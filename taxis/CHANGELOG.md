@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Labels and categories move between groups by dragging only; the "Group…"
+  menu on each row is gone.
+
 ## 0.4.0
 
 Rename entity ids, with everything that uses them.

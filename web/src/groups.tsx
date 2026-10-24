@@ -141,24 +141,6 @@ export function GroupedList({
                   {edited.has(r.edited) && <EditedDot />}
                   <span className="ml-auto whitespace-nowrap text-xs text-muted tabular-nums">{r.extra}</span>
                 </button>
-                <select
-                  aria-label={`Group for ${r.name}`}
-                  title="Group…"
-                  disabled={locked}
-                  value=""
-                  onChange={(e) => move(r.id, e.target.value === NONE ? null : e.target.value)}
-                  className="mr-2 w-20 shrink-0 rounded border border-line bg-bg px-1 py-0.5 text-xs text-muted"
-                >
-                  <option value="">Group…</option>
-                  {groupOf(groups, list, r.id) !== null && <option value={NONE}>Ungrouped</option>}
-                  {sections
-                    .filter((x) => x.group && x.group.id !== groupOf(groups, list, r.id))
-                    .map((x) => (
-                      <option key={x.group!.id} value={x.group!.id}>
-                        {x.group!.name}
-                      </option>
-                    ))}
-                </select>
               </li>
             );
           })}
@@ -341,7 +323,7 @@ export function GroupedList({
             </div>
           );
         })}
-      {groupsLoaded && <p className="px-3 py-2 text-[11px] text-muted">Drag a {noun} onto a group to move it, or use Group….</p>}
+      {groupsLoaded && <p className="px-3 py-2 text-[11px] text-muted">Drag a {noun} onto a group to move it.</p>}
     </div>
   );
 }
