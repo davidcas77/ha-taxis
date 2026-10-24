@@ -172,12 +172,18 @@ export function useTaxis(): TaxisState {
 export const AREA_TABS = ["overview", "entities", "devices", "naming", "labels", "health"] as const;
 export type AreaTab = (typeof AREA_TABS)[number];
 
+// What the Organize page lists. In "spaces" an id reads "floor:<id>" or "area:<id>".
+// Home Assistant keeps one category list per scope, so each scope is its own
+// type.
+export const ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers", "zones", "devices", "entities"] as const;
+export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
+const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
+
 export type Route =
   | { page: "areas"; sel: Selection; tab: AreaTab }
   | { page: "devices" }
   | { page: "entities" }
-  | { page: "labels"; id: string | null }
-  | { page: "categories"; scope: string | null; id: string | null }
+  | { page: "organize"; type: OrganizeType; id: string | null }
   | { page: "changes" }
   | { page: "settings" };
 
@@ -209,10 +215,17 @@ export function parseHash(hash: string): Route {
       return { page: "devices" };
     case "entities":
       return { page: "entities" };
+    case "organize":
+      // Floors and areas used to be two types; their links still open the tree.
+      if (a === "floors" || a === "areas") return { page: "organize", type: "spaces", id: b ? `${a === "floors" ? "floor" : "area"}:${b}` : null };
+      return { page: "organize", type: isOrganizeType(a) ? a : "labels", id: b || null };
+    // Older bookmarks: #labels/<id> and #categories/<scope>/<id>.
     case "labels":
-      return { page: "labels", id: a || null };
-    case "categories":
-      return { page: "categories", scope: a || null, id: b || null };
+      return { page: "organize", type: "labels", id: a || null };
+    case "categories": {
+      const type = `category-${a}`;
+      return isOrganizeType(type) ? { page: "organize", type, id: b || null } : { page: "organize", type: "category-automation", id: null };
+    }
     case "floor":
       return a ? { page: "areas", sel: { kind: "floor", id: a }, tab: "overview" } : HOME;
     case "area":
@@ -234,10 +247,8 @@ export function toHash(r: Route): string {
     case "devices":
     case "entities":
       return `#${r.page}`;
-    case "labels":
-      return r.id ? `#labels/${enc(r.id)}` : "#labels";
-    case "categories":
-      return r.scope ? (r.id ? `#categories/${enc(r.scope)}/${enc(r.id)}` : `#categories/${enc(r.scope)}`) : "#categories";
+    case "organize":
+      return r.id ? `#organize/${r.type}/${enc(r.id)}` : `#organize/${r.type}`;
     case "areas": {
       const s = r.sel;
       if (s.kind === "area") return r.tab === "overview" ? `#area/${enc(s.id)}` : `#area/${enc(s.id)}/${r.tab}`;

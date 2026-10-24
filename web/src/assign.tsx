@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ROLE_ORDER } from "../../shared/roles.ts";
 import type { EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
+import { SortHeader, useSort } from "./table.tsx";
 import { Button, inputClass } from "./ui.tsx";
 
 // Pick entities with filters, then add them to something (a label, a
@@ -14,6 +15,8 @@ type Show = "not" | "in" | "all";
 
 // Roles a label's name suggests: "Night lights" -> lights, "Battery check" ->
 // batteries. Only ever offered as a filter, never applied on its own.
+const ROLE_LABEL = Object.fromEntries(ROLE_ORDER.map((r) => [r.role, r.label])) as Record<EntityRole, string>;
+
 const ROLE_WORDS: [RegExp, EntityRole][] = [
   [/light|lamp|spot/i, "light"],
   [/motion|pir/i, "motion"],
@@ -73,10 +76,26 @@ export function AssignTool({
       .filter((e) => (role ? e.role === role : true))
       .filter((e) => (domain ? e.domain === domain : true))
       .filter((e) => (show === "all" ? true : show === "in" ? isMember(e) : !isMember(e)))
-      .filter((e) => !q || e.name.toLowerCase().includes(q) || e.entityId.includes(q))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .filter((e) => !q || e.name.toLowerCase().includes(q) || e.entityId.includes(q));
   }, [h, candidate, fixedArea, anyArea, area, role, domain, show, isMember, q]);
-  const shown = rows.slice(0, 300);
+  const {
+    rows: sorted,
+    sort,
+    toggle: toggleSort,
+  } = useSort(
+    rows,
+    {
+      name: (e) => e.name,
+      entityId: (e) => e.entityId,
+      area: (e) => (e.areaId ? h.areas[e.areaId]?.name : null),
+      kind: (e) => ROLE_LABEL[e.role],
+      has: (e) => (isMember(e) ? "a" : "b"),
+    },
+    { key: "name", dir: "asc" },
+  );
+  const shown = sorted.slice(0, 300);
+  // Members only get a checkbox in "Already added": there it is how Remove is reached.
+  const selectable = (e: EntityItem) => show === "in" || !isMember(e);
 
   const toggle = (id: string) =>
     setPicked((p) => {
@@ -87,7 +106,7 @@ export function AssignTool({
     });
   // Only what the filters show: a pick hidden by a later filter isn't acted on.
   const visible = new Set(rows.map((e) => e.entityId));
-  const pickedList = [...picked].filter((id) => h.entities[id] && visible.has(id));
+  const pickedList = [...picked].filter((id) => h.entities[id] && visible.has(id) && selectable(h.entities[id]));
   const toAdd = pickedList.filter((id) => !isMember(h.entities[id]));
   const toRemove = pickedList.filter((id) => isMember(h.entities[id]));
 
@@ -132,9 +151,9 @@ export function AssignTool({
         <div role="group" aria-label="Show" className="flex rounded-md border border-line p-0.5 text-xs">
           {(
             [
-              ["not", "Not in it"],
-              ["in", "In it"],
-              ["all", "All"],
+              ["not", "Not added yet"],
+              ["in", "Already added"],
+              ["all", "Show all"],
             ] as [Show, string][]
           ).map(([v, l]) => (
             <button key={v} type="button" aria-pressed={show === v} onClick={() => setShow(v)} className={`rounded px-2 py-1 ${show === v ? "bg-sunken font-medium" : "text-muted"}`}>
@@ -162,7 +181,7 @@ export function AssignTool({
           {rows.length.toLocaleString()} match{rows.length === 1 ? "" : "es"}
           {rows.length > shown.length && `, showing ${shown.length}`} · {pickedList.length} selected
         </span>
-        <Button tone="ghost" onClick={() => setPicked(new Set([...picked, ...shown.map((e) => e.entityId)]))}>
+        <Button tone="ghost" onClick={() => setPicked(new Set([...picked, ...shown.filter(selectable).map((e) => e.entityId)]))}>
           Select all shown
         </Button>
         {picked.size > 0 && (
@@ -194,22 +213,46 @@ export function AssignTool({
           )}
         </span>
       </div>
-      <ul className="max-h-[28rem] divide-y divide-line overflow-y-auto rounded-lg border border-line bg-surface">
-        {shown.length === 0 && <li className="px-3 py-4 text-center text-[13px] text-muted">Nothing matches these filters.</li>}
-        {shown.map((e) => (
-          <li key={e.entityId}>
-            <label className="flex items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-sunken">
-              <input type="checkbox" checked={picked.has(e.entityId)} onChange={() => toggle(e.entityId)} />
-              <span className="min-w-0 flex-1 truncate">
-                {e.name}
-                <code className="ml-2 font-mono text-xs text-muted">{e.entityId}</code>
-              </span>
-              <span className="shrink-0 text-xs text-muted">{e.areaId ? h.areas[e.areaId]?.name : "No area"}</span>
-              {isMember(e) && <span className="shrink-0 rounded bg-accent-soft px-1.5 text-[11px] text-accent">in it</span>}
-            </label>
-          </li>
-        ))}
-      </ul>
+      <div className="max-h-[28rem] overflow-auto rounded-lg border border-line bg-surface">
+        <table className="w-full text-[13px]">
+          <thead className="sticky top-0 z-10 bg-sunken text-left text-xs text-muted">
+            <tr>
+              <th className="w-8 px-3 py-2">
+                <span className="sr-only">Select</span>
+              </th>
+              <SortHeader label="Name" k="name" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Entity id" k="entityId" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Area" k="area" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Kind" k="kind" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Has it" k="has" sort={sort} onToggle={toggleSort} />
+            </tr>
+          </thead>
+          <tbody>
+            {shown.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-4 text-center text-muted">
+                  Nothing matches these filters.
+                </td>
+              </tr>
+            )}
+            {shown.map((e) => {
+              const has = isMember(e);
+              return (
+                <tr key={e.entityId} className={`border-t border-line hover:bg-sunken ${has ? "text-muted opacity-60" : ""}`}>
+                  <td className="px-3 py-1.5">{selectable(e) && <input type="checkbox" aria-label={`Select ${e.name}`} checked={picked.has(e.entityId)} onChange={() => toggle(e.entityId)} />}</td>
+                  <td className="px-3 py-1.5">{e.name}</td>
+                  <td className="px-3 py-1.5">
+                    <code className="font-mono text-xs text-muted">{e.entityId}</code>
+                  </td>
+                  <td className="px-3 py-1.5 text-muted">{e.areaId ? h.areas[e.areaId]?.name : "No area"}</td>
+                  <td className="px-3 py-1.5 text-muted">{ROLE_LABEL[e.role]}</td>
+                  <td className="px-3 py-1.5">{has && <span className="rounded bg-accent-soft px-1.5 text-[11px] text-accent">has it</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
