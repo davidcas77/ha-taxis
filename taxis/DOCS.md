@@ -5,7 +5,10 @@ the areas on each floor, and every device and entity in them, and lets you
 organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
-## Spaces
+The pages along the top: **Areas**, **Devices**, **Entities**, **Labels**,
+**Categories**, **Changes** and **Settings**.
+
+## Areas
 
 - The tree on the left: home, floors, areas, areas on no floor, and entities in
   no area at all.
@@ -16,16 +19,48 @@ Assistant in one go.
 - Entities are grouped by what they do. A group (a light group, a group of
   motion sensors…) shows its members under it; a member that's in several
   groups appears under each, marked "also in…".
+- Each area has tabs: **Overview** (the summary), **Entities**, **Devices**,
+  **Naming** (below), **Labels** (the labels on this area's entities, and a tool
+  to add or take off a label for many of them at once) and **Health** (entities
+  not reporting, groups with missing members, ids that name another area).
 - Click an entity or a device to edit it: name, area, labels, category, icon,
   hidden, disabled. Tick several entities to move them, label them or hide them
   together. Areas and floors have an Edit button, and you can add new ones.
 
-## Organize
+## Devices and Entities
+
+Every device and every entity in one list each, with search and filters for
+area, role, manufacturer and label.
+
+## Labels and Categories
 
 Labels (on areas, devices and entities) and categories (on automations,
 scripts, scenes and helpers; Home Assistant keeps a separate list for each).
-Rename them, change colors and icons, see and change what they're on, create
-and delete them.
+Rename them, change colors and icons, create and delete them, and see what
+they're on. The assign tool lists entities you can filter by area, role and
+domain, with or without the label, and adds the label to the ones you tick or
+takes it off.
+
+## Naming
+
+Under **Settings → Naming**:
+
+- **Area codes.** The word each area's entity ids start with. Taxis finds the
+  one your ids already use (`livingroom` for an area called Living Room, say)
+  and you can set your own.
+- **Patterns.** For entity ids (default `{area}_{type}_{name}`) and display
+  names (default `{Area} {Name}`). The type word goes in only where the domain
+  doesn't already say it: `binary_sensor.livingroom_motion_sofa`, but
+  `light.livingroom_lamp`.
+- **Type words.** The word for each kind of entity (`motion`, `door`,
+  `temp`…).
+
+Each area's **Naming** tab checks its entities against these: which ids start
+with the area's code, which use an older code, which name another area, and
+which say no area at all. It suggests a display name for each; tick the ones
+you want and add them to the list of changes. It also shows the entity id each
+would get. Renaming entity ids, with every automation, script, scene and
+dashboard that uses them, comes in a later version.
 
 ## Changes and Apply
 

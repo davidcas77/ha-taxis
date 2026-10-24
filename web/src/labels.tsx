@@ -1,92 +1,101 @@
-import { Tag, Folder, Search, Trash2 } from "lucide-react";
+import { Tag, Folder, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { CATEGORY_SCOPES, type CategoryItem, type CategoryScope, type ChangeInput, type EntityItem, type Hierarchy, type LabelItem } from "../../shared/types.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
+import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { Button, EditedDot, Field, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
 
-// Organize: labels (on areas, devices and entities) and categories (on
-// automations, scripts, scenes and helpers, one list per kind, as in Home
-// Assistant).
+// Labels and Categories pages. Labels go on areas, devices and entities;
+// categories file automations, scripts, scenes and helpers, one list per kind
+// as in Home Assistant. Both have an assign tool to put many entities in or
+// take them out at once.
 
-type Item = Extract<Route, { page: "organize" }>["item"];
-
-export function OrganizePage({ h, item, go }: { h: Hierarchy; item: Item; go: (r: Route) => void }) {
-  const [scope, setScope] = useState<CategoryScope>(item?.kind === "category" ? (item.scope as CategoryScope) : "automation");
+export function LabelsPage({ h, id, go }: { h: Hierarchy; id: string | null; go: (r: Route) => void }) {
   const usage = useMemo(() => labelUsage(h), [h]);
-  const catUsage = useMemo(() => categoryUsage(h), [h]);
-  const label = item?.kind === "label" ? h.labels[item.id] : undefined;
-  const category = item?.kind === "category" ? h.categories[item.scope as CategoryScope]?.find((c) => c.id === item.id) : undefined;
-  const open = (next: Item) => go({ page: "organize", item: next });
-
+  const label = id ? h.labels[id] : undefined;
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <aside className="flex max-h-[50vh] shrink-0 flex-col gap-4 overflow-y-auto border-b border-line bg-surface p-3 md:max-h-none md:w-80 md:border-r md:border-b-0">
-        <section className="flex flex-col gap-2">
-          <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-            <Tag className="size-4 text-accent" aria-hidden /> Labels
-          </h2>
-          <p className="text-xs text-muted">On areas, devices and entities.</p>
-          <ul className="flex flex-col">
-            {Object.values(h.labels)
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map((l) => (
-                <ListRow key={l.id} active={label?.id === l.id} onClick={() => open({ kind: "label", id: l.id })} count={usage.get(l.id)?.total ?? 0} edited={`label:${l.id}`}>
-                  <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ background: labelColor(l.color) ?? "var(--off)" }} />
-                  {l.name}
-                </ListRow>
-              ))}
-          </ul>
-          <NewForm kind="label" onCreated={() => {}} />
-        </section>
-
-        <section className="flex flex-col gap-2">
-          <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-            <Folder className="size-4 text-accent" aria-hidden /> Categories
-          </h2>
-          <p className="text-xs text-muted">Home Assistant keeps a separate list for each of these.</p>
-          <div role="tablist" aria-label="Category lists" className="flex flex-wrap gap-1">
-            {CATEGORY_SCOPES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                role="tab"
-                aria-selected={scope === s}
-                onClick={() => setScope(s)}
-                className={`rounded-md px-2 py-1 text-xs ${scope === s ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-sunken"}`}
-              >
-                {SCOPE_NAMES[s]}
-              </button>
-            ))}
-          </div>
-          <ul className="flex flex-col">
-            {h.categories[scope].length === 0 && <li className="px-2 py-1 text-xs text-muted">No categories for {SCOPE_NAMES[scope].toLowerCase()} yet.</li>}
-            {h.categories[scope].map((c) => (
-              <ListRow key={c.id} active={category?.id === c.id} onClick={() => open({ kind: "category", scope, id: c.id })} count={catUsage.get(`${scope}:${c.id}`)?.length ?? 0} edited={`category:${c.id}`}>
-                {c.name}
+      <aside className="flex max-h-[50vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-line bg-surface p-3 md:max-h-none md:w-80 md:border-r md:border-b-0">
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+          <Tag className="size-4 text-accent" aria-hidden /> Labels
+        </h2>
+        <p className="text-xs text-muted">On areas, devices and entities. Automations can target a label, so everything with it is acted on.</p>
+        <ul className="flex flex-col">
+          {Object.values(h.labels)
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((l) => (
+              <ListRow key={l.id} active={label?.id === l.id} onClick={() => go({ page: "labels", id: l.id })} count={usage.get(l.id)?.total ?? 0} edited={`label:${l.id}`}>
+                <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ background: labelColor(l.color) ?? "var(--off)" }} />
+                {l.name}
               </ListRow>
             ))}
-          </ul>
-          <NewForm kind="category" scope={scope} onCreated={() => {}} />
-        </section>
+        </ul>
+        <NewForm kind="label" onCreated={() => {}} />
       </aside>
-
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
         {label ? (
-          <LabelDetail key={label.id} h={h} label={label} usage={usage.get(label.id)} onDeleted={() => open(null)} />
-        ) : category ? (
-          <CategoryDetail key={category.id} h={h} category={category} members={catUsage.get(`${category.scope}:${category.id}`) ?? []} onDeleted={() => open(null)} />
+          <LabelDetail key={label.id} h={h} label={label} usage={usage.get(label.id)} onDeleted={() => go({ page: "labels", id: null })} />
         ) : (
-          <div className="flex max-w-[68ch] flex-col gap-2">
-            <h1 className="text-xl font-semibold">Organize</h1>
-            <p className="text-[13px] text-muted">
-              Pick a label or a category to rename it, change its color or icon, and see and change what it's on. New labels and categories go into the list of changes like every
-              other edit.
-            </p>
-          </div>
+          <Intro title="Labels" text="Pick a label to rename it, change its color, and add it to entities or take it off, many at a time." />
         )}
       </main>
+    </div>
+  );
+}
+
+export function CategoriesPage({ h, scope: scopeParam, id, go }: { h: Hierarchy; scope: string | null; id: string | null; go: (r: Route) => void }) {
+  const scope: CategoryScope = (CATEGORY_SCOPES as readonly string[]).includes(scopeParam ?? "") ? (scopeParam as CategoryScope) : "automation";
+  const catUsage = useMemo(() => categoryUsage(h), [h]);
+  const category = id ? h.categories[scope].find((c) => c.id === id) : undefined;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <aside className="flex max-h-[50vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-line bg-surface p-3 md:max-h-none md:w-80 md:border-r md:border-b-0">
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+          <Folder className="size-4 text-accent" aria-hidden /> Categories
+        </h2>
+        <p className="text-xs text-muted">Home Assistant keeps a separate list for each of these.</p>
+        <div role="tablist" aria-label="Category lists" className="flex flex-wrap gap-1">
+          {CATEGORY_SCOPES.map((s) => (
+            <button
+              key={s}
+              type="button"
+              role="tab"
+              aria-selected={scope === s}
+              onClick={() => go({ page: "categories", scope: s, id: null })}
+              className={`rounded-md px-2 py-1 text-xs ${scope === s ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-sunken"}`}
+            >
+              {SCOPE_NAMES[s]}
+            </button>
+          ))}
+        </div>
+        <ul className="flex flex-col">
+          {h.categories[scope].length === 0 && <li className="px-2 py-1 text-xs text-muted">No categories for {SCOPE_NAMES[scope].toLowerCase()} yet.</li>}
+          {h.categories[scope].map((c) => (
+            <ListRow key={c.id} active={category?.id === c.id} onClick={() => go({ page: "categories", scope, id: c.id })} count={catUsage.get(`${scope}:${c.id}`)?.length ?? 0} edited={`category:${c.id}`}>
+              {c.name}
+            </ListRow>
+          ))}
+        </ul>
+        <NewForm kind="category" scope={scope} onCreated={() => {}} />
+      </aside>
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
+        {category ? (
+          <CategoryDetail key={category.id} h={h} category={category} members={catUsage.get(`${scope}:${category.id}`) ?? []} onDeleted={() => go({ page: "categories", scope, id: null })} />
+        ) : (
+          <Intro title="Categories" text="Pick a category to rename it and file automations, scripts, scenes or helpers under it, many at a time." />
+        )}
+      </main>
+    </div>
+  );
+}
+
+function Intro({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="flex max-w-[68ch] flex-col gap-2">
+      <h1 className="text-xl font-semibold">{title}</h1>
+      <p className="text-[13px] text-muted">{text}</p>
     </div>
   );
 }
@@ -303,16 +312,13 @@ function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; label: Labe
         items={(usage?.devices ?? []).map((id) => ({ id, name: h.devices[id]?.name ?? id }))}
         onRemove={(id) => void propose(removeFrom("device", id, h.devices[id].labels))}
       />
-      <Members
-        title="Entities"
-        items={(usage?.entities ?? []).map((id) => ({ id, name: h.entities[id]?.name ?? id, sub: id }))}
-        onRemove={(id) => void propose(removeFrom("entity", id, h.entities[id].labels))}
-      />
-      <AddEntities
+      <AssignTool
         h={h}
-        candidates={(e) => e.inRegistry && !e.labels.includes(label.id)}
+        title={`Entities with “${label.name}”`}
+        isMember={(e) => e.labels.includes(label.id)}
+        suggestedRoles={rolesSuggestedBy(label.name)}
         onAdd={(ids) => void propose(ids.map((id) => ({ kind: "entity", op: "update", targetId: id, fields: { labels: [...h.entities[id].labels, label.id] } })))}
-        what={`Add “${label.name}” to entities`}
+        onRemove={(ids) => void propose(ids.map((id) => removeFrom("entity", id, h.entities[id].labels)))}
       />
     </div>
   );
@@ -366,16 +372,13 @@ function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarchy; cat
           )}
         </div>
       </section>
-      <Members
-        title={`In this category`}
-        items={members.map((e) => ({ id: e.entityId, name: e.name, sub: e.entityId }))}
-        onRemove={(id) => void propose({ kind: "entity", op: "update", targetId: id, fields: { categories: { [scope]: null } } })}
-      />
-      <AddEntities
+      <AssignTool
         h={h}
-        candidates={(e) => e.inRegistry && e.categoryScope === scope && e.categories[scope] !== category.id}
+        title={`${SCOPE_NAMES[scope]} in “${category.name}”`}
+        candidate={(e) => e.inRegistry && e.categoryScope === scope}
+        isMember={(e) => e.categories[scope] === category.id}
         onAdd={(ids) => void propose(ids.map((id) => ({ kind: "entity", op: "update", targetId: id, fields: { categories: { [scope]: category.id } } })))}
-        what={`File ${SCOPE_NAMES[scope].toLowerCase()} under “${category.name}”`}
+        onRemove={(ids) => void propose(ids.map((id) => ({ kind: "entity", op: "update", targetId: id, fields: { categories: { [scope]: null } } })))}
       />
     </div>
   );
@@ -408,59 +411,3 @@ function Members({ title, items, onRemove }: { title: string; items: { id: strin
   );
 }
 
-function AddEntities({ h, candidates, onAdd, what }: { h: Hierarchy; candidates: (e: EntityItem) => boolean; onAdd: (ids: string[]) => void; what: string }) {
-  const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  const q = query.trim().toLowerCase();
-  const found = useMemo(
-    () => (q.length < 2 ? [] : Object.values(h.entities).filter((e) => candidates(e) && !e.disabled && (e.name.toLowerCase().includes(q) || e.entityId.includes(q))).slice(0, 50)),
-    [h, q, candidates],
-  );
-  return (
-    <section className="flex flex-col gap-2">
-      <h2 className="text-sm font-semibold">{what}</h2>
-      <label className="flex max-w-md items-center gap-2 rounded-md border border-line bg-bg px-2 py-1.5">
-        <Search className="size-4 text-muted" aria-hidden />
-        <input id="add-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Type at least 2 letters" aria-label="Find entities" className="w-full bg-transparent text-[13px] outline-none" />
-      </label>
-      {found.length > 0 && (
-        <ul className="max-h-72 divide-y divide-line overflow-y-auto rounded-lg border border-line bg-surface">
-          {found.map((e) => (
-            <li key={e.entityId}>
-              <label className="flex items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-sunken">
-                <input
-                  type="checkbox"
-                  checked={picked.has(e.entityId)}
-                  onChange={() =>
-                    setPicked((p) => {
-                      const n = new Set(p);
-                      if (n.has(e.entityId)) n.delete(e.entityId);
-                      else n.add(e.entityId);
-                      return n;
-                    })
-                  }
-                />
-                <span className="min-w-0 flex-1 truncate">{e.name}</span>
-                <code className="font-mono text-xs text-muted">{e.entityId}</code>
-              </label>
-            </li>
-          ))}
-        </ul>
-      )}
-      {q.length >= 2 && found.length === 0 && <p className="text-xs text-muted">Nothing matches.</p>}
-      {picked.size > 0 && (
-        <div>
-          <Button
-            tone="primary"
-            onClick={() => {
-              onAdd([...picked]);
-              setPicked(new Set());
-            }}
-          >
-            Add {picked.size} to changes
-          </Button>
-        </div>
-      )}
-    </section>
-  );
-}

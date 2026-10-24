@@ -1,4 +1,5 @@
-import type { ApplyResponse, ChangeInput, ChangesResponse, HierarchyResponse } from "../../shared/types.ts";
+import type { NamingSettings } from "../../shared/naming.ts";
+import type { ApplyResponse, ChangeInput, ChangesResponse, HierarchyResponse, NamingResponse } from "../../shared/types.ts";
 
 // Relative URLs on purpose: under Ingress the app lives at
 // /api/hassio_ingress/<token>/, so "/api/…" would miss it.
@@ -22,6 +23,8 @@ async function call<T extends { ok: boolean }>(path: string, init?: RequestInit)
 }
 
 export const api = {
+  naming: () => call<NamingResponse>("api/settings/naming"),
+  saveNaming: (naming: NamingSettings) => call<NamingResponse>("api/settings/naming", { method: "PUT", body: JSON.stringify(naming) }),
   hierarchy: (refresh = false) => call<HierarchyResponse>(`api/hierarchy${refresh ? "?refresh=1" : ""}`),
   changes: () => call<ChangesResponse>("api/changes"),
   addChange: (input: ChangeInput) => call<ChangesResponse>("api/changes", { method: "POST", body: JSON.stringify(input) }),

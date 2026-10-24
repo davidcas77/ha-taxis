@@ -25,6 +25,11 @@ const MIGRATIONS: string[] = [
      after TEXT NOT NULL,
      created_at TEXT NOT NULL
    )`,
+  // 0.3: app settings (naming), one JSON value per key.
+  `CREATE TABLE IF NOT EXISTS settings (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL
+   )`,
 ];
 
 const KEEP_SNAPSHOTS = 10;
