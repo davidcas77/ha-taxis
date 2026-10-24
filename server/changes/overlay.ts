@@ -68,13 +68,17 @@ export function overlayChanges(raw: RawRegistry, changes: Change[]): RawRegistry
         const e = byId(r.entities, "entity_id", c.targetId);
         if (!e) break;
         const { categories, ...rest } = c.after as { categories?: Record<string, string | null> };
-        withLabels(e, c, rest);
+        const { new_entity_id: newId, ...fields } = rest as { new_entity_id?: string } & Record<string, unknown>;
+        withLabels(e, c, fields);
         // The displayed name comes from the live state; show the new one now.
         // After Apply, the fresh read brings the name Home Assistant settles on.
-        if ("name" in rest) {
+        if ("name" in fields) {
           const st = r.states.find((x) => x.entity_id === c.targetId);
-          if (st && typeof rest.name === "string") st.attributes = { ...st.attributes, friendly_name: rest.name };
+          if (st && typeof fields.name === "string") st.attributes = { ...st.attributes, friendly_name: fields.name };
         }
+        // A rename shows everywhere at once: the entity, its state, the groups
+        // it's in, and the area that uses it as its temperature or humidity.
+        if (typeof newId === "string") renameInRaw(r, c.targetId, newId);
         if (categories) {
           const merged: Record<string, string> = { ...(e.categories ?? {}) };
           for (const [scope, id] of Object.entries(categories)) {
@@ -88,4 +92,17 @@ export function overlayChanges(raw: RawRegistry, changes: Change[]): RawRegistry
     }
   }
   return r;
+}
+
+export function renameInRaw(r: RawRegistry, oldId: string, newId: string): void {
+  for (const e of r.entities) if (e.entity_id === oldId) e.entity_id = newId;
+  for (const st of r.states) {
+    if (st.entity_id === oldId) st.entity_id = newId;
+    const members = st.attributes?.entity_id;
+    if (Array.isArray(members) && members.includes(oldId)) st.attributes = { ...st.attributes, entity_id: members.map((m) => (m === oldId ? newId : m)) };
+  }
+  for (const a of r.areas) {
+    if (a.temperature_entity_id === oldId) a.temperature_entity_id = newId;
+    if (a.humidity_entity_id === oldId) a.humidity_entity_id = newId;
+  }
 }

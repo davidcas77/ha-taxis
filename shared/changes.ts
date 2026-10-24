@@ -17,6 +17,10 @@ const ids: Check = (v) => Array.isArray(v) && v.length <= 200 && v.every(id);
 const icon: Check = (v) => v === null || (typeof v === "string" && /^[a-z0-9]+:[a-z0-9-]+$/.test(v));
 const userOrNull: Check = (v) => v === null || v === "user";
 const level: Check = (v) => v === null || (Number.isInteger(v) && Math.abs(v as number) <= 1000);
+// Home Assistant's own rule (valid_entity_id): lower-case letters, digits and
+// single underscores, none at either end of either part.
+export const ENTITY_ID_RE = /^(?!.*__)(?!_)[a-z0-9_]+(?<!_)\.(?!_)[a-z0-9_]+(?<!_)$/;
+const entityIdCheck: Check = (v) => typeof v === "string" && v.length <= 255 && ENTITY_ID_RE.test(v);
 const categoryMap: Check = (v) =>
   typeof v === "object" && v !== null && !Array.isArray(v) &&
   Object.entries(v).every(([k, c]) => (CATEGORY_SCOPES as readonly string[]).includes(k) && idOrNull(c));
@@ -24,7 +28,7 @@ const categoryMap: Check = (v) =>
 // Every field each kind may change, named as Home Assistant names it. Anything
 // else is refused before it is stored, let alone sent.
 export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
-  entity: { name: strOrNull(), icon, area_id: idOrNull, labels: ids, categories: categoryMap, hidden_by: userOrNull, disabled_by: userOrNull },
+  entity: { new_entity_id: entityIdCheck, name: strOrNull(), icon, area_id: idOrNull, labels: ids, categories: categoryMap, hidden_by: userOrNull, disabled_by: userOrNull },
   device: { name_by_user: strOrNull(), area_id: idOrNull, labels: ids, disabled_by: userOrNull },
   area: { name: str(), floor_id: idOrNull, icon, labels: ids },
   floor: { name: str(), level, icon },
@@ -69,6 +73,7 @@ export function currentValues(h: Hierarchy, kind: ChangeKind, targetId: string, 
       const e = h.entities[targetId];
       if (!e) return null;
       return {
+        new_entity_id: e.entityId,
         name: e.customName,
         icon: e.icon,
         area_id: e.ownAreaId,
@@ -217,7 +222,13 @@ export function planMerge(existing: Change[], input: ChangeInput, h: Hierarchy):
     return { action: "insert", change: { kind, op: "create", targetId: "", scope, before: {}, after: { ...fields } } };
   }
 
-  const targetId = input.targetId!;
+  // The preview shows a pending rename under its new id; an edit made there
+  // belongs to the change that renames it.
+  let targetId = input.targetId!;
+  if (kind === "entity") {
+    const renamed = existing.find((c) => c.kind === "entity" && c.after.new_entity_id === targetId);
+    if (renamed) targetId = renamed.targetId;
+  }
   const sameTarget = existing.filter((c) => c.kind === kind && c.targetId === targetId && c.scope === scope);
 
   if (input.op === "delete") {
@@ -280,6 +291,11 @@ export function planMerge(existing: Change[], input: ChangeInput, h: Hierarchy):
     else before[key] = baseOf(key);
   }
 
+  if (kind === "entity" && typeof after.new_entity_id === "string") {
+    const bad = checkRename(existing, h, targetId, after.new_entity_id);
+    if (bad) return { action: "none", reason: bad };
+  }
+
   // Home Assistant 2026.10 refuses an area of its own for a device's main entity
   // (one with no name of its own) until it has a name.
   if (kind === "entity" && h.entities[targetId]?.needsOwnName && ("area_id" in after || "name" in after)) {
@@ -298,4 +314,20 @@ export function planMerge(existing: Change[], input: ChangeInput, h: Hierarchy):
   }
   if (pending) return { action: "replace", id: pending.id, after, before };
   return { action: "insert", change: { kind, op: "update", targetId, scope, before, after } };
+}
+
+// Null when `newId` is a free id in the same domain.
+function checkRename(existing: Change[], h: Hierarchy, targetId: string, newId: string): string | null {
+  const domain = targetId.slice(0, targetId.indexOf("."));
+  if (!newId.startsWith(`${domain}.`)) return `An entity id keeps its domain: it has to start with “${domain}.”.`;
+  if (!h.entities[targetId]?.inRegistry) return "This entity has no unique id, so Home Assistant doesn't let it be renamed.";
+  if (h.entities[newId]) return `Home Assistant already has an entity “${newId}”.`;
+  const taken = existing.find((c) => c.kind === "entity" && c.targetId !== targetId && c.after.new_entity_id === newId);
+  if (taken) return `Another change in the list already renames an entity to “${newId}”.`;
+  // An id another rename frees only becomes free once that one is applied:
+  // keep it simple and refuse it.
+  if (existing.some((c) => c.kind === "entity" && c.targetId === newId && typeof c.after.new_entity_id === "string")) {
+    return `“${newId}” is being renamed in the list; it isn't free until that's applied.`;
+  }
+  return null;
 }
