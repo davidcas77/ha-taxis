@@ -26,7 +26,7 @@ function house(): Hierarchy {
   add("light.livingroom_spots_front", "living_room", "Livingroom spots front");
   add("light.livingroom_lamp", "living_room", "Livingroom lamp");
   add("light.lr_ledstrip", "living_room", "LR ledstrip");
-  add("sensor.c220_motion_alarm", "living_room", "C220 Motion alarm");
+  add("sensor.k90_motion_alarm", "living_room", "K90 Motion alarm");
   add("binary_sensor.livingroom_balcony_door", "living_room", "Balcony door", "door");
   add("light.playroom_main", "playroom", "Playroom main");
   add("light.playroom_desk", "playroom", "Playroom desk");
@@ -144,7 +144,7 @@ describe("display names that start with the area's code", () => {
 describe("detecting a code ignores brands and devices", () => {
   it("prefers a prefix that looks like the area over a more common brand", () => {
     const reg = buildMockRegistry();
-    reg.areas = [{ area_id: "guest_bathroom", name: "Serenity Bathroom" }];
+    reg.areas = [{ area_id: "guest_bathroom", name: "Blue Bathroom" }];
     reg.devices = [];
     reg.entities = [];
     reg.states = [];

@@ -93,7 +93,7 @@ export function detectAreaCode(area: AreaNode, h: Hierarchy): { code: string; co
   }
   // A first token counts only when it looks like the area ("livingroom" for
   // living_room, "living" for Living room): the most common token is often a
-  // brand or device ("dryer", "sonoff", "c220") instead.
+  // brand or device ("dryer", "sonoff", "k90") instead.
   const compact = [area.id.replace(/_/g, ""), slug(area.name).replace(/_/g, "")];
   const related = (t: string) => t.length >= 3 && compact.some((c) => c.startsWith(t) || t.startsWith(c));
   const topFirst = [...firstTokens.entries()].filter(([t]) => related(t)).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => t);
