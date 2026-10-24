@@ -37,7 +37,7 @@ area, role, manufacturer and label.
 Three panes: what you organize on the left (floors and areas, labels, the
 category lists, zones, devices, entities), its items in the middle, and the
 selected item's properties on the right. Floors and areas show as a tree: drag
-an area onto another floor (or use **Move to…**), and add floors and areas in
+an area onto another floor, and add floors and areas in
 place. An area's properties include its entity id code.
 
 ### Labels and Categories
