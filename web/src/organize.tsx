@@ -4,6 +4,7 @@ import { useMemo, useState, type DragEvent, type ReactNode } from "react";
 import type { CategoryScope, EntityItem, FloorNode, Hierarchy } from "../../shared/types.ts";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { CategoryDetail, LabelDetail, NewForm, categoryUsage, labelUsage } from "./labels.tsx";
+import { AreaCodeField } from "./naming.tsx";
 import { ROLE_LABEL } from "./spaces.tsx";
 import { useTaxis, type OrganizeType, type Route } from "./state.tsx";
 import { SortHeader, useSort, type SortValue } from "./table.tsx";
@@ -93,7 +94,7 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
       <section aria-label="Properties" className={`${show("props")} min-h-0 min-w-0 flex-1 flex-col overflow-y-auto md:flex`}>
         <BackBar label={TYPE_NAME[type]} onBack={() => select(null)} />
         <div className="p-4">
-          <Properties h={h} type={type} id={id} clear={() => select(null)} />
+          <Properties h={h} type={type} id={id} go={go} clear={() => select(null)} />
         </div>
       </section>
     </div>
@@ -469,7 +470,7 @@ function SpacesTree({ h, id, select, query }: { h: Hierarchy; id: string | null;
 // ---------------------------------------------------------------------------
 // Right pane
 
-function Properties({ h, type, id, clear }: { h: Hierarchy; type: OrganizeType; id: string | null; clear: () => void }) {
+function Properties({ h, type, id, go, clear }: { h: Hierarchy; type: OrganizeType; id: string | null; go: (r: Route) => void; clear: () => void }) {
   if (!id) return <p className="text-[13px] text-muted">Pick an item to see its properties here.</p>;
   const missing = <p className="text-[13px] text-muted">That item is gone. Pick another.</p>;
   switch (type) {
@@ -481,7 +482,12 @@ function Properties({ h, type, id, clear }: { h: Hierarchy; type: OrganizeType; 
         return f ? <FloorEditor key={f.id} floor={f} onClose={clear} onDeleted={clear} /> : missing;
       }
       const a = h.areas[rid];
-      return a ? <AreaEditor key={a.id} h={h} area={a} onClose={clear} onDeleted={clear} /> : missing;
+      return a ? (
+        <div className="flex flex-col gap-4">
+          <AreaCodeField h={h} area={a} go={go} />
+          <AreaEditor key={a.id} h={h} area={a} onClose={clear} onDeleted={clear} />
+        </div>
+      ) : missing;
     }
     case "labels": {
       const l = h.labels[id];

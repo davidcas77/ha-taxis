@@ -349,3 +349,77 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
     </div>
   );
 }
+
+// The area's entity id code, editable where the area is. It's a Taxis setting,
+// so it saves on its own and never joins the change list.
+export function AreaCodeField({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
+  const { naming, namingLoaded } = useTaxis();
+  // Saving before the settings arrive would write the defaults over them.
+  if (!namingLoaded) return <p className="text-[13px] text-muted">Loading the naming settings…</p>;
+  return <AreaCodeForm key={area.id} h={h} area={area} naming={naming} go={go} />;
+}
+
+function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; naming: NamingSettings; go: (r: Route) => void }) {
+  const { saveNaming, notify } = useTaxis();
+  const c = areaCodes(h, naming)[area.id];
+  const [value, setValue] = useState(c.custom ? c.code : "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const store = async (raw: string) => {
+    const next = slug(raw);
+    // Empty, or the detected code itself, means "use the detected one".
+    const areaCodesNext = { ...naming.areaCodes };
+    if (next && next !== c.detected) areaCodesNext[area.id] = next;
+    else delete areaCodesNext[area.id];
+    setBusy(true);
+    const err = await saveNaming({ ...naming, areaCodes: areaCodesNext });
+    setBusy(false);
+    setError(err);
+    if (err) return;
+    setValue(next && next !== c.detected ? next : "");
+    notify({ tone: "ok", text: "Saved" });
+  };
+
+  const hasDetected = c.detectedCount > 0 && Boolean(c.detected);
+  return (
+    <section className="flex flex-col gap-2 border-b border-line pb-4">
+      <h3 className="text-sm font-semibold">Entity id code</h3>
+      <Field
+        label="Code"
+        htmlFor="area-code"
+        hint={
+          <>
+            Entity ids in this area start with this. Found in {c.detectedCount} of {c.total} ids{c.custom ? " (set by you)" : ""}.
+          </>
+        }
+      >
+        <div className="flex gap-2">
+          <input
+            id="area-code"
+            className={`${inputClass} font-mono`}
+            value={value}
+            placeholder={c.detected}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={(e) => e.target.value.trim() && setValue(slug(e.target.value))}
+          />
+          <Button tone="primary" disabled={busy} onClick={() => store(value)}>
+            Save
+          </Button>
+        </div>
+      </Field>
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <p className="text-[11px] text-muted">Saved in Taxis right away; it doesn't change Home Assistant.</p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {c.custom && hasDetected && (
+          <button type="button" className="text-accent hover:underline" disabled={busy} onClick={() => store("")}>
+            Use detected ({c.detected})
+          </button>
+        )}
+        <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: area.id }, tab: "naming" })}>
+          Check this area's ids →
+        </button>
+      </div>
+    </section>
+  );
+}
