@@ -109,7 +109,8 @@ describe("buildHierarchy", () => {
   });
 
   it("counts everything", () => {
-    expect(h.counts).toEqual({ floors: 3, areas: 4, devices: 5, entities: 7, unassigned: 3 });
+    // switch.old_plug is disabled: it counts as disabled, not as active or unassigned.
+    expect(h.counts).toEqual({ floors: 3, areas: 4, devices: 5, entities: 6, disabledEntities: 1, unassigned: 2 });
     expect(h.home).toEqual({ name: "Test House", haVersion: "2026.10.3" });
   });
 });

@@ -8,7 +8,8 @@ import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
 import { HaSocket } from "./ha/socket.ts";
-import { isAllowedPeer } from "./ingress.ts";
+import { isAllowedPeer, normalizePeer } from "./ingress.ts";
+import { log, setLogSecret } from "./log.ts";
 import { buildHierarchy } from "./model/hierarchy.ts";
 
 try {
@@ -25,6 +26,9 @@ const target = resolveHaTarget(env);
 const store = openStore(dataDir(env));
 const ha = target.ok ? new HaSocket(target.target.wsUrl, target.target.token) : null;
 const token = target.ok ? target.target.token : undefined;
+setLogSecret(token);
+
+const n = (v: number) => v.toLocaleString("en-US");
 
 // A full read walks every registry; keep it for a short while so tab switches
 // and reloads don't hit Home Assistant each time. Refresh bypasses it.
@@ -36,13 +40,25 @@ async function loadHierarchy(force: boolean): Promise<{ hierarchy: Hierarchy; ca
   if (!ha) throw new Error(target.ok ? "Home Assistant is not configured." : target.reason);
   if (!force && cache && Date.now() - cache.at < CACHE_MS) return { hierarchy: cache.hierarchy, cached: true };
   inFlight ??= (async () => {
+    const started = Date.now();
     const raw = await readRegistry(ha);
     const fetchedAt = new Date().toISOString();
     const hierarchy = buildHierarchy(raw, fetchedAt);
+    const c = hierarchy.counts;
+    log.info(
+      `Read Home Assistant ${hierarchy.home.haVersion ?? ""} in ${Date.now() - started} ms: ` +
+        `${n(c.floors)} floors, ${n(c.areas)} areas, ${n(c.devices)} devices, ` +
+        `${n(c.entities)} entities (${n(c.disabledEntities)} disabled), ${n(c.unassigned)} not in any area`,
+    );
     // Snapshots keep the registries only: live states are not configuration and
-    // would make each snapshot several times larger.
-    const { states: _states, ...registries } = raw;
-    store.saveSnapshot({ takenAt: fetchedAt, haVersion: hierarchy.home.haVersion, counts: hierarchy.counts, raw: registries });
+    // would make each snapshot several times larger. A failed save is logged but
+    // doesn't fail the read: the hierarchy is still correct.
+    try {
+      const { states: _states, ...registries } = raw;
+      store.saveSnapshot({ takenAt: fetchedAt, haVersion: hierarchy.home.haVersion, counts: c, raw: registries });
+    } catch (e) {
+      log.error("Saving the snapshot failed", e);
+    }
     cache = { at: Date.now(), hierarchy };
     return hierarchy;
   })().finally(() => {
@@ -54,8 +70,17 @@ async function loadHierarchy(force: boolean): Promise<{ hierarchy: Hierarchy; ca
 const app = new Hono<{ Bindings: { incoming: { socket: { remoteAddress?: string } } } }>();
 
 app.use("*", async (c, next) => {
-  if (!isAllowedPeer(c.env.incoming.socket.remoteAddress, mode)) return c.text("Forbidden", 403);
+  const peer = c.env.incoming.socket.remoteAddress;
+  if (!isAllowedPeer(peer, mode)) {
+    log.warn(`Refused a request from ${normalizePeer(peer) || "an unknown address"}: only Home Assistant's Ingress may connect`);
+    return c.text("Forbidden", 403);
+  }
   await next();
+});
+
+app.onError((e, c) => {
+  log.error(`Request ${c.req.method} ${c.req.path} failed`, e);
+  return c.text("Something went wrong in Taxis. See the app's log.", 500);
 });
 
 app.get("/api/health", (c) =>
@@ -73,6 +98,7 @@ app.get("/api/hierarchy", async (c) => {
     return c.json<HierarchyResponse>({ ok: true, hierarchy, cached });
   } catch (e) {
     const message = redact(e instanceof Error ? e.message : String(e), token);
+    log.error("Reading Home Assistant failed", message);
     return c.json<HierarchyResponse>({ ok: false, error: message }, 502);
   }
 });
@@ -95,8 +121,16 @@ app.get("*", (c) => {
 const hostname = env.HOST ?? (mode === "app" ? "0.0.0.0" : "127.0.0.1");
 
 serve({ fetch: app.fetch, port, hostname }, () => {
-  console.log(`Taxis ${version} listening on ${hostname}:${port} (${mode} mode)`);
-  if (!target.ok) console.warn(`Home Assistant: ${target.reason}`);
+  log.info(`Taxis ${version} listening on ${hostname}:${port} (${mode} mode)`);
+  if (!target.ok) log.warn(`Home Assistant: ${target.reason}`);
+});
+
+process.on("unhandledRejection", (e) => log.error("Unhandled error", e));
+// After an uncaught exception the process state can't be trusted: log it and
+// exit, as Node would, so the Supervisor shows the app as stopped.
+process.on("uncaughtException", (e) => {
+  log.error("Unexpected error, stopping", e);
+  process.exit(1);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

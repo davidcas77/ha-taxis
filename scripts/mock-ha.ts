@@ -105,6 +105,10 @@ function buildRegistry(): RawRegistry {
       }
     });
   }
+  // Entities an integration ships disabled: in the registry, with no state.
+  for (const name of ["linkquality", "update_available", "power_outage_count"]) {
+    reg.entities.push({ entity_id: `sensor.zigbee_hub_${name}`, device_id: "hub", platform: "mqtt", disabled_by: "integration", entity_category: "diagnostic" });
+  }
   // Things that live in no area, like in a real home.
   reg.entities.push({ entity_id: "automation.lights_on_at_sunset", platform: "automation" });
   reg.states.push({ entity_id: "automation.lights_on_at_sunset", state: "on", attributes: { friendly_name: "Lights on at sunset" } });

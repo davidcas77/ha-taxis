@@ -196,7 +196,8 @@ export function App() {
             <span>{hierarchy.home.name}</span>
             <span className="tabular-nums">
               {hierarchy.counts.floors} floors · {hierarchy.counts.areas} areas · {hierarchy.counts.devices} devices ·{" "}
-              {hierarchy.counts.entities} entities
+              {hierarchy.counts.entities.toLocaleString()} entities
+              {hierarchy.counts.disabledEntities > 0 && ` (${hierarchy.counts.disabledEntities.toLocaleString()} disabled)`}
             </span>
             <span>Read {timeAgo(hierarchy.fetchedAt)}</span>
           </div>
@@ -437,11 +438,12 @@ function Heading({ title, subtitle, children }: { title: string; subtitle?: stri
   );
 }
 
-function Stat({ label, value, onClick }: { label: string; value: number; onClick?: () => void }) {
+function Stat({ label, value, note, onClick }: { label: string; value: number; note?: string; onClick?: () => void }) {
   const body = (
     <>
       <span className="text-2xl font-semibold tabular-nums">{value.toLocaleString()}</span>
       <span className="text-xs text-muted">{label}</span>
+      {note && <span className="mt-0.5 text-[11px] text-muted">{note}</span>}
     </>
   );
   return onClick ? (
@@ -463,7 +465,11 @@ function HomeView({ h, filters, select }: { h: Hierarchy; filters: Filters; sele
         <Stat label="Floors" value={h.counts.floors} />
         <Stat label="Areas" value={h.counts.areas} />
         <Stat label="Devices" value={h.counts.devices} />
-        <Stat label="Entities" value={h.counts.entities} />
+        <Stat
+          label="Entities"
+          value={h.counts.entities}
+          note={h.counts.disabledEntities > 0 ? `${h.counts.disabledEntities.toLocaleString()} more are disabled` : undefined}
+        />
         <Stat label="Not in any area" value={countVisible(h.unassignedEntityIds, h, filters)} onClick={() => select({ kind: "unassigned" })} />
       </div>
       <section className="flex flex-col gap-2">

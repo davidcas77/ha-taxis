@@ -88,7 +88,16 @@ export type Hierarchy = {
   labels: Record<string, LabelItem>;
   // Entities that end up in no area at all (neither their own nor their device's).
   unassignedEntityIds: string[];
-  counts: { floors: number; areas: number; devices: number; entities: number; unassigned: number };
+  // `entities` and `unassigned` count active entities only; disabled ones are
+  // counted in `disabledEntities`.
+  counts: {
+    floors: number;
+    areas: number;
+    devices: number;
+    entities: number;
+    disabledEntities: number;
+    unassigned: number;
+  };
 };
 
 export type HealthResponse = {

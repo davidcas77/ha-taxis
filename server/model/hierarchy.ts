@@ -179,12 +179,29 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
     entities,
     labels,
     unassignedEntityIds: unassigned,
-    counts: {
-      floors: floors.length,
-      areas: Object.keys(areas).length,
-      devices: Object.keys(devices).length,
-      entities: Object.keys(entities).length,
-      unassigned: unassigned.length,
-    },
+    counts: countAll(floors.length, areas, devices, entities, unassigned),
+  };
+}
+
+// Integrations disable many entities by default (Zigbee2MQTT especially), so a
+// home can have more disabled entities than active ones. Counts are of active
+// entities, the way Home Assistant itself counts them; disabled ones are
+// reported separately.
+function countAll(
+  floors: number,
+  areas: Record<string, AreaNode>,
+  devices: Record<string, DeviceItem>,
+  entities: Record<string, EntityItem>,
+  unassigned: string[],
+): Hierarchy["counts"] {
+  const all = Object.values(entities);
+  const disabled = all.filter((e) => e.disabled).length;
+  return {
+    floors,
+    areas: Object.keys(areas).length,
+    devices: Object.keys(devices).length,
+    entities: all.length - disabled,
+    disabledEntities: disabled,
+    unassigned: unassigned.filter((id) => !entities[id].disabled).length,
   };
 }
