@@ -2,14 +2,16 @@
 
 Taxis shows your whole Home Assistant as one hierarchy: your home, its floors,
 the areas on each floor, and every device and entity in them, grouped by what
-they do (lights, motion, presence, climate, media, doors and windows, and more).
+they do. It lets you organise all of it, renaming, moving, labelling and
+categorising, and applies your changes to Home Assistant in one go, with a
+backup first.
 
 It runs as a Home Assistant app and opens from the sidebar. It needs no token
 and no account, and it only talks to your own Home Assistant.
 
-> **Status: early, read-only.** Version 0.1 reads and shows. Editing areas and
-> floors, two-way sync and automations come in later versions. Nothing in this
-> version changes your Home Assistant.
+> **Status: early.** Version 0.2 reads, shows and edits the organisation of
+> your home (areas, floors, labels, categories and where things are). Creating
+> automations comes later.
 
 ## Install
 
@@ -22,15 +24,25 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 3. Find **Taxis** in the store, choose **Install**, then **Start**.
 4. Turn on **Show in sidebar** and open **Taxis**.
 
-## What it shows
+## What it does
 
 - **Spaces:** home → floors → areas, plus areas on no floor and entities that
   are in no area at all.
-- **Each area:** its entities grouped by role, with live states, and the devices
-  assigned to it (including which hub they connect through).
-- **Search** across every entity, by name or entity id.
-- Config and diagnostic entities, and disabled or hidden ones, are hidden until
-  you ask for them.
+- **Each area:** a summary (temperature, humidity, light level, presence,
+  motion, doors and windows, lights on), its entities grouped by role with live
+  states, groups shown with their members, and its devices.
+- **Editing:** entities (name, area, labels, category, icon, hidden, disabled),
+  devices (name, area, labels, disabled), areas and floors (create, rename,
+  move, delete), several entities at once.
+- **Organize:** labels and categories: create, rename, recolor, delete, and
+  see and change what they're on.
+- **Changes:** every edit waits in a list, shown as before → after. Apply backs
+  up Home Assistant, applies the list, and reads Home Assistant back to check
+  each change.
+
+Taxis never removes a device or an entity, never calls a service, and never
+changes what an automation does. The commands it may send are fixed in
+`server/ha/socket.ts`.
 
 ## Privacy
 
@@ -38,8 +50,8 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   connection. It needs no long-lived token.
 - It only answers requests that come through Home Assistant (Ingress), so only
   signed-in Home Assistant users can open it.
-- It keeps a snapshot of what it read in `/data/taxis.db` inside the app, for
-  the two-way sync that comes later. Nothing leaves your Home Assistant.
+- It keeps its change list and snapshots of what it read in `/data/taxis.db`
+  inside the app. Nothing leaves your Home Assistant.
 
 ## Development
 

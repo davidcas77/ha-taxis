@@ -1,5 +1,7 @@
+import { CATEGORY_SCOPES, type CategoryScope } from "../../shared/types.ts";
 import type {
   RawArea,
+  RawCategory,
   RawConfig,
   RawDevice,
   RawEntity,
@@ -13,7 +15,7 @@ import type { HaSocket } from "./socket.ts";
 // One read of everything the hierarchy needs. The commands run in parallel over
 // the same connection; all of them are read-only (see READ_COMMANDS).
 export async function readRegistry(ha: Pick<HaSocket, "command">): Promise<RawRegistry> {
-  const [config, floors, areas, devices, entities, labels, states] = await Promise.all([
+  const [config, floors, areas, devices, entities, labels, states, ...categoryLists] = await Promise.all([
     ha.command<RawConfig>("get_config"),
     ha.command<RawFloor[]>("config/floor_registry/list"),
     ha.command<RawArea[]>("config/area_registry/list"),
@@ -21,6 +23,10 @@ export async function readRegistry(ha: Pick<HaSocket, "command">): Promise<RawRe
     ha.command<RawEntity[]>("config/entity_registry/list"),
     ha.command<RawLabel[]>("config/label_registry/list"),
     ha.command<RawState[]>("get_states"),
+    ...CATEGORY_SCOPES.map((scope) => ha.command<RawCategory[]>("config/category_registry/list", { scope })),
   ]);
-  return { config, floors, areas, devices, entities, labels, states };
+  const categories = Object.fromEntries(
+    CATEGORY_SCOPES.map((scope, i) => [scope, categoryLists[i] as RawCategory[]]),
+  ) as Record<CategoryScope, RawCategory[]>;
+  return { config, floors, areas, devices, entities, labels, categories, states };
 }

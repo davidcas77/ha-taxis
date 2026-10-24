@@ -5,8 +5,10 @@
 // replies auth_ok or auth_invalid. After that every command carries an id and
 // gets exactly one {type:"result", id, success, result | error} back.
 //
-// This version of Taxis only reads, and that is enforced here rather than by
-// convention: only the commands in READ_COMMANDS can be sent.
+// What may be sent is enforced here rather than by convention: command() sends
+// only READ_COMMANDS; write() sends only WRITE_COMMANDS, and only the Apply step
+// calls write(). Nothing can call services, delete devices or entities, or touch
+// automations' contents.
 
 export const READ_COMMANDS = new Set([
   "get_config",
@@ -16,11 +18,37 @@ export const READ_COMMANDS = new Set([
   "config/device_registry/list",
   "config/entity_registry/list",
   "config/label_registry/list",
+  "config/category_registry/list",
 ]);
 
 export function assertReadCommand(type: string): void {
   if (!READ_COMMANDS.has(type)) {
-    throw new Error(`Refusing to send "${type}" to Home Assistant: this version of Taxis only reads.`);
+    throw new Error(`Refusing to send "${type}" to Home Assistant: it isn't a read.`);
+  }
+}
+
+// Registry edits the change list can make. Entities and devices are only ever
+// updated, never removed.
+export const WRITE_COMMANDS = new Set([
+  "config/floor_registry/create",
+  "config/floor_registry/update",
+  "config/floor_registry/delete",
+  "config/area_registry/create",
+  "config/area_registry/update",
+  "config/area_registry/delete",
+  "config/label_registry/create",
+  "config/label_registry/update",
+  "config/label_registry/delete",
+  "config/category_registry/create",
+  "config/category_registry/update",
+  "config/category_registry/delete",
+  "config/device_registry/update",
+  "config/entity_registry/update",
+]);
+
+export function assertWriteCommand(type: string): void {
+  if (!WRITE_COMMANDS.has(type)) {
+    throw new Error(`Refusing to send "${type}" to Home Assistant: Taxis doesn't make that change.`);
   }
 }
 
@@ -176,6 +204,16 @@ export class HaSocket {
   /** Sends one read command and resolves with its result. */
   async command<T>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
     assertReadCommand(type);
+    return this.send<T>(type, payload);
+  }
+
+  /** Sends one registry edit. Only the Apply step calls this. */
+  async write<T>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
+    assertWriteCommand(type);
+    return this.send<T>(type, payload);
+  }
+
+  private async send<T>(type: string, payload: Record<string, unknown>): Promise<T> {
     await this.connect();
     const conn = this.conn;
     if (!conn || conn.socket.readyState !== OPEN) throw new Error("The connection to Home Assistant closed.");

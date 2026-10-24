@@ -1,12 +1,15 @@
-import type {
-  AreaNode,
-  DeviceItem,
-  EntityItem,
-  FloorNode,
-  Hierarchy,
-  LabelItem,
+import {
+  CATEGORY_SCOPES,
+  type AreaNode,
+  type CategoryItem,
+  type CategoryScope,
+  type DeviceItem,
+  type EntityItem,
+  type FloorNode,
+  type Hierarchy,
+  type LabelItem,
 } from "../../shared/types.ts";
-import { entityRole } from "../../shared/roles.ts";
+import { categoryScopeFor, entityRole } from "../../shared/roles.ts";
 
 // Raw shapes as Home Assistant's WebSocket registry commands return them. Only
 // the fields Taxis reads are typed; everything else is ignored.
@@ -18,6 +21,8 @@ export type RawArea = {
   floor_id?: string | null;
   icon?: string | null;
   labels?: string[];
+  temperature_entity_id?: string | null;
+  humidity_entity_id?: string | null;
 };
 export type RawDevice = {
   id: string;
@@ -35,6 +40,7 @@ export type RawEntity = {
   entity_id: string;
   name?: string | null;
   original_name?: string | null;
+  has_entity_name?: boolean;
   device_id?: string | null;
   area_id?: string | null;
   platform: string;
@@ -42,12 +48,15 @@ export type RawEntity = {
   hidden_by?: string | null;
   entity_category?: string | null;
   labels?: string[];
+  icon?: string | null;
+  categories?: Record<string, string>;
 };
-export type RawLabel = { label_id: string; name: string; color?: string | null; icon?: string | null };
+export type RawLabel = { label_id: string; name: string; color?: string | null; icon?: string | null; description?: string | null };
+export type RawCategory = { category_id: string; name: string; icon?: string | null };
 export type RawState = {
   entity_id: string;
   state: string;
-  attributes?: { friendly_name?: string; device_class?: string; unit_of_measurement?: string };
+  attributes?: { friendly_name?: string; device_class?: string; unit_of_measurement?: string; entity_id?: unknown };
 };
 export type RawConfig = { location_name?: string; version?: string };
 
@@ -58,6 +67,8 @@ export type RawRegistry = {
   devices: RawDevice[];
   entities: RawEntity[];
   labels: RawLabel[];
+  // One list per scope. Optional so snapshots taken before 0.2 still load.
+  categories?: Partial<Record<CategoryScope, RawCategory[]>>;
   states: RawState[];
 };
 
@@ -70,7 +81,18 @@ const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ?
 
 export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
   const labels: Record<string, LabelItem> = {};
-  for (const l of raw.labels) labels[l.label_id] = { id: l.label_id, name: l.name, color: l.color ?? null, icon: l.icon ?? null };
+  for (const l of raw.labels) {
+    labels[l.label_id] = { id: l.label_id, name: l.name, color: l.color ?? null, icon: l.icon ?? null, description: text(l.description) };
+  }
+
+  const categories = Object.fromEntries(
+    CATEGORY_SCOPES.map((scope) => [
+      scope,
+      (raw.categories?.[scope] ?? [])
+        .map((c): CategoryItem => ({ id: c.category_id, scope, name: c.name, icon: c.icon ?? null }))
+        .sort(byName),
+    ]),
+  ) as Record<CategoryScope, CategoryItem[]>;
 
   const areas: Record<string, AreaNode> = {};
   for (const a of raw.areas) {
@@ -80,6 +102,8 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
       floorId: a.floor_id ?? null,
       icon: a.icon ?? null,
       labels: a.labels ?? [],
+      temperatureEntityId: text(a.temperature_entity_id),
+      humidityEntityId: text(a.humidity_entity_id),
       deviceIds: [],
       entityIds: [],
     };
@@ -92,12 +116,14 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
     devices[d.id] = {
       id: d.id,
       name: text(d.name_by_user) ?? text(d.name) ?? d.id,
+      customName: text(d.name_by_user),
       manufacturer: text(d.manufacturer),
       model: text(d.model),
       areaId,
       viaDeviceId: d.via_device_id ?? null,
       isService: d.entry_type === "service",
       disabled: Boolean(d.disabled_by),
+      disabledBy: text(d.disabled_by),
       labels: d.labels ?? [],
       entityIds: [],
     };
@@ -115,22 +141,38 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
     const device = reg?.device_id ? devices[reg.device_id] : undefined;
     const ownArea = reg?.area_id && areas[reg.area_id] ? reg.area_id : null;
     const areaId = ownArea ?? device?.areaId ?? null;
+    const platform = reg?.platform ?? "";
+    const memberList = st?.attributes?.entity_id;
     entities[entityId] = {
       entityId,
       name: text(st?.attributes?.friendly_name) ?? text(reg?.name) ?? text(reg?.original_name) ?? entityId,
+      customName: text(reg?.name),
       domain,
       role: entityRole(domain, deviceClass),
       deviceClass,
       state: st ? String(st.state) : null,
       unit: text(st?.attributes?.unit_of_measurement),
+      icon: text(reg?.icon),
       deviceId: device ? device.id : null,
       areaId,
+      ownAreaId: ownArea,
       areaFromEntity: Boolean(ownArea && device?.areaId && ownArea !== device.areaId),
       labels: reg?.labels ?? [],
+      categories: pickCategories(reg?.categories),
+      categoryScope: reg ? categoryScopeFor(domain, platform) : null,
+      // A group reports its members in the entity_id attribute. Only real entity
+      // ids count; a group that reports none isn't shown as a group.
+      members: Array.isArray(memberList) ? memberList.filter((m): m is string => typeof m === "string" && m.includes(".") && m !== entityId) : [],
       maintenance: reg?.entity_category === "config" || reg?.entity_category === "diagnostic",
       disabled: Boolean(reg?.disabled_by),
       hidden: Boolean(reg?.hidden_by),
-      platform: reg?.platform ?? "",
+      hiddenBy: text(reg?.hidden_by),
+      disabledBy: text(reg?.disabled_by),
+      // Home Assistant's own test: a device, and no entity name of its own.
+      // The list's original_name already has the device name taken off.
+      needsOwnName: Boolean(reg?.device_id && !text(reg?.original_name)),
+      inRegistry: Boolean(reg),
+      platform,
     };
     if (device) device.entityIds.push(entityId);
     if (areaId) areas[areaId].entityIds.push(entityId);
@@ -178,6 +220,7 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
     devices,
     entities,
     labels,
+    categories,
     unassignedEntityIds: unassigned,
     counts: countAll(floors.length, areas, devices, entities, unassigned),
   };
@@ -204,4 +247,13 @@ function countAll(
     disabledEntities: disabled,
     unassigned: unassigned.filter((id) => !entities[id].disabled).length,
   };
+}
+
+function pickCategories(raw: Record<string, string> | undefined): Partial<Record<CategoryScope, string>> {
+  const out: Partial<Record<CategoryScope, string>> = {};
+  for (const scope of CATEGORY_SCOPES) {
+    const id = raw?.[scope];
+    if (typeof id === "string" && id) out[scope] = id;
+  }
+  return out;
 }

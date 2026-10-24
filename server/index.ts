@@ -3,14 +3,27 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { readFileSync } from "node:fs";
 
-import type { HealthResponse, Hierarchy, HierarchyResponse } from "../shared/types.ts";
+import { validateInput } from "../shared/changes.ts";
+import type {
+  ApplyResult,
+  ApplyResponse,
+  ChangeInput,
+  ChangesResponse,
+  HealthResponse,
+  Hierarchy,
+  HierarchyResponse,
+} from "../shared/types.ts";
+import { applyChanges } from "./changes/apply.ts";
+import { overlayChanges } from "./changes/overlay.ts";
+import { changeStore } from "./changes/store.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
 import { HaSocket } from "./ha/socket.ts";
+import { backupHomeAssistant } from "./ha/supervisor.ts";
 import { isAllowedPeer, normalizePeer } from "./ingress.ts";
 import { log, setLogSecret } from "./log.ts";
-import { buildHierarchy } from "./model/hierarchy.ts";
+import { buildHierarchy, type RawRegistry } from "./model/hierarchy.ts";
 
 try {
   process.loadEnvFile(".env");
@@ -27,18 +40,31 @@ const store = openStore(dataDir(env));
 const ha = target.ok ? new HaSocket(target.target.wsUrl, target.target.token) : null;
 const token = target.ok ? target.target.token : undefined;
 setLogSecret(token);
+const changes = changeStore(store.db);
 
 const n = (v: number) => v.toLocaleString("en-US");
 
 // A full read walks every registry; keep it for a short while so tab switches
 // and reloads don't hit Home Assistant each time. Refresh bypasses it.
 const CACHE_MS = 30_000;
-let cache: { at: number; hierarchy: Hierarchy } | null = null;
-let inFlight: Promise<Hierarchy> | null = null;
+// The cache keeps the raw registries and the hierarchy built from them as read
+// ("live": the "before" side of every change). What the UI gets is the preview:
+// the change list laid over the live read.
+type Read = { raw: RawRegistry; live: Hierarchy };
+let cache: { at: number; read: Read } | null = null;
+// One Apply at a time, and no edits while it runs: two at once could
+// interleave their writes, and an edit folded into a change being applied would
+// be lost when that change is marked done.
+let applying = false;
+let inFlight: Promise<Read> | null = null;
 
-async function loadHierarchy(force: boolean): Promise<{ hierarchy: Hierarchy; cached: boolean }> {
+async function loadRead(force: boolean): Promise<{ read: Read; cached: boolean }> {
   if (!ha) throw new Error(target.ok ? "Home Assistant is not configured." : target.reason);
-  if (!force && cache && Date.now() - cache.at < CACHE_MS) return { hierarchy: cache.hierarchy, cached: true };
+  if (!force && cache && Date.now() - cache.at < CACHE_MS) return { read: cache.read, cached: true };
+  // A forced read (Refresh, and Apply's checks) must reflect what Home Assistant
+  // holds now, so it never reuses a read that started earlier.
+  if (force && inFlight) await inFlight.catch(() => {});
+  if (force) inFlight = null;
   inFlight ??= (async () => {
     const started = Date.now();
     const raw = await readRegistry(ha);
@@ -59,13 +85,21 @@ async function loadHierarchy(force: boolean): Promise<{ hierarchy: Hierarchy; ca
     } catch (e) {
       log.error("Saving the snapshot failed", e);
     }
-    cache = { at: Date.now(), hierarchy };
-    return hierarchy;
+    const read = { raw, live: hierarchy };
+    cache = { at: Date.now(), read };
+    return read;
   })().finally(() => {
     inFlight = null;
   });
-  return { hierarchy: await inFlight, cached: false };
+  return { read: await inFlight, cached: false };
 }
+
+function preview(read: Read): Hierarchy {
+  const pending = changes.list();
+  return pending.length ? buildHierarchy(overlayChanges(read.raw, pending), read.live.fetchedAt) : read.live;
+}
+
+const errorText = (e: unknown) => redact(e instanceof Error ? e.message : String(e), token);
 
 const app = new Hono<{ Bindings: { incoming: { socket: { remoteAddress?: string } } } }>();
 
@@ -75,6 +109,14 @@ app.use("*", async (c, next) => {
     log.warn(`Refused a request from ${normalizePeer(peer) || "an unknown address"}: only Home Assistant's Ingress may connect`);
     return c.text("Forbidden", 403);
   }
+  await next();
+});
+
+// Changes arrive through Ingress only (above). On top of that, every request
+// that changes something must carry this header, which a form on another
+// website can't add: a simple guard against cross-site requests.
+app.use("/api/*", async (c, next) => {
+  if (c.req.method !== "GET" && c.req.header("x-taxis-request") !== "1") return c.text("Missing request header.", 400);
   await next();
 });
 
@@ -94,12 +136,112 @@ app.get("/api/health", (c) =>
 
 app.get("/api/hierarchy", async (c) => {
   try {
-    const { hierarchy, cached } = await loadHierarchy(c.req.query("refresh") === "1");
-    return c.json<HierarchyResponse>({ ok: true, hierarchy, cached });
+    const { read, cached } = await loadRead(c.req.query("refresh") === "1");
+    return c.json<HierarchyResponse>({ ok: true, hierarchy: preview(read), cached });
   } catch (e) {
-    const message = redact(e instanceof Error ? e.message : String(e), token);
+    const message = errorText(e);
     log.error("Reading Home Assistant failed", message);
     return c.json<HierarchyResponse>({ ok: false, error: message }, 502);
+  }
+});
+
+const listResponse = (): ChangesResponse => ({ ok: true, changes: changes.list(), version: changes.version() });
+
+app.get("/api/changes", (c) => c.json<ChangesResponse>(listResponse()));
+
+app.post("/api/changes", async (c) => {
+  if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
+  const input = (await c.req.json().catch(() => null)) as ChangeInput | null;
+  const invalid = input ? validateInput(input) : "The request wasn't JSON.";
+  if (invalid) return c.json<ChangesResponse>({ ok: false, error: invalid }, 400);
+  try {
+    const { read } = await loadRead(false);
+    // Apply may have started while Home Assistant was being read.
+    if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
+    const refused = changes.add(input!, read.live);
+    if (refused) return c.json<ChangesResponse>({ ok: false, error: refused }, 409);
+    return c.json<ChangesResponse>(listResponse());
+  } catch (e) {
+    return c.json<ChangesResponse>({ ok: false, error: errorText(e) }, 502);
+  }
+});
+
+app.delete("/api/changes/:id", (c) => {
+  if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
+  changes.remove(Number(c.req.param("id")));
+  return c.json<ChangesResponse>(listResponse());
+});
+
+app.delete("/api/changes", (c) => {
+  if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
+  changes.clear();
+  log.info("Discarded every change in the list");
+  return c.json<ChangesResponse>(listResponse());
+});
+
+
+app.post("/api/apply", async (c) => {
+  if (!ha || !target.ok) {
+    return c.json<ApplyResponse>({ ok: false, error: target.ok ? "Home Assistant is not configured." : target.reason }, 503);
+  }
+  if (applying) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
+  // The body is read before the lock is taken; check the lock again after it.
+  const body = (await c.req.json().catch(() => ({}))) as { allowWithoutBackup?: boolean; version?: unknown };
+  if (applying) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
+  // Apply exactly the list the user confirmed: if anything in it changed since
+  // (another tab, another device, an edit folded into a change), they must look
+  // again.
+  const pending = changes.list();
+  if (pending.length === 0) return c.json<ApplyResponse>({ ok: false, error: "There are no changes to apply." }, 400);
+  if (body.version !== changes.version()) {
+    return c.json<ApplyResponse>({ ok: false, error: "The list of changes changed since you looked at it. Check it again, then apply." }, 409);
+  }
+
+  applying = true;
+  try {
+    // Backup first. Inside Home Assistant it's required: no backup, no changes.
+    // In development there's no Supervisor, so applying needs an explicit OK.
+    let backup: ApplyResult["backup"];
+    if (mode === "app") {
+      const name = `Taxis before applying ${pending.length} change${pending.length === 1 ? "" : "s"}`;
+      log.info(`Making a backup: ${name}`);
+      const made = await backupHomeAssistant(target.target.token, name);
+      if (!made.ok) {
+        log.error("Backup failed, nothing was applied", made.reason);
+        return c.json<ApplyResponse>({ ok: false, error: `Nothing was changed. ${made.reason}` }, 502);
+      }
+      backup = { made: true, name };
+    } else if (body.allowWithoutBackup) {
+      backup = { made: false, reason: "Running outside Home Assistant, so no backup was possible." };
+    } else {
+      return c.json<ApplyResponse>(
+        { ok: false, error: "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one." },
+        409,
+      );
+    }
+
+    log.info(`Applying ${pending.length} change(s) to Home Assistant`);
+    const { results, appliedIds, realIds } = await applyChanges(pending, ha, async () => (await loadRead(true)).read.raw);
+    for (const r of results) {
+      const ch = pending.find((x) => x.id === r.changeId)!;
+      const line = `${ch.op} ${ch.kind} ${ch.targetId}: ${r.message}`;
+      if (r.ok) log.info(line);
+      else log.error(line);
+    }
+    // Done changes leave the list; the rest stay. Creations that happened hand
+    // their real ids to the changes still pointing at them.
+    for (const id of appliedIds) changes.done(id);
+    for (const [temp, real] of realIds) changes.swapTempId(temp, real);
+    // Whatever happened, the next view must come from a fresh read.
+    cache = null;
+    log.info(`Applied ${appliedIds.length} of ${pending.length} change(s)`);
+    return c.json<ApplyResponse>({ ok: true, backup, results });
+  } catch (e) {
+    log.error("Applying changes failed", e);
+    cache = null;
+    return c.json<ApplyResponse>({ ok: false, error: errorText(e) }, 502);
+  } finally {
+    applying = false;
   }
 });
 

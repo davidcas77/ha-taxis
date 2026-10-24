@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HaSocket, READ_COMMANDS, assertReadCommand, type SocketLike } from "./socket.ts";
+import { HaSocket, READ_COMMANDS, WRITE_COMMANDS, assertReadCommand, assertWriteCommand, type SocketLike } from "./socket.ts";
 
 // A fake Home Assistant on the other end of the socket. `answer` decides how it
 // replies to each command; everything sent is recorded.
@@ -44,14 +44,24 @@ describe("read-only guard", () => {
   it("allows only registry and state reads", () => {
     for (const t of READ_COMMANDS) expect(() => assertReadCommand(t)).not.toThrow();
     for (const t of ["call_service", "config/area_registry/create", "config/entity_registry/update", "config/device_registry/remove_config_entry"]) {
-      expect(() => assertReadCommand(t)).toThrow(/only reads/);
+      expect(() => assertReadCommand(t)).toThrow(/isn.t a read/);
     }
+  });
+
+  it("write() sends only registry edits: no services, no removing devices or entities", async () => {
+    const ha = fakeHa();
+    const client = new HaSocket("ws://x", "good", ha.factory);
+    for (const t of ["call_service", "config/entity_registry/remove", "config/device_registry/remove_config_entry", "get_states"]) {
+      await expect(client.write(t, {})).rejects.toThrow(/doesn't make that change/);
+    }
+    expect(ha.opened()).toBe(0);
+    for (const t of WRITE_COMMANDS) expect(() => assertWriteCommand(t)).not.toThrow();
   });
 
   it("refuses a write command before anything is sent", async () => {
     const ha = fakeHa();
     const client = new HaSocket("ws://x", "good", ha.factory);
-    await expect(client.command("call_service", { domain: "light" })).rejects.toThrow(/only reads/);
+    await expect(client.command("call_service", { domain: "light" })).rejects.toThrow(/isn.t a read/);
     expect(ha.opened()).toBe(0);
   });
 });

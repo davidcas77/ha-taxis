@@ -1,4 +1,4 @@
-import type { EntityRole } from "./types.ts";
+import type { CategoryScope, EntityRole } from "./types.ts";
 
 // What an entity does in a room, from its domain and device class. Read from
 // Home Assistant, never guessed from a name.
@@ -17,6 +17,7 @@ const BINARY_SENSOR_ROLES: Record<string, EntityRole> = {
 const SENSOR_ROLES: Record<string, EntityRole> = {
   temperature: "temperature",
   humidity: "humidity",
+  illuminance: "illuminance",
   power: "power",
   energy: "power",
   current: "power",
@@ -71,6 +72,7 @@ export const ROLE_ORDER: { role: EntityRole; label: string }[] = [
   { role: "climate", label: "Climate" },
   { role: "temperature", label: "Temperature" },
   { role: "humidity", label: "Humidity" },
+  { role: "illuminance", label: "Light level" },
   { role: "cover", label: "Covers" },
   { role: "lock", label: "Locks" },
   { role: "media", label: "Media" },
@@ -83,3 +85,17 @@ export const ROLE_ORDER: { role: EntityRole; label: string }[] = [
   { role: "helper", label: "Helpers" },
   { role: "other", label: "Other" },
 ];
+
+// Helpers made in Settings → Helpers. Some are their own domain (input_*,
+// timer…); others are config-entry helpers whose platform names them.
+const HELPER_DOMAINS = new Set(["input_boolean", "input_number", "input_select", "input_text", "input_datetime", "input_button", "counter", "timer", "schedule"]);
+const HELPER_PLATFORMS = new Set(["template", "group", "min_max", "derivative", "utility_meter", "threshold", "trend", "integration", "statistics", "switch_as_x", "tod", "filter", "history_stats", "random", "mold_indicator"]);
+
+// Which of Home Assistant's category lists an entity can be filed in, if any.
+export function categoryScopeFor(domain: string, platform: string): CategoryScope | null {
+  if (domain === "automation") return "automation";
+  if (domain === "script") return "script";
+  if (domain === "scene") return "scene";
+  if (HELPER_DOMAINS.has(domain) || HELPER_PLATFORMS.has(platform)) return "helpers";
+  return null;
+}
