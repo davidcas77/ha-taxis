@@ -1,10 +1,11 @@
 // Where Home Assistant is and how to authenticate.
 //
 // Inside Home Assistant (as an app) the Supervisor injects SUPERVISOR_TOKEN and
-// proxies the WebSocket API at ws://supervisor/core/websocket. For local
-// development, HA_URL + HA_TOKEN (a long-lived token) point at a real instance.
+// proxies the WebSocket API at ws://supervisor/core/websocket and the REST API
+// at http://supervisor/core/api. For local development, HA_URL + HA_TOKEN (a
+// long-lived token) point at a real instance.
 
-export type HaTarget = { wsUrl: string; token: string; mode: "app" | "dev" };
+export type HaTarget = { wsUrl: string; restUrl: string; token: string; mode: "app" | "dev" };
 export type HaTargetResult = { ok: true; target: HaTarget } | { ok: false; reason: string };
 
 type Env = Record<string, string | undefined>;
@@ -14,7 +15,7 @@ export function resolveHaTarget(env: Env): HaTargetResult {
   if (supervisorToken) {
     return {
       ok: true,
-      target: { wsUrl: "ws://supervisor/core/websocket", token: supervisorToken, mode: "app" },
+      target: { wsUrl: "ws://supervisor/core/websocket", restUrl: "http://supervisor/core/api", token: supervisorToken, mode: "app" },
     };
   }
 
@@ -38,8 +39,10 @@ export function resolveHaTarget(env: Env): HaTargetResult {
     return { ok: false, reason: "HA_URL must start with http:// or https://." };
   }
   const ws = parsed.protocol === "https:" ? "wss:" : "ws:";
-  const base = `${ws}//${parsed.host}${parsed.pathname.replace(/\/+$/, "")}`;
-  return { ok: true, target: { wsUrl: `${base}/api/websocket`, token: token!, mode: "dev" } };
+  const path = parsed.pathname.replace(/\/+$/, "");
+  const base = `${ws}//${parsed.host}${path}`;
+  const restUrl = `${parsed.protocol}//${parsed.host}${path}/api`;
+  return { ok: true, target: { wsUrl: `${base}/api/websocket`, restUrl, token: token!, mode: "dev" } };
 }
 
 export function runMode(env: Env): "app" | "dev" {

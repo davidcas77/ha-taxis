@@ -1,6 +1,10 @@
 import { applyLabelDiff, currentValues, isTempId, labelDiff, sameValue } from "../../shared/changes.ts";
 import type { Change, ChangeKind, Hierarchy } from "../../shared/types.ts";
+import type { RestApi } from "../ha/rest.ts";
 import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
+import { findReferences, searchRelated, type Related } from "../references/find.ts";
+import { mapLimit, snapshot, type ReferenceIO, type Snapshot } from "../references/snapshot.ts";
+import { updateReferences, type RenamePair } from "../references/update.ts";
 
 // Applying the change list to Home Assistant.
 //
@@ -20,8 +24,34 @@ import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
 //
 // A change that fails doesn't stop the others, except the ones that depend on
 // it (an area that was never created can't receive a device).
+//
+// Renaming an entity id (new_entity_id) adds to this, because Home Assistant
+// renames only the registry entry and the state:
+//
+//   0b. before anything is written, what uses each old id is read: one snapshot
+//       of every automation, script, scene and dashboard, and search/related
+//       for each id. If that can't be read, the renames are not sent;
+//   2b. once the renames are verified (step 4), the editable configs that use
+//       an old id are rewritten in one pass with all the renames at once, each
+//       after a last check that Home Assistant still holds what the snapshot
+//       read, and read back after. Areas that use the old id as their
+//       temperature or humidity sensor are pointed at the new one;
+//   what can't be updated (YAML, helpers, a config changed meanwhile) is listed
+//   in the change's `details`. The rename itself counts as done once the
+//   registry shows it, whatever happened to the configs: it can't be sent
+//   again, because the old id no longer exists.
+//
+// A list without renames reads and writes exactly what it did before.
 
 export type Writer = { write<T>(type: string, payload: Record<string, unknown>): Promise<T> };
+
+// What the rename step needs besides the writer: reads over the WebSocket and
+// the REST client for automations, scripts and scenes.
+export type RenameIO = { ha: ReferenceIO["ha"]; rest: RestApi };
+
+export const isRename = (c: Change) => c.kind === "entity" && c.op === "update" && typeof c.after.new_entity_id === "string";
+
+const LEFT_ALONE = "Not updated: automations, scripts, scenes and dashboards were left alone, because the rename wasn't confirmed. Check what uses the old id.";
 
 const ORDER: ChangeKind[] = ["floor", "label", "category", "area", "device", "entity"];
 const DELETE_ORDER: ChangeKind[] = ["area", "floor", "label", "category"];
@@ -53,11 +83,13 @@ const FIELD_NAMES: Record<string, string> = {
   level: "level",
   color: "color",
   description: "description",
+  new_entity_id: "entity id",
   hidden_by: "hidden setting",
   disabled_by: "disabled setting",
 };
 
-export type Outcome = { changeId: number; ok: boolean; message: string };
+// details: for a rename, what was updated and what still needs a hand.
+export type Outcome = { changeId: number; ok: boolean; message: string; details?: string[] };
 
 // Names Home Assistant treats as the same: categories compare case-folded;
 // floors, areas and labels also ignore spaces.
@@ -89,13 +121,17 @@ export async function applyChanges(
   changes: Change[],
   ha: Writer,
   readFresh: () => Promise<RawRegistry>,
+  // Needed to rename entity ids with what uses them; without it a rename only
+  // changes the registry.
+  rename?: RenameIO,
 ): Promise<{ results: Outcome[]; appliedIds: number[]; realIds: Map<string, string> }> {
   const realIds = new Map<string, string>();
   const outcome = new Map<number, Outcome>();
   const sent = new Map<number, Record<string, unknown>>();
   const fail = (c: Change, message: string) => outcome.set(c.id, { changeId: c.id, ok: false, message });
 
-  const before = buildHierarchy(await readFresh(), "");
+  const beforeRaw = await readFresh();
+  const before = buildHierarchy(beforeRaw, "");
 
   // Only id fields are resolved: a name that happens to start with "new:" is
   // just a name.
@@ -193,6 +229,27 @@ export async function applyChanges(
     else prepared.set(c.id, p);
   }
 
+  // 0b. Renames: read what uses each old id before anything is written. If it
+  // can't be read, the renames are not sent (renaming would leave automations
+  // pointing at an id that no longer exists, with no way to say so).
+  const renames = rename ? changes.filter((c) => isRename(c) && prepared.has(c.id)) : [];
+  let snap: Snapshot | null = null;
+  const related = new Map<number, Related>();
+  if (rename && renames.length > 0) {
+    try {
+      snap = await snapshot({ ha: rename.ha, rest: rename.rest }, beforeRaw.states, beforeRaw.entities);
+      await mapLimit(renames, 6, async (c) => {
+        related.set(c.id, await searchRelated(rename.ha, c.targetId));
+      });
+    } catch (e) {
+      snap = null;
+      for (const c of renames) {
+        prepared.delete(c.id);
+        fail(c, `Taxis couldn't check what uses it (${(e as Error).message}), so it wasn't renamed.`);
+      }
+    }
+  }
+
   const run = async (c: Change) => {
     if (outcome.has(c.id) || sent.has(c.id)) return;
     const base = prepared.get(c.id);
@@ -244,8 +301,8 @@ export async function applyChanges(
   for (const c of of("delete", DELETE_ORDER)) await run(c);
 
   // 4. Check every written change against a fresh read.
+  let after: RawRegistry | null = null;
   if (sent.size > 0) {
-    let after: RawRegistry | null = null;
     try {
       after = await readFresh();
     } catch (e) {
@@ -253,7 +310,10 @@ export async function applyChanges(
         if (!sent.has(c.id)) continue;
         // A creation Home Assistant answered with an id exists, read or not.
         if (c.op === "create") outcome.set(c.id, { changeId: c.id, ok: true, message: "Created (not re-read)." });
-        else fail(c, `Sent, but Taxis couldn't read Home Assistant back to check it: ${(e as Error).message}`);
+        else {
+          fail(c, `Sent, but Taxis couldn't read Home Assistant back to check it: ${(e as Error).message}`);
+          if (isRename(c)) outcome.get(c.id)!.details = [LEFT_ALONE];
+        }
       }
     }
     if (after) {
@@ -267,8 +327,35 @@ export async function applyChanges(
         // again would only fail on the name.
         else if (c.op === "create" && realIds.has(c.targetId) && !problem.startsWith("Home Assistant doesn't show")) {
           outcome.set(c.id, { changeId: c.id, ok: true, message: `Created, but ${problem.charAt(0).toLowerCase()}${problem.slice(1)}` });
-        } else fail(c, problem);
+        }
+        // Likewise a rename the registry shows: the old id is gone, so sending it
+        // again could only fail. What differs besides the id is reported.
+        else if (isRename(c) && renamedInRegistry(c, payload, after)) {
+          outcome.set(c.id, { changeId: c.id, ok: true, message: `Renamed, but ${problem.charAt(0).toLowerCase()}${problem.slice(1)}` });
+        } else {
+          fail(c, problem);
+          if (isRename(c)) outcome.get(c.id)!.details = [LEFT_ALONE];
+        }
       }
+    }
+  }
+
+  // 2b. What used the old ids. Only for renames the registry now shows.
+  if (rename && snap && after) {
+    const pairs: RenamePair[] = renames
+      .filter((c) => sent.has(c.id) && outcome.get(c.id)?.ok)
+      .map((c) => ({ changeId: c.id, oldId: c.targetId, newId: String(c.after.new_entity_id) }));
+    if (pairs.length > 0) {
+      const lines = await updateReferences({ ha: { command: (t, p) => rename.ha.command(t, p), write: (t, p) => ha.write(t, p) }, rest: rename.rest }, snap, pairs);
+      const areaLines = await repointAreas(ha, after, pairs);
+      pairs.forEach((r, i) => {
+        const details = [...(lines.get(r.changeId) ?? []), ...(areaLines.get(r.changeId) ?? [])];
+        const found = findReferences(snap!, related.get(r.changeId) ?? {}, r.oldId);
+        for (const m of found.manual) details.push(`Needs a hand: ${m.name}: ${m.reason}`);
+        // Things that couldn't be read could be using the id; say so once.
+        if (i === 0) for (const note of snap!.notes) details.push(`Not updated: ${note}. Check it by hand.`);
+        outcome.get(r.changeId)!.details = details;
+      });
     }
   }
 
@@ -285,7 +372,10 @@ export function verify(
   deletedLabels: Set<string> = new Set(),
 ): string | null {
   const id = realIds.get(c.targetId) ?? c.targetId;
-  const item = findRaw(fresh, c, id);
+  // A renamed entity is found under its new id, and must be gone from the old.
+  const renamedTo = typeof payload.new_entity_id === "string" ? payload.new_entity_id : null;
+  const item = findRaw(fresh, c, renamedTo ?? id);
+  if (renamedTo && renamedTo !== id && findRaw(fresh, c, id)) return `Home Assistant still has an entity with the old id “${id}”.`;
   // A new item with the same name can get the same id (Home Assistant derives
   // ids from names), so an id this Apply just created doesn't count as left over.
   if (c.op === "delete") return item && ![...realIds.values()].includes(id) ? "Home Assistant still has it." : null;
@@ -293,6 +383,10 @@ export function verify(
 
   for (const [key, expected] of Object.entries(payload)) {
     if (key === "scope" || key === ID_KEY[c.kind]) continue;
+    if (key === "new_entity_id") {
+      if (item.entity_id !== expected) return `Its entity id reads ${JSON.stringify(item.entity_id ?? null)} in Home Assistant, not ${JSON.stringify(expected)}.`;
+      continue;
+    }
     if (key === "categories") {
       const now = (item.categories ?? {}) as Record<string, string>;
       for (const [scope, cat] of Object.entries(expected as Record<string, string | null>)) {
@@ -310,6 +404,50 @@ export function verify(
     }
   }
   return null;
+}
+
+// True when the fresh read shows the entity under its new id and not the old.
+function renamedInRegistry(c: Change, payload: Record<string, unknown>, fresh: RawRegistry): boolean {
+  return typeof payload.new_entity_id === "string" && !!findRaw(fresh, c, payload.new_entity_id) && !findRaw(fresh, c, c.targetId);
+}
+
+// Home Assistant leaves an area's temperature and humidity sensor on the old id
+// when the entity is renamed: point them at the new one.
+async function repointAreas(ha: Writer, fresh: RawRegistry, pairs: RenamePair[]): Promise<Map<number, string[]>> {
+  const lines = new Map<number, string[]>(pairs.map((r) => [r.changeId, []]));
+  const byOld = new Map(pairs.map((r) => [r.oldId, r]));
+  const fields = [
+    ["temperature_entity_id", "temperature sensor"],
+    ["humidity_entity_id", "humidity sensor"],
+  ] as const;
+  for (const area of fresh.areas) {
+    const hits = fields.flatMap(([field, label]) => {
+      const r = byOld.get(area[field] ?? "");
+      return r ? [{ field, label, r }] : [];
+    });
+    if (hits.length === 0) continue;
+    const payload: Record<string, unknown> = { area_id: area.area_id };
+    for (const h of hits) payload[h.field] = h.r.newId;
+    let result: Record<string, unknown> | null = null;
+    let problem: string | null = null;
+    try {
+      result = (await ha.write<Record<string, unknown> | null>("config/area_registry/update", payload)) ?? null;
+    } catch (e) {
+      problem = `Home Assistant refused it (${(e as Error).message})`;
+    }
+    for (const h of hits) {
+      // The answer is the area as stored: when it shows another sensor, it didn't take.
+      const stale = result && typeof result === "object" && h.field in result && result[h.field] !== h.r.newId;
+      const what = `area “${area.name}” (${h.label})`;
+      const line = problem
+        ? `Not updated: ${what}: ${problem}. Change it by hand.`
+        : stale
+          ? `Not updated: ${what} still reads ${JSON.stringify(result![h.field])}. Check it in Home Assistant.`
+          : `Updated ${what}`;
+      lines.get(h.r.changeId)!.push(line);
+    }
+  }
+  return lines;
 }
 
 function findRaw(fresh: RawRegistry, c: Change, id: string): Record<string, unknown> | undefined {

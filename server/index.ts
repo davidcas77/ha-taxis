@@ -14,19 +14,24 @@ import type {
   Hierarchy,
   HierarchyResponse,
   NamingResponse,
+  ReferencesResponse,
+  RenameRefs,
 } from "../shared/types.ts";
-import { applyChanges } from "./changes/apply.ts";
+import { applyChanges, isRename } from "./changes/apply.ts";
 import { overlayChanges } from "./changes/overlay.ts";
 import { changeStore } from "./changes/store.ts";
 import { settingsStore, validateNaming } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
+import { HaRest } from "./ha/rest.ts";
 import { HaSocket } from "./ha/socket.ts";
 import { backupHomeAssistant } from "./ha/supervisor.ts";
 import { isAllowedPeer, normalizePeer } from "./ingress.ts";
 import { log, setLogSecret } from "./log.ts";
 import { buildHierarchy, type RawRegistry } from "./model/hierarchy.ts";
+import { findReferences, searchRelated, type Related } from "./references/find.ts";
+import { mapLimit, snapshot, type Snapshot } from "./references/snapshot.ts";
 
 try {
   process.loadEnvFile(".env");
@@ -41,6 +46,7 @@ const port = Number(env.PORT ?? 8099);
 const target = resolveHaTarget(env);
 const store = openStore(dataDir(env));
 const ha = target.ok ? new HaSocket(target.target.wsUrl, target.target.token) : null;
+const rest = target.ok ? new HaRest(target.target.restUrl, target.target.token) : null;
 const token = target.ok ? target.target.token : undefined;
 setLogSecret(token);
 const changes = changeStore(store.db);
@@ -96,6 +102,37 @@ async function loadRead(force: boolean): Promise<{ read: Read; cached: boolean }
     inFlight = null;
   });
   return { read: await inFlight, cached: false };
+}
+
+// What the automations, scripts, scenes and dashboards hold, read once and shared
+// by every rename asked about. Kept like the registry read, and dropped after
+// Apply (which changes them).
+let refsCache: { at: number; snap: Snapshot } | null = null;
+let refsInFlight: Promise<Snapshot> | null = null;
+// Bumped when Apply drops the cache, so a read that started before it can't put
+// its (older) result back.
+let refsGeneration = 0;
+const dropSnapshot = () => {
+  refsCache = null;
+  refsGeneration += 1;
+};
+
+async function loadSnapshot(read: Read, force: boolean): Promise<Snapshot> {
+  if (!ha || !rest) throw new Error("Home Assistant is not configured.");
+  if (!force && refsCache && Date.now() - refsCache.at < CACHE_MS) return refsCache.snap;
+  if (force && refsInFlight) await refsInFlight.catch(() => {});
+  if (force) refsInFlight = null;
+  refsInFlight ??= (async () => {
+    const started = Date.now();
+    const generation = refsGeneration;
+    const snap = await snapshot({ ha, rest }, read.raw.states, read.raw.entities);
+    log.info(`Read what uses entity ids in ${Date.now() - started} ms: ${n(snap.items.length)} automations, scripts, scenes and dashboards${snap.notes.length ? `, ${n(snap.notes.length)} not readable` : ""}`);
+    if (generation === refsGeneration) refsCache = { at: Date.now(), snap };
+    return snap;
+  })().finally(() => {
+    refsInFlight = null;
+  });
+  return refsInFlight;
 }
 
 function preview(read: Read): Hierarchy {
@@ -184,6 +221,30 @@ app.post("/api/changes", async (c) => {
   }
 });
 
+// Where the entity ids being renamed are used: what Apply will update, and what
+// the user has to change by hand. Read-only.
+app.get("/api/references", async (c) => {
+  const renames = changes.list().filter(isRename);
+  if (renames.length === 0) return c.json<ReferencesResponse>({ ok: true, renames: [] });
+  try {
+    const { read } = await loadRead(false);
+    const snap = await loadSnapshot(read, c.req.query("refresh") === "1");
+    const out: RenameRefs[] = [];
+    const related = new Map<number, Related>();
+    await mapLimit(renames, 6, async (r) => {
+      related.set(r.id, await searchRelated(ha!, r.targetId));
+    });
+    for (const r of renames) {
+      out.push({ changeId: r.id, oldId: r.targetId, newId: String(r.after.new_entity_id), ...findReferences(snap, related.get(r.id) ?? {}, r.targetId) });
+    }
+    return c.json<ReferencesResponse>({ ok: true, renames: out });
+  } catch (e) {
+    const message = errorText(e);
+    log.error("Reading what uses the renamed entities failed", message);
+    return c.json<ReferencesResponse>({ ok: false, error: message }, 502);
+  }
+});
+
 app.delete("/api/changes/:id", (c) => {
   if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
   changes.remove(Number(c.req.param("id")));
@@ -239,24 +300,28 @@ app.post("/api/apply", async (c) => {
     }
 
     log.info(`Applying ${pending.length} change(s) to Home Assistant`);
-    const { results, appliedIds, realIds } = await applyChanges(pending, ha, async () => (await loadRead(true)).read.raw);
+    const { results, appliedIds, realIds } = await applyChanges(pending, ha, async () => (await loadRead(true)).read.raw, rest ? { ha, rest } : undefined);
     for (const r of results) {
       const ch = pending.find((x) => x.id === r.changeId)!;
       const line = `${ch.op} ${ch.kind} ${ch.targetId}: ${r.message}`;
       if (r.ok) log.info(line);
       else log.error(line);
+      for (const d of r.details ?? []) log.info(`  ${d}`);
     }
     // Done changes leave the list; the rest stay. Creations that happened hand
     // their real ids to the changes still pointing at them.
     for (const id of appliedIds) changes.done(id);
     for (const [temp, real] of realIds) changes.swapTempId(temp, real);
-    // Whatever happened, the next view must come from a fresh read.
+    // Whatever happened, the next view must come from a fresh read, of the
+    // registries and of what uses entity ids.
     cache = null;
+    dropSnapshot();
     log.info(`Applied ${appliedIds.length} of ${pending.length} change(s)`);
     return c.json<ApplyResponse>({ ok: true, backup, results });
   } catch (e) {
     log.error("Applying changes failed", e);
     cache = null;
+    dropSnapshot();
     return c.json<ApplyResponse>({ ok: false, error: errorText(e) }, 502);
   } finally {
     applying = false;

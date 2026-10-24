@@ -331,7 +331,9 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
     }
     case "config/area_registry/update": {
       const area = reg.areas.find((a) => a.area_id === p.area_id);
-      return area ? ok(pick(area, ["name", "floor_id", "icon", "labels"])) : fail("Area not found");
+      // temperature_entity_id and humidity_entity_id are fields of the real
+      // config/area_registry/update; Taxis uses them after an entity rename.
+      return area ? ok(pick(area, ["name", "floor_id", "icon", "labels", "temperature_entity_id", "humidity_entity_id"])) : fail("Area not found");
     }
     case "config/area_registry/delete": {
       if (!reg.areas.some((a) => a.area_id === p.area_id)) return fail("Area not found");

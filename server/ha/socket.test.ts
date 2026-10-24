@@ -173,3 +173,32 @@ describe("HaSocket", () => {
     expect(ha.opened()).toBe(2);
   });
 });
+
+describe("allowlists for renames", () => {
+  it("reads: where an entity is used, and dashboards; never a dashboard save", () => {
+    for (const t of ["search/related", "lovelace/dashboards/list", "lovelace/config"]) expect(() => assertReadCommand(t)).not.toThrow();
+    for (const t of ["lovelace/config/save", "lovelace/config/delete", "lovelace/dashboards/create", "lovelace/dashboards/delete", "call_service"]) {
+      expect(() => assertReadCommand(t)).toThrow(/isn.t a read/);
+    }
+  });
+
+  it("writes: a dashboard's contents can be saved, never deleted or created; services are never called", async () => {
+    expect(() => assertWriteCommand("lovelace/config/save")).not.toThrow();
+    const ha = fakeHa();
+    const client = new HaSocket("ws://x", "good", ha.factory);
+    for (const t of ["lovelace/config/delete", "lovelace/dashboards/create", "lovelace/dashboards/delete", "lovelace/config", "search/related", "call_service", "config/entity_registry/remove", "config/automation/delete"]) {
+      await expect(client.write(t, {})).rejects.toThrow(/doesn't make that change/);
+    }
+    expect(ha.opened()).toBe(0);
+    // And the only entity change a rename needs is the update that is already allowed.
+    expect(WRITE_COMMANDS.has("config/entity_registry/update")).toBe(true);
+    expect([...WRITE_COMMANDS].filter((t) => /remove|delete/.test(t) && !/^config\/(floor|area|label|category)_registry\/delete$/.test(t))).toEqual([]);
+  });
+
+  it("keeps Home Assistant's error code on a rejected command, so 'no config found' can be told apart", async () => {
+    const ha = fakeHa({ answer: (m) => ({ type: "result", id: m.id, success: false, error: { code: "config_not_found", message: "No config found." } }) });
+    const client = new HaSocket("ws://x", "good", ha.factory);
+    const error = await client.command("lovelace/config", { url_path: "auto" }).catch((e: Error) => e);
+    expect(error).toMatchObject({ message: "No config found.", code: "config_not_found" });
+  });
+});
