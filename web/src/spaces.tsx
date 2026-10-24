@@ -39,7 +39,7 @@ import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { AreaNamingTab } from "./naming.tsx";
 import { useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
-import { AreaSelect, Button, EditedDot, LabelChip, inputClass } from "./ui.tsx";
+import { AreaSelect, Button, ConfirmAction, EditedDot, LabelChip, inputClass } from "./ui.tsx";
 
 export const ROLE_ICONS: Record<EntityRole, LucideIcon> = {
   light: Lightbulb,
@@ -899,9 +899,14 @@ export function BulkBar({ h, ids, onDone }: { h: Hierarchy; ids: string[]; onDon
         <Button disabled={busy || !label} onClick={() => void run((e) => (e.labels.includes(label) ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { labels: [...e.labels, label] } }))}>
           Add label
         </Button>
-        <Button disabled={busy || !label} onClick={() => void run((e) => (!e.labels.includes(label) ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { labels: e.labels.filter((x) => x !== label) } }))}>
+        <ConfirmAction
+          tone="plain"
+          disabled={busy || !label}
+          question={`Take “${h.labels[label]?.name ?? label}” off ${ids.length} selected?`}
+          onConfirm={() => void run((e) => (!e.labels.includes(label) ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { labels: e.labels.filter((x) => x !== label) } }))}
+        >
           Remove label
-        </Button>
+        </ConfirmAction>
       </div>
       <Button disabled={busy} onClick={() => void run((e) => (e.hidden ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { hidden_by: "user" } }))}>
         Hide
