@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { GROUP_ID, GROUP_LISTS, MAX_GROUPS, MAX_ITEMS, MAX_NAME, type GroupSettings } from "../shared/groups.ts";
-import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, slug, type NamingSettings } from "../shared/naming.ts";
-import type { EntityRole } from "../shared/types.ts";
+import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, slug, type NamingSettings } from "../shared/naming.ts";
+import type { EntityRole, Hierarchy } from "../shared/types.ts";
 
 // App settings, one JSON value per key in SQLite: naming and groups.
 
@@ -76,6 +76,17 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>): {
     words[role as EntityRole] = clean;
   }
   return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, typeWords: words } };
+}
+
+// Null when no two areas end up with the same code. Runs against the live
+// hierarchy because detected codes count too. rawAreaIds: the area ids as
+// Home Assistant listed them, to catch a repeated id before it hides in a map.
+export function checkAreaCodes(settings: NamingSettings, h: Hierarchy, rawAreaIds: readonly string[] = Object.keys(h.areas)): string | null {
+  const ids = duplicateIds(rawAreaIds);
+  if (ids.length) return `Home Assistant lists the area id ${ids.join(", ")} more than once.`;
+  const dupes = duplicateCodes(areaCodes(h, settings));
+  const message = duplicateCodesMessage(dupes, (id) => h.areas[id]?.name ?? id);
+  return message && `${message} Give each area its own code.`;
 }
 
 // Groups for labels and categories. Only the five known lists are kept; an

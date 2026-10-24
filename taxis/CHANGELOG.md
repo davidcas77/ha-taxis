@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Area codes: with no entities or no clear winner, the code is the area id (not
+  its name); two areas can't share a code, in Settings or on save; the area
+  codes table sorts by column.
 - Labels and categories move between groups by dragging only; the "Group…"
   menu on each row is gone. Areas move between floors the same way; the
   "Move to…" menu is gone.

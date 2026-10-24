@@ -80,11 +80,17 @@ export type AreaCode = {
   // Other prefixes that also stand for this area (old ids, the area id).
   aliases: string[];
   custom: boolean;
+  // The detected code is the area's id (or name) because nothing in its
+  // entities settled it: "id" for the area id, "name" for its name.
+  fallback: "id" | "name" | null;
 };
 
 const counted = (e: EntityItem) => !e.disabled && !e.maintenance;
 
-export function detectAreaCode(area: AreaNode, h: Hierarchy): { code: string; count: number; total: number; candidates: string[] } {
+export function detectAreaCode(
+  area: AreaNode,
+  h: Hierarchy,
+): { code: string; count: number; total: number; candidates: string[]; fallback: "id" | "name" | null } {
   const ids = area.entityIds.map((id) => h.entities[id]).filter((e): e is EntityItem => Boolean(e) && counted(e)).map((e) => objectId(e.entityId));
   const firstTokens = new Map<string, number>();
   for (const id of ids) {
@@ -105,8 +111,13 @@ export function detectAreaCode(area: AreaNode, h: Hierarchy): { code: string; co
   // The best-used prefix wins; on a tie, the area's own id.
   const ranked = candidates.map((c) => ({ c, n: score(c) })).sort((a, b) => b.n - a.n || (a.c === area.id ? -1 : b.c === area.id ? 1 : 0));
   const best = ranked[0];
-  const code = best && best.n > 0 ? best.c : slug(area.name) || area.id;
-  return { code, count: best && best.n > 0 ? best.n : 0, total: ids.length, candidates: ranked.filter((r) => r.n > 0).map((r) => r.c) };
+  // No entities, or no clear winner: the area id, which never changes. Its
+  // name is the second choice, for an id that says nothing usable.
+  const found = best && best.n > 0;
+  const fromId = slug(area.id);
+  const fallback = found ? null : fromId ? "id" : "name";
+  const code = found ? best.c : fromId || slug(area.name) || area.id;
+  return { code, count: found ? best.n : 0, total: ids.length, candidates: ranked.filter((r) => r.n > 0).map((r) => r.c), fallback };
 }
 
 export function areaCodes(h: Hierarchy, s: NamingSettings): Record<string, AreaCode> {
@@ -123,9 +134,39 @@ export function areaCodes(h: Hierarchy, s: NamingSettings): Record<string, AreaC
       total: d.total,
       aliases: [...new Set([d.code, area.id, area.id.replace(/_/g, ""), ...d.candidates])].filter((x) => x && x !== code),
       custom: Boolean(custom),
+      fallback: d.fallback,
     };
   }
   return out;
+}
+
+// Codes that more than one area ends up with: code -> the areas sharing it.
+// Takes anything with a code (the effective ones from areaCodes), so detected
+// and custom codes are held to the same rule. Empty codes are ignored.
+export function duplicateCodes(codes: Record<string, { code: string }>): Map<string, string[]> {
+  const byCode = new Map<string, string[]>();
+  for (const [areaId, { code }] of Object.entries(codes)) {
+    if (!code) continue;
+    byCode.set(code, [...(byCode.get(code) ?? []), areaId]);
+  }
+  for (const [code, ids] of byCode) if (ids.length < 2) byCode.delete(code);
+  return byCode;
+}
+
+// Ids that appear more than once. Home Assistant keeps area ids unique; this
+// is a defensive check on what it sent.
+export function duplicateIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const id of ids) (seen.has(id) ? dupes : seen).add(id);
+  return [...dupes];
+}
+
+// One sentence per shared code, naming the areas ("kitchen" is the code of
+// Kitchen and Kitchenette), or null when every code is its own.
+export function duplicateCodesMessage(dupes: Map<string, string[]>, nameOf: (areaId: string) => string): string | null {
+  if (dupes.size === 0) return null;
+  return [...dupes].map(([code, ids]) => `The code “${code}” is used by ${ids.map(nameOf).join(" and ")}.`).join(" ");
 }
 
 // ---------------------------------------------------------------------------

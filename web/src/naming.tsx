@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
-import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
+import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, duplicateCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
 import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
+import { SortHeader, useSort } from "./table.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
 
 // Naming: the Settings panel (a code per area, the patterns, the type words)
@@ -30,7 +31,29 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
   const [draft, setDraft] = useState<NamingSettings>(naming);
   const [error, setError] = useState<string | null>(null);
   const codes = useMemo(() => areaCodes(h, draft), [h, draft]);
-  const areas = [...h.floors.flatMap((f) => f.areaIds), ...h.looseAreaIds].map((id) => h.areas[id]);
+  const floorOrder = useMemo(() => [...h.floors.flatMap((f) => f.areaIds), ...h.looseAreaIds].map((id) => h.areas[id]), [h]);
+  // Two areas with the same effective code (detected or set): area id -> the other areas' names.
+  const clashes = useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const ids of duplicateCodes(codes).values()) for (const id of ids) out.set(id, ids.filter((x) => x !== id).map((x) => h.areas[x]?.name ?? x));
+    return out;
+  }, [codes, h]);
+  // "floor order" is the neutral start: no column is sorted until one is clicked.
+  const sortColumns = useMemo(
+    () => ({
+      area: (a: AreaNode) => a.name,
+      id: (a: AreaNode) => a.id,
+      found: (a: AreaNode) => codes[a.id].detectedCount,
+      code: (a: AreaNode) => codes[a.id].code,
+      fit: (a: AreaNode) => {
+        const f = analyzeArea(a, h, draft, codes).counts;
+        const t = Object.values(f).reduce((x, y) => x + y, 0);
+        return t ? f.ok / t : null;
+      },
+    }),
+    [codes, h, draft],
+  );
+  const { rows: areas, sort, toggle } = useSort(floorOrder, sortColumns, { key: "floor", dir: "asc" });
   const sample = h.entities[Object.keys(h.entities).find((id) => h.entities[id].areaId && h.entities[id].role === "light") ?? ""];
   const preview = useMemo(() => {
     if (!sample?.areaId) return null;
@@ -80,11 +103,11 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
             <table className="w-full text-[13px]">
               <thead className="bg-sunken text-left text-xs text-muted">
                 <tr>
-                  <th className="px-3 py-2 font-medium">Area</th>
-                  <th className="px-3 py-2 font-medium">Area id</th>
-                  <th className="px-3 py-2 font-medium">Found in its entities</th>
-                  <th className="px-3 py-2 font-medium">Code</th>
-                  <th className="px-3 py-2 font-medium">Fit</th>
+                  <SortHeader label="Area" k="area" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Area id" k="id" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Found in its entities" k="found" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Code" k="code" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Fit" k="fit" sort={sort} onToggle={toggle} />
                 </tr>
               </thead>
               <tbody>
@@ -92,8 +115,9 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                   const c = codes[a.id];
                   const fit = analyzeArea(a, h, draft, codes).counts;
                   const total = Object.values(fit).reduce((x, y) => x + y, 0);
+                  const also = clashes.get(a.id);
                   return (
-                    <tr key={a.id} className="border-t border-line">
+                    <tr key={a.id} className={`border-t border-line ${also ? "bg-danger-soft" : ""}`}>
                       <td className="px-3 py-1.5">
                         <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: a.id }, tab: "naming" })}>
                           {a.name}
@@ -106,13 +130,17 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                             <code className="font-mono">{c.detected}</code> <span className="text-muted">· {c.detectedCount} of {c.total}</span>
                           </>
                         ) : (
-                          <span className="text-muted">{c.total ? "no common prefix" : "no entities"}</span>
+                          <span className="text-muted">
+                            {c.total ? "no common prefix" : "no entities"}
+                            {c.fallback === "id" ? ": using the area id" : ""}
+                          </span>
                         )}
                       </td>
                       <td className="px-3 py-1.5">
                         <input
                           aria-label={`Code for ${a.name}`}
-                          className={`${inputClass} w-40 font-mono`}
+                          aria-invalid={also ? true : undefined}
+                          className={`${inputClass} w-40 font-mono ${also ? "border-danger text-danger" : ""}`}
                           value={draft.areaCodes[a.id] ?? ""}
                           placeholder={c.detected}
                           onChange={(e) => {
@@ -123,6 +151,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                           }}
                           onBlur={(e) => e.target.value.trim() && setDraft((d) => ({ ...d, areaCodes: { ...d.areaCodes, [a.id]: slug(e.target.value) } }))}
                         />
+                        {also && <div className="mt-1 text-xs text-danger">Also used by {also.join(", ")}</div>}
                       </td>
                       <td className="px-3 py-1.5 text-xs tabular-nums text-muted">{total ? `${fit.ok} of ${total}` : "–"}</td>
                     </tr>
@@ -160,7 +189,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
         </section>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
-          <Button tone="primary" onClick={() => void save()}>
+          <Button tone="primary" disabled={clashes.size > 0} onClick={() => void save()}>
             Save settings
           </Button>
           <Button tone="ghost" onClick={() => setDraft(naming)}>
@@ -169,6 +198,11 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           <Button tone="ghost" onClick={() => setDraft(structuredClone(DEFAULT_NAMING))}>
             Back to detected codes and defaults
           </Button>
+          {clashes.size > 0 && (
+            <span role="alert" className="text-xs text-danger">
+              Two areas share a code. Give each area its own before saving.
+            </span>
+          )}
           {error && (
             <span role="alert" className="text-xs text-danger">
               {error}

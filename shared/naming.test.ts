@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildMockRegistry } from "../scripts/mock-ha-core.ts";
 import { buildHierarchy } from "../server/model/hierarchy.ts";
-import { DEFAULT_NAMING, analyzeArea, areaCodes, detectAreaCode, slug } from "./naming.ts";
+import { DEFAULT_NAMING, analyzeArea, areaCodes, detectAreaCode, duplicateCodes, duplicateCodesMessage, duplicateIds, slug } from "./naming.ts";
 import type { Hierarchy } from "./types.ts";
 
 // A house shaped like a real one: areas renamed after their ids were set, old
@@ -50,6 +50,27 @@ describe("area codes", () => {
     const codes = areaCodes(h, { ...DEFAULT_NAMING, areaCodes: { playroom: "Study" } });
     expect(codes.playroom).toMatchObject({ code: "study", detected: "playroom", custom: true });
     expect(codes.playroom.aliases).toContain("playroom");
+  });
+
+  it("falls back to the area id, not the name, when nothing settles the code", () => {
+    const reg = buildMockRegistry();
+    reg.areas = [
+      { area_id: "ground_floor", name: "Entrance", floor_id: "ground" },
+      { area_id: "!!", name: "Cellar", floor_id: "ground" },
+    ];
+    reg.devices = [];
+    reg.entities = [];
+    reg.states = [];
+    const h = buildHierarchy(reg, "now");
+    expect(detectAreaCode(h.areas.ground_floor, h)).toMatchObject({ code: "ground_floor", count: 0, total: 0, fallback: "id" });
+    // An id with nothing usable in it falls back to the name.
+    expect(detectAreaCode(h.areas["!!"], h)).toMatchObject({ code: "cellar", fallback: "name" });
+    expect(areaCodes(h, DEFAULT_NAMING).ground_floor.fallback).toBe("id");
+  });
+
+  it("has no fallback when entities settle the code", () => {
+    const h = house();
+    expect(detectAreaCode(h.areas.living_room, h).fallback).toBeNull();
   });
 
   it("makes ids out of any name", () => {
@@ -177,5 +198,40 @@ describe("review fixes", () => {
     const h = buildHierarchy(reg, "now");
     const [row] = analyzeArea(h.areas.kitchen, h, DEFAULT_NAMING).rows;
     expect(row.suggestedName).toBe("Kitchen Climate");
+  });
+});
+
+describe("duplicate codes", () => {
+  it("lists each code more than one area ends up with", () => {
+    const dupes = duplicateCodes({ a: { code: "kitchen" }, b: { code: "kitchen" }, c: { code: "hall" }, d: { code: "" }, e: { code: "" } });
+    expect([...dupes]).toEqual([["kitchen", ["a", "b"]]]);
+    expect(duplicateCodes({ a: { code: "x" }, b: { code: "y" } }).size).toBe(0);
+  });
+
+  it("sees a custom code that collides with another area's detected one", () => {
+    const h = house();
+    const codes = areaCodes(h, { ...DEFAULT_NAMING, areaCodes: { playroom: "bathroom" } });
+    expect([...duplicateCodes(codes)]).toEqual([["bathroom", ["playroom", "bathroom"]]]);
+  });
+
+  it("sees detected codes that collide on their own", () => {
+    const reg = buildMockRegistry();
+    reg.areas = [
+      { area_id: "guest-room", name: "A", floor_id: "ground" },
+      { area_id: "guest_room", name: "B", floor_id: "ground" },
+    ];
+    reg.devices = [];
+    reg.entities = [];
+    reg.states = [];
+    const dupes = duplicateCodes(areaCodes(buildHierarchy(reg, "now"), DEFAULT_NAMING));
+    expect([...dupes.keys()]).toEqual(["guest_room"]);
+  });
+
+  it("finds repeated ids and words the clash", () => {
+    expect(duplicateIds(["a", "b", "a", "a"])).toEqual(["a"]);
+    expect(duplicateIds(["a", "b"])).toEqual([]);
+    const msg = duplicateCodesMessage(new Map([["kit", ["k1", "k2"]]]), (id) => ({ k1: "Kitchen", k2: "Kitchenette" })[id]!);
+    expect(msg).toBe("The code “kit” is used by Kitchen and Kitchenette.");
+    expect(duplicateCodesMessage(new Map(), String)).toBeNull();
   });
 });

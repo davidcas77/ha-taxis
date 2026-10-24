@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_NAMING } from "../shared/naming.ts";
-import { validateGroups, validateNaming } from "./settings.ts";
+import { buildMockRegistry } from "../scripts/mock-ha-core.ts";
+import { buildHierarchy } from "./model/hierarchy.ts";
+import { checkAreaCodes, validateGroups, validateNaming } from "./settings.ts";
 
 const base = { idPattern: DEFAULT_NAMING.idPattern, namePattern: DEFAULT_NAMING.namePattern };
 
@@ -77,5 +79,32 @@ describe("validateGroups", () => {
     const items = (n: number) => Array.from({ length: n }, (_, i) => `i${i}`);
     expect(validateGroups({ labels: { groups: [{ id: "g", name: "n", items: items(2000) }] } })).toMatchObject({ ok: true });
     expect(validateGroups({ labels: { groups: [{ id: "g", name: "n", items: items(1000) }, { id: "h", name: "n", items: items(1001).map((x) => `z${x}`) }] } })).toMatchObject({ ok: false });
+  });
+});
+
+describe("checkAreaCodes", () => {
+  const hierarchy = () => {
+    const reg = buildMockRegistry();
+    reg.areas = [
+      { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
+      { area_id: "pantry", name: "Pantry", floor_id: "ground" },
+    ];
+    reg.devices = [];
+    reg.entities = [];
+    reg.states = [];
+    return buildHierarchy(reg, "now");
+  };
+  const settings = (areaCodes: Record<string, string>) => ({ ...DEFAULT_NAMING, areaCodes });
+
+  it("accepts codes that are all different", () => {
+    expect(checkAreaCodes(settings({ pantry: "store" }), hierarchy())).toBeNull();
+  });
+
+  it("refuses a custom code another area already has, naming the code and areas", () => {
+    expect(checkAreaCodes(settings({ pantry: "kitchen" }), hierarchy())).toContain("The code “kitchen” is used by Kitchen and Pantry.");
+  });
+
+  it("refuses an area id Home Assistant lists twice", () => {
+    expect(checkAreaCodes(DEFAULT_NAMING, hierarchy(), ["kitchen", "pantry", "kitchen"])).toContain("kitchen more than once");
   });
 });

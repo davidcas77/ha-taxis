@@ -23,7 +23,7 @@ import type {
 import { applyChanges, isRename } from "./changes/apply.ts";
 import { overlayChanges } from "./changes/overlay.ts";
 import { changeStore } from "./changes/store.ts";
-import { settingsStore, validateGroups, validateNaming } from "./settings.ts";
+import { checkAreaCodes, settingsStore, validateGroups, validateNaming } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
@@ -206,9 +206,14 @@ app.get("/api/settings/naming", (c) => c.json<NamingResponse>({ ok: true, naming
 
 app.put("/api/settings/naming", bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json<NamingResponse>({ ok: false, error: "The settings are too large." }, 413) }), async (c) => {
   // Codes are kept only for areas Home Assistant has (when it can be read).
-  const areaIds = await loadRead(false).then(({ read }) => new Set(Object.keys(read.live.areas)), () => undefined);
+  const live = await loadRead(false).then(({ read }) => read, () => undefined);
+  const areaIds = live && new Set(Object.keys(live.live.areas));
   const checked = validateNaming(await c.req.json().catch(() => null), areaIds);
   if (!checked.ok) return c.json<NamingResponse>({ ok: false, error: checked.error }, 400);
+  // Two areas can't share a code, detected or set. Skipped when Home Assistant
+  // can't be read, since the detected codes can't be worked out then.
+  const clash = live && checkAreaCodes(checked.value, live.live, live.raw.areas.map((a) => a.area_id));
+  if (clash) return c.json<NamingResponse>({ ok: false, error: clash }, 400);
   settings.saveNaming(checked.value);
   log.info("Saved naming settings");
   return c.json<NamingResponse>({ ok: true, naming: checked.value });

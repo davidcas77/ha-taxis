@@ -62,7 +62,10 @@ Under **Settings → Naming**:
 
 - **Area codes.** The word each area's entity ids start with. Taxis finds the
   one your ids already use (`livingroom` for an area called Living Room, say)
-  and you can set your own.
+  and you can set your own. When no entity settles it (an empty area, or no
+  clear winner), the code is the area's id, which never changes. Two areas
+  can't share a code, detected or set: Settings marks both rows and won't save
+  until each area has its own. The columns sort when you click their headers.
 - **Patterns.** For entity ids (default `{area}_{type}_{name}`) and display
   names (default `{Area} {Name}`). The type word goes in only where the domain
   doesn't already say it: `binary_sensor.livingroom_motion_sofa`, but
