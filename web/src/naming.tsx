@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
@@ -194,25 +194,47 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
   const rows = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? Boolean(r.editable && (r.suggestedName || r.suggestedId)) : r.status === filter));
   const nameFor = (id: string, fallback: string | null) => names[id] ?? fallback ?? "";
   const idFor = (id: string, fallback: string | null) => ids[id] ?? fallback ?? "";
-  const withName = analysis.rows.filter((r) => r.editable && r.suggestedName);
-  const withId = analysis.rows.filter((r) => r.editable && r.suggestedId);
-  const pickedRows = analysis.rows.filter((r) => r.editable && picked.has(r.entityId));
+  // Fields already added to the change list, per row. A row stays picked until
+  // neither of its suggestions (name, id) is left to add.
+  const [proposed, setProposed] = useState<Record<string, { name?: boolean; id?: boolean }>>({});
+  // Everything below acts on the visible rows only, so a hidden pick is never added.
+  const withName = rows.filter((r) => r.editable && r.suggestedName);
+  const withId = rows.filter((r) => r.editable && r.suggestedId);
+  const pickedRows = rows.filter((r) => r.editable && picked.has(r.entityId));
 
   // A name or an id is proposed only if it differs from what the entity has.
   const nameInputs = pickedRows
     .map((r) => ({ r, name: nameFor(r.entityId, r.suggestedName).trim() }))
-    .filter(({ r, name }) => name && name !== r.name)
+    .filter(({ r, name }) => name && name !== r.name && !proposed[r.entityId]?.name)
     .map(({ r, name }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { name } }));
   // The server refuses another domain, so an id is valid only in the entity's own.
   const idValid = (entityId: string, v: string) => ENTITY_ID_RE.test(v) && v.split(".")[0] === entityId.split(".")[0];
   const idInputs = pickedRows
     .map((r) => ({ r, id: idFor(r.entityId, r.suggestedId).trim() }))
-    .filter(({ r, id }) => id && id !== r.entityId && idValid(r.entityId, id))
+    .filter(({ r, id }) => id && id !== r.entityId && idValid(r.entityId, id) && !proposed[r.entityId]?.id)
     .map(({ r, id }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { new_entity_id: id } }));
 
-  const add = async (inputs: ChangeInput[]) => {
+  // Rule: after a successful propose, only the rows proposed for this field are
+  // touched. A row leaves `picked` once it has nothing left to add; if its other
+  // suggestion is still pending it stays picked, with this field marked as done.
+  const add = async (field: "name" | "id", inputs: ChangeInput[]) => {
     if (inputs.length === 0) return;
-    if (await propose(inputs)) setPicked(new Set());
+    if (!(await propose(inputs))) return;
+    const other = new Set((field === "name" ? idInputs : nameInputs).map((i) => i.targetId));
+    const done = inputs.map((i) => i.targetId as string);
+    setProposed((p) => {
+      const n = { ...p };
+      for (const id of done) {
+        if (other.has(id)) n[id] = { ...n[id], [field]: true };
+        else delete n[id];
+      }
+      return n;
+    });
+    setPicked((p) => {
+      const n = new Set(p);
+      for (const id of done) if (!other.has(id)) n.delete(id);
+      return n;
+    });
   };
 
   if (total === 0) return <p className="text-[13px] text-muted">No entities in this area to check.</p>;
@@ -301,6 +323,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
                         value={nameFor(r.entityId, r.suggestedName)}
                         onChange={(e) => {
                           setNames((n) => ({ ...n, [r.entityId]: e.target.value }));
+                          setProposed((p) => (p[r.entityId]?.name ? { ...p, [r.entityId]: { ...p[r.entityId], name: false } } : p));
                           setPicked((p) => new Set(p).add(r.entityId));
                         }}
                       />
@@ -318,6 +341,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
                         aria-invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
                         onChange={(e) => {
                           setIds((n) => ({ ...n, [r.entityId]: e.target.value }));
+                          setProposed((p) => (p[r.entityId]?.id ? { ...p, [r.entityId]: { ...p[r.entityId], id: false } } : p));
                           setPicked((p) => new Set(p).add(r.entityId));
                         }}
                       />
@@ -335,10 +359,10 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={() => setPicked(new Set(withName.map((r) => r.entityId)))}>Select every name suggestion</Button>
         <Button onClick={() => setPicked(new Set(withId.map((r) => r.entityId)))}>Select every id suggestion</Button>
-        <Button tone="primary" disabled={busy || nameInputs.length === 0} onClick={() => void add(nameInputs)}>
+        <Button tone="primary" disabled={busy || nameInputs.length === 0} onClick={() => void add("name", nameInputs)}>
           Add {nameInputs.length || ""} name change{nameInputs.length === 1 ? "" : "s"} to the list
         </Button>
-        <Button tone="primary" disabled={busy || idInputs.length === 0} onClick={() => void add(idInputs)}>
+        <Button tone="primary" disabled={busy || idInputs.length === 0} onClick={() => void add("id", idInputs)}>
           Add {idInputs.length || ""} id rename{idInputs.length === 1 ? "" : "s"} to the list
         </Button>
         <span className="text-xs text-muted">
@@ -365,6 +389,25 @@ function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; n
   const [value, setValue] = useState(c.custom ? c.code : "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The server keeps codes only for areas that exist in Home Assistant, so an
+  // area created in Taxis and not applied yet has its code dropped.
+  const unapplied = area.id.startsWith("new:");
+  // What a successful save sent; checked against the saved result below.
+  const [sent, setSent] = useState<{ code: string | undefined } | null>(null);
+
+  // saveNaming resolves with no result, but it updates `naming` first. Compare
+  // what came back with what was sent: if they differ, don't say "Saved".
+  useEffect(() => {
+    if (!sent) return;
+    setSent(null);
+    if (naming.areaCodes[area.id] !== sent.code) {
+      setError("The code wasn't kept. Taxis only stores codes for areas that exist in Home Assistant.");
+      return;
+    }
+    setValue(sent.code ?? "");
+    notify({ tone: "ok", text: "Saved" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [naming, sent]);
 
   const store = async (raw: string) => {
     const next = slug(raw);
@@ -377,8 +420,7 @@ function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; n
     setBusy(false);
     setError(err);
     if (err) return;
-    setValue(next && next !== c.detected ? next : "");
-    notify({ tone: "ok", text: "Saved" });
+    setSent({ code: areaCodesNext[area.id] });
   };
 
   const hasDetected = c.detectedCount > 0 && Boolean(c.detected);
@@ -391,6 +433,7 @@ function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; n
         hint={
           <>
             Entity ids in this area start with this. Found in {c.detectedCount} of {c.total} ids{c.custom ? " (set by you)" : ""}.
+            {unapplied && " Set the code once this area has been applied to Home Assistant."}
           </>
         }
       >
@@ -400,10 +443,11 @@ function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; n
             className={`${inputClass} font-mono`}
             value={value}
             placeholder={c.detected}
+            disabled={unapplied}
             onChange={(e) => setValue(e.target.value)}
             onBlur={(e) => e.target.value.trim() && setValue(slug(e.target.value))}
           />
-          <Button tone="primary" disabled={busy} onClick={() => store(value)}>
+          <Button tone="primary" disabled={busy || unapplied} onClick={() => store(value)}>
             Save
           </Button>
         </div>
@@ -412,7 +456,7 @@ function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; n
       <p className="text-[11px] text-muted">Saved in Taxis right away; it doesn't change Home Assistant.</p>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
         {c.custom && hasDetected && (
-          <button type="button" className="text-accent hover:underline" disabled={busy} onClick={() => store("")}>
+          <button type="button" className="text-accent hover:underline" disabled={busy || unapplied} onClick={() => store("")}>
             Use detected ({c.detected})
           </button>
         )}
