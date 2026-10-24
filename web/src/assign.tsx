@@ -5,7 +5,7 @@ import { ROLE_ORDER } from "../../shared/roles.ts";
 import type { EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
-import { Button, inputClass } from "./ui.tsx";
+import { Button, ConfirmAction, inputClass } from "./ui.tsx";
 
 // Pick entities with filters, then add them to something (a label, a
 // category) or take them out. Used by the Labels and Categories pages and an
@@ -201,15 +201,17 @@ export function AssignTool({
             Add {toAdd.length || ""}
           </Button>
           {onRemove && (
-            <Button
+            <ConfirmAction
+              tone="plain"
               disabled={busy || toRemove.length === 0}
-              onClick={() => {
+              question={`Remove ${toRemove.length} ${toRemove.length === 1 ? "entity" : "entities"} from ${title}?`}
+              onConfirm={() => {
                 onRemove(toRemove);
                 setPicked(new Set());
               }}
             >
               Remove {toRemove.length || ""}
-            </Button>
+            </ConfirmAction>
           )}
         </span>
       </div>

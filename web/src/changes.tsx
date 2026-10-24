@@ -5,7 +5,7 @@ import type { ApplyResult, Change, Hierarchy, RenameRefs } from "../../shared/ty
 import { api } from "./api.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
 import { useTaxis } from "./state.tsx";
-import { Button } from "./ui.tsx";
+import { Button, ConfirmAction } from "./ui.tsx";
 
 // The list of changes, in words, and Apply.
 
@@ -139,9 +139,14 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                   <li key={c.id} className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2.5">
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 text-[13px] font-medium">{title(h, c)}</span>
-                      <Button tone="ghost" aria-label={`Remove: ${title(h, c)}`} onClick={() => void removeChange(c.id)}>
+                      <ConfirmAction
+                        tone="ghost"
+                        ariaLabel={`Remove: ${title(h, c)}`}
+                        question="Remove this change? Nothing was applied to Home Assistant."
+                        onConfirm={() => void removeChange(c.id)}
+                      >
                         <Trash2 className="size-3.5" aria-hidden /> Remove
-                      </Button>
+                      </ConfirmAction>
                     </div>
                     {keys.length > 0 && (
                       <dl className="grid grid-cols-[minmax(5rem,auto)_1fr] gap-x-3 gap-y-0.5 text-xs">
@@ -172,9 +177,13 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                 <Button tone="primary" onClick={() => setStep("confirm")}>
                   Apply {changes.length} change{changes.length === 1 ? "" : "s"} to Home Assistant
                 </Button>
-                <Button tone="ghost" onClick={() => void clearChanges()}>
+                <ConfirmAction
+                  tone="ghost"
+                  question={`Discard all ${changes.length} change${changes.length === 1 ? "" : "s"}? Nothing was applied to Home Assistant.`}
+                  onConfirm={() => void clearChanges()}
+                >
                   Discard all
-                </Button>
+                </ConfirmAction>
               </div>
             )}
             {step === "confirm" && (

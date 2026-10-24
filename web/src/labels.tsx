@@ -1,11 +1,10 @@
-import { Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { type CategoryItem, type CategoryScope, type ChangeInput, type EntityItem, type Hierarchy, type LabelItem } from "../../shared/types.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
 import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
 import { useTaxis } from "./state.tsx";
-import { Button, Field, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
+import { Actions, Button, ConfirmAction, Field, HeaderBar, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
 
 // Label and category details, shown in the Organize page's right pane. Labels
 // go on areas, devices and entities; categories file automations, scripts,
@@ -90,30 +89,24 @@ export function categoryUsage(h: Hierarchy): Map<string, EntityItem[]> {
   return m;
 }
 
-function DetailHeader({ title, onDelete, deleteWhat, children }: { title: ReactNode; onDelete: () => void; deleteWhat: string; children?: ReactNode }) {
-  const [asking, setAsking] = useState(false);
+// Title on the left, the same actions as every editor on the right.
+function DetailHeader({
+  title,
+  children,
+  actions,
+}: {
+  title: ReactNode;
+  children?: ReactNode;
+  actions: ReactNode;
+}) {
   return (
-    <div className="flex flex-wrap items-start gap-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+    <HeaderBar>
+      <div className="flex min-w-[8rem] flex-1 flex-col gap-1">
         <h1 className="flex items-center gap-2 text-xl font-semibold">{title}</h1>
         {children}
       </div>
-      {asking ? (
-        <span className="flex items-center gap-2 text-xs">
-          Delete this {deleteWhat}? Home Assistant removes it from everything it's on.
-          <Button tone="danger" onClick={onDelete}>
-            Yes, delete
-          </Button>
-          <Button tone="ghost" onClick={() => setAsking(false)}>
-            Keep it
-          </Button>
-        </span>
-      ) : (
-        <Button tone="danger" onClick={() => setAsking(true)}>
-          <Trash2 className="size-3.5" aria-hidden /> Delete {deleteWhat}
-        </Button>
-      )}
-    </div>
+      {actions}
+    </HeaderBar>
   );
 }
 
@@ -125,17 +118,27 @@ export function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; labe
   const [description, setDescription] = useState(label.description ?? "");
   const [error, setError] = useState<string | null>(null);
 
+  const fields: Record<string, unknown> = {};
+  if (name.trim() !== label.name) fields.name = name.trim();
+  if ((color || null) !== label.color) fields.color = color || null;
+  if ((icon.trim() || null) !== label.icon) fields.icon = icon.trim() || null;
+  if ((description.trim() || null) !== label.description) fields.description = description.trim() || null;
+  const dirty = Object.keys(fields).length > 0;
+
   const save = async () => {
     if (!name.trim()) return setError("A label needs a name.");
     if (icon.trim() && !/^[a-z0-9]+:[a-z0-9-]+$/.test(icon.trim())) return setError("An icon looks like mdi:tag.");
-    const fields: Record<string, unknown> = {};
-    if (name.trim() !== label.name) fields.name = name.trim();
-    if ((color || null) !== label.color) fields.color = color || null;
-    if ((icon.trim() || null) !== label.icon) fields.icon = icon.trim() || null;
-    if ((description.trim() || null) !== label.description) fields.description = description.trim() || null;
-    if (Object.keys(fields).length === 0) return setError("Nothing has changed yet.");
+    if (!dirty) return;
     setError(null);
     await propose({ kind: "label", op: "update", targetId: label.id, fields });
+  };
+  // No panel to close here: Cancel puts the fields back as they were.
+  const revert = () => {
+    setName(label.name);
+    setColor(label.color ?? "");
+    setIcon(label.icon ?? "");
+    setDescription(label.description ?? "");
+    setError(null);
   };
 
   const removeFrom = (kind: "area" | "device" | "entity", id: string, current: string[]): ChangeInput => ({
@@ -148,10 +151,23 @@ export function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; labe
   return (
     <div className="flex flex-col gap-6">
       <DetailHeader
-        deleteWhat="label"
-        onDelete={async () => {
-          if (await propose({ kind: "label", op: "delete", targetId: label.id })) onDeleted();
-        }}
+        actions={
+          <Actions
+            dirty={dirty}
+            onSave={() => void save()}
+            onCancel={dirty ? revert : undefined}
+            error={error}
+            danger={
+              <ConfirmAction
+                wide
+                question={`Delete label “${label.name}”? Home Assistant removes it from everything it's on.`}
+                onConfirm={() => void propose({ kind: "label", op: "delete", targetId: label.id }).then((ok) => ok && onDeleted())}
+              >
+                Delete label
+              </ConfirmAction>
+            }
+          />
+        }
         title={
           <>
             <span aria-hidden className="size-3 rounded-full" style={{ background: labelColor(label.color) ?? "var(--off)" }} />
@@ -184,25 +200,19 @@ export function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; labe
         <Field label="Description" htmlFor="label-desc">
           <input id="label-desc" className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
-        <div className="flex items-center gap-2 sm:col-span-2">
-          <Button tone="primary" onClick={() => void save()}>
-            Add to changes
-          </Button>
-          {error && (
-            <span role="alert" className="text-xs text-danger">
-              {error}
-            </span>
-          )}
-        </div>
       </section>
 
       <Members
         title="Areas"
+        what="area"
+        from={label.name}
         items={(usage?.areas ?? []).map((id) => ({ id, name: h.areas[id]?.name ?? id }))}
         onRemove={(id) => void propose(removeFrom("area", id, h.areas[id].labels))}
       />
       <Members
         title="Devices"
+        what="device"
+        from={label.name}
         items={(usage?.devices ?? []).map((id) => ({ id, name: h.devices[id]?.name ?? id }))}
         onRemove={(id) => void propose(removeFrom("device", id, h.devices[id].labels))}
       />
@@ -225,23 +235,43 @@ export function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarc
   const [error, setError] = useState<string | null>(null);
   const scope = category.scope;
 
+  const fields: Record<string, unknown> = {};
+  if (name.trim() !== category.name) fields.name = name.trim();
+  if ((icon.trim() || null) !== category.icon) fields.icon = icon.trim() || null;
+  const dirty = Object.keys(fields).length > 0;
+
   const save = async () => {
     if (!name.trim()) return setError("A category needs a name.");
-    const fields: Record<string, unknown> = {};
-    if (name.trim() !== category.name) fields.name = name.trim();
-    if ((icon.trim() || null) !== category.icon) fields.icon = icon.trim() || null;
-    if (Object.keys(fields).length === 0) return setError("Nothing has changed yet.");
+    if (!dirty) return;
     setError(null);
     await propose({ kind: "category", op: "update", scope, targetId: category.id, fields });
+  };
+  const revert = () => {
+    setName(category.name);
+    setIcon(category.icon ?? "");
+    setError(null);
   };
 
   return (
     <div className="flex flex-col gap-6">
       <DetailHeader
-        deleteWhat="category"
-        onDelete={async () => {
-          if (await propose({ kind: "category", op: "delete", scope, targetId: category.id })) onDeleted();
-        }}
+        actions={
+          <Actions
+            dirty={dirty}
+            onSave={() => void save()}
+            onCancel={dirty ? revert : undefined}
+            error={error}
+            danger={
+              <ConfirmAction
+                wide
+                question={`Delete category “${category.name}”? Its ${SCOPE_NAMES[scope].toLowerCase()} end up with no category.`}
+                onConfirm={() => void propose({ kind: "category", op: "delete", scope, targetId: category.id }).then((ok) => ok && onDeleted())}
+              >
+                Delete category
+              </ConfirmAction>
+            }
+          />
+        }
         title={category.name}
       >
         <p className="text-[13px] text-muted">
@@ -255,16 +285,6 @@ export function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarc
         <Field label="Icon" htmlFor="cat-icon">
           <input id="cat-icon" className={inputClass} value={icon} placeholder="mdi:…" onChange={(e) => setIcon(e.target.value)} />
         </Field>
-        <div className="flex items-center gap-2 sm:col-span-2">
-          <Button tone="primary" onClick={() => void save()}>
-            Add to changes
-          </Button>
-          {error && (
-            <span role="alert" className="text-xs text-danger">
-              {error}
-            </span>
-          )}
-        </div>
       </section>
       <AssignTool
         h={h}
@@ -278,7 +298,7 @@ export function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarc
   );
 }
 
-function Members({ title, items, onRemove }: { title: string; items: { id: string; name: string; sub?: string }[]; onRemove: (id: string) => void }) {
+function Members({ title, what, from, items, onRemove }: { title: string; what: string; from: string; items: { id: string; name: string; sub?: string }[]; onRemove: (id: string) => void }) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-sm font-semibold">
@@ -294,9 +314,9 @@ function Members({ title, items, onRemove }: { title: string; items: { id: strin
                 {i.name}
                 {i.sub && <code className="ml-2 font-mono text-xs text-muted">{i.sub}</code>}
               </span>
-              <Button tone="ghost" onClick={() => onRemove(i.id)}>
+              <ConfirmAction tone="ghost" question={`Take label “${from}” off ${what} “${i.name}”?`} onConfirm={() => onRemove(i.id)}>
                 Remove
-              </Button>
+              </ConfirmAction>
             </li>
           ))}
         </ul>

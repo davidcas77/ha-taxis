@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type Ref } from "react";
 
 import type { Hierarchy, LabelItem } from "../../shared/types.ts";
 
@@ -8,7 +8,7 @@ export function Button({
   tone = "plain",
   className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "plain" | "primary" | "danger" | "ghost" }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "plain" | "primary" | "danger" | "ghost"; ref?: Ref<HTMLButtonElement> }) {
   const tones = {
     plain: "border border-line bg-surface hover:bg-sunken",
     primary: "border border-transparent bg-accent text-[var(--on-accent)] hover:opacity-90",
@@ -131,7 +131,9 @@ export function EditedDot({ title = "Changed in Taxis, not applied yet" }: { tit
   return <span role="img" aria-label={title} title={title} className="inline-block size-1.5 shrink-0 rounded-full bg-warn" />;
 }
 
-export function Panel({ title, onClose, children, footer }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+// An editor's frame. `actions` render in the title row, top right, and the row
+// is sticky so Add to changes stays in view while the body scrolls.
+export function Panel({ title, onClose, children, actions }: { title: ReactNode; onClose: () => void; children: ReactNode; actions?: ReactNode }) {
   // An editor opens at the top of the page; bring it into view and put the
   // cursor in its first field.
   const ref = useRef<HTMLElement>(null);
@@ -141,14 +143,145 @@ export function Panel({ title, onClose, children, footer }: { title: ReactNode; 
   }, []);
   return (
     <section ref={ref} aria-label={typeof title === "string" ? title : "Editor"} className="flex flex-col rounded-lg border border-accent/40 bg-surface">
-      <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</h2>
+      <HeaderBar>
+        <h2 className="min-w-[6rem] flex-1 truncate text-sm font-semibold">{title}</h2>
+        {actions}
         <button type="button" onClick={onClose} aria-label="Close" className="rounded px-1.5 text-lg leading-none text-muted hover:text-fg">
           ×
         </button>
-      </div>
+      </HeaderBar>
       <div className="flex flex-col gap-3.5 p-3.5">{children}</div>
-      {footer && <div className="flex flex-wrap items-center gap-2 border-t border-line px-3.5 py-2.5">{footer}</div>}
     </section>
+  );
+}
+
+// The top row of every editor and detail form. Sticky, with a fixed minimum
+// height so nothing jumps when buttons appear.
+export function HeaderBar({ children }: { children: ReactNode }) {
+  return (
+    <div className="sticky top-0 z-10 flex min-h-[3.25rem] flex-wrap items-center gap-2 rounded-t-lg border-b border-line bg-surface px-3.5 py-2.5">{children}</div>
+  );
+}
+
+// The one place that decides what the header actions show, left to right:
+// "Unsaved edits", Add to changes, Cancel, then `danger` (a Delete). Saving is
+// offered only once something differs; Delete is an action, not a save, so it
+// is always there and, being last, never moves.
+export function Actions({
+  dirty,
+  onSave,
+  onCancel,
+  saving = false,
+  error,
+  danger,
+}: {
+  dirty: boolean;
+  onSave: () => void;
+  onCancel?: () => void;
+  saving?: boolean;
+  error?: string | null;
+  danger?: ReactNode;
+}) {
+  return (
+    <>
+      {dirty && <span className="text-xs text-muted">Unsaved edits</span>}
+      {dirty && (
+        <Button tone="primary" onClick={onSave} disabled={saving}>
+          Add to changes
+        </Button>
+      )}
+      {onCancel && (
+        <Button tone="ghost" onClick={onCancel}>
+          {dirty ? "Cancel" : "Close"}
+        </Button>
+      )}
+      {danger}
+      {error && (
+        <span role="alert" className="basis-full text-right text-xs text-danger">
+          {error}
+        </span>
+      )}
+    </>
+  );
+}
+
+// A destructive button that asks first, in place. The confirm button repeats
+// the trigger's own text. Focus lands on Cancel so a stray Enter doesn't
+// delete; Escape cancels. `wide` drops the question onto its own line (used in
+// a header, so it sits right under the title row).
+export function ConfirmAction({
+  children,
+  question,
+  onConfirm,
+  tone = "danger",
+  disabled,
+  ariaLabel,
+  className = "",
+  wide = false,
+}: {
+  children: ReactNode;
+  question: ReactNode;
+  onConfirm: () => void;
+  tone?: "plain" | "danger" | "ghost";
+  disabled?: boolean;
+  ariaLabel?: string;
+  className?: string;
+  wide?: boolean;
+}) {
+  const [asking, setAsking] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+
+  useEffect(() => {
+    if (asking) cancelRef.current?.focus();
+    else if (returnFocus.current) {
+      returnFocus.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [asking]);
+  // Nothing left to act on (e.g. the selection was cleared): drop the question.
+  useEffect(() => {
+    if (disabled) setAsking(false);
+  }, [disabled]);
+
+  const cancel = () => {
+    returnFocus.current = true;
+    setAsking(false);
+  };
+
+  if (!asking) {
+    return (
+      <Button ref={triggerRef} tone={tone} className={className} disabled={disabled} aria-label={ariaLabel} onClick={() => setAsking(true)}>
+        {children}
+      </Button>
+    );
+  }
+  return (
+    <span
+      role="group"
+      aria-label="Confirm"
+      className={`flex flex-wrap items-center gap-2 text-xs ${wide ? "basis-full justify-end" : ""}`}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          cancel();
+        }
+      }}
+    >
+      <span>{question}</span>
+      <Button
+        tone="danger"
+        onClick={() => {
+          setAsking(false);
+          onConfirm();
+        }}
+      >
+        {children}
+      </Button>
+      <Button ref={cancelRef} tone="ghost" onClick={cancel}>
+        Cancel
+      </Button>
+    </span>
   );
 }
