@@ -332,7 +332,7 @@ app.post("/api/apply", async (c) => {
     }
 
     log.info(`Applying ${pending.length} change(s) to Home Assistant`);
-    const { results, appliedIds, realIds } = await applyChanges(pending, ha, async () => (await loadRead(true)).read.raw, rest ? { ha, rest } : undefined);
+    const { results, appliedIds, realIds, retargets } = await applyChanges(pending, ha, async () => (await loadRead(true)).read.raw, rest ? { ha, rest } : undefined);
     for (const r of results) {
       const ch = pending.find((x) => x.id === r.changeId)!;
       const line = `${ch.op} ${ch.kind} ${ch.targetId}: ${r.message}`;
@@ -343,6 +343,8 @@ app.post("/api/apply", async (c) => {
     // Done changes leave the list; the rest stay. Creations that happened hand
     // their real ids to the changes still pointing at them.
     for (const id of appliedIds) changes.done(id);
+    // A rename that took while another field didn't: the rest stays, under the new id.
+    for (const r of retargets) changes.retarget(r.changeId, r.targetId, r.after, r.before);
     for (const [temp, real] of realIds) changes.swapTempId(temp, real);
     // Whatever happened, the next view must come from a fresh read, of the
     // registries and of what uses entity ids.

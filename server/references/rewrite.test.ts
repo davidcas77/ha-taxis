@@ -101,6 +101,79 @@ describe("rewrite: several renames at once", () => {
   });
 });
 
+describe("rewrite: a dot after the id", () => {
+  it("leaves file names and other dotted text alone", () => {
+    for (const text of ["light.x.png", "/local/light.x.png", "light.x.", "see light.x. Then", "light.x.jpg light.x.2", "light.x.states", "light.x.state_class"]) {
+      expect(one(text)).toMatchObject({ value: text, count: 0 });
+    }
+  });
+
+  it("still rewrites an id followed by a state-object attribute, as a whole word", () => {
+    expect(one("{{ states.light.x.state }}").value).toBe("{{ states.light.y.state }}");
+    expect(one("{{ states.light.x.attributes.brightness }}").value).toBe("{{ states.light.y.attributes.brightness }}");
+    for (const part of ["state", "attributes", "last_changed", "last_updated", "last_reported", "entity_id", "domain", "object_id", "name", "context"]) {
+      expect(one(`states.light.x.${part}`)).toMatchObject({ value: `states.light.y.${part}`, count: 1 });
+    }
+    // The next thing after the id may be the ordinary end of a sentence or a file.
+    expect(one("light.x.state and light.x.png")).toMatchObject({ value: "light.y.state and light.x.png", count: 1 });
+  });
+});
+
+describe("rewrite: a script's action keeps its old key", () => {
+  const script = map(["script.movie_time", "script.film"]);
+  const run = (v: unknown) => rewrite(v, script);
+
+  it("keeps 'action', 'service' and 'perform_action' when they hold exactly the old id", () => {
+    const value = {
+      a: { action: "script.movie_time" },
+      b: { service: "script.movie_time" },
+      c: { tap_action: { action: "perform-action", perform_action: "script.movie_time" } },
+    };
+    const out = run(value);
+    expect(out.value).toEqual(value);
+    expect(out.count).toBe(0);
+    expect(out.kept).toEqual([
+      { key: "action", id: "script.movie_time" },
+      { key: "service", id: "script.movie_time" },
+      { key: "perform_action", id: "script.movie_time" },
+    ]);
+  });
+
+  it("still rewrites the id wherever it is an entity reference", () => {
+    const out = run({
+      actions: [
+        { action: "script.movie_time" },
+        { action: "script.turn_on", target: { entity_id: "script.movie_time" } },
+        { action: "homeassistant.turn_on", entity_id: ["script.movie_time"] },
+        { condition: "template", value_template: "{{ is_state('script.movie_time', 'on') }}" },
+      ],
+      card: { type: "button", entity: "script.movie_time", tap_action: { action: "perform-action", perform_action: "script.movie_time" } },
+    });
+    expect(out.value).toEqual({
+      actions: [
+        { action: "script.movie_time" },
+        { action: "script.turn_on", target: { entity_id: "script.film" } },
+        { action: "homeassistant.turn_on", entity_id: ["script.film"] },
+        { condition: "template", value_template: "{{ is_state('script.film', 'on') }}" },
+      ],
+      card: { type: "button", entity: "script.film", tap_action: { action: "perform-action", perform_action: "script.movie_time" } },
+    });
+    expect(out.count).toBe(4);
+    expect(out.kept).toHaveLength(2);
+  });
+
+  it("only applies to script ids, and to a string that is exactly the id", () => {
+    expect(rewrite({ action: "light.x" }, map(["light.x", "light.y"]))).toMatchObject({ value: { action: "light.y" }, count: 1, kept: [] });
+    expect(run({ action: "script.movie_time_2" }).kept).toEqual([]);
+    expect(run({ action: "{{ 'script.movie_time' }}" })).toMatchObject({ value: { action: "{{ 'script.film' }}" }, count: 1, kept: [] });
+  });
+
+  it("doesn't count a kept id as a use (countId)", () => {
+    expect(countId({ action: "script.movie_time", entity_id: "script.movie_time" }, "script.movie_time")).toBe(1);
+    expect(countId({ action: "script.movie_time" }, "script.movie_time")).toBe(0);
+  });
+});
+
 describe("countId", () => {
   it("counts whole-id uses, in strings and keys", () => {
     expect(countId({ a: "light.x light.x_2", "light.x": 1, b: ["light.x"] }, "light.x")).toBe(3);

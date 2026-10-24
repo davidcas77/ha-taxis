@@ -15,7 +15,9 @@ export type ReferenceIO = {
 export type SnapItem = {
   kind: RefKind;
   // The id Home Assistant edits it under: an automation's or scene's id, a
-  // script's object_id, a dashboard's url_path ("lovelace" for the default one).
+  // script's registry unique_id (its config key, which is not the entity id
+  // once the script has been renamed), a dashboard's url_path ("lovelace" for
+  // the default one).
   id: string;
   // The automation, script or scene entity itself, if it has one.
   entityId: string | null;
@@ -118,6 +120,13 @@ export async function snapshot(io: ReferenceIO, states: RawState[], entities: Ra
       }
     });
   };
+  // A script's config is keyed by the registry unique_id, which stays put when
+  // the entity id changes. The object id is only a fallback.
+  const uniqueIdOf = new Map<string, string>();
+  for (const e of entities) {
+    const u = str((e as { unique_id?: unknown }).unique_id);
+    if (u) uniqueIdOf.set(e.entity_id, u);
+  }
   for (const s of states) {
     const dot = s.entity_id.indexOf(".");
     const domain = s.entity_id.slice(0, dot);
@@ -125,7 +134,7 @@ export async function snapshot(io: ReferenceIO, states: RawState[], entities: Ra
     const configId = str(attrsOf(s).id);
     if (domain === "automation" && configId) addRest("automation", s, configId);
     else if (domain === "scene" && configId) addRest("scene", s, configId);
-    else if (domain === "script") addRest("script", s, objectId);
+    else if (domain === "script") addRest("script", s, uniqueIdOf.get(s.entity_id) ?? objectId);
   }
 
   // Dashboards: the default one, and every other the list reports.
@@ -153,12 +162,22 @@ export async function snapshot(io: ReferenceIO, states: RawState[], entities: Ra
       }
     });
   };
-  addDashboard(null, "Overview", "storage");
+  // The default dashboard can be in YAML mode. If Taxis can't tell, it assumes
+  // storage and lets the save report the problem.
+  let defaultMode: "storage" | "yaml" = "storage";
+  try {
+    const info = await io.ha.command<{ mode?: unknown } | null>("lovelace/info", {});
+    if (info?.mode === "yaml") defaultMode = "yaml";
+  } catch {
+    // keep "storage"
+  }
+  addDashboard(null, "Overview", defaultMode);
   try {
     const list = await io.ha.command<{ url_path?: unknown; mode?: unknown; title?: unknown }[]>("lovelace/dashboards/list");
     for (const d of Array.isArray(list) ? list : []) {
       const urlPath = str(d.url_path);
-      if (!urlPath) continue;
+      // "lovelace" is the default dashboard, which is already there.
+      if (!urlPath || urlPath === DEFAULT_DASHBOARD_ID) continue;
       addDashboard(urlPath, str(d.title) ?? urlPath, d.mode === "yaml" ? "yaml" : "storage");
     }
   } catch (e) {

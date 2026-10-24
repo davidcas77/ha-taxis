@@ -17,7 +17,8 @@ export type MockHome = RawRegistry & {
   // Automations from YAML packages, by attributes.id. They have states but the
   // config API answers 404 for them.
   yamlAutomations: Record<string, Config>;
-  // scripts.yaml, by object_id.
+  // scripts.yaml, by config key. The entity registry's unique_id is that key,
+  // which is why a renamed script's entity id and key can differ.
   scripts: Record<string, Config>;
   // Scenes by id.
   scenes: Record<string, Config>;
@@ -148,7 +149,7 @@ export function buildMockRegistry(): MockHome {
   }
   // Things that live in no area, like in a real home. Their configs sit beside
   // the states, and the state carries the id that links the two.
-  const configured = (entityId: string, name: string, attrs: Record<string, unknown>, state = "on", extra: Partial<RawRegistry["entities"][number]> = {}) => {
+  const configured = (entityId: string, name: string, attrs: Record<string, unknown>, state = "on", extra: Partial<RawRegistry["entities"][number]> & { unique_id?: string } = {}) => {
     reg.entities.push({ entity_id: entityId, platform: entityId.split(".")[0], ...extra });
     reg.states.push({ entity_id: entityId, state, attributes: { friendly_name: name, ...attrs } } as RawState);
   };
@@ -193,7 +194,7 @@ export function buildMockRegistry(): MockHome {
     ],
     mode: "single",
   };
-  configured("script.movie_time", "Movie time", {}, "off");
+  configured("script.movie_time", "Movie time", {}, "off", { unique_id: "movie_time" });
 
   reg.scenes["1700000000100"] = {
     id: "1700000000100",
@@ -260,14 +261,21 @@ export function containsEntityId(value: unknown, entityId: string): boolean {
   return walk(value);
 }
 
+// The entity id of a script config: the registry entry whose unique_id is the
+// config key (the entity id may have been renamed since), else script.<key>.
+function scriptEntityId(home: Pick<RawRegistry, "entities">, key: string): string {
+  const entry = home.entities.find((e) => e.platform === "script" && (e as { unique_id?: string }).unique_id === key);
+  return entry?.entity_id ?? `script.${key}`;
+}
+
 // Entity ids of the states whose attributes.id is a key of `configs`, for the
 // configs that mention `entityId`.
 function entitiesMentioning(home: Partial<MockHome> & RawRegistry, domain: string, configs: Record<string, Config> | undefined, entityId: string): string[] {
   const out: string[] = [];
   for (const [key, config] of Object.entries(configs ?? {})) {
     if (!containsEntityId(config, entityId)) continue;
-    // Scripts are keyed by object_id, the rest by the id in the state.
-    const own = domain === "script" ? `script.${key}` : home.states.find((s) => s.entity_id.startsWith(`${domain}.`) && (s.attributes as Config | undefined)?.id === key)?.entity_id;
+    // Scripts are keyed by their registry unique_id, the rest by the id in the state.
+    const own = domain === "script" ? scriptEntityId(home, key) : home.states.find((s) => s.entity_id.startsWith(`${domain}.`) && (s.attributes as Config | undefined)?.id === key)?.entity_id;
     if (own) out.push(own);
   }
   return out;
@@ -397,6 +405,10 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
     }
     case "lovelace/dashboards/list":
       return ok((home.dashboards ?? []).filter((d) => d.url_path !== null).map((d) => ({ id: String(d.url_path).replace(/-/g, "_"), url_path: d.url_path, mode: d.mode, title: d.title })));
+    case "lovelace/info": {
+      const dash = home.dashboards?.find((d) => d.url_path === (p.url_path ?? null));
+      return dash ? ok({ mode: dash.mode }) : fail("Unknown dashboard");
+    }
     case "lovelace/config": {
       const dash = home.dashboards?.find((d) => d.url_path === (p.url_path ?? null));
       if (!dash) return fail("Unknown dashboard");
@@ -468,7 +480,7 @@ export function handleMockRest(home: MockHome, method: string, path: string, bod
   // HA shows the new title in the state: the alias, or a scene's name.
   const title = (body as Config)[kind === "scene" ? "name" : "alias"];
   const state = home.states.find((s) =>
-    kind === "script" ? s.entity_id === `script.${id}` : s.entity_id.startsWith(`${kind}.`) && (s.attributes as Config | undefined)?.id === id,
+    kind === "script" ? s.entity_id === scriptEntityId(home, id) : s.entity_id.startsWith(`${kind}.`) && (s.attributes as Config | undefined)?.id === id,
   );
   if (state && typeof title === "string") state.attributes = { ...state.attributes, friendly_name: title };
   return { status: 200, body: { result: "ok" } };

@@ -147,6 +147,29 @@ describe("lovelace", () => {
     expect(fails(home, "lovelace/config", { url_path: "nope" })).toBeTruthy();
   });
 
+  it("says whether a dashboard is stored or YAML; no url_path means the default one", () => {
+    const home = buildMockRegistry();
+    expect(ok(home, "lovelace/info")).toEqual({ mode: "storage" });
+    expect(ok(home, "lovelace/info", { url_path: null })).toEqual({ mode: "storage" });
+    expect(ok(home, "lovelace/info", { url_path: "dashboard-wall" })).toEqual({ mode: "yaml" });
+    expect(fails(home, "lovelace/info", { url_path: "nope" })).toBeTruthy();
+    home.dashboards[0].mode = "yaml";
+    expect(ok(home, "lovelace/info")).toEqual({ mode: "yaml" });
+  });
+
+  it("keys a script's config by the registry unique_id, which a rename does not change", () => {
+    const home = buildMockRegistry();
+    expect(home.entities.find((e) => e.entity_id === "script.movie_time")).toMatchObject({ unique_id: "movie_time" });
+    ok(home, "config/entity_registry/update", { entity_id: "script.movie_time", new_entity_id: "script.film" });
+    expect(home.entities.find((e) => e.entity_id === "script.film")).toMatchObject({ unique_id: "movie_time" });
+    expect(handleMockRest(home, "GET", "/api/config/script/config/movie_time", undefined).status).toBe(200);
+    expect(handleMockRest(home, "GET", "/api/config/script/config/film", undefined).status).toBe(404);
+    // search/related names the script by its new entity id.
+    expect(ok<Record<string, string[]>>(home, "search/related", { item_type: "entity", item_id: "light.living_lamp" }).script).toEqual(["script.film"]);
+    handleMockRest(home, "POST", "/api/config/script/config/movie_time", { alias: "Film night", sequence: [] });
+    expect(home.states.find((s) => s.entity_id === "script.film")!.attributes?.friendly_name).toBe("Film night");
+  });
+
   it("saves a clone to a storage dashboard and refuses YAML mode", () => {
     const home = buildMockRegistry();
     const config = { views: [{ title: "New" }] };

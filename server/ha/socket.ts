@@ -28,6 +28,9 @@ export const READ_COMMANDS = new Set([
   // Dashboards other than the default one, and a dashboard's stored config.
   "lovelace/dashboards/list",
   "lovelace/config",
+  // Whether a dashboard is stored ("storage") or written in YAML ("yaml"); with
+  // no url_path, the default dashboard.
+  "lovelace/info",
 ]);
 
 export function assertReadCommand(type: string): void {

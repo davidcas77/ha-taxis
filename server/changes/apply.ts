@@ -41,6 +41,17 @@ import { updateReferences, type RenamePair } from "../references/update.ts";
 //   registry shows it, whatever happened to the configs: it can't be sent
 //   again, because the old id no longer exists.
 //
+// Two ways a rename can be left half done, both handled so nothing is lost:
+//
+//   - the registry rename landed but Taxis couldn't read it back, so the change
+//     is still in the list under an old id that is gone. The next Apply sees the
+//     new id and no old one, doesn't send the rename again, and goes on to the
+//     configs (and to any other field of the change, now against the new id);
+//   - the rename verified but another field of the same change didn't. The
+//     change is reported as failed and comes back in `retargets`: the caller
+//     points it at the new id, without the rename, so it stays in the list as an
+//     ordinary update of what is left.
+//
 // A list without renames reads and writes exactly what it did before.
 
 export type Writer = { write<T>(type: string, payload: Record<string, unknown>): Promise<T> };
@@ -49,7 +60,19 @@ export type Writer = { write<T>(type: string, payload: Record<string, unknown>):
 // the REST client for automations, scripts and scenes.
 export type RenameIO = { ha: ReferenceIO["ha"]; rest: RestApi };
 
+// A change that has to stay in the list, now as an update of `targetId`.
+export type Retarget = { changeId: number; targetId: string; after: Record<string, unknown>; before: Record<string, unknown> };
+
 export const isRename = (c: Change) => c.kind === "entity" && c.op === "update" && typeof c.after.new_entity_id === "string";
+
+// The change without its rename, aimed at the entity's new id.
+function withoutRename(c: Change, newId: string): Change {
+  const after = { ...c.after };
+  const was = { ...c.before };
+  delete after.new_entity_id;
+  delete was.new_entity_id;
+  return { ...c, targetId: newId, after, before: was };
+}
 
 const LEFT_ALONE = "Not updated: automations, scripts, scenes and dashboards were left alone, because the rename wasn't confirmed. Check what uses the old id.";
 
@@ -124,7 +147,7 @@ export async function applyChanges(
   // Needed to rename entity ids with what uses them; without it a rename only
   // changes the registry.
   rename?: RenameIO,
-): Promise<{ results: Outcome[]; appliedIds: number[]; realIds: Map<string, string> }> {
+): Promise<{ results: Outcome[]; appliedIds: number[]; realIds: Map<string, string>; retargets: Retarget[] }> {
   const realIds = new Map<string, string>();
   const outcome = new Map<number, Outcome>();
   const sent = new Map<number, Record<string, unknown>>();
@@ -132,6 +155,20 @@ export async function applyChanges(
 
   const beforeRaw = await readFresh();
   const before = buildHierarchy(beforeRaw, "");
+
+  // A rename whose old id is gone and whose new id exists already happened (an
+  // earlier Apply sent it but couldn't confirm it). It is not sent again; the
+  // rest of the change works against the new id.
+  const renameOf = new Map<number, RenamePair>(
+    changes.filter(isRename).map((c) => [c.id, { changeId: c.id, oldId: c.targetId, newId: String(c.after.new_entity_id) }]),
+  );
+  const resumed = new Set<number>();
+  for (const r of renameOf.values()) {
+    if (!exists(before, "entity", r.oldId, null) && exists(before, "entity", r.newId, null)) resumed.add(r.changeId);
+  }
+  const work = changes.map((c) => (resumed.has(c.id) ? withoutRename(c, renameOf.get(c.id)!.newId) : c));
+  // Renames the registry is known to show: resumed ones, and those verified below.
+  const confirmed = new Set<number>(resumed);
 
   // Only id fields are resolved: a name that happens to start with "new:" is
   // just a name.
@@ -223,7 +260,11 @@ export async function applyChanges(
   };
 
   const prepared = new Map<number, Record<string, unknown>>();
-  for (const c of changes) {
+  for (const c of work) {
+    if (resumed.has(c.id) && Object.keys(c.after).length === 0) {
+      outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied (the rename was already in Home Assistant)." });
+      continue;
+    }
     const p = payloadFor(c);
     if (typeof p === "string") fail(c, p);
     else prepared.set(c.id, p);
@@ -232,7 +273,7 @@ export async function applyChanges(
   // 0b. Renames: read what uses each old id before anything is written. If it
   // can't be read, the renames are not sent (renaming would leave automations
   // pointing at an id that no longer exists, with no way to say so).
-  const renames = rename ? changes.filter((c) => isRename(c) && prepared.has(c.id)) : [];
+  const renames = rename ? changes.filter((c) => renameOf.has(c.id) && (resumed.has(c.id) || prepared.has(c.id))) : [];
   let snap: Snapshot | null = null;
   const related = new Map<number, Related>();
   if (rename && renames.length > 0) {
@@ -245,7 +286,9 @@ export async function applyChanges(
       snap = null;
       for (const c of renames) {
         prepared.delete(c.id);
-        fail(c, `Taxis couldn't check what uses it (${(e as Error).message}), so it wasn't renamed.`);
+        confirmed.delete(c.id);
+        const why = `Taxis couldn't check what uses it (${(e as Error).message}), so`;
+        fail(c, resumed.has(c.id) ? `${why} it didn't update them.` : `${why} it wasn't renamed.`);
       }
     }
   }
@@ -269,7 +312,7 @@ export async function applyChanges(
     }
   };
 
-  const of = (op: Change["op"], kinds: ChangeKind[]) => kinds.flatMap((k) => changes.filter((x) => x.op === op && x.kind === k));
+  const of = (op: Change["op"], kinds: ChangeKind[]) => kinds.flatMap((k) => work.filter((x) => x.op === op && x.kind === k));
 
   // 1. Creations. A clash with a name this list deletes or renames away is
   // resolved by running that change first.
@@ -277,7 +320,7 @@ export async function applyChanges(
     if (outcome.has(c.id)) continue;
     const clash = namesOf(before, c.kind, c.scope).find((x) => nameKey(c.kind, x.name) === nameKey(c.kind, c.after.name));
     if (clash) {
-      const freeing = changes.find(
+      const freeing = work.find(
         (x) =>
           x.kind === c.kind &&
           x.targetId === clash.id &&
@@ -306,7 +349,7 @@ export async function applyChanges(
     try {
       after = await readFresh();
     } catch (e) {
-      for (const c of changes) {
+      for (const c of work) {
         if (!sent.has(c.id)) continue;
         // A creation Home Assistant answered with an id exists, read or not.
         if (c.op === "create") outcome.set(c.id, { changeId: c.id, ok: true, message: "Created (not re-read)." });
@@ -317,21 +360,26 @@ export async function applyChanges(
       }
     }
     if (after) {
-      const deletedLabels = new Set(changes.filter((x) => x.kind === "label" && x.op === "delete" && sent.has(x.id)).map((x) => x.targetId));
-      for (const c of changes) {
+      const deletedLabels = new Set(work.filter((x) => x.kind === "label" && x.op === "delete" && sent.has(x.id)).map((x) => x.targetId));
+      for (const c of work) {
         const payload = sent.get(c.id);
         if (!payload) continue;
         const problem = verify(c, payload, after, realIds, deletedLabels);
-        if (!problem) outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied." });
+        if (!problem) {
+          outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied." });
+          if (isRename(c)) confirmed.add(c.id);
+        }
         // A creation that happened is done even if a detail differs: sending it
         // again would only fail on the name.
         else if (c.op === "create" && realIds.has(c.targetId) && !problem.startsWith("Home Assistant doesn't show")) {
           outcome.set(c.id, { changeId: c.id, ok: true, message: `Created, but ${problem.charAt(0).toLowerCase()}${problem.slice(1)}` });
         }
         // Likewise a rename the registry shows: the old id is gone, so sending it
-        // again could only fail. What differs besides the id is reported.
+        // again could only fail. The change is not done, though: what else it
+        // sets stays in the list under the new id (see `retargets`).
         else if (isRename(c) && renamedInRegistry(c, payload, after)) {
-          outcome.set(c.id, { changeId: c.id, ok: true, message: `Renamed, but ${problem.charAt(0).toLowerCase()}${problem.slice(1)}` });
+          confirmed.add(c.id);
+          fail(c, `Renamed, but ${problem.charAt(0).toLowerCase()}${problem.slice(1)}`);
         } else {
           fail(c, problem);
           if (isRename(c)) outcome.get(c.id)!.details = [LEFT_ALONE];
@@ -340,27 +388,36 @@ export async function applyChanges(
     }
   }
 
-  // 2b. What used the old ids. Only for renames the registry now shows.
-  if (rename && snap && after) {
-    const pairs: RenamePair[] = renames
-      .filter((c) => sent.has(c.id) && outcome.get(c.id)?.ok)
-      .map((c) => ({ changeId: c.id, oldId: c.targetId, newId: String(c.after.new_entity_id) }));
+  // 2b. What used the old ids. Only for renames the registry shows (a resumed
+  // one is judged by the read taken at the start).
+  if (rename && snap) {
+    const pairs: RenamePair[] = renames.filter((c) => confirmed.has(c.id)).map((c) => renameOf.get(c.id)!);
     if (pairs.length > 0) {
       const lines = await updateReferences({ ha: { command: (t, p) => rename.ha.command(t, p), write: (t, p) => ha.write(t, p) }, rest: rename.rest }, snap, pairs);
-      const areaLines = await repointAreas(ha, after, pairs);
+      const areaLines = await repointAreas(ha, after ?? beforeRaw, pairs);
       pairs.forEach((r, i) => {
         const details = [...(lines.get(r.changeId) ?? []), ...(areaLines.get(r.changeId) ?? [])];
         const found = findReferences(snap!, related.get(r.changeId) ?? {}, r.oldId);
         for (const m of found.manual) details.push(`Needs a hand: ${m.name}: ${m.reason}`);
         // Things that couldn't be read could be using the id; say so once.
         if (i === 0) for (const note of snap!.notes) details.push(`Not updated: ${note}. Check it by hand.`);
-        outcome.get(r.changeId)!.details = details;
+        const o = outcome.get(r.changeId);
+        if (o) o.details = details;
       });
     }
   }
 
+  // A rename the registry shows, in a change that is not done: what is left of
+  // it goes on as an update of the new id.
+  const retargets: Retarget[] = [];
+  for (const c of changes) {
+    if (!confirmed.has(c.id) || outcome.get(c.id)?.ok) continue;
+    const rest = withoutRename(c, renameOf.get(c.id)!.newId);
+    if (Object.keys(rest.after).length > 0) retargets.push({ changeId: c.id, targetId: rest.targetId, after: rest.after, before: rest.before });
+  }
+
   const results = changes.map((c) => outcome.get(c.id) ?? { changeId: c.id, ok: false, message: "Not sent." });
-  return { results, appliedIds: results.filter((r) => r.ok).map((r) => r.changeId), realIds };
+  return { results, appliedIds: results.filter((r) => r.ok).map((r) => r.changeId), realIds, retargets };
 }
 
 // Null when Home Assistant now shows what was sent; otherwise what's different.

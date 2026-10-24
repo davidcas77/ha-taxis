@@ -120,6 +120,17 @@ export function changeStore(db: DatabaseSync) {
       remove.run(id);
     },
 
+    /**
+     * A rename took but the rest of its change didn't: the change goes on as an
+     * update of `newTargetId` with what is left. (While a rename is pending,
+     * edits made under the new id are folded into that same change, so no
+     * other change can already target `newTargetId`.)
+     */
+    retarget(changeId: number, newTargetId: string, after: Record<string, unknown>, before: Record<string, unknown>): void {
+      setTarget.run(newTargetId, changeId);
+      replace.run(JSON.stringify(before), JSON.stringify(after), changeId);
+    },
+
     /** After Apply created an item: point the remaining changes at its real id. */
     swapTempId(temp: string, real: string): void {
       for (const c of list()) {

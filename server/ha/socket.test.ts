@@ -176,7 +176,7 @@ describe("HaSocket", () => {
 
 describe("allowlists for renames", () => {
   it("reads: where an entity is used, and dashboards; never a dashboard save", () => {
-    for (const t of ["search/related", "lovelace/dashboards/list", "lovelace/config"]) expect(() => assertReadCommand(t)).not.toThrow();
+    for (const t of ["search/related", "lovelace/dashboards/list", "lovelace/config", "lovelace/info"]) expect(() => assertReadCommand(t)).not.toThrow();
     for (const t of ["lovelace/config/save", "lovelace/config/delete", "lovelace/dashboards/create", "lovelace/dashboards/delete", "call_service"]) {
       expect(() => assertReadCommand(t)).toThrow(/isn.t a read/);
     }

@@ -32,15 +32,25 @@ export async function updateReferences(io: UpdateIO, snap: Snapshot, renames: Re
   };
 
   for (const item of snap.items) {
-    if (!item.editable || item.config === null) continue;
+    if (item.config === null) continue;
     const next = rewrite(item.config, map);
-    if (next.count === 0) continue;
-    // The renames this config is affected by, and how often each is used in it.
-    const own = renames
-      .map((r) => ({ r, n: rewrite(item.config, new Map([[r.oldId, r.newId]])).count }))
-      .filter((x) => x.n > 0);
-    const affected = own.map((x) => x.r);
+    if (next.count === 0 && next.kept.length === 0) continue;
     const label = `${item.kind} “${item.name}”`;
+    // How each rename touches this config: places replaced, and script ids left
+    // alone because Home Assistant still runs the script by its old key.
+    const each = renames.map((r) => ({ r, ...rewrite(item.config, new Map([[r.oldId, r.newId]])) }));
+    for (const x of each) {
+      const seen = new Set<string>();
+      for (const k of x.kept) {
+        const text = `${k.key}: ${k.id}`;
+        if (seen.has(text)) continue;
+        seen.add(text);
+        say([x.r], `Kept “${text}” in ${label}: Home Assistant still runs the script by its old key.`);
+      }
+    }
+    if (!item.editable || next.count === 0) continue;
+    const own = each.filter((x) => x.count > 0).map((x) => ({ r: x.r, n: x.count }));
+    const affected = own.map((x) => x.r);
 
     if (next.collisions.length > 0) {
       say(affected, `Not updated: ${label}: replacing the id would merge two entries (${next.collisions.join(", ")}). Update it by hand.`);

@@ -5,7 +5,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
-import { buildMockRegistry } from "../../scripts/mock-ha-core.ts";
+import { buildMockRegistry, handleMock } from "../../scripts/mock-ha-core.ts";
 import { validateInput } from "../../shared/changes.ts";
 import type { ChangeInput } from "../../shared/types.ts";
 import { fakeHa } from "../references/fake-ha.ts";
@@ -255,10 +255,24 @@ describe("when a config can't be written", () => {
     const t = setup();
     t.rename("light.living_spots", "light.living_ceiling");
     t.fake.home.dashboards[0].mode = "yaml";
+    // Taxis can't tell the mode, assumes storage, tries, and is refused.
+    t.fake.failRead.add("lovelace/info");
     const { results } = await t.apply();
     expect(results[0].ok).toBe(true);
-    // Read as YAML by the fake: Taxis tried (the default dashboard's mode isn't known) and was refused.
     expect(results[0].details!.join("\n")).toMatch(/Not updated: dashboard “Overview”: Home Assistant refused it \(Dashboard is in YAML mode, can't save.\)/);
+  });
+
+  it("a default dashboard in YAML mode is not edited, and is listed as needing a hand", async () => {
+    const t = setup();
+    t.rename("light.living_spots", "light.living_ceiling");
+    t.fake.home.dashboards[0].mode = "yaml";
+    const yaml = structuredClone(t.fake.home.dashboards[0].config);
+    const { results } = await t.apply();
+    expect(results[0].ok).toBe(true);
+    expect(results[0].details).toContain("Needs a hand: Overview: Written in YAML: change it in the file.");
+    expect(results[0].details!.some((d) => /dashboard “Overview”/.test(d) && /^(Updated|Not updated)/.test(d))).toBe(false);
+    expect(t.fake.writes().ws.map((c) => c.type)).toEqual(["config/entity_registry/update"]);
+    expect(t.fake.home.dashboards[0].config).toEqual(yaml);
   });
 });
 
@@ -319,6 +333,232 @@ describe("when what uses an id can't be read", () => {
     expect(results[0].details!.some((d) => /^Not updated: couldn't read automation “Kitchen motion light” .*Check it by hand\.$/.test(d))).toBe(true);
     expect(results[0].details).toContain("Updated automation “Lights on at sunset” (1 place)");
   });
+});
+
+describe("renaming a script", () => {
+  // Home Assistant runs a script by its config key, so after the rename
+  // `action: script.movie_time` still works and `action: script.film` would not.
+  const callers = (t: ReturnType<typeof setup>) => {
+    const { home } = t.fake;
+    // Only calls it: nothing to rewrite.
+    home.automations["1700000000001"].actions = [{ action: "script.movie_time" }];
+    // Calls it, and also names it as an entity.
+    home.automations["1700000000002"].actions = [
+      { action: "script.movie_time" },
+      { action: "script.turn_on", target: { entity_id: "script.movie_time" } },
+    ];
+    home.dashboards[0].config = {
+      views: [{ cards: [{ type: "button", entity: "script.movie_time", tap_action: { action: "perform-action", perform_action: "script.movie_time" } }] }],
+    };
+  };
+
+  it("keeps 'action: script.old' and rewrites the entity references, and says so", async () => {
+    const t = setup();
+    callers(t);
+    t.rename("script.movie_time", "script.film");
+    const { results } = await t.apply();
+
+    expect(results[0]).toMatchObject({ ok: true, message: "Applied." });
+    const { home } = t.fake;
+    expect(home.automations["1700000000001"].actions).toEqual([{ action: "script.movie_time" }]);
+    expect(home.automations["1700000000002"].actions).toEqual([
+      { action: "script.movie_time" },
+      { action: "script.turn_on", target: { entity_id: "script.film" } },
+    ]);
+    expect(home.dashboards[0].config).toEqual({
+      views: [{ cards: [{ type: "button", entity: "script.film", tap_action: { action: "perform-action", perform_action: "script.movie_time" } }] }],
+    });
+    // The config key is what Home Assistant runs it by; it didn't move.
+    expect(Object.keys(home.scripts)).toEqual(["movie_time"]);
+
+    const details = results[0].details!;
+    expect(details).toContain("Kept “action: script.movie_time” in automation “Lights on at sunset”: Home Assistant still runs the script by its old key.");
+    expect(details).toContain("Kept “action: script.movie_time” in automation “Kitchen motion light”: Home Assistant still runs the script by its old key.");
+    expect(details).toContain("Kept “perform_action: script.movie_time” in dashboard “Overview”: Home Assistant still runs the script by its old key.");
+    expect(details).toContain("Updated automation “Kitchen motion light” (1 place)");
+    expect(details).toContain("Updated dashboard “Overview” (1 place)");
+    // Kept is not a task for the user, and not a failure.
+    expect(details.some((d) => d.startsWith("Needs a hand") || d.startsWith("Not updated"))).toBe(false);
+    // The automation that only calls the script is not written at all.
+    expect(t.fake.writes().rest.map((c) => c.path)).toEqual(["/api/config/automation/config/1700000000002"]);
+  });
+
+  it("writes nothing to a config that only calls the script", async () => {
+    const t = setup();
+    callers(t);
+    t.fake.home.automations["1700000000002"].actions = [{ action: "script.movie_time" }];
+    t.fake.home.dashboards[0].config = { views: [{ cards: [{ type: "button", tap_action: { action: "perform-action", perform_action: "script.movie_time" } }] }] };
+    t.rename("script.movie_time", "script.film");
+    const { results } = await t.apply();
+    expect(results[0].ok).toBe(true);
+    expect(t.fake.writes().rest).toEqual([]);
+    expect(t.fake.writes().ws.map((c) => c.type)).toEqual(["config/entity_registry/update"]);
+    expect(results[0].details!.filter((d) => d.startsWith("Kept"))).toHaveLength(3);
+  });
+
+  it("finds a script's config by its registry unique_id after an earlier rename", async () => {
+    const t = setup();
+    // Renamed before: the entity is script.film, the config key is still movie_time.
+    expect(handleMock(t.fake.home, "config/entity_registry/update", { entity_id: "script.movie_time", new_entity_id: "script.film" }).success).toBe(true);
+    t.rename("light.living_lamp", "light.living_floor");
+    const { results } = await t.apply();
+
+    expect(results[0].ok).toBe(true);
+    expect(results[0].details).toContain("Updated script “Movie time” (1 place)");
+    expect(t.fake.home.scripts.movie_time.sequence).toEqual([
+      { action: "media_player.turn_on", target: { entity_id: "media_player.living_tv" } },
+      { action: "light.turn_off", target: { entity_id: "light.living_floor" } },
+    ]);
+    const script = t.fake.rest.filter((c) => c.path.includes("/script/"));
+    expect(script.every((c) => c.path.endsWith("/movie_time") && c.status === 200)).toBe(true);
+    expect(script.map((c) => c.method)).toEqual(["GET", "GET", "POST", "GET"]);
+  });
+});
+
+describe("a rename that landed but couldn't be read back", () => {
+  // The first read is the one before writing; the second is the check after.
+  const flaky = (t: ReturnType<typeof setup>) => {
+    let reads = 0;
+    return async () => {
+      if (++reads === 2) throw new Error("connection lost");
+      return t.fake.readFresh();
+    };
+  };
+  const firstApply = async (t: ReturnType<typeof setup>) => {
+    const out = await applyChanges(t.store.list(), t.fake.ha, flaky(t), { ha: t.fake.ha, rest: t.fake.api });
+    for (const id of out.appliedIds) t.store.done(id);
+    return out;
+  };
+
+  it("is finished by the next Apply, which doesn't send the rename again", async () => {
+    const t = setup();
+    t.rename("light.living_spots", "light.living_ceiling");
+    const first = await firstApply(t);
+
+    expect(first.results[0].ok).toBe(false);
+    expect(first.results[0].message).toMatch(/couldn't read Home Assistant back/);
+    expect(first.retargets).toEqual([]);
+    // The rename is in the registry, the change is still in the list under the old id, nothing uses the new id yet.
+    expect(t.entity("light.living_ceiling")).toBeDefined();
+    expect(t.store.list()).toHaveLength(1);
+    expect(t.store.list()[0].targetId).toBe("light.living_spots");
+    expect(JSON.stringify(t.fake.home.automations)).toContain("light.living_spots");
+
+    t.fake.ws.length = 0;
+    t.fake.rest.length = 0;
+    const second = await t.apply();
+
+    expect(second.results[0]).toMatchObject({ ok: true });
+    expect(second.retargets).toEqual([]);
+    expect(t.store.list()).toEqual([]);
+    // Not sent again: the only writes are the dashboard and the two configs.
+    expect(t.fake.writes().ws.map((c) => c.type)).toEqual(["lovelace/config/save"]);
+    expect(t.fake.writes().rest.map((c) => c.path).sort()).toEqual(["/api/config/automation/config/1700000000001", "/api/config/scene/config/1700000000100"]);
+    expect(second.results[0].details).toContain("Updated automation “Lights on at sunset” (1 place)");
+    expect(second.results[0].details).toContain("Updated dashboard “Overview” (2 places)");
+    expect(JSON.stringify(t.fake.home.automations["1700000000001"])).toContain("light.living_ceiling");
+    expect(JSON.stringify(t.fake.home.automations["1700000000001"])).not.toContain("light.living_spots");
+  });
+
+  it("also sends the change's other fields, to the new id", async () => {
+    const t = setup();
+    expect(t.add({ kind: "entity", op: "update", targetId: "light.living_spots", fields: { new_entity_id: "light.living_ceiling", name: "Ceiling" } })).toBeNull();
+    await firstApply(t);
+    expect(t.store.list()).toHaveLength(1);
+
+    t.fake.ws.length = 0;
+    const second = await t.apply();
+    expect(second.results[0]).toMatchObject({ ok: true });
+    expect(t.store.list()).toEqual([]);
+    const registry = t.fake.writes().ws.filter((c) => c.type === "config/entity_registry/update");
+    expect(registry.map((c) => c.payload)).toEqual([{ entity_id: "light.living_ceiling", name: "Ceiling" }]);
+    expect(t.entity("light.living_ceiling")!.name).toBe("Ceiling");
+    expect(second.results[0].details).toContain("Updated scene “Evening” (1 place)");
+  });
+
+  it("keeps the change when what uses the old id can't be read, so the next Apply tries again", async () => {
+    const t = setup();
+    t.rename("light.living_spots", "light.living_ceiling");
+    await firstApply(t);
+
+    t.fake.failRead.add("search/related");
+    t.fake.ws.length = 0;
+    const second = await t.apply();
+    expect(second.results[0].ok).toBe(false);
+    expect(second.results[0].message).toMatch(/couldn't check what uses it.*didn't update them/);
+    expect(second.retargets).toEqual([]);
+    expect(t.store.list()).toHaveLength(1);
+    expect(t.fake.writes()).toEqual({ ws: [], rest: [] });
+
+    t.fake.failRead.clear();
+    const third = await t.apply();
+    expect(third.results[0].ok).toBe(true);
+    expect(t.store.list()).toEqual([]);
+  });
+
+  it("still counts as an ordinary failure when the new id isn't there either", async () => {
+    const t = setup();
+    t.rename("light.living_spots", "light.living_ceiling");
+    t.fake.home.entities = t.fake.home.entities.filter((e) => e.entity_id !== "light.living_spots");
+    t.fake.home.states = t.fake.home.states.filter((s) => s.entity_id !== "light.living_spots");
+    const { results } = await t.apply();
+    expect(results[0]).toMatchObject({ ok: false, message: "It's no longer in Home Assistant." });
+    expect(t.fake.writes()).toEqual({ ws: [], rest: [] });
+  });
+});
+
+describe("a rename that verified while another field of the change didn't", () => {
+  // Home Assistant takes the rename and quietly drops the name.
+  const dropsName = (t: ReturnType<typeof setup>) => ({
+    write: <T,>(type: string, payload: Record<string, unknown>) => {
+      const { name: _name, ...rest } = payload;
+      return t.fake.ha.write<T>(type, type === "config/entity_registry/update" ? rest : payload);
+    },
+  });
+  const renameAndName = (t: ReturnType<typeof setup>) =>
+    expect(t.add({ kind: "entity", op: "update", targetId: "light.living_spots", fields: { new_entity_id: "light.living_ceiling", name: "Ceiling" } })).toBeNull();
+
+  it("reports the change as failed and hands back the rest, aimed at the new id", async () => {
+    const t = setup();
+    renameAndName(t);
+    const change = t.store.list()[0];
+    const out = await applyChanges(t.store.list(), dropsName(t), t.fake.readFresh, { ha: t.fake.ha, rest: t.fake.api });
+
+    expect(out.results[0].ok).toBe(false);
+    expect(out.results[0].message).toMatch(/^Renamed, but its name /);
+    expect(out.appliedIds).toEqual([]);
+    const { new_entity_id: _a, ...before } = change.before;
+    expect(out.retargets).toEqual([{ changeId: change.id, targetId: "light.living_ceiling", after: { name: "Ceiling" }, before }]);
+    // The rename did its job: what used the old id was updated.
+    expect(out.results[0].details).toContain("Updated automation “Lights on at sunset” (1 place)");
+    expect(t.entity("light.living_ceiling")).toBeDefined();
+  });
+
+  it("keeps it in the list as an ordinary update, and the next Apply finishes it", async () => {
+    const t = setup();
+    renameAndName(t);
+    const out = await applyChanges(t.store.list(), dropsName(t), t.fake.readFresh, { ha: t.fake.ha, rest: t.fake.api });
+    for (const id of out.appliedIds) t.store.done(id);
+    for (const r of out.retargets) t.store.retarget(r.changeId, r.targetId, r.after, r.before);
+
+    const [left, ...more] = t.store.list();
+    expect(more).toEqual([]);
+    expect(left).toMatchObject({ kind: "entity", op: "update", targetId: "light.living_ceiling", after: { name: "Ceiling" } });
+    expect(left.after).not.toHaveProperty("new_entity_id");
+    expect(left.before).not.toHaveProperty("new_entity_id");
+
+    t.fake.ws.length = 0;
+    t.fake.rest.length = 0;
+    const next = await t.apply();
+    expect(next.results[0]).toMatchObject({ ok: true, message: "Applied." });
+    expect(next.results[0].details).toBeUndefined();
+    expect(t.store.list()).toEqual([]);
+    expect(t.entity("light.living_ceiling")!.name).toBe("Ceiling");
+    // Nothing about a rename or about configs is sent any more.
+    expect(t.fake.ws.map((c) => [c.type, c.payload])).toEqual([["config/entity_registry/update", { entity_id: "light.living_ceiling", name: "Ceiling" }]]);
+    expect(t.fake.rest).toEqual([]);
+  });
+
 });
 
 describe("a list without renames", () => {

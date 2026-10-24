@@ -56,7 +56,7 @@ wss.on("connection", (socket) => {
     if (!authed) return;
     const { id, type, ...payload } = msg;
     const reply = handleMock(registry, type, payload);
-    const reads = ["get_states", "get_config", "search/related", "lovelace/config"];
+    const reads = ["get_states", "get_config", "search/related", "lovelace/config", "lovelace/info"];
     if (!type.endsWith("/list") && !reads.includes(type)) console.log(`write ${type} ${JSON.stringify(payload)}`);
     socket.send(
       JSON.stringify(

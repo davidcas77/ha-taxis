@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { handleMock } from "../../scripts/mock-ha-core.ts";
 import { findReferences, searchRelated } from "./find.ts";
 import { fakeHa } from "./fake-ha.ts";
 import { snapshot } from "./snapshot.ts";
@@ -35,6 +36,8 @@ describe("snapshot", () => {
       'lovelace/config {"url_path":"dashboard-wall"}',
       'lovelace/config {"url_path":null}',
       "lovelace/dashboards/list {}",
+      // No url_path: the default dashboard.
+      "lovelace/info {}",
     ]);
     expect(t.writes()).toEqual({ ws: [], rest: [] });
 
@@ -80,6 +83,74 @@ describe("snapshot", () => {
     await snapshot({ ha: t.ha, rest: t.api }, t.home.states, t.home.entities);
     expect(t.ws.every((c) => c.kind === "read")).toBe(true);
     expect(t.rest.every((c) => c.method === "GET")).toBe(true);
+  });
+});
+
+describe("snapshot: scripts are found by their registry unique_id", () => {
+  const renamed = () => {
+    const t = fakeHa();
+    // The script was renamed before: its entity id is script.film, its config key is still movie_time.
+    expect(handleMock(t.home, "config/entity_registry/update", { entity_id: "script.movie_time", new_entity_id: "script.film" }).success).toBe(true);
+    return t;
+  };
+
+  it("reads the config under the unique_id, not the object id", async () => {
+    const t = renamed();
+    const snap = await snapshot({ ha: t.ha, rest: t.api }, t.home.states, t.home.entities);
+    const script = snap.items.find((i) => i.kind === "script")!;
+    expect(script).toMatchObject({ id: "movie_time", entityId: "script.film", editable: true, yaml: false, name: "Movie time" });
+    expect(script.config).not.toBeNull();
+    expect(t.rest.filter((c) => c.path.includes("/script/"))).toEqual([{ method: "GET", path: "/api/config/script/config/movie_time", body: undefined, status: 200 }]);
+    expect(snap.notes).toEqual([]);
+  });
+
+  it("falls back to the object id when the registry has no unique_id", async () => {
+    const t = fakeHa();
+    delete (t.home.entities.find((e) => e.entity_id === "script.movie_time") as Record<string, unknown>).unique_id;
+    const snap = await snapshot({ ha: t.ha, rest: t.api }, t.home.states, t.home.entities);
+    expect(snap.items.find((i) => i.kind === "script")).toMatchObject({ id: "movie_time", editable: true });
+  });
+
+  it("finds what the renamed script's config uses", async () => {
+    const t = renamed();
+    const snap = await snapshot({ ha: t.ha, rest: t.api }, t.home.states, t.home.entities);
+    const found = findReferences(snap, await searchRelated(t.ha, "light.living_lamp"), "light.living_lamp");
+    expect(found.sites).toContainEqual({ kind: "script", id: "movie_time", name: "Movie time", count: 1 });
+  });
+});
+
+describe("snapshot: the default dashboard's mode", () => {
+  it("asks lovelace/info for the default dashboard, and a YAML one can be read but not edited", async () => {
+    const t = fakeHa();
+    t.home.dashboards[0].mode = "yaml";
+    const snap = await snapshot({ ha: t.ha, rest: t.api }, t.home.states, t.home.entities);
+    expect(t.ws.filter((c) => c.type === "lovelace/info").map((c) => c.payload)).toEqual([{}]);
+    const home = snap.items.find((i) => i.kind === "dashboard" && i.urlPath === null)!;
+    expect(home).toMatchObject({ id: "lovelace", editable: false, yaml: true });
+    expect(home.config).not.toBeNull();
+
+    const found = findReferences(snap, {}, "light.living_spots");
+    expect(found.sites.map((s) => s.kind)).toEqual(["automation", "scene"]);
+    expect(found.manual).toContainEqual({ kind: "dashboard", id: "lovelace", name: "Overview", reason: "Written in YAML: change it in the file." });
+  });
+
+  it("treats a 'lovelace' entry in the dashboard list as the default one, not a second dashboard", async () => {
+    const t = fakeHa();
+    t.home.dashboards.push({ url_path: "lovelace", title: "Home again", mode: "storage", config: { views: [{ title: "Dupe", cards: [{ type: "light", entity: "light.living_spots" }] }] } });
+    const snap = await snapshot({ ha: t.ha, rest: t.api }, t.home.states, t.home.entities);
+    expect(snap.items.filter((i) => i.kind === "dashboard" && i.id === "lovelace")).toHaveLength(1);
+    expect(t.ws.some((c) => c.type === "lovelace/config" && c.payload.url_path === "lovelace")).toBe(false);
+    const found = findReferences(snap, {}, "light.living_spots");
+    expect(found.sites.filter((s) => s.kind === "dashboard")).toEqual([{ kind: "dashboard", id: "lovelace", name: "Overview", count: 2 }]);
+  });
+
+  it("assumes storage when lovelace/info fails, and says nothing", async () => {
+    const t = fakeHa();
+    t.home.dashboards[0].mode = "yaml";
+    t.failRead.add("lovelace/info");
+    const snap = await snapshot({ ha: t.ha, rest: t.api }, t.home.states, t.home.entities);
+    expect(snap.items.find((i) => i.kind === "dashboard" && i.urlPath === null)).toMatchObject({ editable: true, yaml: false });
+    expect(snap.notes).toEqual([]);
   });
 });
 
