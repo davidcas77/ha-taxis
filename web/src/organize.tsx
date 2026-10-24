@@ -71,7 +71,7 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <nav
         aria-label="What to organize"
-        className={`${show("types")} min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto border-b border-line bg-surface p-2 md:flex md:w-56 md:flex-none md:border-r md:border-b-0`}
+        className={`${show("types")} min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto border-b border-line bg-surface p-2 md:flex md:w-44 md:flex-none lg:w-56 md:border-r md:border-b-0`}
       >
         {TYPE_ORDER.map((t) => (
           <button
@@ -88,7 +88,7 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
       </nav>
       <section
         aria-label={TYPE_NAME[type]}
-        className={`${show("items")} min-h-0 min-w-0 flex-1 flex-col border-b border-line md:flex md:w-80 md:flex-none md:border-r md:border-b-0 lg:w-[28rem]`}
+        className={`${show("items")} min-h-0 min-w-0 flex-1 flex-col border-b border-line md:flex md:w-64 md:flex-none md:border-r md:border-b-0 lg:w-80 xl:w-[26rem]`}
       >
         <BackBar label="Types" onBack={() => setStep("types")} />
         <ItemsPane key={type} h={h} type={type} id={id} select={select} />
