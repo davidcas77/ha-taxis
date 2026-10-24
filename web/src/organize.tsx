@@ -331,7 +331,8 @@ function ItemsTable({ h, type, id, select, query }: { h: Hierarchy; type: Organi
 // ---------------------------------------------------------------------------
 // Floors and areas: a tree where areas can be moved between floors.
 
-const NO_FLOOR = "none";
+// Not a slug Home Assistant can produce, so a floor called "None" stays a floor.
+const NO_FLOOR = "(no floor)";
 
 function SpacesTree({ h, id, select, query }: { h: Hierarchy; id: string | null; select: (id: string | null) => void; query: string }) {
   const { edited, propose, busy } = useTaxis();

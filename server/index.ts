@@ -76,8 +76,12 @@ async function loadRead(force: boolean): Promise<{ read: Read; cached: boolean }
   if (!force && cache && Date.now() - cache.at < CACHE_MS) return { read: cache.read, cached: true };
   // A forced read (Refresh, and Apply's checks) must reflect what Home Assistant
   // holds now, so it never reuses a read that started earlier.
-  if (force && inFlight) await inFlight.catch(() => {});
-  if (force) inFlight = null;
+  // Two forced reads at once share the one that starts after the earlier read.
+  if (force) {
+    const prev = inFlight;
+    if (prev) await prev.catch(() => {});
+    if (inFlight === prev) inFlight = null;
+  }
   inFlight ??= (async () => {
     const started = Date.now();
     const raw = await readRegistry(ha);
@@ -123,8 +127,11 @@ const dropSnapshot = () => {
 async function loadSnapshot(read: Read, force: boolean): Promise<Snapshot> {
   if (!ha || !rest) throw new Error("Home Assistant is not configured.");
   if (!force && refsCache && Date.now() - refsCache.at < CACHE_MS) return refsCache.snap;
-  if (force && refsInFlight) await refsInFlight.catch(() => {});
-  if (force) refsInFlight = null;
+  if (force) {
+    const prev = refsInFlight;
+    if (prev) await prev.catch(() => {});
+    if (refsInFlight === prev) refsInFlight = null;
+  }
   refsInFlight ??= (async () => {
     const started = Date.now();
     const generation = refsGeneration;
