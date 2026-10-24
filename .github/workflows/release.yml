@@ -1,0 +1,68 @@
+name: Release
+
+# Publishes the app images Home Assistant installs. Tag a release as v<version>,
+# where <version> matches taxis/config.yaml; Home Assistant then offers the update.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the app version
+        run: |
+          # The value of the top-level `version:` key, without quotes, comments or CR.
+          version=$(grep -E '^version:' taxis/config.yaml | head -n1 | sed -E 's/^version:[[:space:]]*//; s/[[:space:]]*#.*$//; s/\r$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/')
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match taxis/config.yaml version ${version}."
+            exit 1
+          fi
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: taxis/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            BUILD_VERSION=${{ env.VERSION }}
+            BUILD_ARCH=${{ matrix.arch }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ha-taxis-${{ matrix.arch }}:${{ env.VERSION }}
+            ghcr.io/${{ github.repository_owner }}/ha-taxis-${{ matrix.arch }}:latest

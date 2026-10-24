@@ -1,0 +1,26 @@
+# Home Assistant app manifest.
+# https://developers.home-assistant.io/docs/add-ons/configuration
+name: Taxis
+version: "0.1.0"
+slug: taxis
+description: See and organise your floors, areas, devices and entities as one hierarchy.
+url: https://github.com/davidcas77/ha-taxis
+arch:
+  - amd64
+  - aarch64
+# Floor and label registries exist from Home Assistant 2024.4.
+homeassistant: "2024.4.0"
+init: false
+startup: application
+boot: auto
+# Opens inside Home Assistant (sidebar panel). Home Assistant authenticates the
+# user; the app only ever sees requests that come through Ingress.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:file-tree-outline
+panel_title: Taxis
+# Grants SUPERVISOR_TOKEN access to Home Assistant's API, including the
+# WebSocket API. No long-lived token is ever needed.
+homeassistant_api: true
+# Prebuilt images, published by .github/workflows/release.yml.
+image: ghcr.io/davidcas77/ha-taxis-{arch}

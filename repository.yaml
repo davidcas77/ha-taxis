@@ -1,0 +1,5 @@
+# Home Assistant app repository manifest. Adding this repo's URL under
+# Settings → Apps → App store → ⋮ → Repositories makes the apps in it installable.
+name: Taxis
+url: https://github.com/davidcas77/ha-taxis
+maintainer: davidcas77

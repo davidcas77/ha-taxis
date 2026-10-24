@@ -1,0 +1,104 @@
+# Taxis
+
+Taxis shows your whole Home Assistant as one hierarchy: your home, its floors,
+the areas on each floor, and every device and entity in them, grouped by what
+they do (lights, motion, presence, climate, media, doors and windows, and more).
+
+It runs as a Home Assistant app and opens from the sidebar. It needs no token
+and no account, and it only talks to your own Home Assistant.
+
+> **Status: early, read-only.** Version 0.1 reads and shows. Editing areas and
+> floors, two-way sync and automations come in later versions. Nothing in this
+> version changes your Home Assistant.
+
+## Install
+
+Requires Home Assistant OS or a Supervised installation (the ones with
+**Settings → Apps**).
+
+1. Go to **Settings → Apps → App store**, open the **⋮** menu and choose
+   **Repositories**.
+2. Add `https://github.com/davidcas77/ha-taxis` and close the dialog.
+3. Find **Taxis** in the store, choose **Install**, then **Start**.
+4. Turn on **Show in sidebar** and open **Taxis**.
+
+## What it shows
+
+- **Spaces:** home → floors → areas, plus areas on no floor and entities that
+  are in no area at all.
+- **Each area:** its entities grouped by role, with live states, and the devices
+  assigned to it (including which hub they connect through).
+- **Search** across every entity, by name or entity id.
+- Config and diagnostic entities, and disabled or hidden ones, are hidden until
+  you ask for them.
+
+## Privacy
+
+- Taxis connects only to your Home Assistant, through the Supervisor's own
+  connection. It needs no long-lived token.
+- It only answers requests that come through Home Assistant (Ingress), so only
+  signed-in Home Assistant users can open it.
+- It keeps a snapshot of what it read in `/data/taxis.db` inside the app, for
+  the two-way sync that comes later. Nothing leaves your Home Assistant.
+
+## Development
+
+You need Node.js 22.13 or newer.
+
+```bash
+npm install
+npm run dev:mock
+```
+
+`dev:mock` starts a fake Home Assistant with an invented house
+(`scripts/mock-ha.ts`), the Taxis server, and the web UI at
+<http://localhost:5173>. No real Home Assistant is needed.
+
+To work against your own Home Assistant instead, copy `.env.example` to `.env`,
+fill in `HA_URL` and a long-lived `HA_TOKEN`, then run `npm run dev`. The token
+is full admin over your home: keep it in `.env`, which is never committed.
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev:mock` | Fake HA + server + UI, with hot reload |
+| `npm run dev` | Server + UI against the HA in `.env` |
+| `npm test` | Unit tests |
+| `npm run typecheck` | TypeScript |
+| `npm run build` | Builds `dist/` (UI and server) |
+| `docker build -f taxis/Dockerfile .` | Builds the app image |
+
+### Layout
+
+| Path | Contents |
+| --- | --- |
+| `repository.yaml` | Makes this repository an app repository for Home Assistant |
+| `taxis/` | The app: `config.yaml` (manifest), `Dockerfile`, `DOCS.md`, `CHANGELOG.md` |
+| `server/` | Node server (Hono): Home Assistant WebSocket client, SQLite store, API |
+| `shared/` | Types and logic shared by the server and the UI |
+| `web/` | The UI (React, Vite, Tailwind) |
+| `scripts/mock-ha.ts` | The fake Home Assistant |
+
+### Releasing
+
+1. Bump `version` in `taxis/config.yaml` and add a `taxis/CHANGELOG.md` entry.
+2. Tag the commit `v<version>` and push the tag.
+3. `.github/workflows/release.yml` runs the checks, builds the images for amd64
+   and aarch64 and publishes them to `ghcr.io`. Home Assistant then offers the
+   update.
+
+After the very first release, open the two `ha-taxis-*` packages on GitHub
+(**Packages**) and set them to **Public**: the Supervisor downloads images
+without signing in, and new packages start private. Until a release exists,
+installing from the repository fails because the image isn't published yet.
+
+The app image is always built from the repository root
+(`docker build -f taxis/Dockerfile .`), because it needs the whole source tree.
+The Supervisor never builds it; it downloads the published image named in
+`taxis/config.yaml`.
+
+To run the image outside Home Assistant (for testing), set `HOST=0.0.0.0` and
+point it at an instance with `HA_URL` and `HA_TOKEN`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
