@@ -5,6 +5,8 @@
 - Labels and categories move between groups by dragging only; the "Group…"
   menu on each row is gone. Areas move between floors the same way; the
   "Move to…" menu is gone.
+- An area's properties show its entity id code read-only, with a link to
+  Settings, where codes are changed.
 
 ## 0.4.0
 

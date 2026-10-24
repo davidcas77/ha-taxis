@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
@@ -374,96 +374,27 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
   );
 }
 
-// The area's entity id code, editable where the area is. It's a Taxis setting,
-// so it saves on its own and never joins the change list.
+// The area's entity id code, shown where the area is. It's changed in
+// Settings, with every other area's code, so the codes stay in one place.
 export function AreaCodeField({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
   const { naming, namingLoaded } = useTaxis();
-  // Saving before the settings arrive would write the defaults over them.
   if (!namingLoaded) return <p className="text-[13px] text-muted">Loading the naming settings…</p>;
-  return <AreaCodeForm key={area.id} h={h} area={area} naming={naming} go={go} />;
-}
-
-function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; naming: NamingSettings; go: (r: Route) => void }) {
-  const { saveNaming, notify } = useTaxis();
   const c = areaCodes(h, naming)[area.id];
-  const [value, setValue] = useState(c.custom ? c.code : "");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  // The server keeps codes only for areas that exist in Home Assistant, so an
-  // area created in Taxis and not applied yet has its code dropped.
-  const unapplied = area.id.startsWith("new:");
-  // What a successful save sent; checked against the saved result below.
-  const [sent, setSent] = useState<{ code: string | undefined } | null>(null);
-
-  // saveNaming resolves with no result, but it updates `naming` first. Compare
-  // what came back with what was sent: if they differ, don't say "Saved".
-  useEffect(() => {
-    if (!sent) return;
-    setSent(null);
-    if (naming.areaCodes[area.id] !== sent.code) {
-      setError("The code wasn't kept. Taxis only stores codes for areas that exist in Home Assistant.");
-      return;
-    }
-    setValue(sent.code ?? "");
-    notify({ tone: "ok", text: "Saved" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [naming, sent]);
-
-  const store = async (raw: string) => {
-    const next = slug(raw);
-    // Empty, or the detected code itself, means "use the detected one".
-    const areaCodesNext = { ...naming.areaCodes };
-    if (next && next !== c.detected) areaCodesNext[area.id] = next;
-    else delete areaCodesNext[area.id];
-    setBusy(true);
-    const err = await saveNaming({ ...naming, areaCodes: areaCodesNext });
-    setBusy(false);
-    setError(err);
-    if (err) return;
-    setSent({ code: areaCodesNext[area.id] });
-  };
-
-  const hasDetected = c.detectedCount > 0 && Boolean(c.detected);
   return (
-    <section className="flex flex-col gap-2 border-b border-line pb-4">
-      <h3 className="text-sm font-semibold">Entity id code</h3>
-      <Field
-        label="Code"
-        htmlFor="area-code"
-        hint={
-          <>
-            Entity ids in this area start with this. Found in {c.detectedCount} of {c.total} ids{c.custom ? " (set by you)" : ""}.
-            {unapplied && " Set the code once this area has been applied to Home Assistant."}
-          </>
-        }
-      >
-        <div className="flex gap-2">
-          <input
-            id="area-code"
-            className={`${inputClass} font-mono`}
-            value={value}
-            placeholder={c.detected}
-            disabled={unapplied}
-            onChange={(e) => setValue(e.target.value)}
-            onBlur={(e) => e.target.value.trim() && setValue(slug(e.target.value))}
-          />
-          <Button tone="primary" disabled={busy || unapplied} onClick={() => store(value)}>
-            Save
-          </Button>
-        </div>
-      </Field>
-      {error && <p className="text-xs text-danger">{error}</p>}
-      <p className="text-[11px] text-muted">Saved in Taxis right away; it doesn't change Home Assistant.</p>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        {c.custom && hasDetected && (
-          <button type="button" className="text-accent hover:underline" disabled={busy || unapplied} onClick={() => store("")}>
-            Use detected ({c.detected})
-          </button>
-        )}
+    <section className="flex flex-col gap-1.5 border-b border-line pb-4">
+      <div className="flex items-baseline gap-3">
+        <h3 className="text-sm font-semibold">Entity id code</h3>
+        <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[13px]">{c.code}</code>
+        <button type="button" className="ml-auto text-xs text-accent hover:underline" onClick={() => go({ page: "settings" })}>
+          Go to Settings to change
+        </button>
+      </div>
+      <p className="text-xs text-muted">
+        Entity ids in this area start with this. Found in {c.detectedCount} of {c.total} ids{c.custom ? " (set by you)" : ""}.{" "}
         <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: area.id }, tab: "naming" })}>
           Check this area's ids →
         </button>
-      </div>
+      </p>
     </section>
   );
 }
