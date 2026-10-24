@@ -3,7 +3,28 @@
 // Taxis uses and applies the registry edits it sends, keeping the same shapes
 // and ids Home Assistant would.
 
-import type { RawCategory, RawRegistry } from "../server/model/hierarchy.ts";
+import type { RawCategory, RawRegistry, RawState } from "../server/model/hierarchy.ts";
+import { ENTITY_ID_RE } from "../shared/changes.ts";
+
+type Config = Record<string, unknown>;
+type MockDashboard = { url_path: string | null; title: string; mode: "storage" | "yaml"; config: Config | null };
+
+// The registry plus the configs behind automations, scripts, scenes and
+// dashboards: what Taxis 0.4 reads (and rewrites) when it renames an entity.
+export type MockHome = RawRegistry & {
+  // UI automations as in automations.yaml, by their id.
+  automations: Record<string, Config>;
+  // Automations from YAML packages, by attributes.id. They have states but the
+  // config API answers 404 for them.
+  yamlAutomations: Record<string, Config>;
+  // scripts.yaml, by object_id.
+  scripts: Record<string, Config>;
+  // Scenes by id.
+  scenes: Record<string, Config>;
+  dashboards: MockDashboard[];
+  // Helpers set up in the UI.
+  configEntries: { entry_id: string; domain: string; title: string; entities: string[] }[];
+};
 
 type Spec = { area: string; floor: string | null; devices: { name: string; model: string; entities: [string, string, string?, string?][] }[] };
 
@@ -72,8 +93,8 @@ function friendlyName(entityId: string): string {
 
 const slug = (name: string) => name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "item";
 
-export function buildMockRegistry(): RawRegistry {
-  const reg: RawRegistry = {
+export function buildMockRegistry(): MockHome {
+  const reg: MockHome = {
     config: { location_name: "Demo House", version: "2026.10.3" },
     floors: [
       { floor_id: "ground", name: "Ground floor", level: 0 },
@@ -90,6 +111,12 @@ export function buildMockRegistry(): RawRegistry {
       helpers: [{ category_id: "cat_modes", name: "Modes" }],
     },
     states: [],
+    automations: {},
+    yamlAutomations: {},
+    scripts: {},
+    scenes: {},
+    dashboards: [],
+    configEntries: [],
   };
   for (const room of house) {
     const areaId = slug(room.area);
@@ -119,9 +146,93 @@ export function buildMockRegistry(): RawRegistry {
   for (const name of ["linkquality", "update_available", "power_outage_count"]) {
     reg.entities.push({ entity_id: `sensor.zigbee_hub_${name}`, device_id: "hub", platform: "mqtt", disabled_by: "integration", entity_category: "diagnostic" });
   }
-  // Things that live in no area, like in a real home.
-  reg.entities.push({ entity_id: "automation.lights_on_at_sunset", platform: "automation", categories: { automation: "cat_lighting" } });
-  reg.states.push({ entity_id: "automation.lights_on_at_sunset", state: "on", attributes: { friendly_name: "Lights on at sunset" } });
+  // Things that live in no area, like in a real home. Their configs sit beside
+  // the states, and the state carries the id that links the two.
+  const configured = (entityId: string, name: string, attrs: Record<string, unknown>, state = "on", extra: Partial<RawRegistry["entities"][number]> = {}) => {
+    reg.entities.push({ entity_id: entityId, platform: entityId.split(".")[0], ...extra });
+    reg.states.push({ entity_id: entityId, state, attributes: { friendly_name: name, ...attrs } } as RawState);
+  };
+
+  reg.automations["1700000000001"] = {
+    id: "1700000000001",
+    alias: "Lights on at sunset",
+    description: "",
+    triggers: [{ trigger: "sun", event: "sunset", offset: "-00:30:00" }],
+    conditions: [{ condition: "template", value_template: "{{ is_state('binary_sensor.living_presence', 'on') }}" }],
+    actions: [{ action: "light.turn_on", target: { entity_id: ["light.living_spots", "light.living_lamp"] } }],
+    mode: "single",
+  };
+  configured("automation.lights_on_at_sunset", "Lights on at sunset", { id: "1700000000001" }, "on", { categories: { automation: "cat_lighting" } });
+
+  reg.automations["1700000000002"] = {
+    id: "1700000000002",
+    alias: "Kitchen motion light",
+    description: "",
+    triggers: [{ trigger: "state", entity_id: "binary_sensor.kitchen_motion", to: "on" }],
+    conditions: [],
+    actions: [{ action: "light.turn_on", target: { entity_id: "light.kitchen_main" } }],
+    mode: "single",
+  };
+  configured("automation.kitchen_motion_light", "Kitchen motion light", { id: "1700000000002" });
+
+  reg.yamlAutomations["hall_night"] = {
+    id: "hall_night",
+    alias: "Hall night light",
+    triggers: [{ trigger: "state", entity_id: "binary_sensor.hall_motion", to: "on" }],
+    conditions: [],
+    actions: [{ action: "light.turn_on", target: { entity_id: "light.living_spots" } }],
+    mode: "single",
+  };
+  configured("automation.hall_night_light", "Hall night light", { id: "hall_night" });
+
+  reg.scripts["movie_time"] = {
+    alias: "Movie time",
+    sequence: [
+      { action: "media_player.turn_on", target: { entity_id: "media_player.living_tv" } },
+      { action: "light.turn_off", target: { entity_id: "light.living_lamp" } },
+    ],
+    mode: "single",
+  };
+  configured("script.movie_time", "Movie time", {}, "off");
+
+  reg.scenes["1700000000100"] = {
+    id: "1700000000100",
+    name: "Evening",
+    // Entity ids are object keys here, not values.
+    entities: { "light.living_spots": { state: "on", brightness: 120 }, "light.living_lamp": "off" },
+  };
+  configured("scene.evening", "Evening", { id: "1700000000100" }, "unknown");
+
+  // A legacy YAML group: a state only, no registry entry.
+  reg.states.push({ entity_id: "group.all_lamps", state: "off", attributes: { friendly_name: "All lamps", entity_id: ["light.living_lamp", "light.bedside_left"] } });
+
+  reg.dashboards = [
+    {
+      url_path: null,
+      title: "Home",
+      mode: "storage",
+      config: {
+        views: [
+          {
+            title: "Home",
+            cards: [
+              { type: "light", entity: "light.living_spots" },
+              { type: "entities", entities: ["sensor.living_temperature", { entity: "light.kitchen_main", name: "Kitchen" }] },
+              { type: "vertical-stack", cards: [{ type: "tile", entity: "light.living_spots" }, { type: "sensor", entity: "sensor.living_temperature" }] },
+            ],
+          },
+        ],
+      },
+    },
+    { url_path: "dashboard-kitchen", title: "Kitchen", mode: "storage", config: { views: [{ title: "Kitchen", cards: [{ type: "light", entity: "light.kitchen_main" }] }] } },
+    { url_path: "dashboard-wall", title: "Wall panel", mode: "yaml", config: { views: [{ title: "Wall", cards: [{ type: "light", entity: "light.living_spots" }] }] } },
+    // Auto-generated: nothing stored until someone edits it.
+    { url_path: "dashboard-auto", title: "Auto", mode: "storage", config: null },
+  ];
+
+  // The group helper behind light.downstairs.
+  reg.configEntries.push({ entry_id: "01JHELPERDOWNSTAIRS", domain: "group", title: "Downstairs", entities: ["light.living_spots", "light.kitchen_main", "light.kitchen_under_cabinet"] });
+
   reg.entities.push({ entity_id: "input_boolean.guest_mode", platform: "input_boolean" });
   reg.states.push({ entity_id: "input_boolean.guest_mode", state: "off", attributes: { friendly_name: "Guest mode" } });
   reg.devices.push({ id: "plug", name: "Spare plug", manufacturer: "Sonoff", model: "S60" });
@@ -132,8 +243,37 @@ export function buildMockRegistry(): RawRegistry {
 
 export type MockReply = { success: true; result: unknown } | { success: false; message: string };
 
+// True when `entityId` appears as a whole entity id anywhere in `value`: in a
+// string (templates too), an object key, or nested. "light.a" is not in
+// "light.a_2" or "xlight.a", but is in "states.light.a.state".
+export function containsEntityId(value: unknown, entityId: string): boolean {
+  const escaped = entityId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`);
+  const walk = (v: unknown): boolean => {
+    if (typeof v === "string") return re.test(v);
+    if (Array.isArray(v)) return v.some(walk);
+    if (v && typeof v === "object") return Object.entries(v).some(([k, x]) => re.test(k) || walk(x));
+    return false;
+  };
+  return walk(value);
+}
+
+// Entity ids of the states whose attributes.id is a key of `configs`, for the
+// configs that mention `entityId`.
+function entitiesMentioning(home: Partial<MockHome> & RawRegistry, domain: string, configs: Record<string, Config> | undefined, entityId: string): string[] {
+  const out: string[] = [];
+  for (const [key, config] of Object.entries(configs ?? {})) {
+    if (!containsEntityId(config, entityId)) continue;
+    // Scripts are keyed by object_id, the rest by the id in the state.
+    const own = domain === "script" ? `script.${key}` : home.states.find((s) => s.entity_id.startsWith(`${domain}.`) && (s.attributes as Config | undefined)?.id === key)?.entity_id;
+    if (own) out.push(own);
+  }
+  return out;
+}
+
 // One command, answered (and for writes, applied) like Home Assistant would.
-export function handleMock(reg: RawRegistry, type: string, p: Record<string, unknown>): MockReply {
+export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<string, unknown>): MockReply {
+  const home = reg as Partial<MockHome> & RawRegistry;
   const ok = (result: unknown): MockReply => ({ success: true, result });
   const fail = (message: string): MockReply => ({ success: false, message });
   const pick = <T extends object>(obj: T, keys: string[]) => {
@@ -234,9 +374,53 @@ export function handleMock(reg: RawRegistry, type: string, p: Record<string, unk
       const device = reg.devices.find((d) => d.id === p.device_id);
       return device ? ok(pick(device, ["name_by_user", "area_id", "labels", "disabled_by"])) : fail("Device not found");
     }
+    case "search/related": {
+      if (p.item_type !== "entity" || typeof p.item_id !== "string") return fail("Unsupported item");
+      const id = p.item_id;
+      const found: Record<string, string[]> = {};
+      const add = (key: string, ids: string[]) => {
+        if (ids.length) found[key] = ids;
+      };
+      add("automation", [
+        ...entitiesMentioning(home, "automation", home.automations, id),
+        ...entitiesMentioning(home, "automation", home.yamlAutomations, id),
+      ]);
+      add("script", entitiesMentioning(home, "script", home.scripts, id));
+      add("scene", entitiesMentioning(home, "scene", home.scenes, id));
+      add("group", reg.states.filter((s) => Array.isArray(s.attributes?.entity_id) && s.attributes.entity_id.includes(id)).map((s) => s.entity_id));
+      add("config_entry", (home.configEntries ?? []).filter((c) => c.entities.includes(id)).map((c) => c.entry_id));
+      return ok(found);
+    }
+    case "lovelace/dashboards/list":
+      return ok((home.dashboards ?? []).filter((d) => d.url_path !== null).map((d) => ({ id: String(d.url_path).replace(/-/g, "_"), url_path: d.url_path, mode: d.mode, title: d.title })));
+    case "lovelace/config": {
+      const dash = home.dashboards?.find((d) => d.url_path === (p.url_path ?? null));
+      if (!dash) return fail("Unknown dashboard");
+      return dash.config ? ok(structuredClone(dash.config)) : fail("No config found.");
+    }
+    case "lovelace/config/save": {
+      const dash = home.dashboards?.find((d) => d.url_path === (p.url_path ?? null));
+      if (!dash) return fail("Unknown dashboard");
+      if (dash.mode === "yaml") return fail("Dashboard is in YAML mode, can't save.");
+      dash.config = structuredClone(p.config) as Config;
+      return ok(null);
+    }
     case "config/entity_registry/update": {
       const entity = reg.entities.find((e) => e.entity_id === p.entity_id);
       if (!entity) return fail(`Entity not found: ${String(p.entity_id)}`);
+      // Rename first and check it before anything else changes, so a refusal
+      // leaves the entity as it was. HA touches only the registry entry and the
+      // state: automations, dashboards, groups, config entries and an area's
+      // temperature/humidity entity keep the old id.
+      if (typeof p.new_entity_id === "string" && p.new_entity_id !== entity.entity_id) {
+        const next = p.new_entity_id;
+        if (!ENTITY_ID_RE.test(next)) return fail("Invalid entity ID");
+        if (next.split(".")[0] !== entity.entity_id.split(".")[0]) return fail("New entity ID should be in the same domain");
+        if (reg.entities.some((e) => e.entity_id === next) || reg.states.some((s) => s.entity_id === next)) return fail("Entity with this ID is already registered");
+        const st = reg.states.find((s) => s.entity_id === entity.entity_id);
+        if (st) st.entity_id = next;
+        entity.entity_id = next;
+      }
       const { categories, ...rest } = p as { categories?: Record<string, string | null> };
       pick(entity, Object.keys(rest).filter((k) => ["name", "icon", "area_id", "labels", "hidden_by", "disabled_by"].includes(k)));
       // Home Assistant shows a new name in the live state too.
@@ -257,4 +441,31 @@ export function handleMock(reg: RawRegistry, type: string, p: Record<string, unk
     default:
       return fail(`Mock HA does not know ${type}.`);
   }
+}
+
+export type MockRestReply = { status: number; body: unknown };
+
+// HA's REST config API for automations, scripts and scenes. Simplification:
+// real HA creates a config on POST to a new id; here only existing ids can be
+// posted, and unknown ids answer 404.
+export function handleMockRest(home: MockHome, method: string, path: string, body: unknown): MockRestReply {
+  const m = /^\/api\/config\/(automation|script|scene)\/config\/([^/]+)$/.exec(path);
+  if (!m) return { status: 404, body: { message: "Not found" } };
+  if (method !== "GET" && method !== "POST") return { status: 405, body: { message: "Method not allowed" } };
+  const kind = m[1] as "automation" | "script" | "scene";
+  const id = decodeURIComponent(m[2]);
+  const store = { automation: home.automations, script: home.scripts, scene: home.scenes }[kind];
+  // YAML automations are not in `automations`, so they answer 404 too.
+  if (!Object.hasOwn(store, id)) return { status: 404, body: { message: "Resource not found" } };
+  if (method === "GET") return { status: 200, body: structuredClone(store[id]) };
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { status: 400, body: { message: "Message malformed" } };
+  store[id] = structuredClone(body) as Config;
+  // HA shows the new title in the state: the alias, or a scene's name.
+  const title = (body as Config)[kind === "scene" ? "name" : "alias"];
+  const state = home.states.find((s) =>
+    kind === "script" ? s.entity_id === `script.${id}` : s.entity_id.startsWith(`${kind}.`) && (s.attributes as Config | undefined)?.id === id,
+  );
+  if (state && typeof title === "string") state.attributes = { ...state.attributes, friendly_name: title };
+  return { status: 200, body: { result: "ok" } };
 }

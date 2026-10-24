@@ -146,7 +146,12 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
 
   const edited = useMemo(() => {
     const s = new Set<string>();
-    for (const c of changes) s.add(`${c.kind}:${c.targetId}`);
+    for (const c of changes) {
+      s.add(`${c.kind}:${c.targetId}`);
+      // The preview shows a renamed entity under its new id.
+      const renamed = c.kind === "entity" ? c.after.new_entity_id : undefined;
+      if (typeof renamed === "string") s.add(`entity:${renamed}`);
+    }
     return s;
   }, [changes]);
 

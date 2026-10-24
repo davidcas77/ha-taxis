@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 
+import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
-import type { AreaNode, EntityRole, Hierarchy } from "../../shared/types.ts";
+import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
 
@@ -175,8 +176,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           )}
         </div>
         <p className="text-xs text-muted">
-          Renaming entity ids to match these codes, with every automation, script, scene, group and dashboard that uses them updated in the same Apply, comes in the next version.
-          Until then the Naming tabs suggest display names you can apply, and show the entity ids they'd suggest.
+          Renaming an id also updates the automations, scripts, scenes and dashboards that use it, when you apply.
         </p>
       </div>
     </main>
@@ -184,23 +184,33 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
 }
 
 export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
-  const { naming, propose } = useTaxis();
+  const { naming, propose, busy } = useTaxis();
   const analysis = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
   const [filter, setFilter] = useState<NamingStatus | "all" | "suggested">("all");
   const [names, setNames] = useState<Record<string, string>>({});
+  const [ids, setIds] = useState<Record<string, string>>({});
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const total = analysis.rows.length;
-  const rows = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? Boolean(r.editable && r.suggestedName) : r.status === filter));
+  const rows = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? Boolean(r.editable && (r.suggestedName || r.suggestedId)) : r.status === filter));
   const nameFor = (id: string, fallback: string | null) => names[id] ?? fallback ?? "";
+  const idFor = (id: string, fallback: string | null) => ids[id] ?? fallback ?? "";
   const withName = analysis.rows.filter((r) => r.editable && r.suggestedName);
+  const withId = analysis.rows.filter((r) => r.editable && r.suggestedId);
+  const pickedRows = analysis.rows.filter((r) => r.editable && picked.has(r.entityId));
 
-  const add = async () => {
-    const inputs = [...picked]
-      .map((id) => analysis.rows.find((r) => r.entityId === id))
-      .filter((r): r is NonNullable<typeof r> => Boolean(r && r.editable))
-      .map((r) => ({ r, name: nameFor(r.entityId, r.suggestedName).trim() }))
-      .filter(({ r, name }) => name && name !== r.name)
-      .map(({ r, name }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { name } }));
+  // A name or an id is proposed only if it differs from what the entity has.
+  const nameInputs = pickedRows
+    .map((r) => ({ r, name: nameFor(r.entityId, r.suggestedName).trim() }))
+    .filter(({ r, name }) => name && name !== r.name)
+    .map(({ r, name }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { name } }));
+  // The server refuses another domain, so an id is valid only in the entity's own.
+  const idValid = (entityId: string, v: string) => ENTITY_ID_RE.test(v) && v.split(".")[0] === entityId.split(".")[0];
+  const idInputs = pickedRows
+    .map((r) => ({ r, id: idFor(r.entityId, r.suggestedId).trim() }))
+    .filter(({ r, id }) => id && id !== r.entityId && idValid(r.entityId, id))
+    .map(({ r, id }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { new_entity_id: id } }));
+
+  const add = async (inputs: ChangeInput[]) => {
     if (inputs.length === 0) return;
     if (await propose(inputs)) setPicked(new Set());
   };
@@ -230,7 +240,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
         {(
           [
             ["all", `All ${total}`],
-            ["suggested", `With a name suggestion ${withName.length}`],
+            ["suggested", `With a suggestion ${analysis.rows.filter((r) => r.editable && (r.suggestedName || r.suggestedId)).length}`],
             ...(Object.keys(STATUS) as NamingStatus[]).map((s) => [s, `${STATUS[s].label} ${analysis.counts[s]}`]),
           ] as [typeof filter, string][]
         ).map(([v, l]) => (
@@ -248,7 +258,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
               <th className="px-3 py-2 font-medium">Entity</th>
               <th className="px-3 py-2 font-medium">Id</th>
               <th className="px-3 py-2 font-medium">Suggested name</th>
-              <th className="px-3 py-2 font-medium">Suggested id (next version)</th>
+              <th className="px-3 py-2 font-medium">Suggested id</th>
             </tr>
           </thead>
           <tbody>
@@ -258,10 +268,10 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
               return (
                 <tr key={r.entityId} className="border-t border-line align-top">
                   <td className="px-3 py-1.5">
-                    {r.editable && r.suggestedName !== null && (
+                    {r.editable && (r.suggestedName !== null || r.suggestedId) && (
                       <input
                         type="checkbox"
-                        aria-label={`Rename ${r.name}`}
+                        aria-label={`Change ${r.name}`}
                         checked={picked.has(r.entityId)}
                         onChange={() =>
                           setPicked((p) => {
@@ -298,7 +308,23 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
                       <span className="text-xs text-muted">{r.editable ? "fits" : "can't be renamed (no unique id)"}</span>
                     )}
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-xs text-muted">{r.suggestedId ?? "fits"}</td>
+                  <td className="px-3 py-1.5 font-mono text-xs">
+                    {r.suggestedId && r.editable ? (
+                      <input
+                        aria-label={`New id for ${r.name}`}
+                        className={`${inputClass} font-mono`}
+                        value={idFor(r.entityId, r.suggestedId)}
+                        spellCheck={false}
+                        aria-invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
+                        onChange={(e) => {
+                          setIds((n) => ({ ...n, [r.entityId]: e.target.value }));
+                          setPicked((p) => new Set(p).add(r.entityId));
+                        }}
+                      />
+                    ) : (
+                      <span className="text-muted">{r.suggestedId ? "can't be renamed" : "fits"}</span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -308,8 +334,12 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
 
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={() => setPicked(new Set(withName.map((r) => r.entityId)))}>Select every name suggestion</Button>
-        <Button tone="primary" disabled={picked.size === 0} onClick={() => void add()}>
-          Add {picked.size || ""} name change{picked.size === 1 ? "" : "s"} to the list
+        <Button onClick={() => setPicked(new Set(withId.map((r) => r.entityId)))}>Select every id suggestion</Button>
+        <Button tone="primary" disabled={busy || nameInputs.length === 0} onClick={() => void add(nameInputs)}>
+          Add {nameInputs.length || ""} name change{nameInputs.length === 1 ? "" : "s"} to the list
+        </Button>
+        <Button tone="primary" disabled={busy || idInputs.length === 0} onClick={() => void add(idInputs)}>
+          Add {idInputs.length || ""} id rename{idInputs.length === 1 ? "" : "s"} to the list
         </Button>
         <span className="text-xs text-muted">
           For an entity of a device, Home Assistant may still put the device's name in front of the name you set. The preview shows what you set; after Apply, Taxis shows what Home

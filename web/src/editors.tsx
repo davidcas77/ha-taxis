@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { CATEGORY_SCOPES, type AreaNode, type ChangeInput, type DeviceItem, type EntityItem, type FloorNode, type Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
 import { AreaSelect, Button, Field, inputClass, LabelPicker, Panel } from "./ui.tsx";
@@ -52,6 +53,8 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
   const device = entity.deviceId ? h.devices[entity.deviceId] : undefined;
   const deviceArea = device?.areaId ? h.areas[device.areaId]?.name : null;
   const [name, setName] = useState(entity.customName ?? "");
+  const domain = entity.entityId.split(".")[0];
+  const [objectId, setObjectId] = useState(entity.entityId.slice(domain.length + 1));
   const [area, setArea] = useState<string | null>(entity.ownAreaId);
   const [labels, setLabels] = useState(entity.labels);
   const scope = entity.categoryScope;
@@ -73,7 +76,10 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
 
   const save = () => {
     if (!iconOk(icon.trim())) return setError("An icon looks like mdi:lightbulb.");
+    const newId = `${domain}.${objectId.trim()}`;
+    if (!ENTITY_ID_RE.test(newId)) return setError("An entity id uses lower-case letters, digits and single underscores.");
     const fields: Record<string, unknown> = {};
+    if (newId !== entity.entityId) fields.new_entity_id = newId;
     const newName = name.trim() || null;
     if (newName !== entity.customName) fields.name = newName;
     if (area !== entity.ownAreaId) fields.area_id = area;
@@ -97,6 +103,16 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
     >
       <Field label="Name" htmlFor="ent-name" hint="Leave empty to use the name Home Assistant gives it.">
         <input id="ent-name" className={inputClass} value={name} placeholder={entity.name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <Field
+        label="Entity id"
+        htmlFor="ent-id"
+        hint="Apply also updates the automations, scripts, scenes and dashboards that use it, and lists anything it can't update."
+      >
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-[13px] text-muted">{domain}.</span>
+          <input id="ent-id" className={`${inputClass} font-mono`} value={objectId} spellCheck={false} onChange={(e) => setObjectId(e.target.value)} />
+        </div>
       </Field>
       <Field
         label="Area"
