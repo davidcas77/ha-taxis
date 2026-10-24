@@ -5,8 +5,8 @@ the areas on each floor, and every device and entity in them, and lets you
 organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
-The pages along the top: **Areas**, **Devices**, **Entities**, **Labels**,
-**Categories**, **Changes** and **Settings**.
+The pages along the top: **Areas**, **Devices**, **Entities**, **Organize**,
+**Changes** and **Settings**.
 
 ## Areas
 
@@ -32,7 +32,15 @@ The pages along the top: **Areas**, **Devices**, **Entities**, **Labels**,
 Every device and every entity in one list each, with search and filters for
 area, role, manufacturer and label.
 
-## Labels and Categories
+## Organize
+
+Three panes: what you organize on the left (floors and areas, labels, the
+category lists, zones, devices, entities), its items in the middle, and the
+selected item's properties on the right. Floors and areas show as a tree: drag
+an area onto another floor (or use **Move to…**), and add floors and areas in
+place. An area's properties include its entity id code.
+
+### Labels and Categories
 
 Labels (on areas, devices and entities) and categories (on automations,
 scripts, scenes and helpers; Home Assistant keeps a separate list for each).
@@ -58,9 +66,23 @@ Under **Settings → Naming**:
 Each area's **Naming** tab checks its entities against these: which ids start
 with the area's code, which use an older code, which name another area, and
 which say no area at all. It suggests a display name for each; tick the ones
-you want and add them to the list of changes. It also shows the entity id each
-would get. Renaming entity ids, with every automation, script, scene and
-dashboard that uses them, comes in a later version.
+you want and add them to the list of changes. It also suggests entity ids,
+which can be added as renames the same way.
+
+## Renaming entity ids
+
+Change an entity's id in its editor, or from the Naming tab. On the
+**Changes** page each rename shows what uses the old id:
+
+- **Updated by Taxis:** automations, scripts and scenes made in Home
+  Assistant's UI, and dashboards Home Assistant stores. The old id is replaced
+  wherever it appears, templates included. Each one is rewritten only if it
+  hasn't changed since Taxis read it, and read back afterwards.
+- **Needs a hand:** automations, scripts and dashboards written in YAML, YAML
+  groups, and helpers that hold the entity in their options. Taxis lists each
+  one with what to do; it never edits YAML files.
+
+Home Assistant moves the entity's history to the new id itself.
 
 ## Changes and Apply
 
@@ -73,10 +95,11 @@ the **Changes** page. Apply:
 3. reads Home Assistant back and checks each one. A change that didn't take
    stays in the list with the reason.
 
-Taxis only edits what Home Assistant's own settings pages edit: names, areas,
-floors, labels, categories, icons, hidden and disabled. It never removes a
-device or an entity, never calls a service, and never changes what an
-automation does.
+Taxis only edits what Home Assistant's own settings pages edit: names, ids,
+areas, floors, labels, categories, icons, hidden and disabled. When it renames
+an entity it replaces the old id in automations, scripts, scenes and
+dashboards, and changes nothing else in them. It never removes a device or an
+entity, and never calls a service.
 
 ## Data and privacy
 
