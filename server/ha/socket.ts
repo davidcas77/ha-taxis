@@ -61,6 +61,15 @@ type Connection = {
 };
 
 const OPEN = 1;
+
+// Host only, for messages: never the full URL.
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "the configured address";
+  }
+}
 // Home Assistant counts failed WebSocket logins towards its IP ban. After a
 // rejected token, don't try again for a while.
 const AUTH_RETRY_MS = 60_000;
@@ -141,7 +150,7 @@ export class HaSocket {
       };
       socket.onerror = () => {
         clearTimeout(timer);
-        fail(new Error("The connection to Home Assistant failed."));
+        fail(new Error(`The connection to Home Assistant at ${hostOf(this.url)} failed.`));
       };
       socket.onclose = () => {
         clearTimeout(timer);
