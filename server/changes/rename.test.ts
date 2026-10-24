@@ -52,9 +52,8 @@ describe("renaming light.living_spots", () => {
       "Updated dashboard “Overview” (2 places)",
       "Needs a hand: Hall night light: Written in YAML: change it in the file.",
       "Needs a hand: Wall panel: Written in YAML: change it in the file.",
-      "Needs a hand: Downstairs: A YAML group: change it in the file.",
       "Needs a hand: Living all: A YAML group: change it in the file.",
-      "Needs a hand: Helper (01JHELPERDOWNSTAIRS): A helper: open its options in Home Assistant and pick the new entity.",
+      "Needs a hand: Downstairs: A helper: open its options in Home Assistant and pick the new entity.",
     ]);
     expect(appliedIds).toEqual([results[0].changeId]);
     expect(t.store.list()).toEqual([]);

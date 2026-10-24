@@ -231,6 +231,8 @@ export function buildMockRegistry(): MockHome {
   ];
 
   // The group helper behind light.downstairs.
+  // light.downstairs is that helper's entity, as HA links them.
+  Object.assign(reg.entities.find((e) => e.entity_id === "light.downstairs")!, { config_entry_id: "01JHELPERDOWNSTAIRS" });
   reg.configEntries.push({ entry_id: "01JHELPERDOWNSTAIRS", domain: "group", title: "Downstairs", entities: ["light.living_spots", "light.kitchen_main", "light.kitchen_under_cabinet"] });
 
   reg.entities.push({ entity_id: "input_boolean.guest_mode", platform: "input_boolean" });

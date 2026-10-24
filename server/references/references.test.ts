@@ -99,9 +99,8 @@ describe("references for light.living_spots", () => {
     expect(found.manual).toEqual([
       { kind: "automation", id: "automation.hall_night_light", name: "Hall night light", reason: "Written in YAML: change it in the file." },
       { kind: "dashboard", id: "dashboard-wall", name: "Wall panel", reason: "Written in YAML: change it in the file." },
-      { kind: "group", id: "light.downstairs", name: "Downstairs", reason: "A YAML group: change it in the file." },
       { kind: "group", id: "light.living_all", name: "Living all", reason: "A YAML group: change it in the file." },
-      { kind: "config_entry", id: "01JHELPERDOWNSTAIRS", name: "Helper (01JHELPERDOWNSTAIRS)", reason: "A helper: open its options in Home Assistant and pick the new entity." },
+      { kind: "config_entry", id: "01JHELPERDOWNSTAIRS", name: "Downstairs", reason: "A helper: open its options in Home Assistant and pick the new entity." },
     ]);
   });
 

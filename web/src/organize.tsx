@@ -392,12 +392,12 @@ function SpacesTree({ h, id, select, query }: { h: Hierarchy; id: string | null;
                     <Layers className="size-3.5 shrink-0 text-muted" aria-hidden />
                     <span className="truncate">{g.floor.name}</span>
                     {edited.has(`floor:${g.floor.id}`) && <EditedDot />}
-                    <span className="ml-auto whitespace-nowrap text-xs font-normal tabular-nums text-muted">{g.all} areas</span>
+                    <span className="ml-auto whitespace-nowrap text-xs font-normal tabular-nums text-muted">{g.all} area{g.all === 1 ? "" : "s"}</span>
                   </button>
                 ) : (
                   <span className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-[13px] font-semibold text-muted">
                     <span className="truncate">No floor</span>
-                    <span className="ml-auto whitespace-nowrap text-xs font-normal tabular-nums">{g.all} areas</span>
+                    <span className="ml-auto whitespace-nowrap text-xs font-normal tabular-nums">{g.all} area{g.all === 1 ? "" : "s"}</span>
                   </span>
                 )}
                 {g.floor && (
