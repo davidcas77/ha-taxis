@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0
+
+Rename entity ids, with everything that uses them.
+
+- **Entity id renames.** Change an entity's id in its editor, or turn the
+  Naming tab's suggested ids into renames. Each rename goes into the list of
+  changes like any other edit.
+- **References.** For each rename, the Changes page lists what uses the old
+  id. Apply updates automations, scripts and scenes made in the UI, and
+  dashboards Home Assistant stores, replacing the old id wherever it appears
+  (templates included). Each is rewritten only if it hasn't changed since Taxis
+  read it, then read back to check. An area's temperature or humidity sensor is
+  repointed too.
+- **Needs a hand.** What Taxis can't safely edit is listed with what to do:
+  automations, scripts and dashboards written in YAML, YAML groups, and
+  helpers whose options hold the entity.
+- **Organize.** One page with three panes: what you organize (floors and
+  areas, labels, the four category lists, zones, devices, entities), its
+  items, and the selected item's properties. Floors and areas are a tree:
+  drag an area onto another floor, or use "Move to…"; add floors and areas in
+  place. An area's entity id code can be edited there.
+- **Groups.** Labels and each category list can be split into groups, with
+  items moved between them by drag and drop. Groups are kept in Taxis only;
+  Home Assistant has none and nothing changes there.
+- **Lists.** Sortable column headers. In the label assign tool, entities that
+  already have the label are greyed out, with a filter for "Not added yet",
+  "Already added" and "Show all".
+
 ## 0.3.0
 
 Pages along the top, tabs in each area, and a naming scheme for the house.

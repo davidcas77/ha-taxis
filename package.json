@@ -1,6 +1,6 @@
 {
   "name": "ha-taxis",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Taxis: see and organise your Home Assistant floors, areas, devices and entities as one hierarchy.",
   "license": "MIT",

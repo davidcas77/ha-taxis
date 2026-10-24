@@ -1,35 +1,18 @@
 import { useState } from "react";
 
+import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { CATEGORY_SCOPES, type AreaNode, type ChangeInput, type DeviceItem, type EntityItem, type FloorNode, type Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
-import { AreaSelect, Button, Field, inputClass, LabelPicker, Panel } from "./ui.tsx";
+import { Actions, AreaSelect, Button, ConfirmAction, Field, inputClass, LabelPicker, Panel } from "./ui.tsx";
 
 // Editors. Each one shows the values as they'll be (pending changes included),
-// and "Add to changes" proposes only the fields that differ. Nothing reaches
+// and "Add to changes" appears once a field differs and proposes only those. Nothing reaches
 // Home Assistant until Apply on the Changes page.
 
 const SCOPE_NAMES: Record<string, string> = { automation: "Automations", script: "Scripts", scene: "Scenes", helpers: "Helpers" };
 
 const iconOk = (v: string) => v === "" || /^[a-z0-9]+:[a-z0-9-]+$/.test(v);
 const same = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
-
-function Actions({ onSave, onCancel, saving, error }: { onSave: () => void; onCancel: () => void; saving: boolean; error: string | null }) {
-  return (
-    <>
-      <Button tone="primary" onClick={onSave} disabled={saving}>
-        Add to changes
-      </Button>
-      <Button tone="ghost" onClick={onCancel}>
-        Cancel
-      </Button>
-      {error && (
-        <span role="alert" className="text-xs text-danger">
-          {error}
-        </span>
-      )}
-    </>
-  );
-}
 
 function useSubmit(onDone: () => void) {
   const { propose } = useTaxis();
@@ -52,6 +35,8 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
   const device = entity.deviceId ? h.devices[entity.deviceId] : undefined;
   const deviceArea = device?.areaId ? h.areas[device.areaId]?.name : null;
   const [name, setName] = useState(entity.customName ?? "");
+  const domain = entity.entityId.split(".")[0];
+  const [objectId, setObjectId] = useState(entity.entityId.slice(domain.length + 1));
   const [area, setArea] = useState<string | null>(entity.ownAreaId);
   const [labels, setLabels] = useState(entity.labels);
   const scope = entity.categoryScope;
@@ -71,18 +56,24 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
     );
   }
 
+  // What differs from the item now. Dirty means save would send a field.
+  const newId = `${domain}.${objectId.trim()}`;
+  const fields: Record<string, unknown> = {};
+  if (newId !== entity.entityId) fields.new_entity_id = newId;
+  const newName = name.trim() || null;
+  if (newName !== entity.customName) fields.name = newName;
+  if (area !== entity.ownAreaId) fields.area_id = area;
+  if (!same(labels, entity.labels)) fields.labels = labels;
+  if (scope && (category || null) !== (entity.categories[scope] ?? null)) fields.categories = { [scope]: category || null };
+  if (hidden !== entity.hidden) fields.hidden_by = hidden ? "user" : null;
+  if (disabled !== entity.disabled) fields.disabled_by = disabled ? "user" : null;
+  if ((icon.trim() || null) !== entity.icon) fields.icon = icon.trim() || null;
+  const dirty = Object.keys(fields).length > 0;
+
   const save = () => {
     if (!iconOk(icon.trim())) return setError("An icon looks like mdi:lightbulb.");
-    const fields: Record<string, unknown> = {};
-    const newName = name.trim() || null;
-    if (newName !== entity.customName) fields.name = newName;
-    if (area !== entity.ownAreaId) fields.area_id = area;
-    if (!same(labels, entity.labels)) fields.labels = labels;
-    if (scope && (category || null) !== (entity.categories[scope] ?? null)) fields.categories = { [scope]: category || null };
-    if (hidden !== entity.hidden) fields.hidden_by = hidden ? "user" : null;
-    if (disabled !== entity.disabled) fields.disabled_by = disabled ? "user" : null;
-    if ((icon.trim() || null) !== entity.icon) fields.icon = icon.trim() || null;
-    void submit(Object.keys(fields).length ? { kind: "entity", op: "update", targetId: entity.entityId, fields } : null);
+    if (!ENTITY_ID_RE.test(newId)) return setError("An entity id uses lower-case letters, digits and single underscores.");
+    void submit(dirty ? { kind: "entity", op: "update", targetId: entity.entityId, fields } : null);
   };
 
   return (
@@ -93,10 +84,20 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
         </>
       }
       onClose={onClose}
-      footer={<Actions onSave={save} onCancel={onClose} saving={saving} error={error} />}
+      actions={<Actions dirty={dirty} onSave={save} onCancel={onClose} saving={saving} error={error} />}
     >
       <Field label="Name" htmlFor="ent-name" hint="Leave empty to use the name Home Assistant gives it.">
         <input id="ent-name" className={inputClass} value={name} placeholder={entity.name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <Field
+        label="Entity id"
+        htmlFor="ent-id"
+        hint="Apply also updates the automations, scripts, scenes and dashboards that use it, and lists anything it can't update."
+      >
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-[13px] text-muted">{domain}.</span>
+          <input id="ent-id" className={`${inputClass} font-mono`} value={objectId} spellCheck={false} onChange={(e) => setObjectId(e.target.value)} />
+        </div>
       </Field>
       <Field
         label="Area"
@@ -176,17 +177,16 @@ export function DeviceEditor({ h, device, onClose }: { h: Hierarchy; device: Dev
   const { saving, error, submit } = useSubmit(onClose);
   const followers = device.entityIds.filter((id) => h.entities[id] && !h.entities[id].ownAreaId).length;
 
-  const save = () => {
-    const fields: Record<string, unknown> = {};
-    if ((name.trim() || null) !== device.customName) fields.name_by_user = name.trim() || null;
-    if (area !== device.areaId) fields.area_id = area;
-    if (!same(labels, device.labels)) fields.labels = labels;
-    if (disabled !== device.disabled) fields.disabled_by = disabled ? "user" : null;
-    void submit(Object.keys(fields).length ? { kind: "device", op: "update", targetId: device.id, fields } : null);
-  };
+  const fields: Record<string, unknown> = {};
+  if ((name.trim() || null) !== device.customName) fields.name_by_user = name.trim() || null;
+  if (area !== device.areaId) fields.area_id = area;
+  if (!same(labels, device.labels)) fields.labels = labels;
+  if (disabled !== device.disabled) fields.disabled_by = disabled ? "user" : null;
+  const dirty = Object.keys(fields).length > 0;
+  const save = () => void submit(dirty ? { kind: "device", op: "update", targetId: device.id, fields } : null);
 
   return (
-    <Panel title={device.name} onClose={onClose} footer={<Actions onSave={save} onCancel={onClose} saving={saving} error={error} />}>
+    <Panel title={device.name} onClose={onClose} actions={<Actions dirty={dirty} onSave={save} onCancel={onClose} saving={saving} error={error} />}>
       <p className="text-xs text-muted">{[device.manufacturer, device.model].filter(Boolean).join(" · ") || "Unknown model"}</p>
       <Field label="Name" htmlFor="dev-name" hint="Leave empty to use the name its integration gives it.">
         <input id="dev-name" className={inputClass} value={name} placeholder={device.name} onChange={(e) => setName(e.target.value)} />
@@ -204,28 +204,6 @@ export function DeviceEditor({ h, device, onClose }: { h: Hierarchy; device: Dev
   );
 }
 
-function DeleteButton({ what, onDelete }: { what: string; onDelete: () => void }) {
-  const [asking, setAsking] = useState(false);
-  if (!asking) {
-    return (
-      <Button tone="danger" className="ml-auto" onClick={() => setAsking(true)}>
-        Delete {what}
-      </Button>
-    );
-  }
-  return (
-    <span className="ml-auto flex items-center gap-2 text-xs">
-      Delete this {what}?
-      <Button tone="danger" onClick={onDelete}>
-        Yes, delete
-      </Button>
-      <Button tone="ghost" onClick={() => setAsking(false)}>
-        Keep it
-      </Button>
-    </span>
-  );
-}
-
 export function AreaEditor({ h, area, onClose, onDeleted }: { h: Hierarchy; area: AreaNode; onClose: () => void; onDeleted: () => void }) {
   const [name, setName] = useState(area.name);
   const [floor, setFloor] = useState<string>(area.floorId ?? "");
@@ -234,26 +212,40 @@ export function AreaEditor({ h, area, onClose, onDeleted }: { h: Hierarchy; area
   const { saving, error, setError, submit } = useSubmit(onClose);
   const del = useSubmit(onDeleted);
 
+  const fields: Record<string, unknown> = {};
+  if (name.trim() !== area.name) fields.name = name.trim();
+  if ((floor || null) !== area.floorId) fields.floor_id = floor || null;
+  if (!same(labels, area.labels)) fields.labels = labels;
+  if ((icon.trim() || null) !== area.icon) fields.icon = icon.trim() || null;
+  const dirty = Object.keys(fields).length > 0;
+
   const save = () => {
     if (!name.trim()) return setError("An area needs a name.");
     if (!iconOk(icon.trim())) return setError("An icon looks like mdi:sofa.");
-    const fields: Record<string, unknown> = {};
-    if (name.trim() !== area.name) fields.name = name.trim();
-    if ((floor || null) !== area.floorId) fields.floor_id = floor || null;
-    if (!same(labels, area.labels)) fields.labels = labels;
-    if ((icon.trim() || null) !== area.icon) fields.icon = icon.trim() || null;
-    void submit(Object.keys(fields).length ? { kind: "area", op: "update", targetId: area.id, fields } : null);
+    void submit(dirty ? { kind: "area", op: "update", targetId: area.id, fields } : null);
   };
 
   return (
     <Panel
       title={`Edit area: ${area.name}`}
       onClose={onClose}
-      footer={
-        <>
-          <Actions onSave={save} onCancel={onClose} saving={saving} error={error ?? del.error} />
-          <DeleteButton what="area" onDelete={() => void del.submit({ kind: "area", op: "delete", targetId: area.id })} />
-        </>
+      actions={
+        <Actions
+          dirty={dirty}
+          onSave={save}
+          onCancel={onClose}
+          saving={saving}
+          error={error ?? del.error}
+          danger={
+            <ConfirmAction
+              wide
+              question={`Delete area “${area.name}”? Its devices and entities end up with no area.`}
+              onConfirm={() => void del.submit({ kind: "area", op: "delete", targetId: area.id })}
+            >
+              Delete area
+            </ConfirmAction>
+          }
+        />
       }
     >
       <Field label="Name" htmlFor="area-name">
@@ -287,26 +279,40 @@ export function FloorEditor({ floor, onClose, onDeleted }: { floor: FloorNode; o
   const { saving, error, setError, submit } = useSubmit(onClose);
   const del = useSubmit(onDeleted);
 
+  const lv = level === "" ? null : Number(level);
+  const fields: Record<string, unknown> = {};
+  if (name.trim() !== floor.name) fields.name = name.trim();
+  if (lv !== floor.level) fields.level = lv;
+  if ((icon.trim() || null) !== floor.icon) fields.icon = icon.trim() || null;
+  const dirty = Object.keys(fields).length > 0;
+
   const save = () => {
     if (!name.trim()) return setError("A floor needs a name.");
     if (level !== "" && !/^-?\d+$/.test(level)) return setError("The level is a whole number: 0 for the ground floor, -1 below it.");
-    const fields: Record<string, unknown> = {};
-    if (name.trim() !== floor.name) fields.name = name.trim();
-    const lv = level === "" ? null : Number(level);
-    if (lv !== floor.level) fields.level = lv;
-    if ((icon.trim() || null) !== floor.icon) fields.icon = icon.trim() || null;
-    void submit(Object.keys(fields).length ? { kind: "floor", op: "update", targetId: floor.id, fields } : null);
+    void submit(dirty ? { kind: "floor", op: "update", targetId: floor.id, fields } : null);
   };
 
   return (
     <Panel
       title={`Edit floor: ${floor.name}`}
       onClose={onClose}
-      footer={
-        <>
-          <Actions onSave={save} onCancel={onClose} saving={saving} error={error ?? del.error} />
-          <DeleteButton what="floor" onDelete={() => void del.submit({ kind: "floor", op: "delete", targetId: floor.id })} />
-        </>
+      actions={
+        <Actions
+          dirty={dirty}
+          onSave={save}
+          onCancel={onClose}
+          saving={saving}
+          error={error ?? del.error}
+          danger={
+            <ConfirmAction
+              wide
+              question={`Delete floor “${floor.name}”? Its areas end up with no floor.`}
+              onConfirm={() => void del.submit({ kind: "floor", op: "delete", targetId: floor.id })}
+            >
+              Delete floor
+            </ConfirmAction>
+          }
+        />
       }
     >
       <Field label="Name" htmlFor="floor-name">

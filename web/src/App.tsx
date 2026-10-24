@@ -1,10 +1,10 @@
-import { AlertTriangle, CheckCircle2, Cpu, Folder, Layers, List, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, Tag } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, FolderTree, Layers, List, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings } from "lucide-react";
 import { useCallback, useState, type ReactNode } from "react";
 
 import { ChangesPage } from "./changes.tsx";
-import { CategoriesPage, LabelsPage } from "./labels.tsx";
 import { DevicesPage, EntitiesPage } from "./lists.tsx";
 import { SettingsPage } from "./naming.tsx";
+import { OrganizePage } from "./organize.tsx";
 import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx";
 import { TaxisProvider, useRoute, useTaxis, type Selection } from "./state.tsx";
 
@@ -55,11 +55,8 @@ function Shell() {
           <Tab active={route.page === "entities"} onClick={() => go({ page: "entities" })} icon={<List className="size-4" aria-hidden />}>
             Entities
           </Tab>
-          <Tab active={route.page === "labels"} onClick={() => go({ page: "labels", id: null })} icon={<Tag className="size-4" aria-hidden />}>
-            Labels
-          </Tab>
-          <Tab active={route.page === "categories"} onClick={() => go({ page: "categories", scope: null, id: null })} icon={<Folder className="size-4" aria-hidden />}>
-            Categories
+          <Tab active={route.page === "organize"} onClick={() => go(route.page === "organize" ? route : { page: "organize", type: "labels", id: null })} icon={<FolderTree className="size-4" aria-hidden />}>
+            Organize
           </Tab>
           <Tab active={route.page === "changes"} onClick={() => go({ page: "changes" })} icon={<ListChecks className="size-4" aria-hidden />}>
             Changes
@@ -128,10 +125,8 @@ function Shell() {
             "Nothing to show yet. Fix the problem above, then refresh."
           )}
         </div>
-      ) : route.page === "labels" ? (
-        <LabelsPage h={hierarchy} id={route.id} go={go} />
-      ) : route.page === "categories" ? (
-        <CategoriesPage h={hierarchy} scope={route.scope} id={route.id} go={go} />
+      ) : route.page === "organize" ? (
+        <OrganizePage h={hierarchy} type={route.type} id={route.id} go={go} />
       ) : route.page === "devices" ? (
         <DevicesPage h={hierarchy} />
       ) : route.page === "entities" ? (

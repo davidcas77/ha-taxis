@@ -9,10 +9,11 @@ backup first.
 It runs as a Home Assistant app and opens from the sidebar. It needs no token
 and no account, and it only talks to your own Home Assistant.
 
-> **Status: early.** Version 0.3 reads, shows and edits the organisation of
-> your home (areas, floors, labels, categories, names and where things are)
-> and checks it against a naming scheme you set. Renaming entity ids comes in
-> 0.4; creating automations later.
+> **Status: early.** Version 0.4 reads, shows and edits the organisation of
+> your home (areas, floors, labels, categories, names, entity ids and where
+> things are), checks it against a naming scheme you set, and renames entity
+> ids together with the automations, scripts, scenes and dashboards that use
+> them. Creating automations comes later.
 
 ## Install
 
@@ -44,9 +45,10 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   up Home Assistant, applies the list, and reads Home Assistant back to check
   each change.
 
-Taxis never removes a device or an entity, never calls a service, and never
-changes what an automation does. The commands it may send are fixed in
-`server/ha/socket.ts`.
+Taxis never removes a device or an entity and never calls a service. In
+automations, scripts, scenes and dashboards it only ever replaces a renamed
+entity id. The commands it may send are fixed in `server/ha/socket.ts` and
+`server/ha/rest.ts`.
 
 ## Privacy
 

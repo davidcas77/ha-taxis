@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
-import type { AreaNode, EntityRole, Hierarchy } from "../../shared/types.ts";
+import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
 
@@ -175,8 +176,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           )}
         </div>
         <p className="text-xs text-muted">
-          Renaming entity ids to match these codes, with every automation, script, scene, group and dashboard that uses them updated in the same Apply, comes in the next version.
-          Until then the Naming tabs suggest display names you can apply, and show the entity ids they'd suggest.
+          Renaming an id also updates the automations, scripts, scenes and dashboards that use it, when you apply.
         </p>
       </div>
     </main>
@@ -184,25 +184,57 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
 }
 
 export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
-  const { naming, propose } = useTaxis();
+  const { naming, propose, busy } = useTaxis();
   const analysis = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
   const [filter, setFilter] = useState<NamingStatus | "all" | "suggested">("all");
   const [names, setNames] = useState<Record<string, string>>({});
+  const [ids, setIds] = useState<Record<string, string>>({});
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const total = analysis.rows.length;
-  const rows = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? Boolean(r.editable && r.suggestedName) : r.status === filter));
+  const rows = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? Boolean(r.editable && (r.suggestedName || r.suggestedId)) : r.status === filter));
   const nameFor = (id: string, fallback: string | null) => names[id] ?? fallback ?? "";
-  const withName = analysis.rows.filter((r) => r.editable && r.suggestedName);
+  const idFor = (id: string, fallback: string | null) => ids[id] ?? fallback ?? "";
+  // Fields already added to the change list, per row. A row stays picked until
+  // neither of its suggestions (name, id) is left to add.
+  const [proposed, setProposed] = useState<Record<string, { name?: boolean; id?: boolean }>>({});
+  // Everything below acts on the visible rows only, so a hidden pick is never added.
+  const withName = rows.filter((r) => r.editable && r.suggestedName);
+  const withId = rows.filter((r) => r.editable && r.suggestedId);
+  const pickedRows = rows.filter((r) => r.editable && picked.has(r.entityId));
 
-  const add = async () => {
-    const inputs = [...picked]
-      .map((id) => analysis.rows.find((r) => r.entityId === id))
-      .filter((r): r is NonNullable<typeof r> => Boolean(r && r.editable))
-      .map((r) => ({ r, name: nameFor(r.entityId, r.suggestedName).trim() }))
-      .filter(({ r, name }) => name && name !== r.name)
-      .map(({ r, name }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { name } }));
+  // A name or an id is proposed only if it differs from what the entity has.
+  const nameInputs = pickedRows
+    .map((r) => ({ r, name: nameFor(r.entityId, r.suggestedName).trim() }))
+    .filter(({ r, name }) => name && name !== r.name && !proposed[r.entityId]?.name)
+    .map(({ r, name }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { name } }));
+  // The server refuses another domain, so an id is valid only in the entity's own.
+  const idValid = (entityId: string, v: string) => ENTITY_ID_RE.test(v) && v.split(".")[0] === entityId.split(".")[0];
+  const idInputs = pickedRows
+    .map((r) => ({ r, id: idFor(r.entityId, r.suggestedId).trim() }))
+    .filter(({ r, id }) => id && id !== r.entityId && idValid(r.entityId, id) && !proposed[r.entityId]?.id)
+    .map(({ r, id }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { new_entity_id: id } }));
+
+  // Rule: after a successful propose, only the rows proposed for this field are
+  // touched. A row leaves `picked` once it has nothing left to add; if its other
+  // suggestion is still pending it stays picked, with this field marked as done.
+  const add = async (field: "name" | "id", inputs: ChangeInput[]) => {
     if (inputs.length === 0) return;
-    if (await propose(inputs)) setPicked(new Set());
+    if (!(await propose(inputs))) return;
+    const other = new Set((field === "name" ? idInputs : nameInputs).map((i) => i.targetId));
+    const done = inputs.map((i) => i.targetId as string);
+    setProposed((p) => {
+      const n = { ...p };
+      for (const id of done) {
+        if (other.has(id)) n[id] = { ...n[id], [field]: true };
+        else delete n[id];
+      }
+      return n;
+    });
+    setPicked((p) => {
+      const n = new Set(p);
+      for (const id of done) if (!other.has(id)) n.delete(id);
+      return n;
+    });
   };
 
   if (total === 0) return <p className="text-[13px] text-muted">No entities in this area to check.</p>;
@@ -230,7 +262,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
         {(
           [
             ["all", `All ${total}`],
-            ["suggested", `With a name suggestion ${withName.length}`],
+            ["suggested", `With a suggestion ${analysis.rows.filter((r) => r.editable && (r.suggestedName || r.suggestedId)).length}`],
             ...(Object.keys(STATUS) as NamingStatus[]).map((s) => [s, `${STATUS[s].label} ${analysis.counts[s]}`]),
           ] as [typeof filter, string][]
         ).map(([v, l]) => (
@@ -248,7 +280,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
               <th className="px-3 py-2 font-medium">Entity</th>
               <th className="px-3 py-2 font-medium">Id</th>
               <th className="px-3 py-2 font-medium">Suggested name</th>
-              <th className="px-3 py-2 font-medium">Suggested id (next version)</th>
+              <th className="px-3 py-2 font-medium">Suggested id</th>
             </tr>
           </thead>
           <tbody>
@@ -258,10 +290,10 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
               return (
                 <tr key={r.entityId} className="border-t border-line align-top">
                   <td className="px-3 py-1.5">
-                    {r.editable && r.suggestedName !== null && (
+                    {r.editable && (r.suggestedName !== null || r.suggestedId) && (
                       <input
                         type="checkbox"
-                        aria-label={`Rename ${r.name}`}
+                        aria-label={`Change ${r.name}`}
                         checked={picked.has(r.entityId)}
                         onChange={() =>
                           setPicked((p) => {
@@ -291,6 +323,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
                         value={nameFor(r.entityId, r.suggestedName)}
                         onChange={(e) => {
                           setNames((n) => ({ ...n, [r.entityId]: e.target.value }));
+                          setProposed((p) => (p[r.entityId]?.name ? { ...p, [r.entityId]: { ...p[r.entityId], name: false } } : p));
                           setPicked((p) => new Set(p).add(r.entityId));
                         }}
                       />
@@ -298,7 +331,24 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
                       <span className="text-xs text-muted">{r.editable ? "fits" : "can't be renamed (no unique id)"}</span>
                     )}
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-xs text-muted">{r.suggestedId ?? "fits"}</td>
+                  <td className="px-3 py-1.5 font-mono text-xs">
+                    {r.suggestedId && r.editable ? (
+                      <input
+                        aria-label={`New id for ${r.name}`}
+                        className={`${inputClass} font-mono`}
+                        value={idFor(r.entityId, r.suggestedId)}
+                        spellCheck={false}
+                        aria-invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
+                        onChange={(e) => {
+                          setIds((n) => ({ ...n, [r.entityId]: e.target.value }));
+                          setProposed((p) => (p[r.entityId]?.id ? { ...p, [r.entityId]: { ...p[r.entityId], id: false } } : p));
+                          setPicked((p) => new Set(p).add(r.entityId));
+                        }}
+                      />
+                    ) : (
+                      <span className="text-muted">{r.suggestedId ? "can't be renamed" : "fits"}</span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -308,8 +358,12 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
 
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={() => setPicked(new Set(withName.map((r) => r.entityId)))}>Select every name suggestion</Button>
-        <Button tone="primary" disabled={picked.size === 0} onClick={() => void add()}>
-          Add {picked.size || ""} name change{picked.size === 1 ? "" : "s"} to the list
+        <Button onClick={() => setPicked(new Set(withId.map((r) => r.entityId)))}>Select every id suggestion</Button>
+        <Button tone="primary" disabled={busy || nameInputs.length === 0} onClick={() => void add("name", nameInputs)}>
+          Add {nameInputs.length || ""} name change{nameInputs.length === 1 ? "" : "s"} to the list
+        </Button>
+        <Button tone="primary" disabled={busy || idInputs.length === 0} onClick={() => void add("id", idInputs)}>
+          Add {idInputs.length || ""} id rename{idInputs.length === 1 ? "" : "s"} to the list
         </Button>
         <span className="text-xs text-muted">
           For an entity of a device, Home Assistant may still put the device's name in front of the name you set. The preview shows what you set; after Apply, Taxis shows what Home
@@ -317,5 +371,99 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
         </span>
       </div>
     </div>
+  );
+}
+
+// The area's entity id code, editable where the area is. It's a Taxis setting,
+// so it saves on its own and never joins the change list.
+export function AreaCodeField({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
+  const { naming, namingLoaded } = useTaxis();
+  // Saving before the settings arrive would write the defaults over them.
+  if (!namingLoaded) return <p className="text-[13px] text-muted">Loading the naming settings…</p>;
+  return <AreaCodeForm key={area.id} h={h} area={area} naming={naming} go={go} />;
+}
+
+function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; naming: NamingSettings; go: (r: Route) => void }) {
+  const { saveNaming, notify } = useTaxis();
+  const c = areaCodes(h, naming)[area.id];
+  const [value, setValue] = useState(c.custom ? c.code : "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // The server keeps codes only for areas that exist in Home Assistant, so an
+  // area created in Taxis and not applied yet has its code dropped.
+  const unapplied = area.id.startsWith("new:");
+  // What a successful save sent; checked against the saved result below.
+  const [sent, setSent] = useState<{ code: string | undefined } | null>(null);
+
+  // saveNaming resolves with no result, but it updates `naming` first. Compare
+  // what came back with what was sent: if they differ, don't say "Saved".
+  useEffect(() => {
+    if (!sent) return;
+    setSent(null);
+    if (naming.areaCodes[area.id] !== sent.code) {
+      setError("The code wasn't kept. Taxis only stores codes for areas that exist in Home Assistant.");
+      return;
+    }
+    setValue(sent.code ?? "");
+    notify({ tone: "ok", text: "Saved" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [naming, sent]);
+
+  const store = async (raw: string) => {
+    const next = slug(raw);
+    // Empty, or the detected code itself, means "use the detected one".
+    const areaCodesNext = { ...naming.areaCodes };
+    if (next && next !== c.detected) areaCodesNext[area.id] = next;
+    else delete areaCodesNext[area.id];
+    setBusy(true);
+    const err = await saveNaming({ ...naming, areaCodes: areaCodesNext });
+    setBusy(false);
+    setError(err);
+    if (err) return;
+    setSent({ code: areaCodesNext[area.id] });
+  };
+
+  const hasDetected = c.detectedCount > 0 && Boolean(c.detected);
+  return (
+    <section className="flex flex-col gap-2 border-b border-line pb-4">
+      <h3 className="text-sm font-semibold">Entity id code</h3>
+      <Field
+        label="Code"
+        htmlFor="area-code"
+        hint={
+          <>
+            Entity ids in this area start with this. Found in {c.detectedCount} of {c.total} ids{c.custom ? " (set by you)" : ""}.
+            {unapplied && " Set the code once this area has been applied to Home Assistant."}
+          </>
+        }
+      >
+        <div className="flex gap-2">
+          <input
+            id="area-code"
+            className={`${inputClass} font-mono`}
+            value={value}
+            placeholder={c.detected}
+            disabled={unapplied}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={(e) => e.target.value.trim() && setValue(slug(e.target.value))}
+          />
+          <Button tone="primary" disabled={busy || unapplied} onClick={() => store(value)}>
+            Save
+          </Button>
+        </div>
+      </Field>
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <p className="text-[11px] text-muted">Saved in Taxis right away; it doesn't change Home Assistant.</p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {c.custom && hasDetected && (
+          <button type="button" className="text-accent hover:underline" disabled={busy || unapplied} onClick={() => store("")}>
+            Use detected ({c.detected})
+          </button>
+        )}
+        <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: area.id }, tab: "naming" })}>
+          Check this area's ids →
+        </button>
+      </div>
+    </section>
   );
 }

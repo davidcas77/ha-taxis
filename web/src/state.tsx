@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import type { GroupSettings } from "../../shared/groups.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "../../shared/naming.ts";
 import type { Change, ChangeInput, Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
@@ -26,6 +27,16 @@ type TaxisState = {
   // True while propose() is storing changes and reloading the preview. Edits
   // made from the preview (labels in particular) wait for it.
   busy: boolean;
+  // Groups for labels and categories: Taxis only, saved right away, never in
+  // the change list.
+  groups: GroupSettings;
+  // False until the saved groups have arrived; edits wait for it.
+  groupsLoaded: boolean;
+  // True while a groups save is in flight; further edits wait for it.
+  groupsSaving: boolean;
+  // Applies the edit at once and rolls it back if the save fails. Resolves to
+  // an error text, or null when saved.
+  saveGroups: (edit: (g: GroupSettings) => GroupSettings) => Promise<string | null>;
   saveNaming: (n: NamingSettings) => Promise<string | null>;
   reload: (refresh?: boolean) => Promise<void>;
   propose: (input: ChangeInput | ChangeInput[]) => Promise<boolean>;
@@ -47,6 +58,11 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
   const [naming, setNaming] = useState<NamingSettings>(DEFAULT_NAMING);
   const [namingLoaded, setNamingLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [groups, setGroups] = useState<GroupSettings>({});
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
+  const [groupsSaving, setGroupsSaving] = useState(false);
+  const groupsRef = useRef<GroupSettings>({});
+  const groupsBusy = useRef(false);
   const proposing = useRef(false);
 
   useEffect(() => {
@@ -57,6 +73,40 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
       } else setError(r.error);
     });
   }, []);
+
+  useEffect(() => {
+    void api.groups().then((r) => {
+      if (r.ok) {
+        groupsRef.current = r.groups;
+        setGroups(r.groups);
+        setGroupsLoaded(true);
+      } else setError(r.error);
+    });
+  }, []);
+
+  const saveGroups = useCallback(async (edit: (g: GroupSettings) => GroupSettings) => {
+    // Never save before the real groups have arrived: defaults would overwrite them.
+    if (!groupsLoaded) return "The groups haven't loaded yet.";
+    if (groupsBusy.current) return "Still saving the last change. Try again in a moment.";
+    const before = groupsRef.current;
+    const next = edit(before);
+    if (next === before) return null;
+    groupsBusy.current = true;
+    setGroupsSaving(true);
+    groupsRef.current = next;
+    setGroups(next);
+    const r = await api.saveGroups(next);
+    groupsBusy.current = false;
+    setGroupsSaving(false);
+    if (!r.ok) {
+      groupsRef.current = before;
+      setGroups(before);
+      return r.error;
+    }
+    groupsRef.current = r.groups;
+    setGroups(r.groups);
+    return null;
+  }, [groupsLoaded]);
 
   const saveNaming = useCallback(async (n: NamingSettings) => {
     const r = await api.saveNaming(n);
@@ -146,13 +196,18 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
 
   const edited = useMemo(() => {
     const s = new Set<string>();
-    for (const c of changes) s.add(`${c.kind}:${c.targetId}`);
+    for (const c of changes) {
+      s.add(`${c.kind}:${c.targetId}`);
+      // The preview shows a renamed entity under its new id.
+      const renamed = c.kind === "entity" ? c.after.new_entity_id : undefined;
+      if (typeof renamed === "string") s.add(`entity:${renamed}`);
+    }
     return s;
   }, [changes]);
 
   const value = useMemo(
-    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, saveNaming, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
-    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, saveNaming, reload, propose, removeChange, clearChanges],
+    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, saveNaming, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
+    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, saveNaming, reload, propose, removeChange, clearChanges],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -167,12 +222,18 @@ export function useTaxis(): TaxisState {
 export const AREA_TABS = ["overview", "entities", "devices", "naming", "labels", "health"] as const;
 export type AreaTab = (typeof AREA_TABS)[number];
 
+// What the Organize page lists. In "spaces" an id reads "floor:<id>" or "area:<id>".
+// Home Assistant keeps one category list per scope, so each scope is its own
+// type.
+export const ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers", "zones", "devices", "entities"] as const;
+export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
+const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
+
 export type Route =
   | { page: "areas"; sel: Selection; tab: AreaTab }
   | { page: "devices" }
   | { page: "entities" }
-  | { page: "labels"; id: string | null }
-  | { page: "categories"; scope: string | null; id: string | null }
+  | { page: "organize"; type: OrganizeType; id: string | null }
   | { page: "changes" }
   | { page: "settings" };
 
@@ -204,10 +265,17 @@ export function parseHash(hash: string): Route {
       return { page: "devices" };
     case "entities":
       return { page: "entities" };
+    case "organize":
+      // Floors and areas used to be two types; their links still open the tree.
+      if (a === "floors" || a === "areas") return { page: "organize", type: "spaces", id: b ? `${a === "floors" ? "floor" : "area"}:${b}` : null };
+      return { page: "organize", type: isOrganizeType(a) ? a : "labels", id: b || null };
+    // Older bookmarks: #labels/<id> and #categories/<scope>/<id>.
     case "labels":
-      return { page: "labels", id: a || null };
-    case "categories":
-      return { page: "categories", scope: a || null, id: b || null };
+      return { page: "organize", type: "labels", id: a || null };
+    case "categories": {
+      const type = `category-${a}`;
+      return isOrganizeType(type) ? { page: "organize", type, id: b || null } : { page: "organize", type: "category-automation", id: null };
+    }
     case "floor":
       return a ? { page: "areas", sel: { kind: "floor", id: a }, tab: "overview" } : HOME;
     case "area":
@@ -229,10 +297,8 @@ export function toHash(r: Route): string {
     case "devices":
     case "entities":
       return `#${r.page}`;
-    case "labels":
-      return r.id ? `#labels/${enc(r.id)}` : "#labels";
-    case "categories":
-      return r.scope ? (r.id ? `#categories/${enc(r.scope)}/${enc(r.id)}` : `#categories/${enc(r.scope)}`) : "#categories";
+    case "organize":
+      return r.id ? `#organize/${r.type}/${enc(r.id)}` : `#organize/${r.type}`;
     case "areas": {
       const s = r.sel;
       if (s.kind === "area") return r.tab === "overview" ? `#area/${enc(s.id)}` : `#area/${enc(s.id)}/${r.tab}`;

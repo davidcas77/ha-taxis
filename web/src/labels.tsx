@@ -1,124 +1,17 @@
-import { Tag, Folder, Trash2 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
-import { CATEGORY_SCOPES, type CategoryItem, type CategoryScope, type ChangeInput, type EntityItem, type Hierarchy, type LabelItem } from "../../shared/types.ts";
+import { type CategoryItem, type CategoryScope, type ChangeInput, type EntityItem, type Hierarchy, type LabelItem } from "../../shared/types.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
 import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
-import { useTaxis, type Route } from "./state.tsx";
-import { Button, EditedDot, Field, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
+import { useTaxis } from "./state.tsx";
+import { Actions, Button, ConfirmAction, Field, HeaderBar, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
 
-// Labels and Categories pages. Labels go on areas, devices and entities;
-// categories file automations, scripts, scenes and helpers, one list per kind
-// as in Home Assistant. Both have an assign tool to put many entities in or
-// take them out at once.
+// Label and category details, shown in the Organize page's right pane. Labels
+// go on areas, devices and entities; categories file automations, scripts,
+// scenes and helpers, one list per kind as in Home Assistant. Both have an
+// assign tool to put many entities in or take them out at once.
 
-export function LabelsPage({ h, id, go }: { h: Hierarchy; id: string | null; go: (r: Route) => void }) {
-  const usage = useMemo(() => labelUsage(h), [h]);
-  const label = id ? h.labels[id] : undefined;
-  return (
-    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <aside className="flex max-h-[50vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-line bg-surface p-3 md:max-h-none md:w-80 md:border-r md:border-b-0">
-        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-          <Tag className="size-4 text-accent" aria-hidden /> Labels
-        </h2>
-        <p className="text-xs text-muted">On areas, devices and entities. Automations can target a label, so everything with it is acted on.</p>
-        <ul className="flex flex-col">
-          {Object.values(h.labels)
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((l) => (
-              <ListRow key={l.id} active={label?.id === l.id} onClick={() => go({ page: "labels", id: l.id })} count={usage.get(l.id)?.total ?? 0} edited={`label:${l.id}`}>
-                <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ background: labelColor(l.color) ?? "var(--off)" }} />
-                {l.name}
-              </ListRow>
-            ))}
-        </ul>
-        <NewForm kind="label" onCreated={() => {}} />
-      </aside>
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
-        {label ? (
-          <LabelDetail key={label.id} h={h} label={label} usage={usage.get(label.id)} onDeleted={() => go({ page: "labels", id: null })} />
-        ) : (
-          <Intro title="Labels" text="Pick a label to rename it, change its color, and add it to entities or take it off, many at a time." />
-        )}
-      </main>
-    </div>
-  );
-}
-
-export function CategoriesPage({ h, scope: scopeParam, id, go }: { h: Hierarchy; scope: string | null; id: string | null; go: (r: Route) => void }) {
-  const scope: CategoryScope = (CATEGORY_SCOPES as readonly string[]).includes(scopeParam ?? "") ? (scopeParam as CategoryScope) : "automation";
-  const catUsage = useMemo(() => categoryUsage(h), [h]);
-  const category = id ? h.categories[scope].find((c) => c.id === id) : undefined;
-  return (
-    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <aside className="flex max-h-[50vh] shrink-0 flex-col gap-3 overflow-y-auto border-b border-line bg-surface p-3 md:max-h-none md:w-80 md:border-r md:border-b-0">
-        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-          <Folder className="size-4 text-accent" aria-hidden /> Categories
-        </h2>
-        <p className="text-xs text-muted">Home Assistant keeps a separate list for each of these.</p>
-        <div role="tablist" aria-label="Category lists" className="flex flex-wrap gap-1">
-          {CATEGORY_SCOPES.map((s) => (
-            <button
-              key={s}
-              type="button"
-              role="tab"
-              aria-selected={scope === s}
-              onClick={() => go({ page: "categories", scope: s, id: null })}
-              className={`rounded-md px-2 py-1 text-xs ${scope === s ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-sunken"}`}
-            >
-              {SCOPE_NAMES[s]}
-            </button>
-          ))}
-        </div>
-        <ul className="flex flex-col">
-          {h.categories[scope].length === 0 && <li className="px-2 py-1 text-xs text-muted">No categories for {SCOPE_NAMES[scope].toLowerCase()} yet.</li>}
-          {h.categories[scope].map((c) => (
-            <ListRow key={c.id} active={category?.id === c.id} onClick={() => go({ page: "categories", scope, id: c.id })} count={catUsage.get(`${scope}:${c.id}`)?.length ?? 0} edited={`category:${c.id}`}>
-              {c.name}
-            </ListRow>
-          ))}
-        </ul>
-        <NewForm kind="category" scope={scope} onCreated={() => {}} />
-      </aside>
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
-        {category ? (
-          <CategoryDetail key={category.id} h={h} category={category} members={catUsage.get(`${scope}:${category.id}`) ?? []} onDeleted={() => go({ page: "categories", scope, id: null })} />
-        ) : (
-          <Intro title="Categories" text="Pick a category to rename it and file automations, scripts, scenes or helpers under it, many at a time." />
-        )}
-      </main>
-    </div>
-  );
-}
-
-function Intro({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="flex max-w-[68ch] flex-col gap-2">
-      <h1 className="text-xl font-semibold">{title}</h1>
-      <p className="text-[13px] text-muted">{text}</p>
-    </div>
-  );
-}
-
-function ListRow({ active, onClick, count, edited, children }: { active: boolean; onClick: () => void; count: number; edited: string; children: ReactNode }) {
-  const { edited: changed } = useTaxis();
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        aria-current={active ? "true" : undefined}
-        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${active ? "bg-accent-soft font-medium text-accent" : "hover:bg-sunken"}`}
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-2 truncate">{children}</span>
-        {changed.has(edited) && <EditedDot />}
-        <span className="text-xs tabular-nums text-muted">{count}</span>
-      </button>
-    </li>
-  );
-}
-
-function NewForm({ kind, scope, onCreated }: { kind: "label" | "category"; scope?: CategoryScope; onCreated: () => void }) {
+export function NewForm({ kind, scope, onCreated }: { kind: "label" | "category"; scope?: CategoryScope; onCreated: () => void }) {
   const { propose } = useTaxis();
   const [name, setName] = useState("");
   const [color, setColor] = useState("");
@@ -170,9 +63,9 @@ function NewForm({ kind, scope, onCreated }: { kind: "label" | "category"; scope
 
 const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-type LabelUse = { total: number; areas: string[]; devices: string[]; entities: string[] };
+export type LabelUse = { total: number; areas: string[]; devices: string[]; entities: string[] };
 
-function labelUsage(h: Hierarchy): Map<string, LabelUse> {
+export function labelUsage(h: Hierarchy): Map<string, LabelUse> {
   const m = new Map<string, LabelUse>();
   const get = (id: string) => {
     let u = m.get(id);
@@ -185,7 +78,7 @@ function labelUsage(h: Hierarchy): Map<string, LabelUse> {
   return m;
 }
 
-function categoryUsage(h: Hierarchy): Map<string, EntityItem[]> {
+export function categoryUsage(h: Hierarchy): Map<string, EntityItem[]> {
   const m = new Map<string, EntityItem[]>();
   for (const e of Object.values(h.entities)) {
     for (const [scope, id] of Object.entries(e.categories)) {
@@ -196,34 +89,28 @@ function categoryUsage(h: Hierarchy): Map<string, EntityItem[]> {
   return m;
 }
 
-function DetailHeader({ title, onDelete, deleteWhat, children }: { title: ReactNode; onDelete: () => void; deleteWhat: string; children?: ReactNode }) {
-  const [asking, setAsking] = useState(false);
+// Title on the left, the same actions as every editor on the right.
+function DetailHeader({
+  title,
+  children,
+  actions,
+}: {
+  title: ReactNode;
+  children?: ReactNode;
+  actions: ReactNode;
+}) {
   return (
-    <div className="flex flex-wrap items-start gap-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+    <HeaderBar>
+      <div className="flex min-w-[8rem] flex-1 flex-col gap-1">
         <h1 className="flex items-center gap-2 text-xl font-semibold">{title}</h1>
         {children}
       </div>
-      {asking ? (
-        <span className="flex items-center gap-2 text-xs">
-          Delete this {deleteWhat}? Home Assistant removes it from everything it's on.
-          <Button tone="danger" onClick={onDelete}>
-            Yes, delete
-          </Button>
-          <Button tone="ghost" onClick={() => setAsking(false)}>
-            Keep it
-          </Button>
-        </span>
-      ) : (
-        <Button tone="danger" onClick={() => setAsking(true)}>
-          <Trash2 className="size-3.5" aria-hidden /> Delete {deleteWhat}
-        </Button>
-      )}
-    </div>
+      {actions}
+    </HeaderBar>
   );
 }
 
-function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; label: LabelItem; usage: LabelUse | undefined; onDeleted: () => void }) {
+export function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; label: LabelItem; usage: LabelUse | undefined; onDeleted: () => void }) {
   const { propose } = useTaxis();
   const [name, setName] = useState(label.name);
   const [color, setColor] = useState(label.color ?? "");
@@ -231,17 +118,27 @@ function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; label: Labe
   const [description, setDescription] = useState(label.description ?? "");
   const [error, setError] = useState<string | null>(null);
 
+  const fields: Record<string, unknown> = {};
+  if (name.trim() !== label.name) fields.name = name.trim();
+  if ((color || null) !== label.color) fields.color = color || null;
+  if ((icon.trim() || null) !== label.icon) fields.icon = icon.trim() || null;
+  if ((description.trim() || null) !== label.description) fields.description = description.trim() || null;
+  const dirty = Object.keys(fields).length > 0;
+
   const save = async () => {
     if (!name.trim()) return setError("A label needs a name.");
     if (icon.trim() && !/^[a-z0-9]+:[a-z0-9-]+$/.test(icon.trim())) return setError("An icon looks like mdi:tag.");
-    const fields: Record<string, unknown> = {};
-    if (name.trim() !== label.name) fields.name = name.trim();
-    if ((color || null) !== label.color) fields.color = color || null;
-    if ((icon.trim() || null) !== label.icon) fields.icon = icon.trim() || null;
-    if ((description.trim() || null) !== label.description) fields.description = description.trim() || null;
-    if (Object.keys(fields).length === 0) return setError("Nothing has changed yet.");
+    if (!dirty) return;
     setError(null);
     await propose({ kind: "label", op: "update", targetId: label.id, fields });
+  };
+  // No panel to close here: Cancel puts the fields back as they were.
+  const revert = () => {
+    setName(label.name);
+    setColor(label.color ?? "");
+    setIcon(label.icon ?? "");
+    setDescription(label.description ?? "");
+    setError(null);
   };
 
   const removeFrom = (kind: "area" | "device" | "entity", id: string, current: string[]): ChangeInput => ({
@@ -254,10 +151,23 @@ function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; label: Labe
   return (
     <div className="flex flex-col gap-6">
       <DetailHeader
-        deleteWhat="label"
-        onDelete={async () => {
-          if (await propose({ kind: "label", op: "delete", targetId: label.id })) onDeleted();
-        }}
+        actions={
+          <Actions
+            dirty={dirty}
+            onSave={() => void save()}
+            onCancel={dirty ? revert : undefined}
+            error={error}
+            danger={
+              <ConfirmAction
+                wide
+                question={`Delete label “${label.name}”? Home Assistant removes it from everything it's on.`}
+                onConfirm={() => void propose({ kind: "label", op: "delete", targetId: label.id }).then((ok) => ok && onDeleted())}
+              >
+                Delete label
+              </ConfirmAction>
+            }
+          />
+        }
         title={
           <>
             <span aria-hidden className="size-3 rounded-full" style={{ background: labelColor(label.color) ?? "var(--off)" }} />
@@ -290,25 +200,19 @@ function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; label: Labe
         <Field label="Description" htmlFor="label-desc">
           <input id="label-desc" className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
-        <div className="flex items-center gap-2 sm:col-span-2">
-          <Button tone="primary" onClick={() => void save()}>
-            Add to changes
-          </Button>
-          {error && (
-            <span role="alert" className="text-xs text-danger">
-              {error}
-            </span>
-          )}
-        </div>
       </section>
 
       <Members
         title="Areas"
+        what="area"
+        from={label.name}
         items={(usage?.areas ?? []).map((id) => ({ id, name: h.areas[id]?.name ?? id }))}
         onRemove={(id) => void propose(removeFrom("area", id, h.areas[id].labels))}
       />
       <Members
         title="Devices"
+        what="device"
+        from={label.name}
         items={(usage?.devices ?? []).map((id) => ({ id, name: h.devices[id]?.name ?? id }))}
         onRemove={(id) => void propose(removeFrom("device", id, h.devices[id].labels))}
       />
@@ -324,30 +228,50 @@ function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; label: Labe
   );
 }
 
-function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarchy; category: CategoryItem; members: EntityItem[]; onDeleted: () => void }) {
+export function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarchy; category: CategoryItem; members: EntityItem[]; onDeleted: () => void }) {
   const { propose } = useTaxis();
   const [name, setName] = useState(category.name);
   const [icon, setIcon] = useState(category.icon ?? "");
   const [error, setError] = useState<string | null>(null);
   const scope = category.scope;
 
+  const fields: Record<string, unknown> = {};
+  if (name.trim() !== category.name) fields.name = name.trim();
+  if ((icon.trim() || null) !== category.icon) fields.icon = icon.trim() || null;
+  const dirty = Object.keys(fields).length > 0;
+
   const save = async () => {
     if (!name.trim()) return setError("A category needs a name.");
-    const fields: Record<string, unknown> = {};
-    if (name.trim() !== category.name) fields.name = name.trim();
-    if ((icon.trim() || null) !== category.icon) fields.icon = icon.trim() || null;
-    if (Object.keys(fields).length === 0) return setError("Nothing has changed yet.");
+    if (!dirty) return;
     setError(null);
     await propose({ kind: "category", op: "update", scope, targetId: category.id, fields });
+  };
+  const revert = () => {
+    setName(category.name);
+    setIcon(category.icon ?? "");
+    setError(null);
   };
 
   return (
     <div className="flex flex-col gap-6">
       <DetailHeader
-        deleteWhat="category"
-        onDelete={async () => {
-          if (await propose({ kind: "category", op: "delete", scope, targetId: category.id })) onDeleted();
-        }}
+        actions={
+          <Actions
+            dirty={dirty}
+            onSave={() => void save()}
+            onCancel={dirty ? revert : undefined}
+            error={error}
+            danger={
+              <ConfirmAction
+                wide
+                question={`Delete category “${category.name}”? Its ${SCOPE_NAMES[scope].toLowerCase()} end up with no category.`}
+                onConfirm={() => void propose({ kind: "category", op: "delete", scope, targetId: category.id }).then((ok) => ok && onDeleted())}
+              >
+                Delete category
+              </ConfirmAction>
+            }
+          />
+        }
         title={category.name}
       >
         <p className="text-[13px] text-muted">
@@ -361,16 +285,6 @@ function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarchy; cat
         <Field label="Icon" htmlFor="cat-icon">
           <input id="cat-icon" className={inputClass} value={icon} placeholder="mdi:…" onChange={(e) => setIcon(e.target.value)} />
         </Field>
-        <div className="flex items-center gap-2 sm:col-span-2">
-          <Button tone="primary" onClick={() => void save()}>
-            Add to changes
-          </Button>
-          {error && (
-            <span role="alert" className="text-xs text-danger">
-              {error}
-            </span>
-          )}
-        </div>
       </section>
       <AssignTool
         h={h}
@@ -384,7 +298,7 @@ function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarchy; cat
   );
 }
 
-function Members({ title, items, onRemove }: { title: string; items: { id: string; name: string; sub?: string }[]; onRemove: (id: string) => void }) {
+function Members({ title, what, from, items, onRemove }: { title: string; what: string; from: string; items: { id: string; name: string; sub?: string }[]; onRemove: (id: string) => void }) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-sm font-semibold">
@@ -400,9 +314,9 @@ function Members({ title, items, onRemove }: { title: string; items: { id: strin
                 {i.name}
                 {i.sub && <code className="ml-2 font-mono text-xs text-muted">{i.sub}</code>}
               </span>
-              <Button tone="ghost" onClick={() => onRemove(i.id)}>
+              <ConfirmAction tone="ghost" question={`Take label “${from}” off ${what} “${i.name}”?`} onConfirm={() => onRemove(i.id)}>
                 Remove
-              </Button>
+              </ConfirmAction>
             </li>
           ))}
         </ul>

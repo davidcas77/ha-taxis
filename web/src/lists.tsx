@@ -6,6 +6,7 @@ import type { Hierarchy } from "../../shared/types.ts";
 import { DeviceEditor, EntityEditor } from "./editors.tsx";
 import { BulkBar, ROLE_ICONS, ROLE_LABEL } from "./spaces.tsx";
 import { useTaxis } from "./state.tsx";
+import { SortHeader, useSort } from "./table.tsx";
 import { EditedDot, LabelChip, inputClass } from "./ui.tsx";
 
 // Every device, and every entity, in one filterable list.
@@ -52,11 +53,25 @@ export function EntitiesPage({ h }: { h: Hierarchy }) {
         .filter((e) => (area === "*" ? true : area === "" ? !e.areaId : e.areaId === area))
         .filter((e) => (role ? e.role === role : true))
         .filter((e) => (label ? e.labels.includes(label) : true))
-        .filter((e) => !q || e.name.toLowerCase().includes(q) || e.entityId.includes(q))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .filter((e) => !q || e.name.toLowerCase().includes(q) || e.entityId.includes(q)),
     [h, extra, area, role, label, q],
   );
-  const shown = rows.slice(0, LIMIT);
+  const {
+    rows: sorted,
+    sort,
+    toggle: toggleSort,
+  } = useSort(
+    rows,
+    {
+      name: (e) => e.name,
+      area: (e) => (e.areaId ? h.areas[e.areaId]?.name : null),
+      role: (e) => ROLE_LABEL[e.role],
+      labels: (e) => e.labels.map((l) => h.labels[l]?.name ?? "").filter(Boolean).sort().join(", "),
+      state: (e) => e.state,
+    },
+    { key: "name", dir: "asc" },
+  );
+  const shown = sorted.slice(0, LIMIT);
   const toggle = (id: string) =>
     setPicked((p) => {
       const n = new Set(p);
@@ -109,11 +124,11 @@ export function EntitiesPage({ h }: { h: Hierarchy }) {
             <thead className="bg-sunken text-left text-xs text-muted">
               <tr>
                 <th className="w-8 px-3 py-2" />
-                <th className="px-3 py-2 font-medium">Name</th>
-                <th className="px-3 py-2 font-medium">Area</th>
-                <th className="px-3 py-2 font-medium">Role</th>
-                <th className="px-3 py-2 font-medium">Labels</th>
-                <th className="px-3 py-2 font-medium">State</th>
+                <SortHeader label="Name" k="name" sort={sort} onToggle={toggleSort} />
+                <SortHeader label="Area" k="area" sort={sort} onToggle={toggleSort} />
+                <SortHeader label="Role" k="role" sort={sort} onToggle={toggleSort} />
+                <SortHeader label="Labels" k="labels" sort={sort} onToggle={toggleSort} />
+                <SortHeader label="State" k="state" sort={sort} onToggle={toggleSort} />
               </tr>
             </thead>
             <tbody>
@@ -162,8 +177,22 @@ export function DevicesPage({ h }: { h: Hierarchy }) {
   const rows = Object.values(h.devices)
     .filter((d) => (area === "*" ? true : area === "" ? !d.areaId : d.areaId === area))
     .filter((d) => (maker ? d.manufacturer === maker : true))
-    .filter((d) => !q || d.name.toLowerCase().includes(q) || (d.model ?? "").toLowerCase().includes(q))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((d) => !q || d.name.toLowerCase().includes(q) || (d.model ?? "").toLowerCase().includes(q));
+  const {
+    rows: sorted,
+    sort,
+    toggle: toggleSort,
+  } = useSort(
+    rows,
+    {
+      name: (d) => d.name,
+      model: (d) => [d.manufacturer, d.model].filter(Boolean).join(" · "),
+      area: (d) => (d.areaId ? h.areas[d.areaId]?.name : null),
+      via: (d) => (d.viaDeviceId ? h.devices[d.viaDeviceId]?.name : null),
+      entities: (d) => d.entityIds.length,
+    },
+    { key: "name", dir: "asc" },
+  );
   return (
     <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
       <div className="flex flex-col gap-4">
@@ -186,15 +215,15 @@ export function DevicesPage({ h }: { h: Hierarchy }) {
           <table className="w-full text-[13px]">
             <thead className="bg-sunken text-left text-xs text-muted">
               <tr>
-                <th className="px-3 py-2 font-medium">Device</th>
-                <th className="px-3 py-2 font-medium">Model</th>
-                <th className="px-3 py-2 font-medium">Area</th>
-                <th className="px-3 py-2 font-medium">Connected via</th>
-                <th className="px-3 py-2 font-medium">Entities</th>
+                <SortHeader label="Device" k="name" sort={sort} onToggle={toggleSort} />
+                <SortHeader label="Model" k="model" sort={sort} onToggle={toggleSort} />
+                <SortHeader label="Area" k="area" sort={sort} onToggle={toggleSort} />
+                <SortHeader label="Connected via" k="via" sort={sort} onToggle={toggleSort} />
+                <SortHeader label="Entities" k="entities" sort={sort} onToggle={toggleSort} />
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, LIMIT).map((d) => (
+              {sorted.slice(0, LIMIT).map((d) => (
                 <tr key={d.id} className="border-t border-line hover:bg-sunken">
                   <td className="px-3 py-1.5">
                     <button type="button" className="flex items-center gap-1.5 text-left hover:text-accent" onClick={() => setEditing(d.id)}>

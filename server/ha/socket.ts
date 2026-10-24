@@ -7,8 +7,12 @@
 //
 // What may be sent is enforced here rather than by convention: command() sends
 // only READ_COMMANDS; write() sends only WRITE_COMMANDS, and only the Apply step
-// calls write(). Nothing can call services, delete devices or entities, or touch
-// automations' contents.
+// calls write(). Services are never called and nothing is ever deleted: devices
+// and entities are only updated. Registry edits are most of the writes. Besides
+// those, Apply edits the contents of dashboards (lovelace/config/save) and, via
+// the REST client in rest.ts (which has its own fixed allowlist), of
+// automations, scripts and scenes, and only to replace a renamed entity id in
+// them.
 
 export const READ_COMMANDS = new Set([
   "get_config",
@@ -19,6 +23,14 @@ export const READ_COMMANDS = new Set([
   "config/entity_registry/list",
   "config/label_registry/list",
   "config/category_registry/list",
+  // Where an entity is used, for renames: {item_type: "entity", item_id}.
+  "search/related",
+  // Dashboards other than the default one, and a dashboard's stored config.
+  "lovelace/dashboards/list",
+  "lovelace/config",
+  // Whether a dashboard is stored ("storage") or written in YAML ("yaml"); with
+  // no url_path, the default dashboard.
+  "lovelace/info",
 ]);
 
 export function assertReadCommand(type: string): void {
@@ -27,8 +39,8 @@ export function assertReadCommand(type: string): void {
   }
 }
 
-// Registry edits the change list can make. Entities and devices are only ever
-// updated, never removed.
+// Edits Apply can make: registry edits from the change list (entities and
+// devices are only ever updated, never removed), and dashboard contents.
 export const WRITE_COMMANDS = new Set([
   "config/floor_registry/create",
   "config/floor_registry/update",
@@ -44,6 +56,8 @@ export const WRITE_COMMANDS = new Set([
   "config/category_registry/delete",
   "config/device_registry/update",
   "config/entity_registry/update",
+  // Dashboard contents, only ever to replace a renamed entity id in them.
+  "lovelace/config/save",
 ]);
 
 export function assertWriteCommand(type: string): void {
@@ -75,7 +89,7 @@ type Incoming = {
   id?: number;
   success?: boolean;
   result?: unknown;
-  error?: { message?: string };
+  error?: { code?: string; message?: string };
   message?: string;
 };
 
@@ -173,7 +187,7 @@ export class HaSocket {
           conn.pending.delete(msg.id);
           clearTimeout(p.timer);
           if (msg.success) p.resolve(msg.result);
-          else p.reject(new Error(msg.error?.message ?? "Home Assistant returned an error."));
+          else p.reject(Object.assign(new Error(msg.error?.message ?? "Home Assistant returned an error."), { code: msg.error?.code }));
         }
       };
       socket.onerror = () => {

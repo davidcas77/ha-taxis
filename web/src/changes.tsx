@@ -1,11 +1,11 @@
 import { CheckCircle2, CircleAlert, ShieldCheck, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import type { ApplyResult, Change, Hierarchy } from "../../shared/types.ts";
+import type { ApplyResult, Change, Hierarchy, RenameRefs } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
 import { useTaxis } from "./state.tsx";
-import { Button } from "./ui.tsx";
+import { Button, ConfirmAction } from "./ui.tsx";
 
 // The list of changes, in words, and Apply.
 
@@ -16,7 +16,8 @@ function nameOf(h: Hierarchy, c: Change): string {
   const fromBefore = c.before.name ?? c.before.name_by_user;
   switch (c.kind) {
     case "entity":
-      return h.entities[c.targetId]?.name ?? c.targetId;
+      // A rename is previewed under its new id.
+      return h.entities[String(c.after.new_entity_id ?? "")]?.name ?? h.entities[c.targetId]?.name ?? c.targetId;
     case "device":
       return h.devices[c.targetId]?.name ?? String(fromBefore ?? c.targetId);
     case "area":
@@ -37,7 +38,8 @@ function title(h: Hierarchy, c: Change): string {
 }
 
 // One field, in words: "Area: Kitchen → Attic".
-function describe(h: Hierarchy, c: Change, key: string): { label: string; from: string; to: string } {
+function describe(h: Hierarchy, c: Change, key: string): { label: string; from: ReactNode; to: ReactNode } {
+  const mono = (v: unknown) => <span className="font-mono text-xs">{String(v)}</span>;
   const areaName = (v: unknown) => (v ? h.areas[String(v)]?.name ?? String(v) : c.kind === "entity" ? "same as its device" : "no area");
   const floorName = (v: unknown) => (v ? h.floors.find((f) => f.id === v)?.name ?? String(v) : "no floor");
   const labelNames = (v: unknown) => ((v as string[] | undefined) ?? []).map((id) => h.labels[id]?.name ?? id);
@@ -65,6 +67,12 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
         .map(([s, id]) => `${SCOPE_NAMES[s] ?? s}: ${id ? h.categories[s as keyof Hierarchy["categories"]]?.find((x) => x.id === id)?.name ?? id : "none"}`);
       return { label: "Category", from: "", to: parts.join(", ") };
     }
+    case "new_entity_id":
+      return {
+        label: "Entity id",
+        from: b ? mono(b) : "",
+        to: mono(a),
+      };
     case "hidden_by":
       return { label: "Hidden", from: b ? "yes" : "no", to: a ? "yes" : "no" };
     case "disabled_by":
@@ -76,6 +84,8 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
 
 export function ChangesPage({ h }: { h: Hierarchy }) {
   const { changes, version, removeChange, clearChanges, reload } = useTaxis();
+  const hasRename = changes.some((c) => c.kind === "entity" && c.after.new_entity_id !== undefined);
+  const refs = useReferences(hasRename, version);
   const [step, setStep] = useState<"list" | "confirm" | "confirmNoBackup" | "applying">("list");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ outcome: ApplyResult; titles: Map<number, string> } | null>(null);
@@ -129,9 +139,14 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                   <li key={c.id} className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2.5">
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 text-[13px] font-medium">{title(h, c)}</span>
-                      <Button tone="ghost" aria-label={`Remove: ${title(h, c)}`} onClick={() => void removeChange(c.id)}>
+                      <ConfirmAction
+                        tone="ghost"
+                        ariaLabel={`Remove: ${title(h, c)}`}
+                        question="Remove this change? Nothing was applied to Home Assistant."
+                        onConfirm={() => void removeChange(c.id)}
+                      >
                         <Trash2 className="size-3.5" aria-hidden /> Remove
-                      </Button>
+                      </ConfirmAction>
                     </div>
                     {keys.length > 0 && (
                       <dl className="grid grid-cols-[minmax(5rem,auto)_1fr] gap-x-3 gap-y-0.5 text-xs">
@@ -151,6 +166,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                       </dl>
                     )}
                     {c.op === "delete" && <p className="text-xs text-muted">Home Assistant removes it from everything it's on.</p>}
+                    {c.kind === "entity" && c.after.new_entity_id !== undefined && <RenameRefsView refs={refs} changeId={c.id} />}
                   </li>
                 );
               })}
@@ -161,15 +177,24 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                 <Button tone="primary" onClick={() => setStep("confirm")}>
                   Apply {changes.length} change{changes.length === 1 ? "" : "s"} to Home Assistant
                 </Button>
-                <Button tone="ghost" onClick={() => void clearChanges()}>
+                <ConfirmAction
+                  tone="ghost"
+                  question={`Discard all ${changes.length} change${changes.length === 1 ? "" : "s"}? Nothing was applied to Home Assistant.`}
+                  onConfirm={() => void clearChanges()}
+                >
                   Discard all
-                </Button>
+                </ConfirmAction>
               </div>
             )}
             {step === "confirm" && (
               <Confirm onYes={() => void apply(false)} onNo={() => setStep("list")} yes="Back up and apply">
                 Taxis first makes a backup of Home Assistant, then applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home Assistant back to check each one.
                 If the backup fails, nothing is changed.
+                {hasRename && (
+                  <span className="mt-2 block">
+                    Renamed entities: Taxis also rewrites the old id in the automations, scripts, scenes and dashboards listed, each only if it hasn't changed since Taxis read it.
+                  </span>
+                )}
               </Confirm>
             )}
             {step === "confirmNoBackup" && (
@@ -182,6 +207,68 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
         )}
       </div>
     </main>
+  );
+}
+
+type RefsState = { loading: boolean; error: string | null; renames: RenameRefs[] };
+
+// Where each pending rename's old id is used. Fetched when the list changes;
+// an answer for an older list is ignored.
+function useReferences(active: boolean, version: string): RefsState {
+  const [state, setState] = useState<RefsState>({ loading: false, error: null, renames: [] });
+  useEffect(() => {
+    if (!active) return;
+    let stale = false;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    void api.references().then((r) => {
+      if (stale) return;
+      setState(r.ok ? { loading: false, error: null, renames: r.renames } : { loading: false, error: r.error, renames: [] });
+    });
+    return () => {
+      stale = true;
+    };
+  }, [active, version]);
+  return state;
+}
+
+const REF_KINDS: Record<string, string> = { automation: "automation", script: "script", scene: "scene", dashboard: "dashboard" };
+
+function RenameRefsView({ refs, changeId }: { refs: RefsState; changeId: number }) {
+  if (refs.error) return <p className="text-xs text-muted">{refs.error}</p>;
+  const mine = refs.renames.find((r) => r.changeId === changeId);
+  if (!mine) return refs.loading ? <p className="text-xs text-muted">Looking for what uses it…</p> : null;
+  const counts = new Map<string, number>();
+  for (const s of mine.sites) counts.set(s.kind, (counts.get(s.kind) ?? 0) + 1);
+  const summary = [...counts].map(([k, n]) => `${n} ${REF_KINDS[k] ?? k}${n === 1 ? "" : "s"}`).join(", ");
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      {mine.sites.length > 0 ? (
+        <details>
+          <summary className="cursor-pointer text-muted">Updates: {summary}</summary>
+          <ul className="mt-1 flex flex-col gap-0.5 pl-4">
+            {mine.sites.map((s) => (
+              <li key={`${s.kind}:${s.id}`}>
+                <span className="text-muted">{s.kind}</span> {s.name} <span className="text-muted">({s.count})</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : (
+        <p className="text-muted">Nothing else uses it that Taxis can update.</p>
+      )}
+      {mine.manual.length > 0 && (
+        <div className="text-warn">
+          <p>Needs a hand: {mine.manual.length}</p>
+          <ul className="pl-4">
+            {mine.manual.map((m) => (
+              <li key={`${m.kind}:${m.id}`}>
+                {m.name}: {m.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -226,6 +313,13 @@ function Outcome({ result, onClose }: { result: { outcome: ApplyResult; titles: 
             <span>
               {titles.get(r.changeId) ?? `Change ${r.changeId}`}
               {!r.ok && <span className="block text-xs text-muted">{r.message} It stays in the list.</span>}
+              {r.details && r.details.length > 0 && (
+                <ul className="mt-0.5 list-disc pl-4 text-xs text-muted">
+                  {r.details.map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
+                </ul>
+              )}
             </span>
           </li>
         ))}

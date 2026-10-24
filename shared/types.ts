@@ -144,7 +144,8 @@ export type ChangeOp = "create" | "update" | "delete";
 
 // The fields each kind of change may set, named as Home Assistant names them.
 export type ChangeFields = {
-  entity: { name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null };
+  // new_entity_id renames the entity; Apply also updates what uses the old id.
+  entity: { new_entity_id?: string; name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null };
   device: { name_by_user?: string | null; area_id?: string | null; labels?: string[]; disabled_by?: "user" | null };
   area: { name?: string; floor_id?: string | null; icon?: string | null; labels?: string[] };
   floor: { name?: string; level?: number | null; icon?: string | null };
@@ -176,8 +177,26 @@ export type ChangeInput = {
 
 export type ApplyResult = {
   backup: { made: boolean; name?: string; reason?: string };
-  results: { changeId: number; ok: boolean; message: string }[];
+  // details: for a rename, what was updated and what still needs a hand.
+  results: { changeId: number; ok: boolean; message: string; details?: string[] }[];
 };
+
+// ---------------------------------------------------------------------------
+// References: where an entity id is used, for renames.
+// ---------------------------------------------------------------------------
+
+// Places Taxis updates itself: automations, scripts and scenes made in the UI,
+// and dashboards stored by Home Assistant (not YAML).
+export type RefKind = "automation" | "script" | "scene" | "dashboard";
+export type RefSite = { kind: RefKind; id: string; name: string; count: number };
+
+// Places Taxis can only point at: YAML automations and scripts, YAML
+// dashboards, YAML groups, helpers set up in an integration's options.
+export type ManualRef = { kind: string; id: string; name: string; reason: string };
+
+export type RenameRefs = { changeId: number; oldId: string; newId: string; sites: RefSite[]; manual: ManualRef[] };
+
+export type ReferencesResponse = { ok: true; renames: RenameRefs[] } | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
 // API responses.
@@ -199,5 +218,7 @@ export type HierarchyResponse =
 export type ChangesResponse = { ok: true; changes: Change[]; version: string } | { ok: false; error: string };
 
 export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
+
+export type GroupsResponse = { ok: true; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
 
 export type ApplyResponse = ({ ok: true } & ApplyResult) | { ok: false; error: string };
