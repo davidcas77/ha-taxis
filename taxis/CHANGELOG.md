@@ -21,6 +21,9 @@ Rename entity ids, with everything that uses them.
   items, and the selected item's properties. Floors and areas are a tree:
   drag an area onto another floor, or use "Move to…"; add floors and areas in
   place. An area's entity id code can be edited there.
+- **Groups.** Labels and each category list can be split into groups, with
+  items moved between them by drag and drop. Groups are kept in Taxis only;
+  Home Assistant has none and nothing changes there.
 - **Lists.** Sortable column headers. In the label assign tool, entities that
   already have the label are greyed out, with a filter for "Not added yet",
   "Already added" and "Show all".

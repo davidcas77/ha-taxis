@@ -1,8 +1,10 @@
 import { ChevronLeft, Layers, Search } from "lucide-react";
 import { useMemo, useState, type DragEvent, type ReactNode } from "react";
 
+import { listKeyFor } from "../../shared/groups.ts";
 import type { CategoryScope, EntityItem, FloorNode, Hierarchy } from "../../shared/types.ts";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
+import { GroupedList } from "./groups.tsx";
 import { CategoryDetail, LabelDetail, NewForm, categoryUsage, labelUsage } from "./labels.tsx";
 import { AreaCodeField } from "./naming.tsx";
 import { ROLE_LABEL } from "./spaces.tsx";
@@ -233,7 +235,13 @@ function ItemsPane({ h, type, id, select }: { h: Hierarchy; type: OrganizeType; 
         <h1 className="text-sm font-semibold">{TYPE_NAME[type]}</h1>
         <SearchInput value={query} onChange={setQuery} label={`Find in ${TYPE_NAME[type].toLowerCase()}`} />
       </div>
-      {type === "spaces" ? <SpacesTree h={h} id={id} select={select} query={query} /> : <ItemsTable h={h} type={type} id={id} select={select} query={query} />}
+      {type === "spaces" ? (
+        <SpacesTree h={h} id={id} select={select} query={query} />
+      ) : listKeyFor(type) ? (
+        <GroupedItems h={h} type={type} id={id} select={select} query={query} />
+      ) : (
+        <ItemsTable h={h} type={type} id={id} select={select} query={query} />
+      )}
       <NewFooter type={type} />
     </div>
   );
@@ -244,6 +252,17 @@ function NewFooter({ type }: { type: OrganizeType }) {
   const scope = categoryScope(type);
   if (type !== "labels" && !scope) return null;
   return <div className="border-t border-line p-2.5">{scope ? <NewForm kind="category" scope={scope} onCreated={() => {}} /> : <NewForm kind="label" onCreated={() => {}} />}</div>;
+}
+
+// Labels and categories: sections by group (groups are a Taxis-only view).
+function GroupedItems({ h, type, id, select, query }: { h: Hierarchy; type: OrganizeType; id: string | null; select: (id: string | null) => void; query: string }) {
+  const { rows } = useMemo(() => rowsFor(h, type), [h, type]);
+  const isLabel = type === "labels";
+  const items = useMemo(
+    () => rows.map((r) => ({ id: r.id, name: String(r.v.name), edited: r.edited, search: r.search, extra: isLabel ? r.cells.color : `${r.cells.items} item${r.cells.items === 1 ? "" : "s"}` })),
+    [rows, isLabel],
+  );
+  return <GroupedList list={listKeyFor(type)!} noun={isLabel ? "label" : "category"} rows={items} id={id} select={select} query={query} />;
 }
 
 function ItemsTable({ h, type, id, select, query }: { h: Hierarchy; type: OrganizeType; id: string | null; select: (id: string | null) => void; query: string }) {

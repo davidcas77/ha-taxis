@@ -5,11 +5,14 @@ import { bodyLimit } from "hono/body-limit";
 import { readFileSync } from "node:fs";
 
 import { validateInput } from "../shared/changes.ts";
+import { pruneGroups, type GroupListKey } from "../shared/groups.ts";
+import { CATEGORY_SCOPES } from "../shared/types.ts";
 import type {
   ApplyResult,
   ApplyResponse,
   ChangeInput,
   ChangesResponse,
+  GroupsResponse,
   HealthResponse,
   Hierarchy,
   HierarchyResponse,
@@ -20,7 +23,7 @@ import type {
 import { applyChanges, isRename } from "./changes/apply.ts";
 import { overlayChanges } from "./changes/overlay.ts";
 import { changeStore } from "./changes/store.ts";
-import { settingsStore, validateNaming } from "./settings.ts";
+import { settingsStore, validateGroups, validateNaming } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
@@ -202,6 +205,28 @@ app.put("/api/settings/naming", bodyLimit({ maxSize: 64 * 1024, onError: (c) => 
   settings.saveNaming(checked.value);
   log.info("Saved naming settings");
   return c.json<NamingResponse>({ ok: true, naming: checked.value });
+});
+
+// Groups for labels and categories. Taxis only: Home Assistant has no such
+// thing, and nothing in it changes when they do.
+app.get("/api/settings/groups", (c) => c.json<GroupsResponse>({ ok: true, groups: settings.groups() }));
+
+app.put("/api/settings/groups", bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json<GroupsResponse>({ ok: false, error: "The groups are too large." }, 413) }), async (c) => {
+  const checked = validateGroups(await c.req.json().catch(() => null));
+  if (!checked.ok) return c.json<GroupsResponse>({ ok: false, error: checked.error }, 400);
+  // Drop ids Home Assistant no longer has (when it can be read).
+  const live = await loadRead(false).then(
+    ({ read }) => {
+      const out: Partial<Record<GroupListKey, ReadonlySet<string>>> = { labels: new Set(Object.keys(read.live.labels)) };
+      for (const scope of CATEGORY_SCOPES) out[`category:${scope}`] = new Set(read.live.categories[scope].map((x) => x.id));
+      return out;
+    },
+    () => undefined,
+  );
+  const value = live ? pruneGroups(checked.value, live) : checked.value;
+  settings.saveGroups(value);
+  log.info("Saved groups");
+  return c.json<GroupsResponse>({ ok: true, groups: value });
 });
 
 app.post("/api/changes", async (c) => {

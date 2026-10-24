@@ -1,9 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import { GROUP_ID, GROUP_LISTS, MAX_GROUPS, MAX_ITEMS, MAX_NAME, type GroupSettings } from "../shared/groups.ts";
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, slug, type NamingSettings } from "../shared/naming.ts";
 import type { EntityRole } from "../shared/types.ts";
 
-// App settings, one JSON value per key in SQLite. Only naming for now.
+// App settings, one JSON value per key in SQLite: naming and groups.
 
 export function settingsStore(db: DatabaseSync) {
   const get = db.prepare("SELECT value FROM settings WHERE key = ?");
@@ -20,6 +21,20 @@ export function settingsStore(db: DatabaseSync) {
     },
     saveNaming(s: NamingSettings): void {
       put.run("naming", JSON.stringify(s));
+    },
+    groups(): GroupSettings {
+      const row = get.get("groups") as { value: string } | undefined;
+      if (!row) return {};
+      try {
+        // Stored values passed the validator; run it again in case the row was edited by hand.
+        const checked = validateGroups(JSON.parse(row.value));
+        return checked.ok ? checked.value : {};
+      } catch {
+        return {};
+      }
+    },
+    saveGroups(s: GroupSettings): void {
+      put.run("groups", JSON.stringify(s));
     },
   };
 }
@@ -61,4 +76,43 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>): {
     words[role as EntityRole] = clean;
   }
   return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, typeWords: words } };
+}
+
+// Groups for labels and categories. Only the five known lists are kept; an
+// item can sit in one group of a list.
+export function validateGroups(input: unknown): { ok: true; value: GroupSettings } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "The groups weren't readable." };
+  const value: GroupSettings = {};
+  for (const list of Object.keys(input)) {
+    if (!(GROUP_LISTS as readonly string[]).includes(list)) return { ok: false, error: `${list.slice(0, 40)} isn't a list that can have groups.` };
+  }
+  for (const list of GROUP_LISTS) {
+    if (!Object.hasOwn(input, list)) continue;
+    const entry = input[list];
+    if (!isRecord(entry) || !Array.isArray(entry.groups)) return { ok: false, error: `The groups for ${list} weren't readable.` };
+    if (entry.groups.length > MAX_GROUPS) return { ok: false, error: `${list} has more than ${MAX_GROUPS} groups.` };
+    const ids = new Set<string>();
+    const seen = new Set<string>();
+    const groups: { id: string; name: string; items: string[] }[] = [];
+    for (const g of entry.groups) {
+      if (!isRecord(g) || !Array.isArray(g.items)) return { ok: false, error: `A group in ${list} wasn't readable.` };
+      if (typeof g.id !== "string" || !GROUP_ID.test(g.id)) return { ok: false, error: "A group id can use a–z, 0–9, - and _, up to 40 characters." };
+      if (ids.has(g.id)) return { ok: false, error: `Two groups in ${list} share the id ${g.id}.` };
+      ids.add(g.id);
+      const name = typeof g.name === "string" ? g.name.trim() : "";
+      if (name.length === 0) return { ok: false, error: "A group needs a name." };
+      if (name.length > MAX_NAME) return { ok: false, error: `A group name is longer than ${MAX_NAME} characters.` };
+      const items: string[] = [];
+      for (const item of g.items) {
+        if (typeof item !== "string" || item.length === 0 || item.length > 200) return { ok: false, error: `An item in group “${name}” wasn't readable.` };
+        if (seen.has(item)) return { ok: false, error: `An item is in more than one group in ${list}. An item can be in only one group.` };
+        seen.add(item);
+        items.push(item);
+      }
+      if (seen.size > MAX_ITEMS) return { ok: false, error: `${list} has more than ${MAX_ITEMS} grouped items.` };
+      groups.push({ id: g.id, name, items });
+    }
+    value[list] = { groups };
+  }
+  return { ok: true, value };
 }

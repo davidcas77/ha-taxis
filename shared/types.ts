@@ -219,4 +219,6 @@ export type ChangesResponse = { ok: true; changes: Change[]; version: string } |
 
 export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
 
+export type GroupsResponse = { ok: true; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
+
 export type ApplyResponse = ({ ok: true } & ApplyResult) | { ok: false; error: string };

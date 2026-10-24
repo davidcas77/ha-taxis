@@ -1,5 +1,6 @@
+import type { GroupSettings } from "../../shared/groups.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
-import type { ApplyResponse, ChangeInput, ChangesResponse, HierarchyResponse, NamingResponse, ReferencesResponse } from "../../shared/types.ts";
+import type { ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, NamingResponse, ReferencesResponse } from "../../shared/types.ts";
 
 // Relative URLs on purpose: under Ingress the app lives at
 // /api/hassio_ingress/<token>/, so "/api/…" would miss it.
@@ -25,6 +26,8 @@ async function call<T extends { ok: boolean }>(path: string, init?: RequestInit)
 export const api = {
   naming: () => call<NamingResponse>("api/settings/naming"),
   saveNaming: (naming: NamingSettings) => call<NamingResponse>("api/settings/naming", { method: "PUT", body: JSON.stringify(naming) }),
+  groups: () => call<GroupsResponse>("api/settings/groups"),
+  saveGroups: (groups: GroupSettings) => call<GroupsResponse>("api/settings/groups", { method: "PUT", body: JSON.stringify(groups) }),
   hierarchy: (refresh = false) => call<HierarchyResponse>(`api/hierarchy${refresh ? "?refresh=1" : ""}`),
   changes: () => call<ChangesResponse>("api/changes"),
   // Where each pending rename's old id is used: what Apply updates, what it can't.

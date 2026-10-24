@@ -49,6 +49,14 @@ they're on. The assign tool lists entities you can filter by area, role and
 domain, with or without the label, and adds the label to the ones you tick or
 takes it off.
 
+Labels and each category list can also be split into **groups**. Groups exist
+only in Taxis: Home Assistant has no label or category groups, so making,
+renaming or deleting one changes nothing there. Use **New group** to add one,
+and drag a label or category onto a group (or pick one in its **Group…**
+menu) to move it. Groups can be renamed, moved up and down, and deleted; their
+items go back to Ungrouped. Groups save as soon as you change them and don't go
+in the list of changes.
+
 ## Naming
 
 Under **Settings → Naming**:
