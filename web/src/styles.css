@@ -17,6 +17,8 @@
   --color-off: var(--off);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
 }
 
 :root {
@@ -32,6 +34,9 @@
   --off: #a7b1b8;
   --warn: #a15c07;
   --warn-soft: #fbf0df;
+  --danger: #b4232c;
+  --danger-soft: #fbeceb;
+  --on-accent: #ffffff;
   color-scheme: light;
 }
 
@@ -49,6 +54,9 @@
     --off: #4f5d66;
     --warn: #e7a648;
     --warn-soft: #2c2213;
+    --danger: #f0716f;
+    --danger-soft: #2c1719;
+    --on-accent: #0e1418;
     color-scheme: dark;
   }
 }

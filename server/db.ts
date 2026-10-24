@@ -14,11 +14,23 @@ const MIGRATIONS: string[] = [
      counts TEXT NOT NULL,
      raw TEXT NOT NULL
    )`,
+  // 0.2: the change list (see server/changes/store.ts).
+  `CREATE TABLE IF NOT EXISTS changes (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     kind TEXT NOT NULL,
+     op TEXT NOT NULL,
+     target_id TEXT NOT NULL,
+     scope TEXT,
+     before TEXT NOT NULL,
+     after TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   )`,
 ];
 
 const KEEP_SNAPSHOTS = 10;
 
 export type Store = {
+  db: DatabaseSync;
   saveSnapshot(input: { takenAt: string; haVersion: string | null; counts: unknown; raw: unknown }): number;
   latestSnapshot(): { id: number; takenAt: string; raw: unknown } | null;
   close(): void;
@@ -47,6 +59,7 @@ export function openStore(dir: string): Store {
   const latest = db.prepare("SELECT id, taken_at, raw FROM snapshots ORDER BY id DESC LIMIT 1");
 
   return {
+    db,
     saveSnapshot({ takenAt, haVersion, counts, raw }) {
       const result = insert.run(takenAt, haVersion, JSON.stringify(counts), JSON.stringify(raw));
       prune.run(KEEP_SNAPSHOTS);
