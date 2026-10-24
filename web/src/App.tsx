@@ -1,8 +1,10 @@
-import { AlertTriangle, CheckCircle2, Layers, ListChecks, Loader2, MapPin, RefreshCw, Search, Tag } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, Folder, Layers, List, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, Tag } from "lucide-react";
 import { useCallback, useState, type ReactNode } from "react";
 
 import { ChangesPage } from "./changes.tsx";
-import { OrganizePage } from "./organize.tsx";
+import { CategoriesPage, LabelsPage } from "./labels.tsx";
+import { DevicesPage, EntitiesPage } from "./lists.tsx";
+import { SettingsPage } from "./naming.tsx";
 import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx";
 import { TaxisProvider, useRoute, useTaxis, type Selection } from "./state.tsx";
 
@@ -31,7 +33,7 @@ function Shell() {
   const select = useCallback(
     (s: Selection) => {
       setQuery("");
-      go({ page: "spaces", sel: s });
+      go({ page: "areas", sel: s, tab: "overview" });
     },
     [go],
   );
@@ -43,16 +45,28 @@ function Shell() {
           <Layers className="size-5 text-accent" aria-hidden />
           <span className="text-base font-semibold tracking-tight">Taxis</span>
         </div>
-        <nav aria-label="Pages" className="flex gap-1">
-          <Tab active={route.page === "spaces"} onClick={() => go({ page: "spaces", sel: route.page === "spaces" ? route.sel : { kind: "home" } })} icon={<MapPin className="size-4" aria-hidden />}>
-            Spaces
+        <nav aria-label="Pages" className="flex flex-wrap gap-1">
+          <Tab active={route.page === "areas"} onClick={() => go(route.page === "areas" ? route : { page: "areas", sel: { kind: "home" }, tab: "overview" })} icon={<MapPin className="size-4" aria-hidden />}>
+            Areas
           </Tab>
-          <Tab active={route.page === "organize"} onClick={() => go({ page: "organize", item: null })} icon={<Tag className="size-4" aria-hidden />}>
-            Organize
+          <Tab active={route.page === "devices"} onClick={() => go({ page: "devices" })} icon={<Cpu className="size-4" aria-hidden />}>
+            Devices
+          </Tab>
+          <Tab active={route.page === "entities"} onClick={() => go({ page: "entities" })} icon={<List className="size-4" aria-hidden />}>
+            Entities
+          </Tab>
+          <Tab active={route.page === "labels"} onClick={() => go({ page: "labels", id: null })} icon={<Tag className="size-4" aria-hidden />}>
+            Labels
+          </Tab>
+          <Tab active={route.page === "categories"} onClick={() => go({ page: "categories", scope: null, id: null })} icon={<Folder className="size-4" aria-hidden />}>
+            Categories
           </Tab>
           <Tab active={route.page === "changes"} onClick={() => go({ page: "changes" })} icon={<ListChecks className="size-4" aria-hidden />}>
             Changes
             {changes.length > 0 && <span className="rounded-full bg-warn px-1.5 text-[11px] font-semibold text-[var(--bg)] tabular-nums">{changes.length}</span>}
+          </Tab>
+          <Tab active={route.page === "settings"} onClick={() => go({ page: "settings" })} icon={<Settings className="size-4" aria-hidden />}>
+            Settings
           </Tab>
         </nav>
         {hierarchy && (
@@ -114,8 +128,16 @@ function Shell() {
             "Nothing to show yet. Fix the problem above, then refresh."
           )}
         </div>
-      ) : route.page === "organize" ? (
-        <OrganizePage h={hierarchy} item={route.item} go={go} />
+      ) : route.page === "labels" ? (
+        <LabelsPage h={hierarchy} id={route.id} go={go} />
+      ) : route.page === "categories" ? (
+        <CategoriesPage h={hierarchy} scope={route.scope} id={route.id} go={go} />
+      ) : route.page === "devices" ? (
+        <DevicesPage h={hierarchy} />
+      ) : route.page === "entities" ? (
+        <EntitiesPage h={hierarchy} />
+      ) : route.page === "settings" ? (
+        <SettingsPage h={hierarchy} go={go} />
       ) : route.page === "changes" ? (
         <ChangesPage h={hierarchy} />
       ) : (
@@ -148,7 +170,7 @@ function Shell() {
             {query.trim() ? (
               <SearchResults h={hierarchy} query={query} filters={filters} select={select} />
             ) : (
-              <SpaceView h={hierarchy} sel={route.sel} select={select} filters={filters} />
+              <SpaceView h={hierarchy} sel={route.sel} tab={route.tab} go={go} select={select} filters={filters} />
             )}
           </main>
         </div>

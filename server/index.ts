@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { readFileSync } from "node:fs";
 
 import { validateInput } from "../shared/changes.ts";
@@ -12,10 +13,12 @@ import type {
   HealthResponse,
   Hierarchy,
   HierarchyResponse,
+  NamingResponse,
 } from "../shared/types.ts";
 import { applyChanges } from "./changes/apply.ts";
 import { overlayChanges } from "./changes/overlay.ts";
 import { changeStore } from "./changes/store.ts";
+import { settingsStore, validateNaming } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
@@ -41,6 +44,7 @@ const ha = target.ok ? new HaSocket(target.target.wsUrl, target.target.token) : 
 const token = target.ok ? target.target.token : undefined;
 setLogSecret(token);
 const changes = changeStore(store.db);
+const settings = settingsStore(store.db);
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -148,6 +152,20 @@ app.get("/api/hierarchy", async (c) => {
 const listResponse = (): ChangesResponse => ({ ok: true, changes: changes.list(), version: changes.version() });
 
 app.get("/api/changes", (c) => c.json<ChangesResponse>(listResponse()));
+
+// Naming settings: area codes, patterns, type words. Stored in Taxis only;
+// nothing in Home Assistant changes when they do.
+app.get("/api/settings/naming", (c) => c.json<NamingResponse>({ ok: true, naming: settings.naming() }));
+
+app.put("/api/settings/naming", bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json<NamingResponse>({ ok: false, error: "The settings are too large." }, 413) }), async (c) => {
+  // Codes are kept only for areas Home Assistant has (when it can be read).
+  const areaIds = await loadRead(false).then(({ read }) => new Set(Object.keys(read.live.areas)), () => undefined);
+  const checked = validateNaming(await c.req.json().catch(() => null), areaIds);
+  if (!checked.ok) return c.json<NamingResponse>({ ok: false, error: checked.error }, 400);
+  settings.saveNaming(checked.value);
+  log.info("Saved naming settings");
+  return c.json<NamingResponse>({ ok: true, naming: checked.value });
+});
 
 app.post("/api/changes", async (c) => {
   if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);

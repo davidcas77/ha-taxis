@@ -9,9 +9,10 @@ backup first.
 It runs as a Home Assistant app and opens from the sidebar. It needs no token
 and no account, and it only talks to your own Home Assistant.
 
-> **Status: early.** Version 0.2 reads, shows and edits the organisation of
-> your home (areas, floors, labels, categories and where things are). Creating
-> automations comes later.
+> **Status: early.** Version 0.3 reads, shows and edits the organisation of
+> your home (areas, floors, labels, categories, names and where things are)
+> and checks it against a naming scheme you set. Renaming entity ids comes in
+> 0.4; creating automations later.
 
 ## Install
 
@@ -28,14 +29,17 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 
 - **Spaces:** home → floors → areas, plus areas on no floor and entities that
   are in no area at all.
-- **Each area:** a summary (temperature, humidity, light level, presence,
+- **Each area:** tabs for a summary (temperature, humidity, light level, presence,
   motion, doors and windows, lights on), its entities grouped by role with live
   states, groups shown with their members, and its devices.
 - **Editing:** entities (name, area, labels, category, icon, hidden, disabled),
   devices (name, area, labels, disabled), areas and floors (create, rename,
   move, delete), several entities at once.
-- **Organize:** labels and categories: create, rename, recolor, delete, and
-  see and change what they're on.
+- **Labels and Categories:** create, rename, recolor, delete, see what
+  they're on, and add a label to many entities at once.
+- **Naming:** a code per area, patterns for ids and display names, and a check
+  of each area against them, with display-name suggestions.
+- **Devices and Entities:** everything in one list each, with filters.
 - **Changes:** every edit waits in a list, shown as before → after. Apply backs
   up Home Assistant, applies the list, and reads Home Assistant back to check
   each change.

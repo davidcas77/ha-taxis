@@ -34,8 +34,11 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ROLE_ORDER } from "../../shared/roles.ts";
 import { arrangeGroups, membershipIndex, summarizeRoom, type BinarySummary, type NumericSummary } from "../../shared/rooms.ts";
 import type { AreaNode, ChangeInput, EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
+import { analyzeArea } from "../../shared/naming.ts";
+import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
-import { useTaxis, type Selection } from "./state.tsx";
+import { AreaNamingTab } from "./naming.tsx";
+import { useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
 import { AreaSelect, Button, EditedDot, LabelChip, inputClass } from "./ui.tsx";
 
 export const ROLE_ICONS: Record<EntityRole, LucideIcon> = {
@@ -190,7 +193,14 @@ export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; se
 
 type Editing = { kind: "entity" | "device" | "area" | "floor"; id: string } | null;
 
-export function SpaceView({ h, sel, select, filters }: { h: Hierarchy; sel: Selection; select: (s: Selection) => void; filters: Filters }) {
+export function SpaceView({ h, sel, tab, go, select, filters }: {
+  h: Hierarchy;
+  sel: Selection;
+  tab: AreaTab;
+  go: (r: Route) => void;
+  select: (s: Selection) => void;
+  filters: Filters;
+}) {
   const [editing, setEditing] = useState<Editing>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // A new place starts with nothing open and nothing picked.
@@ -227,7 +237,18 @@ export function SpaceView({ h, sel, select, filters }: { h: Hierarchy; sel: Sele
   if (sel.kind === "area") {
     const area = h.areas[sel.id];
     body = area ? (
-      <AreaView h={h} area={area} filters={filters} select={select} rows={rows} onEditArea={() => setEditing({ kind: "area", id: area.id })} onEditDevice={(id) => setEditing({ kind: "device", id })} />
+      <AreaView
+        h={h}
+        area={area}
+        filters={filters}
+        select={select}
+        rows={rows}
+        tab={tab}
+        onTab={(t) => go({ page: "areas", sel: { kind: "area", id: area.id }, tab: t })}
+        go={go}
+        onEditArea={() => setEditing({ kind: "area", id: area.id })}
+        onEditDevice={(id) => setEditing({ kind: "device", id })}
+      />
     ) : (
       <Missing what="That area" select={select} />
     );
@@ -488,20 +509,35 @@ function SummaryChips({ s, h, compact }: { s: ReturnType<typeof summarizeRoom>; 
 
 type Rows = { picked: Set<string>; toggle: (id: string) => void; edit: (id: string) => void };
 
-function AreaView({ h, area, filters, select, rows, onEditArea, onEditDevice }: {
+function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, onEditDevice }: {
   h: Hierarchy;
   area: AreaNode;
   filters: Filters;
   select: (s: Selection) => void;
   rows: Rows;
+  tab: AreaTab;
+  onTab: (t: AreaTab) => void;
+  go: (r: Route) => void;
   onEditArea: () => void;
   onEditDevice: (id: string) => void;
 }) {
-  const { edited } = useTaxis();
+  const { edited, naming } = useTaxis();
   const floor = h.floors.find((f) => f.id === area.floorId);
   const summary = summarizeRoom(area, h);
+  const nameCheck = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
+  const health = useMemo(() => areaHealth(area, h, nameCheck), [area, h, nameCheck]);
+  const named = Object.values(nameCheck.counts).reduce((a, b) => a + b, 0);
+  const tabs: { key: AreaTab; label: string; count?: string }[] = [
+    { key: "overview", label: "Overview" },
+    { key: "entities", label: "Entities", count: String(countVisible(area.entityIds, h, filters)) },
+    { key: "devices", label: "Devices", count: String(area.deviceIds.length) },
+    { key: "naming", label: "Naming", count: named ? `${nameCheck.counts.ok}/${named}` : undefined },
+    { key: "labels", label: "Labels" },
+    { key: "health", label: "Health", count: health.total ? String(health.total) : undefined },
+  ];
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
       <Heading
         title={area.name}
         action={
@@ -529,33 +565,185 @@ function AreaView({ h, area, filters, select, rows, onEditArea, onEditDevice }: 
           {area.labels.map((id) => h.labels[id] && <LabelChip key={id} label={h.labels[id]} />)}
         </div>
       </Heading>
-      <SummaryChips s={summary} h={h} />
-      <RoleSections h={h} ids={area.entityIds} filters={filters} rows={rows} />
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold">Devices in this area · {area.deviceIds.length}</h2>
-        {area.deviceIds.length === 0 ? (
-          <p className="text-[13px] text-muted">No devices are assigned to this area.</p>
-        ) : (
-          <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
-            {area.deviceIds.map((id) => {
-              const d = h.devices[id];
-              const via = d.viaDeviceId ? h.devices[d.viaDeviceId] : undefined;
-              return (
-                <li key={id}>
-                  <button type="button" onClick={() => onEditDevice(id)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2 text-left text-[13px] hover:bg-sunken">
-                    <Cpu className="size-4 text-muted" aria-hidden />
-                    <span className="font-medium">{d.name}</span>
-                    {edited.has(`device:${id}`) && <EditedDot />}
-                    <span className="text-muted">{[d.manufacturer, d.model].filter(Boolean).join(" · ") || "Unknown model"}</span>
-                    {via && <span className="text-xs text-muted">via {via.name}</span>}
-                    <span className="ml-auto text-xs tabular-nums text-muted">{d.entityIds.length} entities</span>
-                  </button>
-                </li>
-              );
-            })}
+
+      <div role="tablist" aria-label="Area tools" className="flex gap-1 overflow-x-auto border-b border-line">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => onTab(t.key)}
+            className={`flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] ${tab === t.key ? "border-accent font-medium text-accent" : "border-transparent text-muted hover:text-fg"}`}
+          >
+            {t.label}
+            {t.count && <span className="text-xs tabular-nums text-muted">{t.count}</span>}
+          </button>
+        ))}
+      </div>
+
+      <div role="tabpanel">
+        {tab === "overview" && (
+          <div className="flex flex-col gap-5">
+            <SummaryChips s={summary} h={h} />
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              <Stat label="Devices" value={area.deviceIds.length} onClick={() => onTab("devices")} />
+              <Stat label="Entities" value={countVisible(area.entityIds, h, filters)} onClick={() => onTab("entities")} />
+              <Stat label="Ids that fit the naming" value={nameCheck.counts.ok} note={named ? `of ${named}` : undefined} onClick={() => onTab("naming")} />
+              <Stat label="Things to look at" value={health.total} onClick={() => onTab("health")} />
+            </div>
+          </div>
+        )}
+        {tab === "entities" && <RoleSections h={h} ids={area.entityIds} filters={filters} rows={rows} />}
+        {tab === "devices" &&
+          (area.deviceIds.length === 0 ? (
+            <p className="text-[13px] text-muted">No devices are assigned to this area.</p>
+          ) : (
+            <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
+              {area.deviceIds.map((id) => {
+                const d = h.devices[id];
+                const via = d.viaDeviceId ? h.devices[d.viaDeviceId] : undefined;
+                return (
+                  <li key={id}>
+                    <button type="button" onClick={() => onEditDevice(id)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2 text-left text-[13px] hover:bg-sunken">
+                      <Cpu className="size-4 text-muted" aria-hidden />
+                      <span className="font-medium">{d.name}</span>
+                      {edited.has(`device:${id}`) && <EditedDot />}
+                      <span className="text-muted">{[d.manufacturer, d.model].filter(Boolean).join(" · ") || "Unknown model"}</span>
+                      {via && <span className="text-xs text-muted">via {via.name}</span>}
+                      <span className="ml-auto text-xs tabular-nums text-muted">{d.entityIds.length} entities</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ))}
+        {tab === "naming" && <AreaNamingTab h={h} area={area} go={go} />}
+        {tab === "labels" && <AreaLabelsTab h={h} area={area} />}
+        {tab === "health" && <AreaHealthTab h={h} health={health} rows={rows} />}
+      </div>
+    </div>
+  );
+}
+
+// What needs a look in an area.
+type Health = {
+  unavailable: EntityItem[];
+  brokenGroups: { group: EntityItem; missing: string[] }[];
+  namedElsewhere: { entity: EntityItem; area: string }[];
+  total: number;
+};
+
+function areaHealth(area: AreaNode, h: Hierarchy, nameCheck: ReturnType<typeof analyzeArea>): Health {
+  const inRoom = area.entityIds.map((id) => h.entities[id]).filter((e): e is EntityItem => Boolean(e) && !e.disabled);
+  const unavailable = inRoom.filter((e) => !e.maintenance && (e.state === "unavailable" || e.state === "unknown") && !["button", "event", "scene"].includes(e.domain));
+  const brokenGroups = inRoom
+    .filter((e) => e.members.length > 0)
+    .map((group) => ({ group, missing: group.members.filter((m) => !h.entities[m]) }))
+    .filter((g) => g.missing.length > 0);
+  const namedElsewhere = nameCheck.rows
+    .filter((r) => r.status === "other-area" && r.otherAreaId)
+    .map((r) => ({ entity: h.entities[r.entityId], area: h.areas[r.otherAreaId!]?.name ?? r.otherAreaId! }))
+    .filter((x) => Boolean(x.entity));
+  return { unavailable, brokenGroups, namedElsewhere, total: unavailable.length + brokenGroups.length + namedElsewhere.length };
+}
+
+function AreaHealthTab({ h, health, rows }: { h: Hierarchy; health: Health; rows: Rows }) {
+  if (health.total === 0) return <p className="text-[13px] text-muted">Nothing to look at: every entity reports, groups are complete, and no id names another area.</p>;
+  return (
+    <div className="flex flex-col gap-5">
+      {health.unavailable.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold">Not reporting · {health.unavailable.length}</h2>
+          <p className="text-xs text-muted">Unavailable or unknown right now. A device that's off or out of battery, or one that's gone.</p>
+          <ul className="flex flex-col rounded-lg border border-line bg-surface py-1">
+            {health.unavailable.map((e) => (
+              <EntityRow key={e.entityId} e={e} rows={rows} device={e.deviceId ? h.devices[e.deviceId]?.name : undefined} />
+            ))}
           </ul>
+        </section>
+      )}
+      {health.brokenGroups.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold">Groups with missing members · {health.brokenGroups.length}</h2>
+          <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
+            {health.brokenGroups.map(({ group, missing }) => (
+              <li key={group.entityId} className="px-3 py-2 text-[13px]">
+                <span className="font-medium">{group.name}</span> lists entities Home Assistant doesn't have:{" "}
+                <code className="font-mono text-xs text-warn">{missing.join(", ")}</code>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {health.namedElsewhere.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold">Named after another area · {health.namedElsewhere.length}</h2>
+          <p className="text-xs text-muted">Either the entity is in the wrong area, or its id has the wrong area in it. Open it to move it; the Naming tab suggests a new name.</p>
+          <ul className="flex flex-col rounded-lg border border-line bg-surface py-1">
+            {health.namedElsewhere.map(({ entity, area }) => (
+              <EntityRow key={entity.entityId} e={entity} rows={rows} note={`id says ${area}`} />
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// Labels in an area: what's used here, and the assign tool for this area's
+// entities.
+function AreaLabelsTab({ h, area }: { h: Hierarchy; area: AreaNode }) {
+  const { propose } = useTaxis();
+  const labels = Object.values(h.labels).sort((a, b) => a.name.localeCompare(b.name));
+  const [labelId, setLabelId] = useState(labels[0]?.id ?? "");
+  const used = new Map<string, number>();
+  for (const id of area.entityIds) for (const l of h.entities[id]?.labels ?? []) used.set(l, (used.get(l) ?? 0) + 1);
+  const label = h.labels[labelId];
+  if (labels.length === 0) return <p className="text-[13px] text-muted">No labels yet. Create them on the Labels page.</p>;
+  return (
+    <div className="flex flex-col gap-5">
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-semibold">Labels on this area's entities</h2>
+        {used.size === 0 ? (
+          <p className="text-[13px] text-muted">None yet.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {[...used.entries()].map(([id, n]) =>
+              h.labels[id] ? (
+                <button key={id} type="button" onClick={() => setLabelId(id)} className="inline-flex items-center gap-1">
+                  <LabelChip label={h.labels[id]} />
+                  <span className="text-xs tabular-nums text-muted">{n}</span>
+                </button>
+              ) : null,
+            )}
+          </div>
         )}
       </section>
+      <div className="flex items-center gap-2">
+        <label htmlFor="area-label-pick" className="text-[13px] text-muted">
+          Work with the label
+        </label>
+        <select id="area-label-pick" className={`${inputClass} w-56`} value={labelId} onChange={(e) => setLabelId(e.target.value)}>
+          {labels.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {label && (
+        <AssignTool
+          key={label.id}
+          h={h}
+          title={`“${label.name}” in ${area.name}`}
+          fixedArea={area.id}
+          isMember={(e) => e.labels.includes(label.id)}
+          suggestedRoles={rolesSuggestedBy(label.name)}
+          onAdd={(ids) => void propose(ids.map((id) => ({ kind: "entity", op: "update", targetId: id, fields: { labels: [...h.entities[id].labels, label.id] } })))}
+          onRemove={(ids) => void propose(ids.map((id) => ({ kind: "entity", op: "update", targetId: id, fields: { labels: h.entities[id].labels.filter((l) => l !== label.id) } })))}
+        />
+      )}
     </div>
   );
 }
@@ -657,7 +845,7 @@ function EntityRow({ e, rows, device, badge, note }: { e: EntityItem; rows: Rows
 }
 
 // Changes to several entities at once.
-function BulkBar({ h, ids, onDone }: { h: Hierarchy; ids: string[]; onDone: () => void }) {
+export function BulkBar({ h, ids, onDone }: { h: Hierarchy; ids: string[]; onDone: () => void }) {
   const { propose } = useTaxis();
   const [area, setArea] = useState<string | null>(null);
   const [label, setLabel] = useState("");

@@ -198,4 +198,6 @@ export type HierarchyResponse =
 // sends back the version the user saw; any difference means they must look again.
 export type ChangesResponse = { ok: true; changes: Change[]; version: string } | { ok: false; error: string };
 
+export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
+
 export type ApplyResponse = ({ ok: true } & ApplyResult) | { ok: false; error: string };

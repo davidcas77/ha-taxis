@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0
+
+Pages along the top, tabs in each area, and a naming scheme for the house.
+
+- **Pages:** Areas, Devices, Entities, Labels, Categories, Changes, Settings.
+  Devices and Entities list everything, with search and filters.
+- **Area tabs:** Overview, Entities, Devices, Naming, Labels, Health.
+- **Labels:** an assign tool to add a label to many entities at once, or take
+  it off, filtered by area, role and domain.
+- **Settings → Naming:** a code per area (found from the ids you already have,
+  or set by you), patterns for entity ids and display names, and the word for
+  each kind of entity.
+- **Naming tab:** shows which of an area's ids fit, which use an old code or
+  another area's, and suggests display names that go into the list of changes.
+  Suggested entity ids are shown only; renaming them, with everything that uses
+  them, comes in 0.4.
+- **Health tab:** entities not reporting, groups with missing members, and ids
+  that name another area.
+
 ## 0.2.0
 
 Taxis can now organise your home, not just show it.
