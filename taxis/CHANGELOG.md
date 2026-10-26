@@ -1,5 +1,226 @@
 # Changelog
 
+## 0.5.0
+
+- **Entry lights.** A new Lighting parameter, **Entry lights**: the lights that
+  come on by day when an area becomes occupied. It is set for one area and never
+  inherited (the house, interior, exterior and floor rows show a dash). Left
+  empty, Taxis suggests the area's only light, or else its main lights, shown in
+  grey as "suggested". The area's Capabilities tab has an **Entry light** picker
+  in its Lights section. A chosen light that stops counting in the area is left
+  out. The Motion lights blueprint is now **version 4**: the day profile turns on
+  the entry lights (the main lights if it is given none), the accent lights still
+  join once the area has been occupied for the extended time, and the night and
+  sleep behaviour is unchanged. An installed Motion lights automation shows as
+  out of date until it is updated.
+- **Floor codes.** Like area codes: a code per floor, the floor's id as a slug by
+  default, editable in Settings next to the area codes, unique, with the same
+  checks. A floor id that says little (`floor_2`, `level_1`, or one that has
+  nothing to do with the floor's name) is flagged with the slug of the name as a
+  suggestion.
+- **Floor and house light groups.** The Helpers tab has a **Floors and house**
+  section: `light.<floor code>_all` gathers the light groups of the areas on a
+  floor, and `light.all` (the end is a setting) gathers the floors' groups and
+  those of areas on no floor. Same statuses as the area helpers (in place,
+  update members, adopt, create, conflict) and the same Add to changes. They are
+  made with the existing group dialog, in no area, and a group is made after the
+  groups it gathers. Only groups that exist or are in the list are members. No new
+  write: the group flow and the entity registry update were already allowed.
+- **Lights without an area.** Parameters → Capabilities lists the lights that are
+  in no area, with a picker per light and **Add N to changes** (a change of the
+  light's own area). Health has two new checks, **Lights without an area**
+  (warning) and **Areas without a floor** (info, linking to the area), and the
+  Taxis setup check warns when a floor's or the house's light group lacks the
+  light group of one of its areas or floors.
+- **Mock demo.** The demo house has a stair lamp in no area, the Garage on no
+  floor, and two floors whose ids say little (`floor_2` for the Loft, `level_1`
+  for the Cellar).
+
+- **Recipe: Area climate.** A fourth recipe that sets an area's thermostats by
+  fixed rules, first match wins, worked out again at every change: a window open
+  for a while (frost protection, or off), away mode, sleep (a bedroom with a bed
+  sensor on, or the house sleep mode), the night window, comfort while the area's
+  schedule is on and the area is occupied, eco otherwise. The target is kept
+  between a lowest and a highest temperature. A thermostat that offers a preset
+  you mapped gets the preset, the others a temperature, and only what differs
+  from what the thermostat shows is sent. The Recipes cell lists each thermostat
+  and which of the two it gets. Taxis only switches a thermostat on or off if you
+  allow it; a thermostat that is off is otherwise left alone. Heating or cooling
+  by season. It needs a thermostat that counts; the Occupancy recipe, the area's
+  window and door groups, a temperature helper and bed sensors are used when
+  they are there.
+- **Parameters: Climate tab, and away and sleep switches.** The temperatures,
+  delays, season, presets, comfort periods and the yes/no options of Area
+  climate, with the same inheritance as the others (a yes/no flips when
+  clicked, the season is a list, preset names are suggested from what the
+  thermostats report, and the comfort periods are an editable line such as
+  `Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00`). The House tab picks the
+  away and sleep mode toggles; with none picked, installing the recipe makes
+  `input_boolean.taxis_away` and `taxis_sleep`.
+- **A schedule per area.** The recipe makes `schedule.<code>_climate` from the
+  comfort periods and updates it when they change. Two new writes, the calls
+  Home Assistant's own Helpers page makes: `schedule/create` and
+  `schedule/update`, checked before they are sent (a name, an icon and the seven
+  days' times, nothing else). Taxis still calls no service and deletes nothing.
+- **Health: Climate.** A thermostat Area climate controls that doesn't answer for
+  10 minutes; Area climate with no temperature helper; and another automation
+  that sets the same thermostats as Area climate. No new reads.
+- **Mock demo.** The demo house has a radiator valve (no presets), a thermostat
+  with presets, a "Heating schedule" automation on the valve, and Area climate
+  installed in the Living room.
+
+- **Health.** A new **Health** page after Parameters: rule-based checks over your
+  home (no AI) that find what is broken or forgotten. A summary counts errors,
+  warnings and info; filter by severity, check, area or text; sort any column;
+  click a row to read the detail and see the entities involved. A finding that
+  can be fixed with something Taxis already does offers it as **a change for the
+  list** (never applied by itself); the others link to the place that deals with
+  them. Nothing here writes to Home Assistant, and it reads nothing Taxis didn't
+  already read. The checks:
+  - **Missing references**: an automation, script, scene or dashboard that uses
+    an entity that no longer exists.
+  - **Not reporting**: entities unavailable or unknown for 24 hours (you can
+    change it), grouped by device. One that an automation, script or scene uses
+    ranks a level higher.
+  - **Automation activity**: automations that are off, have never fired, or
+    haven't fired for 30 days (you can change it).
+  - **Conditions**: a condition that can never pass (an entity that isn't there,
+    or "above 30 and below 20"), and a condition on a switch that only a person
+    changes.
+  - **One-way switches**: an input boolean that something turns on and nothing
+    turns off, or the other way round.
+  - **Competing automations**: several automations that switch the same lights,
+    including the recipes Taxis installed.
+  - **Taxis setup**: recipes that are out of date, helper ids something else is
+    sitting on, areas with lights but no Occupancy, sensors an area counts on
+    that stopped reporting, and an area's temperature or humidity setting that
+    names an entity that isn't there.
+  - **Unused helpers**: helpers that nothing Taxis can read uses.
+  - **Device-based**: triggers, conditions and actions tied to a device id, which
+    stops working when the device is removed and added again.
+- **Area Health tab.** Shows the same checks for that area, under the lists it
+  already had, and its count includes them.
+- **Mock demo.** `npm run mock-ha` now has something for every check.
+- **AI (optional): connection, settings and spending cap.** A new **AI (optional)**
+  section in Settings, off by default. Choose *Anthropic (Claude)* or any
+  *OpenAI-compatible* service (OpenAI, OpenRouter, Ollama, LM Studio), enter an
+  API key, press **Load models**, and pick a model for the **Quick** and **Ask**
+  jobs. The key is kept inside the app: it is never sent back to the browser
+  (Settings shows only that it is set and its last four characters), never
+  logged, and every error message has it removed. Anthropic starts with
+  `claude-haiku-5-5` and `claude-sonnet-5-5`. The **effort** (Quick, Balanced,
+  Thorough) becomes Anthropic's effort setting, or `reasoning_effort` for
+  OpenAI-compatible services that accept it. Only the chosen service's address is
+  contacted, `http://` only for this machine and private networks, and
+  redirects are not followed.
+- **AI usage and a monthly cap.** Each call is recorded (time, job, model, tokens,
+  estimated cost; never the text). Settings shows this month's use against a cap
+  (default $5), and calls are refused once it is reached. Anthropic's prices are
+  built in; for other models you can enter a price per million tokens, and calls
+  to a model with no known price are counted in tokens but can't count toward
+  the cap.
+- **Test connection.** Sends one short, fixed sentence to the Quick or Ask model
+  and shows the answer, the tokens and the cost. AI cannot change anything in
+  Home Assistant; the features that come next will propose changes through the
+  change list.
+
+- **Parameters: House, Occupancy, Lighting and Media.** Four new tabs, each a sortable
+  table with a row for the house default, interior and exterior areas, each floor
+  and each area. Set night start and end, the hold timeout, and the lighting
+  values (dark threshold, day and night brightness and colour, transition, dim
+  before off, dim level), and, new, the extended and sleep times of Occupancy, how
+  long a manual override lasts, and the Media tab: when speakers and TVs go off
+  after the area clears. The most specific level wins: area, floor, interior or
+  exterior, house, built-in default. A cell you haven't set shows the value it
+  takes in grey, with where it comes from. Saved at once, in Taxis only.
+- **Recipes.** A new **Recipes** tab: a table of areas by three recipes,
+  **Occupancy** (a hold timer that follows the area's sensors), **Motion
+  lights** (lights on when the area is occupied, dim and off when it clears)
+  and **Media off** (speakers and TVs off after the area has been clear for a
+  while).
+  Each cell says Ready, Missing (and what), Installed, Out of date (and how) or
+  In changes. Tick cells and **Add to changes**. A warning lists other
+  automations that already control the area's light group.
+- **Apply installs recipes.** Apply saves the recipe's blueprint under `taxis/`
+  (once, and again only when its version changes), makes the area's hold timer,
+  occupied sensor and pause switch, then saves the automation
+  `taxis_<recipe>_<area>` and checks that Home Assistant stored and loaded it.
+  Nothing is ever deleted. The occupied sensor isn't counted as one of the
+  area's sensors.
+- **Occupancy: extended and sleep.** Once an area has been occupied for the
+  *extended after* time, the hold timer uses the longer *extended hold
+  timeout*. In a bedroom with a bed sensor (marked on the area's Capabilities
+  tab), the timer uses the *sleep hold timeout* while the bed sensor is on and
+  never runs out. The extended time is read from the occupied sensor's last
+  change, so there is nothing more to create; a Home Assistant restart starts
+  the count again.
+- **Motion lights: light roles, sleep and manual override.** By day the main
+  lights go on, and the accent lights once the area is extended. Inside the
+  night window the night lights go on, or the main lights at the night brightness
+  when there are none. While someone is in bed only the night lights go on,
+  never the main ones. Task lights are not switched on by the recipe, and turning
+  off still uses the whole light group. When someone changes the lights by hand
+  (the app, a dashboard, a wall switch), the recipe leaves the area alone until it
+  clears, becomes occupied again after being clear, or the *manual override*
+  time is up. The recipe makes a timer for it (`timer.<code>_override`). The
+  occupied sensor blinking when the hold timer restarts no longer dims the
+  lights: the area counts as clear after two seconds.
+- **Media off.** Turns off the area's speakers after *speakers off when clear
+  for* (15 min) and its TVs after *TVs off when clear for* (30 min). Needs
+  Occupancy and a counted speaker or TV. Uses the area's media group when it has
+  one kind of player, the players themselves otherwise.
+- The Occupancy and Motion lights blueprints are now version 3 (Media off
+  starts at 1). Areas that have them show **Out of date** until you add them to
+  the changes again, which rewrites the blueprint and the automation.
+- The demo house has recipes in every state: one installed, one out of date, one
+  ready, some missing, and an automation that already controls the living room
+  lights.
+
+- **Helpers.** A new **Helpers** tab on Parameters, and a Helpers table at the
+  end of each area's Capabilities tab. For each area Taxis works out the
+  canonical helpers from what counts: a group for lights, motion, presence,
+  doors, windows and media (two or more players), and a min/max (mean) sensor
+  for temperature, humidity and light level. Each row says whether the helper
+  is in place, needs its members updated, can be adopted from an existing group
+  (renamed, with the old id replaced where it's used), has to be created, or
+  conflicts with something that already has the id. Tick rows and **Add to
+  changes**; temperature and humidity also point the area's own sensor setting
+  at the canonical sensor.
+- **Settings: Helper names.** The end of each canonical entity id (`all`,
+  `motions`, `doors`…) can be changed, with a live example.
+- **Apply makes helpers.** Apply creates a group or a min/max sensor through
+  Home Assistant's own helper setup dialogs, gives it the id and area, changes
+  a group's members through its options, then reads Home Assistant back to
+  check. It never deletes a helper. The Changes page describes them
+  ("Create group binary_sensor.kitchen_motions in Kitchen: 2 members").
+- The demo house has a light group to adopt, one with a member missing, real
+  sensors on canonical ids (conflicts), and areas that need a group or a
+  min/max sensor, so every status shows.
+
+- **Parameters.** A new page between Organize and Changes, with a bar of tabs
+  for the settings later features use. The first tab, **Capabilities**, is a
+  sortable table of areas by capability (lights, motion, presence, doors,
+  windows, temperature, humidity, light level, thermostats, speakers, TVs,
+  covers, power), with a totals row and a switch for areas with nothing in them.
+- **Capabilities tab on each area.** Lists what Taxis detected in the area from
+  its domain and device class, and lets you choose what counts, whether a
+  motion or presence sensor starts or holds the room, bed sensors, light roles,
+  door or window for an opening sensor, speaker or TV, and whether the area is
+  interior or exterior and a bedroom. Helpers (groups, templates…) and sensors
+  on a camera's device are listed but don't count unless you say so. Choices are
+  kept in Taxis only and saved at once; nothing changes in Home Assistant.
+- The demo house (`npm run dev:mock`) has a camera, a template helper, a
+  speaker, a TV, an opening sensor and a presence sensor next to a motion sensor,
+  so the new tab has something of each to show.
+- Area codes: with no entities or no clear winner, the code is the area id (not
+  its name); two areas can't share a code, in Settings or on save; the area
+  codes table sorts by column.
+- Labels and categories move between groups by dragging only; the "Group…"
+  menu on each row is gone. Areas move between floors the same way; the
+  "Move to…" menu is gone.
+- An area's properties show its entity id code read-only, with a link to
+  Settings, where codes are changed.
+
 ## 0.4.0
 
 Rename entity ids, with everything that uses them.

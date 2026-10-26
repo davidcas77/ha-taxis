@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { log, setLogSecret } from "./log.ts";
+import { addLogSecret, clearLogSecrets, log, setLogSecret } from "./log.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
   setLogSecret(undefined);
+  clearLogSecrets();
 });
 
 describe("log", () => {
@@ -23,5 +24,14 @@ describe("log", () => {
     log.error("Connect failed", new Error("bad auth s3cr3t-token"));
     expect(err.mock.calls[0][0]).not.toContain("s3cr3t-token");
     expect(err.mock.calls[0][0]).toContain("***");
+  });
+
+  it("never writes an AI key either, alongside the token", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    setLogSecret("s3cr3t-token");
+    addLogSecret("sk-test-invented-key-1234");
+    log.warn("Call failed for sk-test-invented-key-1234 and s3cr3t-token");
+    expect(warn.mock.calls[0][0]).not.toContain("sk-test-invented-key-1234");
+    expect(warn.mock.calls[0][0]).not.toContain("s3cr3t-token");
   });
 });

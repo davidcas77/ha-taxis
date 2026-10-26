@@ -1,3 +1,6 @@
+import { BLUEPRINT_PATH_RE } from "../../shared/blueprints.ts";
+import { DAY_KEYS, MAX_RANGES_PER_DAY } from "../../shared/periods.ts";
+
 // Minimal Home Assistant WebSocket client.
 // https://developers.home-assistant.io/docs/api/websocket
 //
@@ -11,8 +14,22 @@
 // and entities are only updated. Registry edits are most of the writes. Besides
 // those, Apply edits the contents of dashboards (lovelace/config/save) and, via
 // the REST client in rest.ts (which has its own fixed allowlist), of
-// automations, scripts and scenes, and only to replace a renamed entity id in
-// them.
+// automations, scripts and scenes, to replace a renamed entity id in them and
+// to make a recipe's automation. The same REST client also creates the canonical helpers (a group or a
+// min/max, through Home Assistant's config flows) and updates a group's members;
+// the new helper is then placed with the registry edits below (its entity id,
+// its area, and an area's temperature or humidity sensor).
+//
+// Recipes add four writes: blueprint/save, which is checked here (automation
+// blueprints only, at taxis/<name>.yaml, never anywhere else), and timer/create,
+// timer/update and input_boolean/create, the calls Home Assistant's own Helpers
+// page makes for a timer and a toggle. The recipe's automations go through the
+// REST client. One read is added with them, blueprint/list, to see which Taxis
+// blueprints are there and at what version. Area climate adds two more,
+// schedule/create and schedule/update, the calls the same page makes for a
+// schedule helper (checked here: a name, an optional icon, and the seven days'
+// periods, nothing else); there is no schedule read, so the periods Taxis wrote
+// are checked against the answer to the write.
 
 export const READ_COMMANDS = new Set([
   "get_config",
@@ -25,6 +42,9 @@ export const READ_COMMANDS = new Set([
   "config/category_registry/list",
   // Where an entity is used, for renames: {item_type: "entity", item_id}.
   "search/related",
+  // The blueprints of a domain, to see which Taxis blueprints exist and their
+  // version: {domain: "automation"}.
+  "blueprint/list",
   // Dashboards other than the default one, and a dashboard's stored config.
   "lovelace/dashboards/list",
   "lovelace/config",
@@ -58,12 +78,63 @@ export const WRITE_COMMANDS = new Set([
   "config/entity_registry/update",
   // Dashboard contents, only ever to replace a renamed entity id in them.
   "lovelace/config/save",
+  // Recipes: a Taxis blueprint (path and domain are checked below), and the
+  // helpers a recipe needs that Home Assistant offers only as these calls.
+  "blueprint/save",
+  "timer/create",
+  "timer/update",
+  "input_boolean/create",
+  // Area climate's schedule helper: its comfort periods.
+  "schedule/create",
+  "schedule/update",
 ]);
 
-export function assertWriteCommand(type: string): void {
+const BLUEPRINT_SAVE_KEYS = new Set(["domain", "path", "yaml", "source_url", "allow_override"]);
+
+// blueprint/save writes a file into Home Assistant's blueprints folder, so what
+// it may write is fixed here: an automation blueprint at taxis/<name>.yaml.
+function assertBlueprintSave(payload: Record<string, unknown>): void {
+  const stray = Object.keys(payload).find((k) => !BLUEPRINT_SAVE_KEYS.has(k));
+  if (stray) throw new Error(`Refusing to save a blueprint with "${stray.slice(0, 40)}": it isn't something Taxis sends.`);
+  if (payload.domain !== "automation") throw new Error(`Refusing to save a blueprint for "${String(payload.domain).slice(0, 40)}": Taxis writes automation blueprints only.`);
+  if (typeof payload.path !== "string" || !BLUEPRINT_PATH_RE.test(payload.path)) {
+    throw new Error(`Refusing to save a blueprint at "${String(payload.path).slice(0, 80)}": Taxis writes only to taxis/<name>.yaml.`);
+  }
+  if (typeof payload.yaml !== "string" || payload.yaml.length === 0 || payload.yaml.length > 64 * 1024) throw new Error("Refusing to save a blueprint with no text or too much of it.");
+}
+
+const SCHEDULE_KEYS = new Set(["name", "icon", "schedule_id", ...DAY_KEYS]);
+const SCHEDULE_TIME = /^([01]\d|2[0-3]):[0-5]\d:00$/;
+
+// schedule/create and schedule/update: a name (and for an update the id of the
+// schedule), an optional icon and the seven days, each a short list of from/to
+// times. Nothing else rides along.
+function assertScheduleWrite(type: string, payload: Record<string, unknown>): void {
+  const stray = Object.keys(payload).find((k) => !SCHEDULE_KEYS.has(k));
+  if (stray) throw new Error(`Refusing to send a schedule with "${stray.slice(0, 40)}": it isn't something Taxis sends.`);
+  if (typeof payload.name !== "string" || payload.name.trim() === "" || payload.name.length > 255) throw new Error("Refusing to send a schedule with no name.");
+  if (payload.icon !== undefined && (typeof payload.icon !== "string" || !/^[a-z0-9]+:[a-z0-9-]+$/.test(payload.icon))) throw new Error("Refusing to send a schedule with an icon that isn't one.");
+  if (type === "schedule/update" ? typeof payload.schedule_id !== "string" || !/^[a-z0-9_]{1,80}$/.test(payload.schedule_id) : "schedule_id" in payload) {
+    throw new Error(type === "schedule/update" ? "Refusing to update a schedule without saying which." : "Refusing to create a schedule with an id.");
+  }
+  for (const day of DAY_KEYS) {
+    const ranges = payload[day];
+    if (!Array.isArray(ranges) || ranges.length > MAX_RANGES_PER_DAY) throw new Error(`Refusing to send a schedule whose ${day} isn't a short list of periods.`);
+    for (const r of ranges as unknown[]) {
+      const keys = r && typeof r === "object" ? Object.keys(r) : [];
+      const { from, to } = (r ?? {}) as { from?: unknown; to?: unknown };
+      const ok = keys.length === 2 && typeof from === "string" && typeof to === "string" && SCHEDULE_TIME.test(from) && SCHEDULE_TIME.test(to) && from < to;
+      if (!ok) throw new Error(`Refusing to send a schedule with a period on ${day} that isn't from/to times.`);
+    }
+  }
+}
+
+export function assertWriteCommand(type: string, payload: Record<string, unknown> = {}): void {
   if (!WRITE_COMMANDS.has(type)) {
     throw new Error(`Refusing to send "${type}" to Home Assistant: Taxis doesn't make that change.`);
   }
+  if (type === "blueprint/save") assertBlueprintSave(payload);
+  if (type === "schedule/create" || type === "schedule/update") assertScheduleWrite(type, payload);
 }
 
 // The subset of the WebSocket API this client uses, so tests can pass a fake.
@@ -223,7 +294,7 @@ export class HaSocket {
 
   /** Sends one registry edit. Only the Apply step calls this. */
   async write<T>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
-    assertWriteCommand(type);
+    assertWriteCommand(type, payload);
     return this.send<T>(type, payload);
   }
 

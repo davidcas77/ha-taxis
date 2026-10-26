@@ -3,7 +3,7 @@
 // read and, as important, what was NOT written. Not a test file itself, so
 // vitest doesn't collect it.
 
-import { buildMockRegistry, handleMock, handleMockRest, type MockHome } from "../../scripts/mock-ha-core.ts";
+import { buildMockRegistry, handleMock, handleMockRest, type MockHome, type MockRestReply } from "../../scripts/mock-ha-core.ts";
 import { HaRest } from "../ha/rest.ts";
 import { assertReadCommand, assertWriteCommand } from "../ha/socket.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
@@ -16,6 +16,9 @@ export function fakeHa(home: MockHome = buildMockRegistry()) {
     home,
     ws: [] as WsCall[],
     rest: [] as RestCall[],
+    // Every call of either kind, in the order it was made: "write blueprint/save",
+    // "POST /config/automation/config/x".
+    order: [] as string[],
     // Called after every call has been answered, e.g. to change the house
     // between Taxis reading a config and writing it.
     after: null as null | ((call: { ws?: WsCall; rest?: RestCall }) => void),
@@ -25,6 +28,8 @@ export function fakeHa(home: MockHome = buildMockRegistry()) {
     maxInFlight: 0,
     // A status to answer a REST request with instead of the fake's own.
     restStatus: null as null | ((method: string, path: string) => number | null),
+    // A whole answer to give instead of the fake's own (a flow that aborts, say).
+    restReply: null as null | ((method: string, path: string, body: unknown) => MockRestReply | null),
     // Fails WebSocket reads of these types.
     failRead: new Set<string>(),
   };
@@ -44,9 +49,10 @@ export function fakeHa(home: MockHome = buildMockRegistry()) {
     track(() => {
       // The same guards the real client has.
       if (kind === "read") assertReadCommand(type);
-      else assertWriteCommand(type);
+      else assertWriteCommand(type, payload);
       const call: WsCall = { kind, type, payload };
       t.ws.push(call);
+      t.order.push(`${kind} ${type}`);
       if (t.failRead.has(type)) throw new Error(`forced failure of ${type}`);
       const reply = handleMock(home, type, payload);
       t.after?.({ ws: call });
@@ -62,9 +68,11 @@ export function fakeHa(home: MockHome = buildMockRegistry()) {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     return track(() => {
       const forced = t.restStatus?.(method, url.pathname) ?? null;
-      const reply = forced === null ? handleMockRest(home, method, url.pathname, body) : { status: forced, body: { message: `forced ${forced}` } };
+      const override = t.restReply?.(method, url.pathname, body) ?? null;
+      const reply = override ?? (forced === null ? handleMockRest(home, method, url.pathname, body) : { status: forced, body: { message: `forced ${forced}` } });
       const call: RestCall = { method, path: url.pathname, body, status: reply.status };
       t.rest.push(call);
+      t.order.push(`${method} ${url.pathname.replace("/api", "")}`);
       t.after?.({ rest: call });
       return new Response(JSON.stringify(reply.body), { status: reply.status, headers: { "content-type": "application/json" } });
     });

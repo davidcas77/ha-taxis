@@ -4,6 +4,7 @@
 // and ids Home Assistant would.
 
 import type { RawCategory, RawRegistry, RawState } from "../server/model/hierarchy.ts";
+import { BLUEPRINTS } from "../shared/blueprints.ts";
 import { ENTITY_ID_RE } from "../shared/changes.ts";
 
 type Config = Record<string, unknown>;
@@ -23,9 +24,27 @@ export type MockHome = RawRegistry & {
   // Scenes by id.
   scenes: Record<string, Config>;
   dashboards: MockDashboard[];
-  // Helpers set up in the UI.
-  configEntries: { entry_id: string; domain: string; title: string; entities: string[] }[];
+  // Helpers set up in the UI. Groups keep their options here; entities is the
+  // member list.
+  configEntries: { entry_id: string; domain: string; title: string; entities: string[]; hide_members?: boolean; all?: boolean; state?: string; device_class?: string }[];
+  // Automation blueprints, by path, as the YAML text that was saved.
+  blueprints: Record<string, string>;
+  // Schedule helpers made in the UI, by their storage id: the name and the seven
+  // days' periods as Home Assistant keeps them ("06:30:00").
+  schedules: Record<string, Config>;
+  // Config flows in progress (helper creation, group options), and a counter
+  // for the ids Home Assistant would generate.
+  flows: { next: number; open: Record<string, MockFlow> };
 };
+
+type MockFlow = { kind: "create" | "options"; handler: string; step: string; groupType?: string; entryId?: string };
+
+// A template sensor's state, for the one template Taxis writes: "on" while the
+// timer it names is active.
+function templateState(home: MockHome, template: string): string {
+  const m = /is_state\('(timer\.[a-z0-9_]+)','active'\)/.exec(template);
+  return m && home.states.find((s) => s.entity_id === m[1])?.state === "active" ? "on" : "off";
+}
 
 type Spec = { area: string; floor: string | null; devices: { name: string; model: string; entities: [string, string, string?, string?][] }[] };
 
@@ -40,8 +59,10 @@ const house: Spec[] = [
       { name: "Sofa presence", model: "FP2", entities: [["binary_sensor.living_presence", "on", "occupancy"], ["sensor.living_illuminance", "112", "illuminance", "lx"]] },
       { name: "Climate sensor", model: "AS008", entities: [["sensor.living_temperature", "21.6", "temperature", "°C"], ["sensor.living_humidity", "48", "humidity", "%"], ["sensor.living_climate_battery", "84", "battery", "%"]] },
       { name: "Window sensor", model: "AS008", entities: [["sensor.living_window_temperature", "19.9", "temperature", "°C"]] },
-      { name: "TV", model: "QE65", entities: [["media_player.living_tv", "playing"]] },
+      { name: "TV", model: "QE65", entities: [["media_player.living_tv", "playing", "tv"]] },
       { name: "Balcony door", model: "AS006", entities: [["binary_sensor.living_balcony_door", "off", "door"]] },
+      // A radiator valve with no presets: Area climate sets its temperature.
+      { name: "Radiator valve", model: "TRV-1", entities: [["climate.living_valve", "heat"]] },
     ],
   },
   {
@@ -51,6 +72,11 @@ const house: Spec[] = [
       { name: "Kitchen lights", model: "Shelly 2PM", entities: [["light.kitchen_main", "off"], ["light.kitchen_under_cabinet", "off"], ["sensor.kitchen_lights_power", "0", "power", "W"]] },
       { name: "Kitchen PIR", model: "AS007", entities: [["binary_sensor.kitchen_motion", "off", "motion"], ["sensor.kitchen_pir_battery", "12", "battery", "%"]] },
       { name: "Leak sensor", model: "SJCGQ11LM", entities: [["binary_sensor.kitchen_leak", "off", "moisture"]] },
+      // Presence next to the PIR: with a motion sensor to start the room, this one holds it.
+      { name: "Kitchen mmWave", model: "LD2410", entities: [["binary_sensor.kitchen_presence", "off", "occupancy"], ["sensor.kitchen_illuminance", "230", "illuminance", "lx"]] },
+      { name: "Kitchen climate", model: "AS008", entities: [["sensor.kitchen_temperature", "22.4", "temperature", "°C"]] },
+      // A media player that says nothing about being a TV is a speaker.
+      { name: "Kitchen speaker", model: "HomePod mini", entities: [["media_player.kitchen_speaker", "idle"]] },
     ],
   },
   {
@@ -59,6 +85,9 @@ const house: Spec[] = [
     devices: [
       { name: "Front door lock", model: "Nuki 4", entities: [["lock.front_door", "locked"], ["binary_sensor.front_door", "off", "door"]] },
       { name: "Hall PIR", model: "AS007", entities: [["binary_sensor.hall_motion", "unavailable", "motion"]] },
+      // A camera's own motion sensor sees outside the room, so it is listed but doesn't count.
+      { name: "Porch camera", model: "Cam 2K", entities: [["camera.porch", "idle"], ["binary_sensor.porch_camera_motion", "off", "motion"]] },
+      { name: "Hall lights", model: "Hue White", entities: [["light.hall_ceiling", "off"], ["light.hall_mirror", "off"]] },
     ],
   },
   {
@@ -77,12 +106,31 @@ const house: Spec[] = [
       { name: "Desk light", model: "WLED", entities: [["light.desk", "on"]] },
       { name: "Desk mmWave", model: "LD2410", entities: [["binary_sensor.study_presence", "off", "occupancy"]] },
       { name: "Study window", model: "AS006", entities: [["binary_sensor.study_window", "on", "window"]] },
+      { name: "Study climate", model: "AS008", entities: [["sensor.study_climate_temperature", "20.8", "temperature", "°C"]] },
+      // "opening" is a window until the user says it is a door.
+      { name: "Skylight sensor", model: "AS006", entities: [["binary_sensor.study_skylight", "off", "opening"]] },
     ],
   },
+  // Floors whose ids say little about them (floor_2, level_1): Settings suggests
+  // a better floor code.
+  {
+    area: "Loft",
+    floor: "floor_2",
+    devices: [{ name: "Loft lamp", model: "IKEA E27", entities: [["light.loft_lamp", "off"]] }],
+  },
+  {
+    area: "Cellar",
+    floor: "level_1",
+    devices: [{ name: "Cellar bulb", model: "Hue White", entities: [["light.cellar_bulb", "off"]] }],
+  },
+  // On no floor.
   {
     area: "Garage",
     floor: null,
-    devices: [{ name: "Garage door", model: "Meross MSG100", entities: [["cover.garage_door", "closed"]] }],
+    devices: [
+      { name: "Garage door", model: "Meross MSG100", entities: [["cover.garage_door", "closed"]] },
+      { name: "Garage lights", model: "Shelly 1", entities: [["light.garage_ceiling", "off"], ["light.garage_bench", "off"]] },
+    ],
   },
 ];
 
@@ -100,6 +148,8 @@ export function buildMockRegistry(): MockHome {
     floors: [
       { floor_id: "ground", name: "Ground floor", level: 0 },
       { floor_id: "first", name: "First floor", level: 1 },
+      { floor_id: "floor_2", name: "Loft", level: 2 },
+      { floor_id: "level_1", name: "Cellar", level: -1 },
     ],
     areas: [],
     devices: [{ id: "hub", name: "Zigbee hub", manufacturer: "Aqara", model: "M3", area_id: "living_room" }],
@@ -118,6 +168,9 @@ export function buildMockRegistry(): MockHome {
     scenes: {},
     dashboards: [],
     configEntries: [],
+    blueprints: {},
+    schedules: {},
+    flows: { next: 1, open: {} },
   };
   for (const room of house) {
     const areaId = slug(room.area);
@@ -131,6 +184,24 @@ export function buildMockRegistry(): MockHome {
       }
     });
   }
+  // Thermostats say what they can do in their attributes, which Area climate reads.
+  Object.assign(reg.states.find((s) => s.entity_id === "climate.living_valve")!.attributes!, {
+    hvac_modes: ["off", "heat"],
+    temperature: 20,
+    min_temp: 5,
+    max_temp: 30,
+    target_temp_step: 0.5,
+  });
+  // This one has presets, so Area climate can use them.
+  Object.assign(reg.states.find((s) => s.entity_id === "climate.bedroom")!.attributes!, {
+    hvac_modes: ["off", "heat", "auto"],
+    preset_modes: ["eco", "comfort", "sleep", "away"],
+    preset_mode: "comfort",
+    temperature: 19,
+    min_temp: 5,
+    max_temp: 25,
+    target_temp_step: 0.5,
+  });
   // The living room's main temperature sensor, set on the area as HA does.
   reg.areas.find((a) => a.area_id === "living_room")!.temperature_entity_id = "sensor.living_temperature";
 
@@ -141,7 +212,16 @@ export function buildMockRegistry(): MockHome {
   };
   group("light.living_all", "living_room", "on", ["light.living_spots", "light.living_lamp"]);
   group("light.downstairs", "living_room", "on", ["light.living_spots", "light.kitchen_main", "light.kitchen_under_cabinet"]);
+  // A template helper that combines the room's motion sensors: listed, not counted.
+  reg.entities.push({ entity_id: "binary_sensor.kitchen_any_motion", platform: "template", area_id: "kitchen" });
+  reg.states.push({ entity_id: "binary_sensor.kitchen_any_motion", state: "off", attributes: { friendly_name: "Kitchen any motion", device_class: "motion" } });
   group("binary_sensor.downstairs_motion", "hallway", "off", ["binary_sensor.kitchen_motion", "binary_sensor.hall_motion"], "motion");
+  // Canonical helpers (see shared/helpers.ts), one of each case. The living room
+  // light group sits at its canonical id with the right members. The hallway one
+  // has the right members under another id. The garage one is at its canonical id
+  // with a member missing.
+  group("light.hall_lights", "hallway", "off", ["light.hall_ceiling", "light.hall_mirror"]);
+  group("light.garage_all", "garage", "off", ["light.garage_ceiling"]);
 
   // Entities an integration ships disabled: in the registry, with no state.
   for (const name of ["linkquality", "update_available", "power_outage_count"]) {
@@ -235,6 +315,25 @@ export function buildMockRegistry(): MockHome {
   // light.downstairs is that helper's entity, as HA links them.
   Object.assign(reg.entities.find((e) => e.entity_id === "light.downstairs")!, { config_entry_id: "01JHELPERDOWNSTAIRS" });
   reg.configEntries.push({ entry_id: "01JHELPERDOWNSTAIRS", domain: "group", title: "Downstairs", entities: ["light.living_spots", "light.kitchen_main", "light.kitchen_under_cabinet"] });
+  // The demo's other group helpers set up in the UI, so their members can be changed.
+  for (const [entityId, entryId, title] of [
+    ["light.hall_lights", "01JHELPERHALLLIGHTS", "Hall lights"],
+    ["light.garage_all", "01JHELPERGARAGEALL", "Garage all"],
+  ]) {
+    Object.assign(reg.entities.find((e) => e.entity_id === entityId)!, { config_entry_id: entryId, original_name: title });
+    const members = reg.states.find((s) => s.entity_id === entityId)!.attributes!.entity_id as string[];
+    reg.configEntries.push({ entry_id: entryId, domain: "group", title, entities: [...members], hide_members: false, all: false });
+  }
+
+  // Lights with no area, on devices that have none either. The stair lamp has a name of
+  // its own; the porch lamp is its device's main entity with none, so Home Assistant
+  // wants it named before it can have an area of its own.
+  reg.devices.push({ id: "stairs", name: "Stair lamp", manufacturer: "Demo", model: "Hue Go" });
+  reg.entities.push({ entity_id: "light.stair_lamp", device_id: "stairs", platform: "demo", original_name: "Stair lamp" });
+  reg.states.push({ entity_id: "light.stair_lamp", state: "off", attributes: { friendly_name: "Stair lamp" } });
+  reg.devices.push({ id: "porch", name: "Porch lamp", manufacturer: "Demo", model: "Hue White" });
+  reg.entities.push({ entity_id: "light.porch_lamp", device_id: "porch", platform: "demo" });
+  reg.states.push({ entity_id: "light.porch_lamp", state: "off", attributes: { friendly_name: "Porch lamp" } });
 
   reg.entities.push({ entity_id: "input_boolean.guest_mode", platform: "input_boolean" });
   reg.states.push({ entity_id: "input_boolean.guest_mode", state: "off", attributes: { friendly_name: "Guest mode" } });
@@ -403,6 +502,82 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
       add("config_entry", (home.configEntries ?? []).filter((c) => c.entities.includes(id)).map((c) => c.entry_id));
       return ok(found);
     }
+    case "blueprint/list": {
+      // Like Home Assistant: the path of each blueprint and its metadata (the
+      // blueprint's own header: name, domain, description…).
+      if (p.domain !== "automation") return fail("Unknown domain");
+      const header = (yaml: string, key: string) => {
+        const m = new RegExp(`^  ${key}: (.*)$`, "m").exec(yaml);
+        return m ? (m[1].startsWith('"') ? (JSON.parse(m[1]) as string) : m[1]) : undefined;
+      };
+      return ok(
+        Object.fromEntries(
+          Object.entries(home.blueprints ?? {}).map(([path, yaml]) => [path, { metadata: { name: header(yaml, "name"), domain: "automation", ...(header(yaml, "description") ? { description: header(yaml, "description") } : {}) } }]),
+        ),
+      );
+    }
+    case "blueprint/save": {
+      if (p.domain !== "automation" || typeof p.path !== "string" || typeof p.yaml !== "string") return fail("Invalid blueprint request");
+      if (!/^[a-z0-9_]+\/[a-z0-9_]+\.yaml$/.test(p.path)) return fail("Invalid path");
+      if (!p.yaml.startsWith("blueprint:")) return fail("Invalid blueprint: no blueprint section");
+      const blueprints = (home.blueprints ??= {});
+      if (Object.hasOwn(blueprints, p.path) && p.allow_override !== true) return fail("File already exists");
+      const overrides = Object.hasOwn(blueprints, p.path) ? {} : null;
+      blueprints[p.path] = p.yaml;
+      // Automations made from it load now.
+      for (const s of home.states ?? []) {
+        const id = (s.attributes as Config | undefined)?.id;
+        const path = typeof id === "string" ? (home.automations?.[id]?.use_blueprint as { path?: string } | undefined)?.path : undefined;
+        if (path === p.path && s.state === "unavailable") s.state = "on";
+      }
+      return ok(overrides);
+    }
+    case "timer/create":
+    case "input_boolean/create": {
+      const domain = type.split("/")[0];
+      if (typeof p.name !== "string" || !p.name.trim()) return fail("name is required");
+      if (domain === "timer" && (typeof p.duration !== "string" || !/^\d{1,3}:\d{2}:\d{2}$/.test(p.duration))) return fail("Invalid duration");
+      const taken = reg.entities.filter((e) => e.platform === domain).map((e) => e.unique_id ?? "");
+      const id = uniqueId(slug(p.name), taken);
+      const entityId = freeEntityId(home as MockHome, domain, p.name);
+      reg.entities.push({ entity_id: entityId, platform: domain, unique_id: id, original_name: p.name });
+      const attributes: Record<string, unknown> = { friendly_name: p.name, editable: true };
+      if (typeof p.icon === "string") attributes.icon = p.icon;
+      if (domain === "timer") Object.assign(attributes, { duration: durationText(String(p.duration)), restore: p.restore === true });
+      reg.states.push({ entity_id: entityId, state: domain === "timer" ? "idle" : p.initial === true ? "on" : "off", attributes } as RawState);
+      return ok({ id, name: p.name, ...(domain === "timer" ? { duration: p.duration, restore: p.restore === true } : { ...(p.icon ? { icon: p.icon } : {}), ...(p.initial === true ? { initial: true } : {}) }) });
+    }
+    case "schedule/create": {
+      if (typeof p.name !== "string" || !p.name.trim()) return fail("name is required");
+      const days = scheduleDaysOf(p);
+      if (typeof days === "string") return fail(days);
+      const taken = reg.entities.filter((e) => e.platform === "schedule").map((e) => e.unique_id ?? "");
+      const id = uniqueId(slug(p.name), taken);
+      const entityId = freeEntityId(home as MockHome, "schedule", p.name);
+      reg.entities.push({ entity_id: entityId, platform: "schedule", unique_id: id, original_name: p.name });
+      reg.states.push({ entity_id: entityId, state: "off", attributes: { friendly_name: p.name, editable: true } } as RawState);
+      const item = { id, name: p.name, ...days };
+      (home.schedules ??= {})[id] = structuredClone(item);
+      return ok(item);
+    }
+    case "schedule/update": {
+      const entity = reg.entities.find((e) => e.platform === "schedule" && e.unique_id === p.schedule_id);
+      if (!entity) return fail("Unable to find schedule");
+      if (typeof p.name !== "string" || !p.name.trim()) return fail("name is required");
+      const days = scheduleDaysOf(p);
+      if (typeof days === "string") return fail(days);
+      const item = { id: String(p.schedule_id), name: p.name, ...days };
+      (home.schedules ??= {})[item.id] = structuredClone(item);
+      return ok(item);
+    }
+    case "timer/update": {
+      const entity = reg.entities.find((e) => e.platform === "timer" && e.unique_id === p.timer_id);
+      if (!entity) return fail("Unable to find timer");
+      if (typeof p.duration !== "string" || !/^\d{1,3}:\d{2}:\d{2}$/.test(p.duration)) return fail("Invalid duration");
+      const st = reg.states.find((s) => s.entity_id === entity.entity_id);
+      if (st) st.attributes = { ...st.attributes, duration: durationText(p.duration) } as RawState["attributes"];
+      return ok({ id: p.timer_id, duration: p.duration });
+    }
     case "lovelace/dashboards/list":
       return ok((home.dashboards ?? []).filter((d) => d.url_path !== null).map((d) => ({ id: String(d.url_path).replace(/-/g, "_"), url_path: d.url_path, mode: d.mode, title: d.title })));
     case "lovelace/info": {
@@ -459,12 +634,43 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
   }
 }
 
+const SCHEDULE_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+// The seven days of a schedule write, checked the way Home Assistant does: times
+// with seconds, each period ending after it starts, none overlapping. A day left
+// out is empty. A string is the reason it was refused.
+function scheduleDaysOf(p: Record<string, unknown>): Record<string, { from: string; to: string }[]> | string {
+  const out: Record<string, { from: string; to: string }[]> = {};
+  for (const day of SCHEDULE_DAYS) {
+    const list = p[day] ?? [];
+    if (!Array.isArray(list)) return `${day} must be a list`;
+    let last = "";
+    for (const r of list as { from?: unknown; to?: unknown }[]) {
+      if (typeof r?.from !== "string" || typeof r?.to !== "string" || !/^\d{2}:\d{2}:\d{2}$/.test(r.from) || !/^\d{2}:\d{2}:\d{2}$/.test(r.to)) return `Invalid time in ${day}`;
+      if (r.from >= r.to) return `Invalid time range, from ${r.from} is after ${r.to}`;
+      if (r.from < last) return "Overlapping time ranges";
+      last = r.to;
+    }
+    out[day] = (list as { from: string; to: string }[]).map((r) => ({ from: r.from, to: r.to }));
+  }
+  return out;
+}
+
+// "00:05:00" as a timer's state writes it: "0:05:00".
+const durationText = (d: string) => {
+  const [h, m, s] = d.split(":").map(Number);
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+};
+
 export type MockRestReply = { status: number; body: unknown };
 
-// HA's REST config API for automations, scripts and scenes. Simplification:
-// real HA creates a config on POST to a new id; here only existing ids can be
-// posted, and unknown ids answer 404.
+// HA's REST config API for automations, scripts and scenes. Posting an id that
+// has no automation yet makes one, like Home Assistant does; scripts and scenes
+// are simplified: only existing ids can be posted, and unknown ids answer 404.
+// YAML automations answer 404 to everything.
 export function handleMockRest(home: MockHome, method: string, path: string, body: unknown): MockRestReply {
+  const flow = handleMockFlow(home, method, path, body);
+  if (flow) return flow;
   const m = /^\/api\/config\/(automation|script|scene)\/config\/([^/]+)$/.exec(path);
   if (!m) return { status: 404, body: { message: "Not found" } };
   if (method !== "GET" && method !== "POST") return { status: 405, body: { message: "Method not allowed" } };
@@ -472,11 +678,26 @@ export function handleMockRest(home: MockHome, method: string, path: string, bod
   const id = decodeURIComponent(m[2]);
   const store = { automation: home.automations, script: home.scripts, scene: home.scenes }[kind];
   // YAML automations are not in `automations`, so they answer 404 too.
-  if (!Object.hasOwn(store, id)) return { status: 404, body: { message: "Resource not found" } };
+  const has = Object.hasOwn(store, id);
+  const creating = !has && method === "POST" && kind === "automation" && !Object.hasOwn(home.yamlAutomations, id);
+  if (!has && !creating) return { status: 404, body: { message: "Resource not found" } };
   if (method === "GET") return { status: 200, body: structuredClone(store[id]) };
 
   if (!body || typeof body !== "object" || Array.isArray(body)) return { status: 400, body: { message: "Message malformed" } };
   store[id] = structuredClone(body) as Config;
+  if (creating) {
+    // The automation entity, named after its alias. One made from a blueprint
+    // Home Assistant doesn't have can't load: unavailable.
+    const alias = typeof (body as Config).alias === "string" ? String((body as Config).alias) : id;
+    const entityId = freeEntityId(home, "automation", alias);
+    home.entities.push({ entity_id: entityId, platform: "automation", unique_id: id, original_name: alias });
+    home.states.push({ entity_id: entityId, state: "on", attributes: { id, friendly_name: alias } } as RawState);
+  }
+  if (kind === "automation") {
+    const path = ((body as Config).use_blueprint as { path?: unknown } | undefined)?.path;
+    const st = home.states.find((s) => s.entity_id.startsWith("automation.") && (s.attributes as Config | undefined)?.id === id);
+    if (st && typeof path === "string") st.state = Object.hasOwn(home.blueprints ?? {}, path) ? "on" : "unavailable";
+  }
   // HA shows the new title in the state: the alias, or a scene's name.
   const title = (body as Config)[kind === "scene" ? "name" : "alias"];
   const state = home.states.find((s) =>
@@ -484,4 +705,503 @@ export function handleMockRest(home: MockHome, method: string, path: string, bod
   );
   if (state && typeof title === "string") state.attributes = { ...state.attributes, friendly_name: title };
   return { status: 200, body: { result: "ok" } };
+}
+
+// ---------------------------------------------------------------------------
+// Config flows: how Home Assistant's UI makes a group or a min/max helper, and
+// edits a group's members. Simplified to what Taxis sends; ids look like the
+// real ones (32 hex characters for a flow, 26 letters and digits for an entry).
+// ---------------------------------------------------------------------------
+
+const GROUP_TYPES = ["binary_sensor", "cover", "event", "fan", "light", "lock", "media_player", "notify", "sensor", "switch"];
+const OFF_STATES = new Set(["off", "unavailable", "unknown", "idle", "standby", "closed", "locked"]);
+
+function nextFlowId(home: MockHome): string {
+  return (home.flows.next++).toString(16).padStart(32, "0");
+}
+
+function nextEntryId(home: MockHome): string {
+  return `01MOCK${String(home.flows.next++).padStart(20, "0")}`;
+}
+
+function freeEntityId(home: MockHome, domain: string, name: string): string {
+  const base = `${domain}.${slug(name)}`;
+  let id = base;
+  for (let n = 2; home.entities.some((e) => e.entity_id === id) || home.states.some((s) => s.entity_id === id); n++) id = `${base}_${n}`;
+  return id;
+}
+
+// A group's state follows its members; a min/max mean follows their numbers.
+function groupState(home: MockHome, members: string[]): string {
+  const states = members.map((m) => home.states.find((s) => s.entity_id === m)?.state ?? "unavailable");
+  return states.some((s) => !OFF_STATES.has(s)) ? "on" : "off";
+}
+
+function meanState(home: MockHome, members: string[]): string {
+  const values = members.map((m) => Number(home.states.find((s) => s.entity_id === m)?.state)).filter((v) => Number.isFinite(v));
+  return values.length ? String(Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10) : "unknown";
+}
+
+const isStringList = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string");
+
+function handleMockFlow(home: MockHome, method: string, path: string, body: unknown): MockRestReply | null {
+  const m = /^\/api\/config\/config_entries\/(options\/)?flow(?:\/([A-Za-z0-9]+))?$/.exec(path);
+  if (!m) return null;
+  if (method !== "POST") return { status: 405, body: { message: "Method not allowed" } };
+  const options = Boolean(m[1]);
+  const flowId = m[2];
+  const data = (body && typeof body === "object" && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+  const bad = (message: string): MockRestReply => ({ status: 400, body: { message } });
+  const form = (id: string, handler: string, step: string, schema: unknown[], errors: Record<string, string> | null = null): MockRestReply => ({
+    status: 200,
+    body: { type: "form", flow_id: id, handler, step_id: step, data_schema: schema, errors, description_placeholders: null, last_step: null },
+  });
+  const done = (id: string, handler: string, title: string, result: unknown): MockRestReply => {
+    delete home.flows.open[id];
+    return { status: 200, body: { type: "create_entry", flow_id: id, handler, version: 1, minor_version: 1, title, description: null, description_placeholders: null, result } };
+  };
+
+  // Starting a flow.
+  if (!flowId) {
+    const handler = data.handler;
+    if (typeof handler !== "string") return bad("Invalid handler specified");
+    const id = nextFlowId(home);
+    if (options) {
+      const entry = home.configEntries.find((e) => e.entry_id === handler);
+      if (!entry || entry.domain !== "group") return { status: 404, body: { message: "Invalid handler specified" } };
+      const type = home.entities.find((e) => e.config_entry_id === entry.entry_id)?.entity_id.split(".")[0] ?? "light";
+      home.flows.open[id] = { kind: "options", handler, step: "init", groupType: type, entryId: entry.entry_id };
+      const schema: unknown[] = [
+        { name: "entities", required: true, selector: { entity: { multiple: true } }, description: { suggested_value: entry.entities } },
+        { name: "hide_members", optional: true, selector: { boolean: {} }, description: { suggested_value: entry.hide_members ?? false } },
+      ];
+      if (type === "light" || type === "binary_sensor") schema.push({ name: "all", optional: true, selector: { boolean: {} }, description: { suggested_value: entry.all ?? false } });
+      return form(id, handler, "init", schema);
+    }
+    if (handler === "group") {
+      home.flows.open[id] = { kind: "create", handler, step: "user" };
+      return { status: 200, body: { type: "menu", flow_id: id, handler, step_id: "user", menu_options: GROUP_TYPES, description_placeholders: null } };
+    }
+    if (handler === "template") {
+      home.flows.open[id] = { kind: "create", handler, step: "user" };
+      return { status: 200, body: { type: "menu", flow_id: id, handler, step_id: "user", menu_options: ["binary_sensor", "sensor", "switch"], description_placeholders: null } };
+    }
+    if (handler === "min_max") {
+      home.flows.open[id] = { kind: "create", handler, step: "user" };
+      return form(id, handler, "user", [{ name: "name", required: true }, { name: "entity_ids", required: true }, { name: "type", required: true }, { name: "round_digits", optional: true }]);
+    }
+    return { status: 404, body: { message: "Invalid handler specified" } };
+  }
+
+  // A step of a flow in progress.
+  const flow = home.flows.open[flowId];
+  if (!flow || flow.kind !== (options ? "options" : "create")) return { status: 404, body: { message: "Invalid flow specified" } };
+
+  if (flow.kind === "options") {
+    const entry = home.configEntries.find((e) => e.entry_id === flow.entryId)!;
+    if (!isStringList(data.entities)) return form(flowId, flow.handler, "init", [], { base: "entities_required" });
+    entry.entities = [...data.entities];
+    if (typeof data.hide_members === "boolean") entry.hide_members = data.hide_members;
+    if (typeof data.all === "boolean") entry.all = data.all;
+    // The group's entity follows its new members.
+    const entity = home.entities.find((e) => e.config_entry_id === entry.entry_id);
+    const st = entity && home.states.find((s) => s.entity_id === entity.entity_id);
+    if (st) {
+      st.attributes = { ...st.attributes, entity_id: [...entry.entities] };
+      st.state = groupState(home, entry.entities);
+    }
+    return done(flowId, flow.handler, "", true);
+  }
+
+  // Creating a group: the menu, then the form of the chosen type.
+  if (flow.handler === "group" && flow.step === "user") {
+    const next = data.next_step_id;
+    if (typeof next !== "string" || !GROUP_TYPES.includes(next)) return bad("Invalid step specified");
+    flow.step = next;
+    flow.groupType = next;
+    const schema: unknown[] = [{ name: "name", required: true }, { name: "entities", required: true }, { name: "hide_members", required: true, default: false }];
+    if (next === "light" || next === "binary_sensor") schema.push({ name: "all", optional: true, default: false });
+    return form(flowId, flow.handler, next, schema);
+  }
+
+  // Creating a template sensor: the menu, then the form of the chosen kind.
+  if (flow.handler === "template" && flow.step === "user") {
+    if (data.next_step_id !== "binary_sensor") return bad("Invalid step specified");
+    flow.step = "binary_sensor";
+    return form(flowId, flow.handler, "binary_sensor", [{ name: "name", required: true }, { name: "state", required: true }, { name: "device_class", optional: true }]);
+  }
+
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  if (!name) return form(flowId, flow.handler, flow.step, [], { name: "name_required" });
+  const entryId = nextEntryId(home);
+  if (flow.handler === "template") {
+    if (typeof data.state !== "string" || !data.state.trim()) return form(flowId, flow.handler, flow.step, [], { state: "template_required" });
+    const entityId = freeEntityId(home, "binary_sensor", name);
+    const deviceClass = typeof data.device_class === "string" ? data.device_class : undefined;
+    home.configEntries.push({ entry_id: entryId, domain: "template", title: name, entities: [], state: data.state, device_class: deviceClass });
+    home.entities.push({ entity_id: entityId, platform: "template", config_entry_id: entryId, original_name: name });
+    home.states.push({ entity_id: entityId, state: templateState(home, data.state), attributes: { friendly_name: name, device_class: deviceClass } } as RawState);
+    return done(flowId, flow.handler, name, { entry_id: entryId, domain: "template", title: name });
+  }
+  if (flow.handler === "group") {
+    if (!isStringList(data.entities)) return form(flowId, flow.handler, flow.step, [], { entities: "entities_required" });
+    const domain = flow.groupType!;
+    const entityId = freeEntityId(home, domain, name);
+    const members = [...data.entities];
+    home.configEntries.push({ entry_id: entryId, domain: "group", title: name, entities: members, hide_members: Boolean(data.hide_members), all: Boolean(data.all) });
+    home.entities.push({ entity_id: entityId, platform: "group", config_entry_id: entryId, original_name: name });
+    home.states.push({ entity_id: entityId, state: groupState(home, members), attributes: { friendly_name: name, entity_id: members } });
+    return done(flowId, flow.handler, name, { entry_id: entryId, domain: "group", title: name });
+  }
+  // min_max
+  if (!isStringList(data.entity_ids)) return form(flowId, flow.handler, flow.step, [], { entity_ids: "entities_required" });
+  const members = [...data.entity_ids];
+  const entityId = freeEntityId(home, "sensor", name);
+  const first = home.states.find((s) => s.entity_id === members[0]);
+  home.configEntries.push({ entry_id: entryId, domain: "min_max", title: name, entities: members });
+  home.entities.push({ entity_id: entityId, platform: "min_max", config_entry_id: entryId, original_name: name });
+  home.states.push({
+    entity_id: entityId,
+    state: meanState(home, members),
+    // A min/max sensor reports which entities gave the extremes, not its members.
+    attributes: { friendly_name: name, device_class: first?.attributes?.device_class, unit_of_measurement: first?.attributes?.unit_of_measurement, min_entity_id: members[0], max_entity_id: members[0] },
+  } as RawState);
+  return done(flowId, flow.handler, name, { entry_id: entryId, domain: "min_max", title: name });
+}
+
+// ---------------------------------------------------------------------------
+// The demo house with recipes partly installed, for `npm run mock-ha`: so every
+// status on the Recipes page shows. Tests start from buildMockRegistry and
+// build on it themselves.
+//
+//   Living room  Occupancy installed and up to date; Motion lights ready (it makes
+//                the override timer, and another automation already controls
+//                its light group); Media off ready (the TV).
+//   Kitchen      Occupancy installed with a hold timeout of 3 min, older than
+//                the default 5: out of date. Motion lights: no light group yet.
+//                Media off ready (the speaker).
+//   Study        Occupancy ready; Motion lights and Media off need it first.
+//   Hallway      Occupancy ready (its sensor is unavailable, which still counts).
+//   Bedroom, Garage  no motion or presence sensor: missing.
+// ---------------------------------------------------------------------------
+
+export function withRecipeDemo(reg: MockHome): MockHome {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const occupancy = BLUEPRINTS.find((b) => b.recipe === "occupancy")!;
+  reg.blueprints[occupancy.path] = occupancy.yaml;
+
+  // An area's runtime helpers: the hold timer, the switch and the occupied sensor.
+  const runtime = (areaId: string, code: string, name: string, minutes: number) => {
+    reg.entities.push({ entity_id: `timer.${code}_hold`, platform: "timer", unique_id: `${code}_hold`, original_name: `${name} hold`, area_id: areaId });
+    reg.states.push({
+      entity_id: `timer.${code}_hold`,
+      state: "idle",
+      attributes: { friendly_name: `${name} hold`, duration: `${Math.floor(minutes / 60)}:${pad(minutes % 60)}:00`, editable: true, restore: true },
+    } as RawState);
+    reg.entities.push({ entity_id: `input_boolean.${code}_paused`, platform: "input_boolean", unique_id: `${code}_paused`, original_name: `${name} automations paused`, area_id: areaId });
+    reg.states.push({ entity_id: `input_boolean.${code}_paused`, state: "off", attributes: { friendly_name: `${name} automations paused`, editable: true, icon: "mdi:pause-circle-outline" } } as RawState);
+    const entry = nextEntryId(reg);
+    reg.configEntries.push({ entry_id: entry, domain: "template", title: `${name} occupied`, entities: [], state: `{{ is_state('timer.${code}_hold','active') }}`, device_class: "occupancy" });
+    reg.entities.push({ entity_id: `binary_sensor.${code}_occupied`, platform: "template", config_entry_id: entry, original_name: `${name} occupied`, area_id: areaId });
+    reg.states.push({ entity_id: `binary_sensor.${code}_occupied`, state: "off", attributes: { friendly_name: `${name} occupied`, device_class: "occupancy" } } as RawState);
+  };
+
+  // An automation as the UI stores it, and its entity.
+  const automation = (id: string, alias: string, config: Config) => {
+    reg.automations[id] = { id, alias, description: "", ...config };
+    const entityId = freeEntityId(reg, "automation", alias);
+    reg.entities.push({ entity_id: entityId, platform: "automation", unique_id: id, original_name: alias });
+    reg.states.push({ entity_id: entityId, state: "on", attributes: { id, friendly_name: alias } } as RawState);
+  };
+  const occupancyOf = (code: string, minutes: number, starts: string[], holds: string[]) => ({
+    use_blueprint: {
+      path: occupancy.path,
+      input: {
+        starts_entities: starts,
+        holds_entities: holds,
+        bed_entities: [],
+        occupied_entity: `binary_sensor.${code}_occupied`,
+        hold_timer: `timer.${code}_hold`,
+        hold_minutes: minutes,
+        extended_after: 30,
+        extended_hold: 15,
+        sleep_hold: 60,
+        pause_switch: `input_boolean.${code}_paused`,
+      },
+    },
+  });
+
+  runtime("living_room", "living", "Living room", 5);
+  automation("taxis_occupancy_living", "Living room – Occupancy (Taxis)", occupancyOf("living", 5, ["binary_sensor.living_presence"], []));
+  runtime("kitchen", "kitchen", "Kitchen", 3);
+  automation("taxis_occupancy_kitchen", "Kitchen – Occupancy (Taxis)", occupancyOf("kitchen", 3, ["binary_sensor.kitchen_motion"], ["binary_sensor.kitchen_presence"]));
+
+  // An automation of the household's own that already controls the living room lights.
+  automation("1700000000003", "Living room evening lights", {
+    triggers: [{ trigger: "sun", event: "sunset" }],
+    conditions: [],
+    actions: [{ action: "light.turn_on", target: { entity_id: "light.living_all" }, data: { brightness_pct: 60 } }],
+    mode: "single",
+  });
+  // ...and one that already sets the living room's radiator valve, which Area climate would also set.
+  automation("1700000000004", "Heating schedule", {
+    triggers: [{ trigger: "time", at: "06:30:00" }],
+    conditions: [],
+    actions: [{ action: "climate.set_temperature", target: { entity_id: "climate.living_valve" }, data: { temperature: 21 } }],
+    mode: "single",
+  });
+  return reg;
+}
+
+// ---------------------------------------------------------------------------
+// The demo house with something for every health check, for `npm run mock-ha`.
+// Everything is invented. Built on withRecipeDemo, so it also has the recipe
+// cells (Kitchen Occupancy out of date, Study and Hallway ready…).
+//
+//   Missing references   "Porch light at dusk" (a light and a sensor that are
+//                        not there); the Kitchen dashboard shows a gone sensor.
+//   Not reporting        the Hall PIR (used by "Hall light on motion", so an
+//                        error) for 3 days; an attic sensor with two entities
+//                        for 5 days, grouped under its device.
+//   Activity             "Lights on at sunset" last ran 45 days ago; "Weekend
+//                        guest lights" has never run; "Old holiday lights" is off.
+//   Conditions           "Garden watering" tests a soil sensor that is gone and
+//                        a range no value is in; "Guest welcome" tests
+//                        input_boolean.guest_mode, which nothing changes.
+//   One-way switches     night_mode is only turned on, movie_mode only off.
+//   Competing lights     "Lights on at sunset" and "Living room evening lights"
+//                        both switch the living room lights.
+//   Taxis setup          Kitchen Occupancy is out of date; Kitchen's motion
+//                        helper id is taken by a real sensor; Bedroom and Garage
+//                        have lights and no way to be occupied (Hallway's
+//                        Occupancy is ready); the Study presence sensor has
+//                        been out for 6 hours; the Study temperature setting
+//                        names a sensor that is gone.
+//   Unused helpers       a spare number and a laundry timer.
+//   Device-based         "Bedroom button", and one tied to a device that is gone.
+//   Climate              the Living room has Area climate (its valve has not
+//                        answered for 3 hours, the room has no temperature
+//                        helper) and "Heating schedule" sets the same valve.
+// ---------------------------------------------------------------------------
+
+export function withHealthDemo(reg: MockHome, now = Date.now()): MockHome {
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const H = 3_600_000;
+  const D = 24 * H;
+
+  const stateOf = (entityId: string) => reg.states.find((s) => s.entity_id === entityId)!;
+  const touch = (entityId: string, patch: { state?: string; ago?: number; attributes?: Record<string, unknown> }) => {
+    const st = stateOf(entityId);
+    if (patch.state !== undefined) st.state = patch.state;
+    if (patch.ago !== undefined) st.last_changed = ago(patch.ago);
+    if (patch.attributes) st.attributes = { ...st.attributes, ...patch.attributes } as RawState["attributes"];
+  };
+
+  // An automation as the UI stores it, and its entity.
+  const automation = (id: string, alias: string, config: Config, opts: { state?: string; triggered?: number } = {}) => {
+    reg.automations[id] = { id, alias, description: "", mode: "single", ...config };
+    const entityId = freeEntityId(reg, "automation", alias);
+    reg.entities.push({ entity_id: entityId, platform: "automation", unique_id: id, original_name: alias });
+    reg.states.push({
+      entity_id: entityId,
+      state: opts.state ?? "on",
+      last_changed: ago(2 * D),
+      attributes: { id, friendly_name: alias, ...(opts.triggered === undefined ? {} : { last_triggered: ago(opts.triggered) }) },
+    } as RawState);
+  };
+
+  // When the automations of the other demos last ran.
+  touch("automation.lights_on_at_sunset", { attributes: { last_triggered: ago(45 * D) } });
+  touch("automation.kitchen_motion_light", { attributes: { last_triggered: ago(2 * H) } });
+  touch("automation.hall_night_light", { attributes: { last_triggered: ago(3 * D) } });
+  for (const s of reg.states) {
+    if (s.entity_id.startsWith("automation.") && String((s.attributes as Config | undefined)?.id ?? "").startsWith("taxis_")) touch(s.entity_id, { attributes: { last_triggered: ago(H) } });
+    if (s.entity_id === "automation.living_room_evening_lights") touch(s.entity_id, { attributes: { last_triggered: ago(D) } });
+  }
+
+  // Missing references.
+  automation(
+    "1700000000010",
+    "Porch light at dusk",
+    {
+      triggers: [{ trigger: "state", entity_id: "binary_sensor.driveway_motion", to: "on" }],
+      conditions: [],
+      actions: [{ action: "light.turn_on", target: { entity_id: "light.porch_lantern" } }],
+    },
+    { triggered: 6 * H },
+  );
+  const kitchen = reg.dashboards.find((d) => d.url_path === "dashboard-kitchen")!;
+  (kitchen.config!.views as { cards: unknown[] }[])[0].cards.push({ type: "sensor", entity: "sensor.kitchen_humidity_old" });
+
+  // Not reporting.
+  touch("binary_sensor.hall_motion", { ago: 3 * D });
+  automation(
+    "1700000000011",
+    "Hall light on motion",
+    { triggers: [{ trigger: "state", entity_id: "binary_sensor.hall_motion", to: "on" }], conditions: [], actions: [{ action: "light.turn_on", target: { entity_id: "light.hall_lights" } }] },
+    { triggered: 4 * D },
+  );
+  reg.devices.push({ id: "attic", name: "Attic sensor", manufacturer: "Demo", model: "AS008" });
+  for (const [entityId, name, dc, unit] of [
+    ["sensor.attic_temperature", "Attic temperature", "temperature", "°C"],
+    ["sensor.attic_humidity", "Attic humidity", "humidity", "%"],
+  ] as const) {
+    reg.entities.push({ entity_id: entityId, device_id: "attic", platform: "demo", original_name: name });
+    reg.states.push({ entity_id: entityId, state: "unavailable", last_changed: ago(5 * D), attributes: { friendly_name: name, device_class: dc, unit_of_measurement: unit } } as RawState);
+  }
+
+  // Activity.
+  automation("1700000000012", "Weekend guest lights", { triggers: [{ trigger: "time", at: "18:00:00" }], conditions: [], actions: [{ action: "light.turn_on", target: { entity_id: "light.kitchen_main" } }] });
+  automation("1700000000013", "Old holiday lights", { triggers: [{ trigger: "time", at: "17:00:00" }], conditions: [], actions: [{ action: "light.turn_on", target: { entity_id: "light.garage_bench" } }] }, { state: "off", triggered: 200 * D });
+
+  // Conditions.
+  automation(
+    "1700000000014",
+    "Garden watering",
+    {
+      triggers: [{ trigger: "time", at: "06:00:00" }],
+      conditions: [
+        { condition: "numeric_state", entity_id: "sensor.garden_soil_moisture", below: 30 },
+        { condition: "numeric_state", entity_id: "sensor.living_temperature", above: 30, below: 20 },
+      ],
+      actions: [{ action: "switch.turn_on", target: { entity_id: "switch.spare_plug" } }],
+    },
+    { triggered: 9 * D },
+  );
+  automation(
+    "1700000000015",
+    "Guest welcome",
+    {
+      triggers: [{ trigger: "state", entity_id: "binary_sensor.front_door", to: "on" }],
+      conditions: [{ condition: "state", entity_id: "input_boolean.guest_mode", state: "on" }],
+      actions: [{ action: "light.turn_on", target: { entity_id: "light.hall_ceiling" } }],
+    },
+    { triggered: 12 * D },
+  );
+
+  // One-way switches.
+  for (const [entityId, name] of [
+    ["input_boolean.night_mode", "Night mode"],
+    ["input_boolean.movie_mode", "Movie mode"],
+  ]) {
+    reg.entities.push({ entity_id: entityId, platform: "input_boolean", unique_id: entityId.split(".")[1], original_name: name });
+    reg.states.push({ entity_id: entityId, state: "off", last_changed: ago(8 * D), attributes: { friendly_name: name, editable: true } } as RawState);
+  }
+  automation(
+    "1700000000016",
+    "Night mode on at 23:00",
+    { triggers: [{ trigger: "time", at: "23:00:00" }], conditions: [], actions: [{ action: "input_boolean.turn_on", target: { entity_id: "input_boolean.night_mode" } }] },
+    { triggered: D },
+  );
+  reg.scripts["movie_over"] = { alias: "Movie over", sequence: [{ action: "input_boolean.turn_off", target: { entity_id: "input_boolean.movie_mode" } }], mode: "single" };
+  reg.entities.push({ entity_id: "script.movie_over", platform: "script", unique_id: "movie_over" });
+  reg.states.push({ entity_id: "script.movie_over", state: "off", last_changed: ago(D), attributes: { friendly_name: "Movie over" } } as RawState);
+  // A reader of both, so neither shows as unused.
+  automation(
+    "1700000000017",
+    "Quiet hours check",
+    {
+      triggers: [{ trigger: "time", at: "22:30:00" }],
+      conditions: [{ condition: "or", conditions: [{ condition: "state", entity_id: "input_boolean.night_mode", state: "on" }, { condition: "state", entity_id: "input_boolean.movie_mode", state: "on" }] }],
+      actions: [{ action: "media_player.turn_off", target: { entity_id: "media_player.living_tv" } }],
+    },
+    { triggered: D },
+  );
+
+  // Taxis setup.
+  reg.entities.push({ entity_id: "binary_sensor.kitchen_motions", platform: "mqtt", area_id: "kitchen", original_name: "Kitchen motions (old)" });
+  reg.states.push({ entity_id: "binary_sensor.kitchen_motions", state: "off", last_changed: ago(D), attributes: { friendly_name: "Kitchen motions (old)" } } as RawState);
+  touch("binary_sensor.study_presence", { state: "unavailable", ago: 6 * H });
+  reg.areas.find((a) => a.area_id === "study")!.temperature_entity_id = "sensor.study_temp_old";
+
+  // Unused helpers.
+  for (const [entityId, name, extra] of [
+    ["input_number.spare_threshold", "Spare threshold", { min: 0, max: 100, mode: "box" }],
+    ["timer.laundry_done", "Laundry done", { duration: "0:45:00", editable: true }],
+  ] as const) {
+    reg.entities.push({ entity_id: entityId, platform: entityId.split(".")[0], unique_id: entityId.split(".")[1], original_name: name });
+    reg.states.push({ entity_id: entityId, state: entityId.startsWith("timer.") ? "idle" : "50", last_changed: ago(30 * D), attributes: { friendly_name: name, ...extra } } as RawState);
+  }
+
+  // Device-based triggers.
+  reg.devices.push({ id: "bedroom_button", name: "Bedroom button", manufacturer: "Demo", model: "WXKG11LM", area_id: "bedroom" });
+  automation(
+    "1700000000018",
+    "Bedroom button",
+    {
+      triggers: [{ trigger: "device", domain: "mqtt", device_id: "bedroom_button", type: "action", subtype: "single" }],
+      conditions: [],
+      actions: [{ action: "light.toggle", target: { entity_id: "light.bedside_left" } }],
+    },
+    { triggered: 2 * D },
+  );
+  automation(
+    "1700000000019",
+    "Old garage remote",
+    {
+      triggers: [{ trigger: "device", domain: "mqtt", device_id: "garage_remote_gone", type: "action", subtype: "single" }],
+      conditions: [],
+      actions: [{ action: "cover.toggle", target: { entity_id: "cover.garage_door" } }],
+    },
+    { triggered: 60 * D },
+  );
+
+  // Climate: Area climate in the Living room, written as Taxis would, and the
+  // helpers it makes. The valve has stopped answering, and there is no
+  // temperature helper (the room's sensor is a real one).
+  const climateBlueprint = BLUEPRINTS.find((b) => b.recipe === "area_climate")!;
+  reg.blueprints[climateBlueprint.path] = climateBlueprint.yaml;
+  reg.entities.push({ entity_id: "schedule.living_climate", platform: "schedule", unique_id: "living_climate", original_name: "Living room climate", area_id: "living_room" });
+  reg.states.push({ entity_id: "schedule.living_climate", state: "off", attributes: { friendly_name: "Living room climate", editable: true } } as RawState);
+  for (const [entityId, name] of [
+    ["input_boolean.taxis_away", "Taxis away mode"],
+    ["input_boolean.taxis_sleep", "Taxis sleep mode"],
+  ]) {
+    reg.entities.push({ entity_id: entityId, platform: "input_boolean", unique_id: entityId.split(".")[1], original_name: name });
+    reg.states.push({ entity_id: entityId, state: "off", attributes: { friendly_name: name, editable: true } } as RawState);
+  }
+  automation(
+    "taxis_area_climate_living",
+    "Living room – Area climate (Taxis)",
+    {
+      use_blueprint: {
+        path: climateBlueprint.path,
+        input: {
+          climate_entities: ["climate.living_valve"],
+          opening_entities: [],
+          occupied_entities: ["binary_sensor.living_occupied"],
+          bed_entities: [],
+          is_bedroom: false,
+          away_entity: "input_boolean.taxis_away",
+          sleep_entity: "input_boolean.taxis_sleep",
+          schedule_entity: "schedule.living_climate",
+          comfort_periods: "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00",
+          comfort_needs_occupancy: true,
+          season: "heating",
+          auto_hvac_on: false,
+          comfort_temp: 21,
+          eco_temp: 19,
+          night_temp: 18,
+          sleep_temp: 17.5,
+          away_temp: 16,
+          frost_temp: 7,
+          min_temp: 16,
+          max_temp: 24,
+          window_delay: 2,
+          restore_delay: 1,
+          eco_after_clear: 30,
+          night_start: "23:00:00",
+          night_end: "07:00:00",
+          preset_comfort: "",
+          preset_eco: "",
+          preset_away: "",
+          preset_sleep: "",
+          pause_switch: "input_boolean.living_paused",
+        },
+      },
+    },
+    { triggered: H },
+  );
+  touch("climate.living_valve", { state: "unavailable", ago: 3 * H });
+  return reg;
 }

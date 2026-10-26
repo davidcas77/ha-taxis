@@ -1,10 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
-import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
+import { HELPERS, HELPER_SUFFIX_RE, canonicalId, effectiveSuffixes, helperNameErrors } from "../../shared/helpers.ts";
+import {
+  DEFAULT_HOUSE_GROUP,
+  DEFAULT_NAMING,
+  DEFAULT_TYPE_WORDS,
+  analyzeArea,
+  areaCodes,
+  duplicateCodes,
+  floorCodeAdvice,
+  floorCodes,
+  slug,
+  type NamingSettings,
+  type NamingStatus,
+} from "../../shared/naming.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
 import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
+import { AiSection } from "./ai.tsx";
 import { useTaxis, type Route } from "./state.tsx";
+import { SortHeader, useSort } from "./table.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
 
 // Naming: the Settings panel (a code per area, the patterns, the type words)
@@ -30,7 +45,52 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
   const [draft, setDraft] = useState<NamingSettings>(naming);
   const [error, setError] = useState<string | null>(null);
   const codes = useMemo(() => areaCodes(h, draft), [h, draft]);
-  const areas = [...h.floors.flatMap((f) => f.areaIds), ...h.looseAreaIds].map((id) => h.areas[id]);
+  const floorOrder = useMemo(() => [...h.floors.flatMap((f) => f.areaIds), ...h.looseAreaIds].map((id) => h.areas[id]), [h]);
+  // Two areas with the same effective code (detected or set): area id -> the other areas' names.
+  const clashes = useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const ids of duplicateCodes(codes).values()) for (const id of ids) out.set(id, ids.filter((x) => x !== id).map((x) => h.areas[x]?.name ?? x));
+    return out;
+  }, [codes, h]);
+  // Floor codes: the same rule as area codes, so two floors can't share one. A
+  // floor code that is also an area's would put the floor's light group on the
+  // area's: a warning, since the planner shows it as a conflict.
+  const floorCodeMap = useMemo(() => floorCodes(h, draft), [h, draft]);
+  const floorClashes = useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const ids of duplicateCodes(floorCodeMap).values()) for (const id of ids) out.set(id, ids.filter((x) => x !== id).map((x) => h.floors.find((f) => f.id === x)?.name ?? x));
+    return out;
+  }, [floorCodeMap, h]);
+  const areaWithFloorCode = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const f of h.floors) {
+      const same = Object.entries(codes).find(([, c]) => c.code === floorCodeMap[f.id].code);
+      if (same) out.set(f.id, h.areas[same[0]]?.name ?? same[0]);
+    }
+    return out;
+  }, [codes, floorCodeMap, h]);
+  const houseGroup = draft.houseGroup || DEFAULT_HOUSE_GROUP;
+  const houseGroupError = HELPER_SUFFIX_RE.test(houseGroup) ? null : "Use a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled.";
+  // "floor order" is the neutral start: no column is sorted until one is clicked.
+  const sortColumns = useMemo(
+    () => ({
+      area: (a: AreaNode) => a.name,
+      id: (a: AreaNode) => a.id,
+      found: (a: AreaNode) => codes[a.id].detectedCount,
+      code: (a: AreaNode) => codes[a.id].code,
+      fit: (a: AreaNode) => {
+        const f = analyzeArea(a, h, draft, codes).counts;
+        const t = Object.values(f).reduce((x, y) => x + y, 0);
+        return t ? f.ok / t : null;
+      },
+    }),
+    [codes, h, draft],
+  );
+  const { rows: areas, sort, toggle } = useSort(floorOrder, sortColumns, { key: "floor", dir: "asc" });
+  // Helper names: live problems, and an example id from the first area.
+  const helperErrors = useMemo(() => helperNameErrors(draft.helperNames), [draft.helperNames]);
+  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
+  const firstArea = floorOrder[0];
   const sample = h.entities[Object.keys(h.entities).find((id) => h.entities[id].areaId && h.entities[id].role === "light") ?? ""];
   const preview = useMemo(() => {
     if (!sample?.areaId) return null;
@@ -80,11 +140,11 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
             <table className="w-full text-[13px]">
               <thead className="bg-sunken text-left text-xs text-muted">
                 <tr>
-                  <th className="px-3 py-2 font-medium">Area</th>
-                  <th className="px-3 py-2 font-medium">Area id</th>
-                  <th className="px-3 py-2 font-medium">Found in its entities</th>
-                  <th className="px-3 py-2 font-medium">Code</th>
-                  <th className="px-3 py-2 font-medium">Fit</th>
+                  <SortHeader label="Area" k="area" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Area id" k="id" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Found in its entities" k="found" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Code" k="code" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Fit" k="fit" sort={sort} onToggle={toggle} />
                 </tr>
               </thead>
               <tbody>
@@ -92,8 +152,9 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                   const c = codes[a.id];
                   const fit = analyzeArea(a, h, draft, codes).counts;
                   const total = Object.values(fit).reduce((x, y) => x + y, 0);
+                  const also = clashes.get(a.id);
                   return (
-                    <tr key={a.id} className="border-t border-line">
+                    <tr key={a.id} className={`border-t border-line ${also ? "bg-danger-soft" : ""}`}>
                       <td className="px-3 py-1.5">
                         <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: a.id }, tab: "naming" })}>
                           {a.name}
@@ -106,13 +167,17 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                             <code className="font-mono">{c.detected}</code> <span className="text-muted">· {c.detectedCount} of {c.total}</span>
                           </>
                         ) : (
-                          <span className="text-muted">{c.total ? "no common prefix" : "no entities"}</span>
+                          <span className="text-muted">
+                            {c.total ? "no common prefix" : "no entities"}
+                            {c.fallback === "id" ? ": using the area id" : ""}
+                          </span>
                         )}
                       </td>
                       <td className="px-3 py-1.5">
                         <input
                           aria-label={`Code for ${a.name}`}
-                          className={`${inputClass} w-40 font-mono`}
+                          aria-invalid={also ? true : undefined}
+                          className={`${inputClass} w-40 font-mono ${also ? "border-danger text-danger" : ""}`}
                           value={draft.areaCodes[a.id] ?? ""}
                           placeholder={c.detected}
                           onChange={(e) => {
@@ -123,6 +188,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                           }}
                           onBlur={(e) => e.target.value.trim() && setDraft((d) => ({ ...d, areaCodes: { ...d.areaCodes, [a.id]: slug(e.target.value) } }))}
                         />
+                        {also && <div className="mt-1 text-xs text-danger">Also used by {also.join(", ")}</div>}
                       </td>
                       <td className="px-3 py-1.5 text-xs tabular-nums text-muted">{total ? `${fit.ok} of ${total}` : "–"}</td>
                     </tr>
@@ -130,6 +196,101 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                 })}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h2 className="text-sm font-semibold">Floor codes</h2>
+            <p className="text-xs text-muted">
+              What the entity id of a floor's light group starts with: <code className="font-mono">{"light.<floor code>_<lights name>"}</code>. The default is the floor's id.
+            </p>
+          </div>
+          {h.floors.length === 0 ? (
+            <p className="text-[13px] text-muted">Home Assistant has no floors.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+              <table className="w-full text-[13px]">
+                <thead className="bg-sunken text-left text-xs text-muted">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Floor</th>
+                    <th className="px-3 py-2 font-medium">Floor id</th>
+                    <th className="px-3 py-2 font-medium">Code</th>
+                    <th className="px-3 py-2 font-medium">Light group</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {h.floors.map((f) => {
+                    const c = floorCodeMap[f.id];
+                    const also = floorClashes.get(f.id);
+                    const advice = floorCodeAdvice(f, c);
+                    const sameAsArea = areaWithFloorCode.get(f.id);
+                    return (
+                      <tr key={f.id} className={`border-t border-line align-top ${also ? "bg-danger-soft" : ""}`}>
+                        <td className="px-3 py-1.5">{f.name}</td>
+                        <td className="px-3 py-1.5 font-mono text-xs text-muted">{f.id}</td>
+                        <td className="px-3 py-1.5">
+                          <input
+                            aria-label={`Code for floor ${f.name}`}
+                            aria-invalid={also ? true : undefined}
+                            className={`${inputClass} w-40 font-mono ${also ? "border-danger text-danger" : ""}`}
+                            value={draft.floorCodes[f.id] ?? ""}
+                            placeholder={c.detected}
+                            spellCheck={false}
+                            onChange={(e) => {
+                              const next = { ...draft.floorCodes };
+                              if (e.target.value.trim()) next[f.id] = e.target.value;
+                              else delete next[f.id];
+                              setDraft({ ...draft, floorCodes: next });
+                            }}
+                            onBlur={(e) => e.target.value.trim() && setDraft((d) => ({ ...d, floorCodes: { ...d.floorCodes, [f.id]: slug(e.target.value) } }))}
+                          />
+                          {also && <div className="mt-1 text-xs text-danger">Also used by {also.join(", ")}</div>}
+                          {!also && advice && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-warn">
+                              <span>
+                                “{c.code}” says little about this floor. Suggested: <code className="font-mono">{advice}</code>
+                              </span>
+                              <Button tone="ghost" className="px-2 py-0.5 text-xs" onClick={() => setDraft((d) => ({ ...d, floorCodes: { ...d.floorCodes, [f.id]: advice } }))}>
+                                Use it
+                              </Button>
+                            </div>
+                          )}
+                          {!also && sameAsArea && <div className="mt-1 text-xs text-warn">The area {sameAsArea} has the same code, so the floor's light group would sit on the area's. Give one of them another code.</div>}
+                        </td>
+                        <td className="px-3 py-1.5 font-mono text-xs text-muted">{canonicalId("light", c.code, suffixes.lights)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="flex max-w-sm flex-col gap-1">
+            <label htmlFor="house-group" className="text-xs font-medium text-muted">
+              Light group of the whole house
+            </label>
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-[13px] text-muted">light.</span>
+              <input
+                id="house-group"
+                className={`${inputClass} font-mono ${houseGroupError ? "border-danger text-danger" : ""}`}
+                value={draft.houseGroup === DEFAULT_HOUSE_GROUP ? "" : draft.houseGroup}
+                placeholder={DEFAULT_HOUSE_GROUP}
+                spellCheck={false}
+                aria-invalid={houseGroupError ? true : undefined}
+                onChange={(e) => setDraft({ ...draft, houseGroup: e.target.value || DEFAULT_HOUSE_GROUP })}
+              />
+            </div>
+            {houseGroupError ? (
+              <p role="alert" className="text-[11px] text-danger">
+                {houseGroupError}
+              </p>
+            ) : (
+              <p className="text-[11px] text-muted">
+                Gathers the light groups of the floors and of the areas on no floor: <code className="font-mono">light.{houseGroup}</code>.
+              </p>
+            )}
           </div>
         </section>
 
@@ -159,8 +320,50 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           </div>
         </section>
 
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h2 className="text-sm font-semibold">Helper names</h2>
+            <p className="text-xs text-muted">
+              The end of the entity id of each canonical helper: <code className="font-mono">{"<domain>.<area code>_<name>"}</code>. Each name is used once.
+            </p>
+          </div>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+            {HELPERS.map((s) => {
+              const error = helperErrors[s.key];
+              return (
+                <div key={s.key} className="flex flex-col gap-1">
+                  <label htmlFor={`helper-name-${s.key}`} className="text-xs font-medium text-muted">
+                    {s.label}
+                  </label>
+                  <input
+                    id={`helper-name-${s.key}`}
+                    className={`${inputClass} font-mono ${error ? "border-danger text-danger" : ""}`}
+                    value={draft.helperNames[s.key] ?? ""}
+                    placeholder={s.suffix}
+                    spellCheck={false}
+                    aria-invalid={error ? true : undefined}
+                    onChange={(e) => {
+                      const names = { ...draft.helperNames };
+                      if (e.target.value) names[s.key] = e.target.value;
+                      else delete names[s.key];
+                      setDraft({ ...draft, helperNames: names });
+                    }}
+                  />
+                  {error ? (
+                    <p role="alert" className="text-[11px] text-danger">
+                      {error}
+                    </p>
+                  ) : (
+                    firstArea && <p className="font-mono text-[11px] text-muted">{canonicalId(s.domain, codes[firstArea.id].code, suffixes[s.key])}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
-          <Button tone="primary" onClick={() => void save()}>
+          <Button tone="primary" disabled={clashes.size > 0 || floorClashes.size > 0 || Object.keys(helperErrors).length > 0 || houseGroupError !== null} onClick={() => void save()}>
             Save settings
           </Button>
           <Button tone="ghost" onClick={() => setDraft(naming)}>
@@ -169,6 +372,16 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           <Button tone="ghost" onClick={() => setDraft(structuredClone(DEFAULT_NAMING))}>
             Back to detected codes and defaults
           </Button>
+          {clashes.size > 0 && (
+            <span role="alert" className="text-xs text-danger">
+              Two areas share a code. Give each area its own before saving.
+            </span>
+          )}
+          {floorClashes.size > 0 && (
+            <span role="alert" className="text-xs text-danger">
+              Two floors share a code. Give each floor its own before saving.
+            </span>
+          )}
           {error && (
             <span role="alert" className="text-xs text-danger">
               {error}
@@ -178,6 +391,8 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
         <p className="text-xs text-muted">
           Renaming an id also updates the automations, scripts, scenes and dashboards that use it, when you apply.
         </p>
+
+        <AiSection />
       </div>
     </main>
   );
@@ -374,96 +589,27 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
   );
 }
 
-// The area's entity id code, editable where the area is. It's a Taxis setting,
-// so it saves on its own and never joins the change list.
+// The area's entity id code, shown where the area is. It's changed in
+// Settings, with every other area's code, so the codes stay in one place.
 export function AreaCodeField({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
   const { naming, namingLoaded } = useTaxis();
-  // Saving before the settings arrive would write the defaults over them.
   if (!namingLoaded) return <p className="text-[13px] text-muted">Loading the naming settings…</p>;
-  return <AreaCodeForm key={area.id} h={h} area={area} naming={naming} go={go} />;
-}
-
-function AreaCodeForm({ h, area, naming, go }: { h: Hierarchy; area: AreaNode; naming: NamingSettings; go: (r: Route) => void }) {
-  const { saveNaming, notify } = useTaxis();
   const c = areaCodes(h, naming)[area.id];
-  const [value, setValue] = useState(c.custom ? c.code : "");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  // The server keeps codes only for areas that exist in Home Assistant, so an
-  // area created in Taxis and not applied yet has its code dropped.
-  const unapplied = area.id.startsWith("new:");
-  // What a successful save sent; checked against the saved result below.
-  const [sent, setSent] = useState<{ code: string | undefined } | null>(null);
-
-  // saveNaming resolves with no result, but it updates `naming` first. Compare
-  // what came back with what was sent: if they differ, don't say "Saved".
-  useEffect(() => {
-    if (!sent) return;
-    setSent(null);
-    if (naming.areaCodes[area.id] !== sent.code) {
-      setError("The code wasn't kept. Taxis only stores codes for areas that exist in Home Assistant.");
-      return;
-    }
-    setValue(sent.code ?? "");
-    notify({ tone: "ok", text: "Saved" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [naming, sent]);
-
-  const store = async (raw: string) => {
-    const next = slug(raw);
-    // Empty, or the detected code itself, means "use the detected one".
-    const areaCodesNext = { ...naming.areaCodes };
-    if (next && next !== c.detected) areaCodesNext[area.id] = next;
-    else delete areaCodesNext[area.id];
-    setBusy(true);
-    const err = await saveNaming({ ...naming, areaCodes: areaCodesNext });
-    setBusy(false);
-    setError(err);
-    if (err) return;
-    setSent({ code: areaCodesNext[area.id] });
-  };
-
-  const hasDetected = c.detectedCount > 0 && Boolean(c.detected);
   return (
-    <section className="flex flex-col gap-2 border-b border-line pb-4">
-      <h3 className="text-sm font-semibold">Entity id code</h3>
-      <Field
-        label="Code"
-        htmlFor="area-code"
-        hint={
-          <>
-            Entity ids in this area start with this. Found in {c.detectedCount} of {c.total} ids{c.custom ? " (set by you)" : ""}.
-            {unapplied && " Set the code once this area has been applied to Home Assistant."}
-          </>
-        }
-      >
-        <div className="flex gap-2">
-          <input
-            id="area-code"
-            className={`${inputClass} font-mono`}
-            value={value}
-            placeholder={c.detected}
-            disabled={unapplied}
-            onChange={(e) => setValue(e.target.value)}
-            onBlur={(e) => e.target.value.trim() && setValue(slug(e.target.value))}
-          />
-          <Button tone="primary" disabled={busy || unapplied} onClick={() => store(value)}>
-            Save
-          </Button>
-        </div>
-      </Field>
-      {error && <p className="text-xs text-danger">{error}</p>}
-      <p className="text-[11px] text-muted">Saved in Taxis right away; it doesn't change Home Assistant.</p>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        {c.custom && hasDetected && (
-          <button type="button" className="text-accent hover:underline" disabled={busy || unapplied} onClick={() => store("")}>
-            Use detected ({c.detected})
-          </button>
-        )}
+    <section className="flex flex-col gap-1.5 border-b border-line pb-4">
+      <div className="flex items-baseline gap-3">
+        <h3 className="text-sm font-semibold">Entity id code</h3>
+        <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[13px]">{c.code}</code>
+        <button type="button" className="ml-auto text-xs text-accent hover:underline" onClick={() => go({ page: "settings" })}>
+          Go to Settings to change
+        </button>
+      </div>
+      <p className="text-xs text-muted">
+        Entity ids in this area start with this. Found in {c.detectedCount} of {c.total} ids{c.custom ? " (set by you)" : ""}.{" "}
         <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: area.id }, tab: "naming" })}>
           Check this area's ids →
         </button>
-      </div>
+      </p>
     </section>
   );
 }

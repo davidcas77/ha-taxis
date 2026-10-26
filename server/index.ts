@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { readFileSync } from "node:fs";
 
+import { AI_PROVIDERS } from "../shared/ai.ts";
 import { validateInput } from "../shared/changes.ts";
 import { pruneGroups, type GroupListKey } from "../shared/groups.ts";
 import { CATEGORY_SCOPES } from "../shared/types.ts";
@@ -16,14 +17,23 @@ import type {
   HealthResponse,
   Hierarchy,
   HierarchyResponse,
+  InventoryResponse,
   NamingResponse,
+  ParametersResponse,
   ReferencesResponse,
   RenameRefs,
 } from "../shared/types.ts";
-import { applyChanges, isRename } from "./changes/apply.ts";
+import { runHealth, type HealthReportResponse } from "../shared/health.ts";
+import { areaThermostats, canonicalLightGroups, type RecipesResponse } from "../shared/recipes.ts";
+import { isRename } from "./changes/apply.ts";
+import { applyAll } from "./changes/all.ts";
 import { overlayChanges } from "./changes/overlay.ts";
+import { readInstalled } from "./changes/recipes.ts";
 import { changeStore } from "./changes/store.ts";
-import { settingsStore, validateGroups, validateNaming } from "./settings.ts";
+import { aiLedger } from "./ai/ledger.ts";
+import { aiRoutes } from "./ai/routes.ts";
+import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
+import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
@@ -31,7 +41,8 @@ import { HaRest } from "./ha/rest.ts";
 import { HaSocket } from "./ha/socket.ts";
 import { backupHomeAssistant } from "./ha/supervisor.ts";
 import { isAllowedPeer, normalizePeer } from "./ingress.ts";
-import { log, setLogSecret } from "./log.ts";
+import { requireTaxisHeader } from "./guard.ts";
+import { addLogSecret, log, setLogSecret } from "./log.ts";
 import { buildHierarchy, type RawRegistry } from "./model/hierarchy.ts";
 import { findReferences, searchRelated, type Related } from "./references/find.ts";
 import { mapLimit, snapshot, type Snapshot } from "./references/snapshot.ts";
@@ -54,6 +65,8 @@ const token = target.ok ? target.target.token : undefined;
 setLogSecret(token);
 const changes = changeStore(store.db);
 const settings = settingsStore(store.db);
+// The AI keys are secrets too: never written to the log, whatever an error says.
+for (const p of AI_PROVIDERS) addLogSecret(settings.aiKey(p));
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -119,8 +132,12 @@ let refsInFlight: Promise<Snapshot> | null = null;
 // Bumped when Apply drops the cache, so a read that started before it can't put
 // its (older) result back.
 let refsGeneration = 0;
+// The list of Taxis blueprints Home Assistant has, for the health checks, kept as
+// long as the read it came with.
+let blueprintCache: { at: number; read: Read; value: Record<string, number | null> | null } | null = null;
 const dropSnapshot = () => {
   refsCache = null;
+  blueprintCache = null;
   refsGeneration += 1;
 };
 
@@ -166,10 +183,7 @@ app.use("*", async (c, next) => {
 // Changes arrive through Ingress only (above). On top of that, every request
 // that changes something must carry this header, which a form on another
 // website can't add: a simple guard against cross-site requests.
-app.use("/api/*", async (c, next) => {
-  if (c.req.method !== "GET" && c.req.header("x-taxis-request") !== "1") return c.text("Missing request header.", 400);
-  await next();
-});
+app.use("/api/*", requireTaxisHeader);
 
 app.onError((e, c) => {
   log.error(`Request ${c.req.method} ${c.req.path} failed`, e);
@@ -206,9 +220,15 @@ app.get("/api/settings/naming", (c) => c.json<NamingResponse>({ ok: true, naming
 
 app.put("/api/settings/naming", bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json<NamingResponse>({ ok: false, error: "The settings are too large." }, 413) }), async (c) => {
   // Codes are kept only for areas Home Assistant has (when it can be read).
-  const areaIds = await loadRead(false).then(({ read }) => new Set(Object.keys(read.live.areas)), () => undefined);
-  const checked = validateNaming(await c.req.json().catch(() => null), areaIds);
+  const live = await loadRead(false).then(({ read }) => read, () => undefined);
+  const areaIds = live && new Set(Object.keys(live.live.areas));
+  const floorIds = live && new Set(live.live.floors.map((f) => f.id));
+  const checked = validateNaming(await c.req.json().catch(() => null), areaIds, floorIds);
   if (!checked.ok) return c.json<NamingResponse>({ ok: false, error: checked.error }, 400);
+  // Two areas can't share a code, nor two floors, detected or set. Skipped when Home Assistant
+  // can't be read, since the detected codes can't be worked out then.
+  const clash = live && checkAreaCodes(checked.value, live.live, live.raw.areas.map((a) => a.area_id));
+  if (clash) return c.json<NamingResponse>({ ok: false, error: clash }, 400);
   settings.saveNaming(checked.value);
   log.info("Saved naming settings");
   return c.json<NamingResponse>({ ok: true, naming: checked.value });
@@ -235,6 +255,37 @@ app.put("/api/settings/groups", bodyLimit({ maxSize: 64 * 1024, onError: (c) => 
   log.info("Saved groups");
   return c.json<GroupsResponse>({ ok: true, groups: value });
 });
+
+// The capability inventory: what each area has, and the user's choices on top
+// of it. Taxis only; nothing in Home Assistant changes when they do.
+app.get("/api/settings/inventory", (c) => c.json<InventoryResponse>({ ok: true, inventory: settings.inventory() }));
+
+app.put("/api/settings/inventory", bodyLimit({ maxSize: 1024 * 1024, onError: (c) => c.json<InventoryResponse>({ ok: false, error: "The inventory settings are too large." }, 413) }), async (c) => {
+  const checked = validateInventory(await c.req.json().catch(() => null));
+  if (!checked.ok) return c.json<InventoryResponse>({ ok: false, error: checked.error }, 400);
+  settings.saveInventory(checked.value);
+  log.info("Saved inventory settings");
+  return c.json<InventoryResponse>({ ok: true, inventory: checked.value });
+});
+
+// The recipe parameters: house, interior/exterior, floor and area values. Taxis
+// only; they reach Home Assistant when a recipe is installed.
+app.get("/api/settings/parameters", (c) => c.json<ParametersResponse>({ ok: true, parameters: settings.parameters() }));
+
+app.put("/api/settings/parameters", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json<ParametersResponse>({ ok: false, error: "The parameters are too large." }, 413) }), async (c) => {
+  const checked = validateParameters(await c.req.json().catch(() => null));
+  if (!checked.ok) return c.json<ParametersResponse>({ ok: false, error: checked.error }, 400);
+  settings.saveParameters(checked.value);
+  log.info("Saved parameters");
+  return c.json<ParametersResponse>({ ok: true, parameters: checked.value });
+});
+
+// Optional AI: its settings (never the key), the models a service offers, a test
+// call and this month's usage. Taxis only: nothing here touches Home Assistant.
+app.route(
+  "/api",
+  aiRoutes({ settings, ledger: aiLedger(store.db), protect: addLogSecret, redact: (m) => redact(m, token) }),
+);
 
 app.post("/api/changes", async (c) => {
   if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
@@ -277,6 +328,55 @@ app.get("/api/references", async (c) => {
   }
 });
 
+// What recipes need to know that the registries don't say: which Taxis
+// blueprints Home Assistant has, the recipes' automations and timers it holds,
+// and what else controls each area's light group. Read-only.
+app.get("/api/recipes/state", async (c) => {
+  if (!ha || !rest) return c.json<RecipesResponse>({ ok: false, error: target.ok ? "Home Assistant is not configured." : target.reason }, 503);
+  try {
+    const { read } = await loadRead(c.req.query("refresh") === "1");
+    const installed = await readInstalled({ ha, rest }, read.raw, canonicalLightGroups(read.live, settings.naming()), areaThermostats(read.live));
+    return c.json<RecipesResponse>({ ok: true, installed });
+  } catch (e) {
+    const message = errorText(e);
+    log.error("Reading what the recipes installed failed", message);
+    return c.json<RecipesResponse>({ ok: false, error: message }, 502);
+  }
+});
+
+// Health: rule-based checks over the home as Home Assistant holds it (not the
+// preview): entities nothing answers for, references to what is gone, forgotten
+// automations, and the state of Taxis's own setup. Read-only: it reads what the
+// rest of Taxis reads, and a finding that has a fix only offers it as a change for
+// the user to add to the list. The snapshot is kept for a short while like the
+// other reads; Refresh (?refresh=1) reads again.
+app.get("/api/health/report", async (c) => {
+  if (!ha || !rest) return c.json<HealthReportResponse>({ ok: false, error: target.ok ? "Home Assistant is not configured." : target.reason }, 503);
+  const refresh = c.req.query("refresh") === "1";
+  const num = (name: string) => (c.req.query(name) ? Number(c.req.query(name)) : undefined);
+  try {
+    const { read, cached } = await loadRead(refresh);
+    const snap = await loadSnapshot(read, refresh);
+    if (refresh || !blueprintCache || blueprintCache.read !== read || Date.now() - blueprintCache.at >= CACHE_MS) {
+      blueprintCache = { at: Date.now(), read, value: await readBlueprints(ha) };
+    }
+    const report = runHealth({
+      snapshot: healthSnapshot(read.raw, read.live, snap, blueprintCache.value),
+      inventory: settings.inventory(),
+      naming: settings.naming(),
+      parameters: settings.parameters(),
+      changes: changes.list(),
+      now: Date.now(),
+      options: { unavailableHours: num("unavailableHours"), staleDays: num("staleDays") },
+    });
+    return c.json<HealthReportResponse>({ ok: true, report, cached: cached && !refresh });
+  } catch (e) {
+    const message = errorText(e);
+    log.error("Running the health checks failed", message);
+    return c.json<HealthReportResponse>({ ok: false, error: message }, 502);
+  }
+});
+
 app.delete("/api/changes/:id", (c) => {
   if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
   changes.remove(Number(c.req.param("id")));
@@ -292,7 +392,7 @@ app.delete("/api/changes", (c) => {
 
 
 app.post("/api/apply", async (c) => {
-  if (!ha || !target.ok) {
+  if (!ha || !rest || !target.ok) {
     return c.json<ApplyResponse>({ ok: false, error: target.ok ? "Home Assistant is not configured." : target.reason }, 503);
   }
   if (applying) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
@@ -332,7 +432,11 @@ app.post("/api/apply", async (c) => {
     }
 
     log.info(`Applying ${pending.length} change(s) to Home Assistant`);
-    const { results, appliedIds, realIds, retargets } = await applyChanges(pending, ha, async () => (await loadRead(true)).read.raw, rest ? { ha, rest } : undefined);
+    const readFresh = async () => (await loadRead(true)).read.raw;
+    // Registry changes first (and, with renames, what uses the old ids), then
+    // blueprints, helpers and the recipes' automations (changes/all.ts).
+    const { results, realIds, retargets } = await applyAll(pending, { ha, rest, readFresh });
+    const appliedIds = results.filter((r) => r.ok).map((r) => r.changeId);
     for (const r of results) {
       const ch = pending.find((x) => x.id === r.changeId)!;
       const line = `${ch.op} ${ch.kind} ${ch.targetId}: ${r.message}`;

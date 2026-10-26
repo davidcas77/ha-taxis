@@ -456,24 +456,6 @@ function SpacesTree({ h, id, select, query }: { h: Hierarchy; id: string | null;
                           {a.deviceIds.length} dev · {a.entityIds.length} ent
                         </span>
                       </button>
-                      <select
-                        aria-label={`Move ${a.name} to…`}
-                        title="Move to…"
-                        disabled={busy}
-                        value=""
-                        onChange={(e) => move(aid, e.target.value)}
-                        className="w-20 shrink-0 rounded border border-line bg-bg px-1 py-0.5 text-xs text-muted"
-                      >
-                        <option value="">Move to…</option>
-                        {floors
-                          .filter((f) => f.id !== a.floorId)
-                          .map((f) => (
-                            <option key={f.id} value={f.id}>
-                              {f.name}
-                            </option>
-                          ))}
-                        {a.floorId && <option value={NO_FLOOR}>No floor</option>}
-                      </select>
                     </li>
                   );
                 })}
@@ -481,7 +463,7 @@ function SpacesTree({ h, id, select, query }: { h: Hierarchy; id: string | null;
             </div>
           );
         })}
-        <p className="px-1 pb-1 text-[11px] text-muted">Drag an area onto a floor to move it, or use Move to….</p>
+        <p className="px-1 pb-1 text-[11px] text-muted">Drag an area onto a floor to move it.</p>
       </div>
     </div>
   );

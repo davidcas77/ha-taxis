@@ -10,11 +10,11 @@
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 
-import { buildMockRegistry, handleMock, handleMockRest } from "./mock-ha-core.ts";
+import { buildMockRegistry, handleMock, handleMockRest, withHealthDemo, withRecipeDemo } from "./mock-ha-core.ts";
 
 const PORT = Number(process.env.MOCK_HA_PORT ?? 8124);
 const TOKEN = "mock";
-const registry = buildMockRegistry();
+const registry = withHealthDemo(withRecipeDemo(buildMockRegistry()));
 
 // REST and WebSocket share one port, like HA.
 const server = createServer((req, res) => {
@@ -56,7 +56,7 @@ wss.on("connection", (socket) => {
     if (!authed) return;
     const { id, type, ...payload } = msg;
     const reply = handleMock(registry, type, payload);
-    const reads = ["get_states", "get_config", "search/related", "lovelace/config", "lovelace/info"];
+    const reads = ["get_states", "get_config", "search/related", "lovelace/config", "lovelace/info", "blueprint/list"];
     if (!type.endsWith("/list") && !reads.includes(type)) console.log(`write ${type} ${JSON.stringify(payload)}`);
     socket.send(
       JSON.stringify(

@@ -122,3 +122,85 @@ describe("HaRest", () => {
     await expect(hang.get("script", "a")).rejects.toThrow(/no answer within 0\.03s/);
   });
 });
+
+describe("REST allowlist for helper flows", () => {
+  const FLOW = "0123456789abcdef0123456789abcdef";
+  const ENTRY = "01JHELPERGARAGEALL";
+
+  it("allows starting a group, min/max or template flow, and posting to a step", () => {
+    expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "group", show_advanced_options: false })).not.toThrow();
+    expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "min_max" })).not.toThrow();
+    expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "template" })).not.toThrow();
+    expect(() => assertRestRequest("POST", `/config/config_entries/flow/${FLOW}`, { next_step_id: "light" })).not.toThrow();
+    expect(() => assertRestRequest("POST", `/config/config_entries/flow/${"A1".repeat(32)}`, {})).not.toThrow();
+  });
+
+  it("allows an options flow for a config entry, and posting to a step", () => {
+    expect(() => assertRestRequest("POST", "/config/config_entries/options/flow", { handler: ENTRY })).not.toThrow();
+    expect(() => assertRestRequest("POST", `/config/config_entries/options/flow/${FLOW}`, { entities: [] })).not.toThrow();
+  });
+
+  it("refuses a flow for any other integration, or with no handler", () => {
+    for (const handler of ["threshold", "derivative", "mqtt", "homeassistant", "TEMPLATE", "template ", "GROUP", "group ", "", null, undefined, 1, ["group"], ["template"], { handler: "group" }]) {
+      expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler })).toThrow(/Refusing to start a config flow/);
+    }
+    expect(() => assertRestRequest("POST", "/config/config_entries/flow")).toThrow(/Refusing to start a config flow/);
+    expect(() => assertRestRequest("POST", "/config/config_entries/flow", ["group"])).toThrow(/Refusing/);
+    expect(() => assertRestRequest("POST", "/config/config_entries/flow", "group")).toThrow(/Refusing/);
+  });
+
+  it("refuses an options flow that doesn't name a config entry", () => {
+    for (const handler of [undefined, null, "", "a/b", "x", "../flow", "group", 12, "a".repeat(65)]) {
+      expect(() => assertRestRequest("POST", "/config/config_entries/options/flow", { handler })).toThrow(/Refusing to start an options flow/);
+    }
+    expect(() => assertRestRequest("POST", "/config/config_entries/options/flow")).toThrow(/Refusing/);
+  });
+
+  it("only ever POSTs to a flow: no GET, no DELETE, no other method", () => {
+    for (const path of ["/config/config_entries/flow", `/config/config_entries/flow/${FLOW}`, "/config/config_entries/options/flow", `/config/config_entries/options/flow/${FLOW}`]) {
+      for (const method of ["GET", "DELETE", "PUT", "PATCH", "HEAD", "post"]) {
+        expect(() => assertRestRequest(method, path, { handler: "group" })).toThrow(/Refusing/);
+      }
+    }
+  });
+
+  it("refuses every other config_entries path and malformed flow ids", () => {
+    const paths = [
+      "/config/config_entries",
+      "/config/config_entries/entry",
+      `/config/config_entries/entry/${ENTRY}`,
+      `/config/config_entries/entry/${ENTRY}/reload`,
+      "/config/config_entries/flow/",
+      "/config/config_entries/flow/short",
+      `/config/config_entries/flow/${"a".repeat(65)}`,
+      `/config/config_entries/flow/${FLOW}/extra`,
+      `/config/config_entries/flow/${FLOW}?x=1`,
+      "/config/config_entries/flow/../entry/x",
+      "/config/config_entries/flow/abcdefgh-ijkl",
+      "/config/config_entries/flow_handlers",
+      "/config/config_entries/flow_handlers/helper",
+      "/config/config_entries/options/flow/",
+      `/config/config_entries/options/flow/${FLOW}/x`,
+      `/api/config/config_entries/flow`,
+      "config/config_entries/flow",
+    ];
+    for (const path of paths) expect(() => assertRestRequest("POST", path, { handler: "group" }), path).toThrow(/Refusing/);
+  });
+
+  it("keeps refusing services and states, and the config reads and writes still work", () => {
+    for (const path of ["/services/light/turn_on", "/states/light.living_spots", "/config/core/check_config"]) expect(() => assertRestRequest("POST", path, { handler: "group" })).toThrow(/Refusing/);
+    expect(() => assertRestRequest("POST", "/config/script/config/movie_time", {})).not.toThrow();
+    expect(() => assertRestRequest("GET", "/config/scene/config/abc")).not.toThrow();
+  });
+
+  it("the client enforces it before anything is sent", async () => {
+    const t = fakeHa();
+    await expect(t.api.request("POST", "/config/config_entries/flow", { handler: "threshold" })).rejects.toThrow(/Refusing to start a config flow/);
+    await expect(t.api.request("DELETE", `/config/config_entries/flow/${FLOW}`)).rejects.toThrow(/Refusing/);
+    await expect(t.api.request("GET", `/config/config_entries/flow/${FLOW}`)).rejects.toThrow(/Refusing/);
+    expect(t.rest).toEqual([]);
+    const res = await t.api.request("POST", "/config/config_entries/flow", { handler: "min_max" });
+    expect(res.status).toBe(200);
+    expect(t.rest).toHaveLength(1);
+  });
+});

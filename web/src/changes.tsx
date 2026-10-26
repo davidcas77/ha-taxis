@@ -1,6 +1,8 @@
 import { CheckCircle2, CircleAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { describePeriods } from "../../shared/periods.ts";
+import { RECIPE_LABEL } from "../../shared/recipes.ts";
 import type { ApplyResult, Change, Hierarchy, RenameRefs } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
@@ -9,7 +11,7 @@ import { Button, ConfirmAction } from "./ui.tsx";
 
 // The list of changes, in words, and Apply.
 
-const KIND_NAMES: Record<Change["kind"], string> = { entity: "entity", device: "device", area: "area", floor: "floor", label: "label", category: "category" };
+const KIND_NAMES: Record<Change["kind"], string> = { entity: "entity", device: "device", area: "area", floor: "floor", label: "label", category: "category", helper: "helper", blueprint: "blueprint", automation: "automation" };
 
 function nameOf(h: Hierarchy, c: Change): string {
   if (c.op === "create") return String(c.after.name ?? "new");
@@ -28,10 +30,53 @@ function nameOf(h: Hierarchy, c: Change): string {
       return String(c.before.name ?? h.labels[c.targetId]?.name ?? c.targetId);
     case "category":
       return String(c.before.name ?? c.targetId);
+    case "helper":
+    case "blueprint":
+      return c.targetId;
+    case "automation":
+      return String(c.after.alias ?? c.targetId);
   }
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// How a helper's members change: what is added and what is taken out.
+function memberChange(c: Change): { added: string[]; removed: string[] } {
+  const was = (c.before.entities as string[] | undefined) ?? [];
+  const now = (c.after.entities as string[] | undefined) ?? [];
+  return { added: now.filter((m) => !was.includes(m)), removed: was.filter((m) => !now.includes(m)) };
+}
+
+const HELPER_KINDS: Record<string, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule" };
+
+const minutes = (seconds: unknown) => `${Number(seconds) / 60} min`;
+
+function helperTitle(h: Hierarchy, c: Change): string {
+  if (c.op === "create") {
+    const kind = HELPER_KINDS[String(c.after.helper)] ?? "helper";
+    const area = typeof c.after.area_id === "string" ? h.areas[c.after.area_id]?.name : undefined;
+    const where = `${c.targetId}${area ? ` in ${area}` : ""}`;
+    if (c.after.helper === "timer") return `Create timer ${where}: ${minutes(c.after.duration)}`;
+    if (c.after.helper === "input_boolean" || c.after.helper === "template") return `Create ${kind} ${where}`;
+    if (c.after.helper === "schedule") return `Create schedule ${where}: ${describePeriods(String(c.after.periods))}`;
+    return `Create ${kind} ${where}: ${plural(((c.after.entities as string[]) ?? []).length, "member")}`;
+  }
+  if ("duration" in c.after) return `Set the duration of ${c.targetId} to ${minutes(c.after.duration)}`;
+  if ("periods" in c.after) return `Set the comfort periods of ${c.targetId}: ${describePeriods(String(c.after.periods))}`;
+  const { added, removed } = memberChange(c);
+  return `Update members of ${c.targetId}: +${added.length} −${removed.length}`;
+}
+
+function recipeTitle(h: Hierarchy, c: Change): string {
+  if (c.kind === "blueprint") return `${c.op === "create" ? "Write" : "Update"} blueprint ${c.targetId}`;
+  const recipe = RECIPE_LABEL[c.after.recipe as keyof typeof RECIPE_LABEL] ?? "recipe";
+  const area = h.areas[String(c.after.area_id)]?.name ?? String(c.after.area_id);
+  return `${c.op === "create" ? "Install" : "Update"} ${recipe} for ${area}`;
+}
+
 function title(h: Hierarchy, c: Change): string {
+  if (c.kind === "helper") return helperTitle(h, c);
+  if (c.kind === "blueprint" || c.kind === "automation") return recipeTitle(h, c);
   const what = c.kind === "category" && c.scope ? `${SCOPE_NAMES[c.scope].toLowerCase().replace(/s$/, "")} category` : KIND_NAMES[c.kind];
   const verb = c.op === "create" ? "New" : c.op === "delete" ? "Delete" : "Change";
   return `${verb} ${what} “${nameOf(h, c)}”`;
@@ -73,6 +118,9 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
         from: b ? mono(b) : "",
         to: mono(a),
       };
+    case "temperature_entity_id":
+    case "humidity_entity_id":
+      return { label: key === "temperature_entity_id" ? "Temperature sensor" : "Humidity sensor", from: b ? mono(b) : "none", to: a ? mono(a) : "none" };
     case "hidden_by":
       return { label: "Hidden", from: b ? "yes" : "no", to: a ? "yes" : "no" };
     case "disabled_by":
@@ -85,6 +133,8 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
 export function ChangesPage({ h }: { h: Hierarchy }) {
   const { changes, version, removeChange, clearChanges, reload } = useTaxis();
   const hasRename = changes.some((c) => c.kind === "entity" && c.after.new_entity_id !== undefined);
+  const hasHelper = changes.some((c) => c.kind === "helper");
+  const hasRecipe = changes.some((c) => c.kind === "blueprint" || c.kind === "automation");
   const refs = useReferences(hasRename, version);
   const [step, setStep] = useState<"list" | "confirm" | "confirmNoBackup" | "applying">("list");
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +184,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
           <>
             <ul className="flex flex-col gap-2">
               {changes.map((c) => {
-                const keys = c.op === "delete" ? [] : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
+                const keys = c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" ? [] : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
                 return (
                   <li key={c.id} className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2.5">
                     <div className="flex items-center gap-2">
@@ -165,6 +215,8 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                         })}
                       </dl>
                     )}
+                    {c.kind === "helper" && <HelperBody h={h} c={c} />}
+                    {(c.kind === "blueprint" || c.kind === "automation") && <RecipeBody c={c} />}
                     {c.op === "delete" && <p className="text-xs text-muted">Home Assistant removes it from everything it's on.</p>}
                     {c.kind === "entity" && c.after.new_entity_id !== undefined && <RenameRefsView refs={refs} changeId={c.id} />}
                   </li>
@@ -190,6 +242,17 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
               <Confirm onYes={() => void apply(false)} onNo={() => setStep("list")} yes="Back up and apply">
                 Taxis first makes a backup of Home Assistant, then applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home Assistant back to check each one.
                 If the backup fails, nothing is changed.
+                {hasHelper && (
+                  <span className="mt-2 block">
+                    Helpers: Taxis makes them the way Home Assistant's own helper dialogs do, then gives each its entity id and area. A helper is never deleted.
+                  </span>
+                )}
+                {hasRecipe && (
+                  <span className="mt-2 block">
+                    Recipes: Taxis saves its blueprint in Home Assistant (under taxis/), makes the helpers the recipe needs, then saves the automation and checks that Home Assistant
+                    loaded it. Nothing is deleted, and an area's recipes can be paused with its pause switch.
+                  </span>
+                )}
                 {hasRename && (
                   <span className="mt-2 block">
                     Renamed entities: Taxis also rewrites the old id in the automations, scripts, scenes and dashboards listed, each only if it hasn't changed since Taxis read it.
@@ -207,6 +270,91 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
         )}
       </div>
     </main>
+  );
+}
+
+// A helper's members, or what changes in them. The id and area are in the title.
+function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
+  const name = (id: string) => (
+    <li key={id}>
+      {h.entities[id]?.name ?? id} <code className="font-mono text-muted">{id}</code>
+    </li>
+  );
+  if (c.op === "create" && c.after.helper === "timer") {
+    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Keeps its state through a restart.</p>;
+  }
+  if (c.op === "create" && c.after.helper === "input_boolean" && !("area_id" in c.after)) {
+    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Starts off. A house switch with no area: turn it on yourself, or from an automation of yours, to tell Area climate the house is {String(c.after.entity_id).endsWith("away") ? "away" : "asleep"}.</p>;
+  }
+  if (c.op === "create" && c.after.helper === "input_boolean") {
+    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Starts off. Turn it on to pause the area's recipes.</p>;
+  }
+  if (c.op === "create" && c.after.helper === "schedule") {
+    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. On during the comfort periods: {describePeriods(String(c.after.periods))}. Edit the periods here (Parameters, Climate) or in Home Assistant.</p>;
+  }
+  if (c.op === "update" && "periods" in c.after) return <p className="text-xs text-muted">Replaces the periods of this schedule with the comfort periods setting.</p>;
+  if (c.op === "create" && c.after.helper === "template") {
+    return (
+      <p className="text-xs text-muted">
+        Named “{String(c.after.name)}”. On while the hold timer runs: <code className="font-mono">{String(c.after.state_template)}</code>
+      </p>
+    );
+  }
+  if (c.op === "update" && "duration" in c.after) return <p className="text-xs text-muted">The recipe's timeout setting is the length of this timer.</p>;
+  if (c.op === "create") {
+    const sensor = c.after.set_area_sensor;
+    return (
+      <div className="flex flex-col gap-1 text-xs">
+        {!("area_id" in c.after) && c.after.group_type === "light" && <p className="text-muted">The light group of a floor or of the house, in no area. Its members are light groups.</p>}
+        <details>
+          <summary className="cursor-pointer text-muted">
+            Named “{String(c.after.name)}”, {plural(((c.after.entities as string[]) ?? []).length, "member")}
+          </summary>
+          <ul className="mt-1 flex flex-col gap-0.5 pl-4">{((c.after.entities as string[]) ?? []).map(name)}</ul>
+        </details>
+        {typeof sensor === "string" && <p className="text-muted">Also becomes the area's {sensor} sensor.</p>}
+      </div>
+    );
+  }
+  const { added, removed } = memberChange(c);
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      {added.length > 0 && (
+        <div>
+          <span className="text-muted">Added</span>
+          <ul className="pl-4">{added.map(name)}</ul>
+        </div>
+      )}
+      {removed.length > 0 && (
+        <div>
+          <span className="text-muted">Taken out</span>
+          <ul className="pl-4">{removed.map(name)}</ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A blueprint, or one recipe's automation with the inputs it fills in.
+function RecipeBody({ c }: { c: Change }) {
+  if (c.kind === "blueprint") {
+    return <p className="text-xs text-muted">Version {String(c.after.version)}. Taxis writes it once; every area that uses the recipe shares it.</p>;
+  }
+  const use = c.after.use_blueprint as { path: string; input: Record<string, unknown> };
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-muted">
+        Made from {use.path}, {plural(Object.keys(use.input).length, "input")}
+      </summary>
+      <dl className="mt-1 grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-3 gap-y-0.5 pl-4">
+        {Object.entries(use.input).map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="text-muted">{k}</dt>
+            <dd className="min-w-0 break-words font-mono">{Array.isArray(v) ? (v.length ? v.join(", ") : "none") : String(v)}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }
 

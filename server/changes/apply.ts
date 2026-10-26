@@ -1,4 +1,4 @@
-import { applyLabelDiff, currentValues, isTempId, labelDiff, sameValue } from "../../shared/changes.ts";
+import { applyLabelDiff, currentValues, isRegistryKind, isTempId, labelDiff, sameValue } from "../../shared/changes.ts";
 import type { Change, ChangeKind, Hierarchy } from "../../shared/types.ts";
 import type { RestApi } from "../ha/rest.ts";
 import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
@@ -53,6 +53,13 @@ import { updateReferences, type RenamePair } from "../references/update.ts";
 //     ordinary update of what is left.
 //
 // A list without renames reads and writes exactly what it did before.
+//
+// Helper changes (a group, min/max, timer, input boolean or template sensor
+// created, a group's members or a timer's duration updated) are not handled
+// here: the caller passes them to applyHelperChanges (helpers.ts) once this has
+// run, so a rename or a new area they depend on is already done. Likewise
+// blueprints and recipe automations (recipes.ts), which come before and after
+// the helpers.
 
 export type Writer = { write<T>(type: string, payload: Record<string, unknown>): Promise<T> };
 
@@ -76,10 +83,14 @@ function withoutRename(c: Change, newId: string): Change {
 
 const LEFT_ALONE = "Not updated: automations, scripts, scenes and dashboards were left alone, because the rename wasn't confirmed. Check what uses the old id.";
 
-const ORDER: ChangeKind[] = ["floor", "label", "category", "area", "device", "entity"];
-const DELETE_ORDER: ChangeKind[] = ["area", "floor", "label", "category"];
+// Helpers, blueprints and automations are not registry items: they have steps
+// of their own (helpers.ts, recipes.ts), after this one.
+type RegistryKind = Exclude<ChangeKind, "helper" | "blueprint" | "automation">;
 
-const REGISTRY: Record<ChangeKind, string> = {
+const ORDER: RegistryKind[] = ["floor", "label", "category", "area", "device", "entity"];
+const DELETE_ORDER: RegistryKind[] = ["area", "floor", "label", "category"];
+
+const REGISTRY: Record<RegistryKind, string> = {
   floor: "config/floor_registry",
   area: "config/area_registry",
   label: "config/label_registry",
@@ -88,7 +99,7 @@ const REGISTRY: Record<ChangeKind, string> = {
   entity: "config/entity_registry",
 };
 
-const ID_KEY: Record<ChangeKind, string> = {
+const ID_KEY: Record<RegistryKind, string> = {
   floor: "floor_id",
   area: "area_id",
   label: "label_id",
@@ -109,6 +120,8 @@ const FIELD_NAMES: Record<string, string> = {
   new_entity_id: "entity id",
   hidden_by: "hidden setting",
   disabled_by: "disabled setting",
+  temperature_entity_id: "temperature sensor",
+  humidity_entity_id: "humidity sensor",
 };
 
 // details: for a rename, what was updated and what still needs a hand.
@@ -141,13 +154,16 @@ function namesOf(h: Hierarchy, kind: ChangeKind, scope: Change["scope"]): { id: 
 }
 
 export async function applyChanges(
-  changes: Change[],
+  // Helper, blueprint and automation changes in the list are left to their own
+  // steps and get no result here.
+  all: Change[],
   ha: Writer,
   readFresh: () => Promise<RawRegistry>,
   // Needed to rename entity ids with what uses them; without it a rename only
   // changes the registry.
   rename?: RenameIO,
 ): Promise<{ results: Outcome[]; appliedIds: number[]; realIds: Map<string, string>; retargets: Retarget[] }> {
+  const changes = all.filter((c) => isRegistryKind(c.kind));
   const realIds = new Map<string, string>();
   const outcome = new Map<number, Outcome>();
   const sent = new Map<number, Record<string, unknown>>();
@@ -216,6 +232,10 @@ export async function applyChanges(
       if (c.op === "update" && !sameValue(now[key], c.before[key]) && !sameValue(now[key], wanted)) {
         return `Its ${FIELD_NAMES[key] ?? key} was changed in Home Assistant after you made this edit (it's now ${JSON.stringify(now[key] ?? null)}). Remove this change and edit it again.`;
       }
+      // An area's temperature or humidity sensor has to be an entity Home Assistant has.
+      if ((key === "temperature_entity_id" || key === "humidity_entity_id") && typeof wanted === "string" && !before.entities[wanted]) {
+        return `The sensor it sets (${wanted}) is no longer in Home Assistant.`;
+      }
       payload[key] = wanted;
     }
     return payload;
@@ -254,7 +274,7 @@ export async function applyChanges(
     if (c.op !== "create") {
       const target = resolveId(c.targetId);
       if (!target.ok) return "It depends on an item that wasn't created.";
-      payload[ID_KEY[c.kind]] = target.value;
+      payload[ID_KEY[c.kind as RegistryKind]] = target.value;
     }
     return payload;
   };
@@ -300,10 +320,10 @@ export async function applyChanges(
     const payload = finish(c, base);
     if (typeof payload === "string") return fail(c, payload);
     try {
-      const result = await ha.write<Record<string, unknown>>(`${REGISTRY[c.kind]}/${c.op}`, payload);
+      const result = await ha.write<Record<string, unknown>>(`${REGISTRY[c.kind as RegistryKind]}/${c.op}`, payload);
       sent.set(c.id, payload);
       if (c.op === "create") {
-        const newId = result?.[ID_KEY[c.kind]];
+        const newId = result?.[ID_KEY[c.kind as RegistryKind]];
         if (typeof newId !== "string") throw new Error("Home Assistant didn't return the new id.");
         realIds.set(c.targetId, newId);
       }
@@ -439,7 +459,7 @@ export function verify(
   if (!item) return c.op === "create" ? "Home Assistant doesn't show it after creating it." : "It's no longer in Home Assistant.";
 
   for (const [key, expected] of Object.entries(payload)) {
-    if (key === "scope" || key === ID_KEY[c.kind]) continue;
+    if (key === "scope" || key === ID_KEY[c.kind as RegistryKind]) continue;
     if (key === "new_entity_id") {
       if (item.entity_id !== expected) return `Its entity id reads ${JSON.stringify(item.entity_id ?? null)} in Home Assistant, not ${JSON.stringify(expected)}.`;
       continue;
@@ -523,5 +543,9 @@ function findRaw(fresh: RawRegistry, c: Change, id: string): Record<string, unkn
       return find(fresh.devices, "id");
     case "entity":
       return find(fresh.entities, "entity_id");
+    case "helper":
+    case "blueprint":
+    case "automation":
+      return undefined;
   }
 }

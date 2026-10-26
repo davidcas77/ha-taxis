@@ -47,6 +47,11 @@ export type RawEntity = {
   disabled_by?: string | null;
   hidden_by?: string | null;
   entity_category?: string | null;
+  // Set for entities made by a config entry (helpers set up in the UI).
+  config_entry_id?: string | null;
+  // The id the integration gave it: for a timer or a toggle made in the UI, the
+  // id Home Assistant's own storage knows it by.
+  unique_id?: string | null;
   labels?: string[];
   icon?: string | null;
   categories?: Record<string, string>;
@@ -56,7 +61,23 @@ export type RawCategory = { category_id: string; name: string; icon?: string | n
 export type RawState = {
   entity_id: string;
   state: string;
-  attributes?: { friendly_name?: string; device_class?: string; unit_of_measurement?: string; entity_id?: unknown };
+  // When the state last changed (ISO), which the health checks read.
+  last_changed?: string;
+  // id: an automation's id. duration: a timer's, written "0:05:00".
+  // last_triggered: an automation's last run. restored: the entity is no longer
+  // provided by its integration.
+  attributes?: {
+    friendly_name?: string;
+    device_class?: string;
+    unit_of_measurement?: string;
+    entity_id?: unknown;
+    id?: unknown;
+    duration?: unknown;
+    last_triggered?: unknown;
+    restored?: unknown;
+    // A thermostat's: the presets it offers.
+    preset_modes?: unknown;
+  };
 };
 export type RawConfig = { location_name?: string; version?: string };
 
@@ -173,6 +194,8 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
       needsOwnName: Boolean(reg?.device_id && !text(reg?.original_name)),
       inRegistry: Boolean(reg),
       platform,
+      configEntryId: text(reg?.config_entry_id),
+      presetModes: domain === "climate" && Array.isArray(st?.attributes?.preset_modes) ? st.attributes.preset_modes.filter((m): m is string => typeof m === "string") : [],
     };
     if (device) device.entityIds.push(entityId);
     if (areaId) areas[areaId].entityIds.push(entityId);

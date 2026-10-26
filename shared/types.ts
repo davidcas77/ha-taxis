@@ -68,6 +68,11 @@ export type EntityItem = {
   // Only entities in the entity registry can be edited.
   inRegistry: boolean;
   platform: string;
+  // The config entry behind a helper set up in the UI (a group, a min/max…).
+  // Null for YAML and for anything an integration made without one.
+  configEntryId: string | null;
+  // A thermostat's presets (the preset_modes attribute), empty for anything else.
+  presetModes: string[];
 };
 
 export type DeviceItem = {
@@ -139,7 +144,7 @@ export type Hierarchy = {
 // Changes: edits collected in Taxis, applied to Home Assistant together.
 // ---------------------------------------------------------------------------
 
-export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category";
+export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category" | "helper" | "blueprint" | "automation";
 export type ChangeOp = "create" | "update" | "delete";
 
 // The fields each kind of change may set, named as Home Assistant names them.
@@ -147,10 +152,44 @@ export type ChangeFields = {
   // new_entity_id renames the entity; Apply also updates what uses the old id.
   entity: { new_entity_id?: string; name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null };
   device: { name_by_user?: string | null; area_id?: string | null; labels?: string[]; disabled_by?: "user" | null };
-  area: { name?: string; floor_id?: string | null; icon?: string | null; labels?: string[] };
+  area: { name?: string; floor_id?: string | null; icon?: string | null; labels?: string[]; temperature_entity_id?: string | null; humidity_entity_id?: string | null };
   floor: { name?: string; level?: number | null; icon?: string | null };
   label: { name?: string; color?: string | null; icon?: string | null; description?: string | null };
   category: { name?: string; icon?: string | null };
+  // A native helper. Created: a group or min/max, named and filled in one go,
+  // with its canonical entity id and area; for a temperature or humidity sensor
+  // the area can be pointed at it in the same step. A recipe's own helpers are a
+  // timer (with its duration), an input boolean, a template binary sensor and a
+  // schedule (with its comfort periods); the house's away and sleep switches are
+  // input booleans with no area.
+  // Updated: a group's members, a timer's duration or a schedule's periods. Never deleted.
+  helper: {
+    helper?: "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule";
+    group_type?: "light" | "binary_sensor" | "media_player";
+    name?: string;
+    entity_id?: string;
+    entities?: string[];
+    area_id?: string | null;
+    set_area_sensor?: "temperature" | "humidity";
+    duration?: number;
+    icon?: string | null;
+    state_template?: string;
+    device_class?: "occupancy";
+    // A schedule helper's comfort periods, as shared/periods.ts writes them.
+    periods?: string;
+  };
+  // A Taxis blueprint written into Home Assistant: its path and the version of
+  // the text Taxis holds. Never deleted.
+  blueprint: { path?: string; version?: number };
+  // One recipe's automation for one area, made from a Taxis blueprint. Never
+  // deleted.
+  automation: {
+    automation_id?: string;
+    recipe?: "occupancy" | "motion_lights" | "media_off" | "area_climate";
+    area_id?: string;
+    alias?: string;
+    use_blueprint?: { path: string; input: Record<string, unknown> };
+  };
 };
 
 export type Change = {
@@ -220,5 +259,9 @@ export type ChangesResponse = { ok: true; changes: Change[]; version: string } |
 export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
 
 export type GroupsResponse = { ok: true; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
+
+export type InventoryResponse = { ok: true; inventory: import("./inventory.ts").InventorySettings } | { ok: false; error: string };
+
+export type ParametersResponse = { ok: true; parameters: import("./parameters.ts").ParameterSettings } | { ok: false; error: string };
 
 export type ApplyResponse = ({ ok: true } & ApplyResult) | { ok: false; error: string };

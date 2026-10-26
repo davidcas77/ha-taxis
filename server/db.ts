@@ -30,6 +30,19 @@ const MIGRATIONS: string[] = [
      key TEXT PRIMARY KEY,
      value TEXT NOT NULL
    )`,
+  // 0.5: what each AI call used and cost (server/ai/ledger.ts). Counts only,
+  // never the prompt or the answer.
+  `CREATE TABLE IF NOT EXISTS ai_usage (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at TEXT NOT NULL,
+     job TEXT NOT NULL,
+     provider TEXT NOT NULL,
+     model TEXT NOT NULL,
+     input_tokens INTEGER NOT NULL,
+     output_tokens INTEGER NOT NULL,
+     cost_usd REAL
+   );
+   CREATE INDEX IF NOT EXISTS ai_usage_at ON ai_usage (at)`,
 ];
 
 const KEEP_SNAPSHOTS = 10;
