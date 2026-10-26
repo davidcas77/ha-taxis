@@ -8,6 +8,7 @@ import {
   PARAM_DEF,
   PARAM_KEYS,
   checkValue,
+  entryLights,
   paramRows,
   resolve,
   resolveAll,
@@ -50,7 +51,9 @@ describe("the definitions", () => {
   it("define every key once, in a tab, with a default that is allowed", () => {
     expect(PARAMS.map((p) => p.key)).toEqual([...PARAM_KEYS]);
     for (const p of PARAMS) {
-      expect(checkValue(p, p.default), p.key).toBeNull();
+      // A list has no value to start from: empty means not set.
+      if (p.kind === "entities") expect(p.default, p.key).toEqual([]);
+      else expect(checkValue(p, p.default), p.key).toBeNull();
       expect(["house", "occupancy", "lighting", "media", "climate"]).toContain(p.tab);
     }
     expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end", "away_mode_entity", "sleep_mode_entity"]);
@@ -65,6 +68,7 @@ describe("the definitions", () => {
       "dim_before_off",
       "dim_level",
       "override_duration",
+      "entry_lights",
     ]);
     expect(PARAMS.filter((p) => p.tab === "media").map((p) => p.key)).toEqual(["media_off_after", "tv_off_after"]);
     expect(PARAMS.filter((p) => p.tab === "climate").map((p) => p.key)).toEqual([
@@ -317,4 +321,83 @@ describe("the rows of a table", () => {
 
 it("writes a time as a blueprint takes it", () => {
   expect(withSeconds("23:00")).toBe("23:00:00");
+});
+
+describe("entry lights", () => {
+  const def = PARAM_DEF.entry_lights;
+  const kitchen = { level: "area", id: "kitchen" } as const;
+
+  it("is a list of lights, set for one area only", () => {
+    expect(def).toMatchObject({ kind: "entities", domain: "light", tab: "lighting", areaOnly: true, default: [] });
+    expect(checkValue(def, ["light.kitchen_main"])).toBeNull();
+    expect(checkValue(def, ["light.a", "light.b"])).toBeNull();
+    for (const bad of [[], "light.a", ["switch.a"], ["light.a", "light.a"], [5], ["Light.A"], Array.from({ length: 21 }, (_, i) => `light.l${i}`)]) {
+      expect(checkValue(def, bad), JSON.stringify(bad)).toMatch(/Entry lights must be a list of 1 to 20 light entity ids/);
+    }
+  });
+
+  it("is not inherited: the house, interior, exterior and floors can't set it, and an area doesn't take theirs", () => {
+    const area = setParameter(EMPTY_PARAMETERS, kitchen, "entry_lights", ["light.kitchen_main"]);
+    expect(area.areas).toEqual({ kitchen: { entry_lights: ["light.kitchen_main"] } });
+    for (const scope of [{ level: "house" }, { level: "type", id: "interior" }, { level: "floor", id: "ground" }] as const) {
+      expect(setParameter(EMPTY_PARAMETERS, scope, "entry_lights", ["light.kitchen_main"]), scope.level).toBe(EMPTY_PARAMETERS);
+    }
+    // Even a stored value at a higher level (hand-edited) is ignored.
+    const stray: ParameterSettings = { ...EMPTY_PARAMETERS, house: { entry_lights: ["light.x"] }, floors: { ground: { entry_lights: ["light.y"] } } };
+    expect(resolve(stray, h, EMPTY_INVENTORY, "kitchen", "entry_lights")).toEqual({ value: [], source: { level: "default", id: null } });
+    expect(resolve(area, h, EMPTY_INVENTORY, "kitchen", "entry_lights")).toEqual({ value: ["light.kitchen_main"], source: { level: "area", id: "kitchen" } });
+    expect(resolve(area, h, EMPTY_INVENTORY, "living_room", "entry_lights").source.level).toBe("default");
+  });
+
+  it("clears with null or an empty list, and a same list is no change", () => {
+    const a = setParameter(EMPTY_PARAMETERS, kitchen, "entry_lights", ["light.a", "light.b"]);
+    expect(setParameter(a, kitchen, "entry_lights", ["light.a", "light.b"])).toBe(a);
+    expect(setParameter(a, kitchen, "entry_lights", null).areas).toEqual({});
+    expect(setParameter(a, kitchen, "entry_lights", []).areas).toEqual({});
+    expect(setParameter(EMPTY_PARAMETERS, kitchen, "entry_lights", [])).toBe(EMPTY_PARAMETERS);
+  });
+
+  describe("the lights that go on", () => {
+    const row = (entityId: string, light: "main" | "accent" | "task" | "night" = "main", counts = true) => ({ entityId, counts, light });
+    const set = (value: string[]) => setParameter(EMPTY_PARAMETERS, kitchen, "entry_lights", value);
+
+    it("is the only light of the area, whatever its role", () => {
+      const r = entryLights(EMPTY_PARAMETERS, "kitchen", [row("light.one", "night")]);
+      expect(r).toEqual({ lights: ["light.one"], source: "only", set: null, suggested: ["light.one"] });
+    });
+
+    it("counts only the lights that count: one counted light among excluded ones is the only light", () => {
+      const r = entryLights(EMPTY_PARAMETERS, "kitchen", [row("light.one", "accent"), row("light.two", "main", false)]);
+      expect(r.lights).toEqual(["light.one"]);
+      expect(r.source).toBe("only");
+    });
+
+    it("is the main lights when there are several lights", () => {
+      const r = entryLights(EMPTY_PARAMETERS, "kitchen", [row("light.b"), row("light.a"), row("light.c", "accent")]);
+      expect(r).toEqual({ lights: ["light.a", "light.b"], source: "main", set: null, suggested: ["light.a", "light.b"] });
+    });
+
+    it("is nothing when there are several lights and none is main, or no light counts", () => {
+      expect(entryLights(EMPTY_PARAMETERS, "kitchen", [row("light.a", "accent"), row("light.b", "night")])).toMatchObject({ lights: [], source: "none" });
+      expect(entryLights(EMPTY_PARAMETERS, "kitchen", [])).toMatchObject({ lights: [], source: "none" });
+      expect(entryLights(EMPTY_PARAMETERS, "kitchen", [row("light.a", "main", false)])).toMatchObject({ lights: [], source: "none" });
+    });
+
+    it("is the choice, when it names lights that count, and the suggestion stays available", () => {
+      const rows = [row("light.a"), row("light.b"), row("light.c", "accent")];
+      expect(entryLights(set(["light.c"]), "kitchen", rows)).toEqual({ lights: ["light.c"], source: "set", set: ["light.c"], suggested: ["light.a", "light.b"] });
+      // Only the lights that still count: the rest of the choice is dropped.
+      expect(entryLights(set(["light.c", "light.gone"]), "kitchen", rows).lights).toEqual(["light.c"]);
+    });
+
+    it("falls back to the suggestion when no chosen light counts any more, and says what was chosen", () => {
+      const rows = [row("light.a"), row("light.b", "main", false), row("light.c", "accent")];
+      const r = entryLights(set(["light.b", "light.gone"]), "kitchen", rows);
+      expect(r).toMatchObject({ lights: ["light.a"], source: "main", set: ["light.b", "light.gone"] });
+    });
+
+    it("reads the choice of the area asked for only", () => {
+      expect(entryLights(set(["light.a"]), "living_room", [row("light.a"), row("light.b")]).source).toBe("main");
+    });
+  });
 });

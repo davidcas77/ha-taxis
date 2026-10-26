@@ -26,12 +26,13 @@ import {
   type MotionRole,
   type Tally,
 } from "../../shared/inventory.ts";
-import type { AreaNode, Hierarchy } from "../../shared/types.ts";
+import { entryLights, setParameter } from "../../shared/parameters.ts";
+import type { AreaNode, EntityItem, Hierarchy } from "../../shared/types.ts";
 import { helperExclusions } from "../../shared/helpers.ts";
 import { AreaHelpersSection } from "./helpers.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
-import { Button, EditedDot } from "./ui.tsx";
+import { AreaSelect, Button, EditedDot } from "./ui.tsx";
 
 // The capability inventory: a matrix of areas by capability, and for each area
 // the entities behind it with the choices Taxis keeps (what counts, roles).
@@ -41,6 +42,103 @@ import { Button, EditedDot } from "./ui.tsx";
 const selectClass = "rounded-md border border-line bg-bg px-2 py-1 text-[13px] outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50";
 
 export const CAPABILITIES_NOTE = "Detected from each entity's area, domain and device class. Choices are stored in Taxis only; nothing changes in Home Assistant.";
+
+// ---------------------------------------------------------------------------
+// Lights without an area.
+// ---------------------------------------------------------------------------
+
+// Lights, not groups: the groups of the floors and the house have no area on purpose.
+export const lightsWithoutArea = (h: Hierarchy): EntityItem[] =>
+  Object.values(h.entities)
+    .filter((e) => e.domain === "light" && !e.disabled && e.areaId === null && e.platform !== "group" && e.members.length === 0)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.entityId.localeCompare(b.entityId));
+
+// A device's main entity with no name of its own: Home Assistant only allows it an
+// area of its own once it has one, so the same edit gives it the name it shows now.
+const needsName = (e: EntityItem) => e.needsOwnName && !e.customName;
+
+// Why a light's own area can't be set here yet, or null when it can. `named`: the
+// user agreed to give it its current name.
+function cannotPlace(e: EntityItem, named: boolean): string | null {
+  if (!e.inRegistry) return "Not in the entity registry, so Home Assistant won't give it an area.";
+  if (needsName(e) && !named) return "Its device's main entity: Home Assistant only allows it an area of its own once it has a name.";
+  return null;
+}
+
+// The lights that sit in no area, with a picker per light. Adding them puts an
+// area change per light in the list; the preview then shows them in their areas.
+export function LightsWithoutArea({ h }: { h: Hierarchy }) {
+  const { propose, busy } = useTaxis();
+  const lights = useMemo(() => lightsWithoutArea(h), [h]);
+  const [chosen, setChosen] = useState<Record<string, string | null>>({});
+  const [named, setNamed] = useState<Record<string, boolean>>({});
+  const picked = lights.filter((e) => chosen[e.entityId] && !cannotPlace(e, named[e.entityId] === true));
+  if (lights.length === 0) return null;
+
+  const add = async () => {
+    // The set of lights is read again when the preview reloads, so the ones that were placed drop out of the list.
+    const inputs = picked.map((e) => ({
+      kind: "entity" as const,
+      op: "update" as const,
+      targetId: e.entityId,
+      fields: { area_id: chosen[e.entityId], ...(needsName(e) ? { name: e.name } : {}) },
+    }));
+    if (await propose(inputs)) {
+      setChosen({});
+      setNamed({});
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-2 rounded-lg border border-warn/40 bg-warn-soft px-3 py-2.5" aria-label="Lights without an area">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="flex-1 text-sm font-semibold">
+          {lights.length} {lights.length === 1 ? "light has" : "lights have"} no area
+        </h2>
+        {picked.length > 0 && (
+          <Button tone="primary" disabled={busy} onClick={() => void add()}>
+            Add {picked.length} to changes
+          </Button>
+        )}
+      </div>
+      <p className="max-w-[68ch] text-xs text-muted">A light in no area is in none of the area light groups, so the recipes and the floor and house groups can't switch it. Choose its area; it is the light's own area, so its device stays where it is.</p>
+      <ul className="divide-y divide-line overflow-hidden rounded-md border border-line bg-surface">
+        {lights.map((e) => {
+          const why = cannotPlace(e, named[e.entityId] === true);
+          const device = e.deviceId ? h.devices[e.deviceId]?.name : null;
+          return (
+            <li key={e.entityId} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-3 py-2 text-[13px]">
+              <div className="flex min-w-[10rem] flex-1 flex-col">
+                <span className="font-medium">{e.name}</span>
+                <code className="font-mono text-xs text-muted">{e.entityId}</code>
+                {why && <span className="mt-0.5 text-xs text-muted">{why}</span>}
+                {needsName(e) && e.inRegistry && (
+                  <label className="mt-0.5 flex cursor-pointer items-center gap-1.5 text-xs">
+                    <input
+                      type="checkbox"
+                      aria-label={`Also name ${e.name} “${e.name}”`}
+                      checked={named[e.entityId] === true}
+                      onChange={(ev) => setNamed((n) => ({ ...n, [e.entityId]: ev.target.checked }))}
+                      className="accent-[var(--accent)]"
+                    />
+                    Also give it the name “{e.name}” (set on the entity, so it no longer follows its device's name)
+                  </label>
+                )}
+              </div>
+              <span className="w-40 text-xs text-muted">{device ? `Device: ${device}` : "No device"}</span>
+              <div className="w-48">
+                <label className="sr-only" htmlFor={`light-area-${e.entityId}`}>
+                  Area of {e.name}
+                </label>
+                <AreaSelect h={h} id={`light-area-${e.entityId}`} value={why ? null : chosen[e.entityId] ?? null} onChange={(v) => setChosen((c) => ({ ...c, [e.entityId]: v }))} noneLabel="Choose an area" />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // The matrix.
@@ -92,6 +190,7 @@ export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => 
 
   return (
     <div className="flex flex-col gap-3">
+      <LightsWithoutArea h={h} />
       <p className="max-w-[68ch] text-[13px] text-muted">{CAPABILITIES_NOTE}</p>
       <label htmlFor="show-empty-areas" className="flex w-fit cursor-pointer items-center gap-2 text-[13px]">
         <input id="show-empty-areas" type="checkbox" checked={showEmpty} onChange={(e) => setShowEmpty(e.target.checked)} className="accent-[var(--accent)]" />
@@ -233,6 +332,7 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
               {c.label} · {counted} of {rows.length} count{rows.length === 1 ? "s" : ""}
             </h2>
             {(c.key === "motion" || c.key === "presence") && <p className="text-xs text-muted">{ROLE_HINT}</p>}
+            {c.key === "lights" && <EntryLightPicker area={area} rows={rows} />}
             <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
               {rows.map((r) => (
                 <CapabilityRow key={r.entityId} h={h} row={r} locked={locked} run={run} />
@@ -246,6 +346,44 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
 
       <AreaHelpersSection h={h} areaId={area.id} go={go} />
     </div>
+  );
+}
+
+// The light that comes on by day when the area becomes occupied. Left on the
+// default, it is the area's only light, or else its main lights.
+function EntryLightPicker({ area, rows }: { area: AreaNode; rows: InventoryRow[] }) {
+  const { parameters, parametersLoaded, parametersSaving, saveParameters, notify } = useTaxis();
+  if (!parametersLoaded || !rows.some((r) => r.counts)) return null;
+  const entry = entryLights(parameters, area.id, rows);
+  const name = (id: string) => rows.find((r) => r.entityId === id)?.name ?? id;
+  const several = entry.source === "set" && entry.lights.length > 1;
+  const value = entry.source !== "set" ? "" : several ? "*" : entry.lights[0];
+  const save = async (next: string | null) => {
+    const error = await saveParameters((p) => setParameter(p, { level: "area", id: area.id }, "entry_lights", next ? [next] : null));
+    if (error) notify({ tone: "error", text: error });
+  };
+  return (
+    <label className="flex flex-wrap items-center gap-2 text-[13px]">
+      Entry light
+      <select
+        aria-label="Entry light"
+        className={selectClass}
+        value={value}
+        disabled={parametersSaving}
+        onChange={(ev) => (ev.target.value === "*" ? undefined : void save(ev.target.value || null))}
+      >
+        <option value="">{entry.suggested.length > 0 ? `Suggested: ${entry.suggested.map(name).join(", ")}` : "None suggested"}</option>
+        {rows
+          .filter((r) => r.counts)
+          .map((r) => (
+            <option key={r.entityId} value={r.entityId}>
+              {r.name}
+            </option>
+          ))}
+        {several && <option value="*">{entry.lights.length} lights (set on the Parameters page)</option>}
+      </select>
+      <span className="text-xs text-muted">Comes on by day when the area becomes occupied.</span>
+    </label>
   );
 }
 

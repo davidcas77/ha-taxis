@@ -383,9 +383,13 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
   };
 
   // Creations first, so a group's update never races the helper it was planned
-  // beside; each one on its own, because the next needs the registry as it is.
-  for (const c of [...changes.filter((x) => x.op === "create"), ...changes.filter((x) => x.op === "update")]) {
+  // beside, and a group before the group that gathers it (a floor's light group
+  // after the groups of its areas); each one on its own, because the next needs
+  // the registry as it is.
+  for (const c of [...inOrder(changes.filter((x) => x.op === "create"), current), ...changes.filter((x) => x.op === "update")]) {
     const done = await (c.op === "create" ? createOne(c) : "duration" in c.after ? updateTimer(c) : "periods" in c.after ? updateSchedule(c) : updateOne(c));
+    // What was just made can be a member of the next group.
+    if (done.ok && c.op === "create") known.add(String(c.after.entity_id));
     outcome.set(c.id, { changeId: c.id, ok: done.ok, message: done.message, ...(done.ok && done.details?.length ? { details: done.details } : {}) });
   }
 
@@ -414,6 +418,24 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
   }
 
   return changes.map((c) => outcome.get(c.id) ?? { changeId: c.id, ok: false, message: "Not sent." });
+}
+
+// The creations with each group after the groups it gathers that are made in the
+// same Apply, and otherwise in the order they were added.
+export function inOrder(creates: Change[], current: (id: string) => string = (id) => id): Change[] {
+  const made = new Map(creates.map((c) => [String(c.after.entity_id), c]));
+  const depth = new Map<Change, number>();
+  const depthOf = (c: Change, seen: Set<Change>): number => {
+    if (depth.has(c)) return depth.get(c)!;
+    if (seen.has(c)) return 0;
+    seen.add(c);
+    const members = ((c.after.entities as string[] | undefined) ?? []).map(current);
+    const d = members.reduce((n, m) => (made.has(m) && made.get(m) !== c ? Math.max(n, depthOf(made.get(m)!, seen) + 1) : n), 0);
+    depth.set(c, d);
+    return d;
+  };
+  const order = new Map(creates.map((c, i) => [c, i]));
+  return [...creates].sort((a, b) => depthOf(a, new Set()) - depthOf(b, new Set()) || order.get(a)! - order.get(b)!);
 }
 
 // A timer's duration as its state says it, in seconds.

@@ -395,6 +395,7 @@ describe("motion lights", () => {
         input: {
           occupied_entity: "binary_sensor.living_occupied",
           light_target: "light.living_all",
+          entry_lights: ["light.living_spots"],
           main_lights: ["light.living_spots"],
           accent_lights: [],
           night_lights: [],
@@ -493,6 +494,7 @@ describe("motion lights: roles, sleep and the manual override", () => {
     const input = autoInput(motionCell(specs, { inv }));
     expect(input).toMatchObject({
       light_target: "light.living_all",
+      entry_lights: ["light.living_spots"],
       main_lights: ["light.living_spots"],
       accent_lights: ["light.living_lamp", "light.living_strip"],
       night_lights: ["light.living_night"],
@@ -519,14 +521,21 @@ describe("motion lights: roles, sleep and the manual override", () => {
     expect(autoInput(motionCell(specs, { inv: setBed(EMPTY_INVENTORY, bed.id, true) })).bed_entities).toEqual([]);
   });
 
-  it("says when no light is a main light", () => {
-    const inv = setLightRole(EMPTY_INVENTORY, "light.living_spots", "accent");
-    expect(motionCell([...base, spots], { inv }).notes).toEqual([
+  it("says when there are no entry lights: several lights and none is a main light", () => {
+    let inv = setLightRole(EMPTY_INVENTORY, "light.living_spots", "accent");
+    inv = setLightRole(inv, "light.living_lamp", "accent");
+    expect(motionCell([...base, spots, lamp], { inv }).notes).toEqual([
       "No light level helper yet, so the lights go on at any light level",
-      "No main lights, so no light goes on by day (set a light's role on the area's Capabilities tab)",
+      "No entry or main lights, so no light goes on by day (set an entry light, or a light's role, on the area's Capabilities tab)",
     ]);
+    expect(autoInput(motionCell([...base, spots, lamp], { inv })).entry_lights).toEqual([]);
     const night = setLightRole(inv, "light.living_night", "night");
-    expect(motionCell([...base, spots, nightlight], { inv: night }).notes[1]).toBe("No main lights, so only the night lights go on");
+    expect(motionCell([...base, spots, lamp, nightlight], { inv: night }).notes[1]).toBe("No entry or main lights, so only the night lights go on");
+    // An entry light of one's own settles it.
+    const own = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "entry_lights", ["light.living_lamp"]);
+    const c = motionCell([...base, spots, lamp], { inv, params: own });
+    expect(c.notes).toEqual(["No light level helper yet, so the lights go on at any light level"]);
+    expect(autoInput(c).entry_lights).toEqual(["light.living_lamp"]);
   });
 
   it("passes the extended time and the override time from the parameters", () => {
@@ -583,21 +592,22 @@ describe("motion lights: roles, sleep and the manual override", () => {
     const specs = [...base, spots, lamp];
     const inv = setLightRole(EMPTY_INVENTORY, lamp.id, "accent");
     const now = autoInput(motionCell(specs, { inv }));
-    const { main_lights: _a, accent_lights: _b, night_lights: _c, bed_entities: _d, extended_after: _e, override_timer: _f, override_minutes: _g, ...old } = now;
+    const { entry_lights: _h, main_lights: _a, accent_lights: _b, night_lights: _c, bed_entities: _d, extended_after: _e, override_timer: _f, override_minutes: _g, ...old } = now;
     const installed = {
       ...occupancyThere,
-      blueprints: { ...BLUEPRINTS_THERE, [MOT.path]: 2 },
+      blueprints: { ...BLUEPRINTS_THERE, [MOT.path]: 3 },
       automations: { ...occupancyThere.automations, taxis_motion_lights_living: { alias: "Living room – Motion lights (Taxis)", path: MOT.path, input: old } },
     };
     const c = cell(plan(specs, { installed, inv }), "motion_lights");
     expect(c.status).toBe("out-of-date");
     expect(c.reasons).toEqual([
       "Extended after (min): none → 30",
+      "Entry lights: none → light.living_spots",
       "Main lights: none → light.living_spots",
       "Accent lights: none → light.living_lamp",
       "Override timer: none → timer.living_override",
       "Manual override lasts (min): none → 0",
-      "The blueprint is version 2, Taxis has 3",
+      "The blueprint is version 3, Taxis has 4",
     ]);
   });
 
@@ -610,7 +620,57 @@ describe("motion lights: roles, sleep and the manual override", () => {
     };
     expect(cell(plan(specs, { installed }), "motion_lights").status).toBe("installed");
     const inv = setLightRole(EMPTY_INVENTORY, lamp.id, "night");
-    expect(cell(plan(specs, { installed, inv }), "motion_lights").reasons).toEqual(["Main lights: light.living_lamp, light.living_spots → light.living_spots", "Night lights: none → light.living_lamp"]);
+    expect(cell(plan(specs, { installed, inv }), "motion_lights").reasons).toEqual([
+      "Entry lights: light.living_lamp, light.living_spots → light.living_spots",
+      "Main lights: light.living_lamp, light.living_spots → light.living_spots",
+      "Night lights: none → light.living_lamp",
+    ]);
+  });
+
+  describe("entry lights", () => {
+    const area = { level: "area", id: "living_room" } as const;
+    const entryOf = (c: ReturnType<typeof motionCell>) => autoInput(c).entry_lights;
+
+    it("are the only light of the area, whatever its role, else the main lights", () => {
+      expect(entryOf(motionCell([...base, spots]))).toEqual(["light.living_spots"]);
+      expect(entryOf(motionCell([...base, spots], { inv: setLightRole(EMPTY_INVENTORY, "light.living_spots", "night") }))).toEqual(["light.living_spots"]);
+      expect(entryOf(motionCell([...base, spots, lamp]))).toEqual(["light.living_lamp", "light.living_spots"]);
+      const inv = setLightRole(EMPTY_INVENTORY, lamp.id, "accent");
+      expect(entryOf(motionCell([...base, spots, lamp], { inv }))).toEqual(["light.living_spots"]);
+    });
+
+    it("are the ones chosen for the area, and a choice for another level or another area is not used", () => {
+      const own = setParameter(EMPTY_PARAMETERS, area, "entry_lights", ["light.living_strip"]);
+      const specs = [...base, spots, lamp, strip];
+      expect(entryOf(motionCell(specs, { params: own }))).toEqual(["light.living_strip"]);
+      const other = setParameter(EMPTY_PARAMETERS, { level: "area", id: "kitchen" }, "entry_lights", ["light.living_strip"]);
+      expect(entryOf(motionCell(specs, { params: other }))).toEqual(["light.living_lamp", "light.living_spots", "light.living_strip"]);
+    });
+
+    it("leave out a chosen light that doesn't count (any more), with a note", () => {
+      const h = house([...base, spots, lamp]);
+      const own = setParameter(EMPTY_PARAMETERS, area, "entry_lights", ["light.living_lamp"]);
+      const c = motionCell([...base, spots, lamp], { params: own, inv: setCounts(h, EMPTY_INVENTORY, lamp.id, false) });
+      expect(entryOf(c)).toEqual(["light.living_spots"]);
+      expect(c.notes).toContain("The entry lights set for this area don't count here any more, so the suggested ones are used");
+    });
+
+    it("make an installed automation out of date when they change, and not otherwise", () => {
+      const specs = [...base, spots, lamp];
+      const input = autoInput(motionCell(specs));
+      const installed = {
+        ...occupancyThere,
+        automations: { ...occupancyThere.automations, taxis_motion_lights_living: { alias: "Living room – Motion lights (Taxis)", path: MOT.path, input } },
+        timers: { ...occupancyThere.timers, "timer.living_override": 3600 },
+      };
+      expect(cell(plan(specs, { installed }), "motion_lights").status).toBe("installed");
+      const own = setParameter(EMPTY_PARAMETERS, area, "entry_lights", ["light.living_lamp"]);
+      const c = cell(plan(specs, { installed, params: own }), "motion_lights");
+      expect(c.status).toBe("out-of-date");
+      expect(c.reasons).toEqual(["Entry lights: light.living_lamp, light.living_spots → light.living_lamp"]);
+      expect(c.inputs.map((i) => i.kind)).toEqual(["automation"]);
+      for (const i of c.inputs) expect(validateInput(i)).toBeNull();
+    });
   });
 });
 

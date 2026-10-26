@@ -222,9 +222,10 @@ app.put("/api/settings/naming", bodyLimit({ maxSize: 64 * 1024, onError: (c) => 
   // Codes are kept only for areas Home Assistant has (when it can be read).
   const live = await loadRead(false).then(({ read }) => read, () => undefined);
   const areaIds = live && new Set(Object.keys(live.live.areas));
-  const checked = validateNaming(await c.req.json().catch(() => null), areaIds);
+  const floorIds = live && new Set(live.live.floors.map((f) => f.id));
+  const checked = validateNaming(await c.req.json().catch(() => null), areaIds, floorIds);
   if (!checked.ok) return c.json<NamingResponse>({ ok: false, error: checked.error }, 400);
-  // Two areas can't share a code, detected or set. Skipped when Home Assistant
+  // Two areas can't share a code, nor two floors, detected or set. Skipped when Home Assistant
   // can't be read, since the detected codes can't be worked out then.
   const clash = live && checkAreaCodes(checked.value, live.live, live.raw.areas.map((a) => a.area_id));
   if (clash) return c.json<NamingResponse>({ ok: false, error: clash }, 400);

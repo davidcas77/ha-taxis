@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildMockRegistry } from "../scripts/mock-ha-core.ts";
 import { buildHierarchy } from "../server/model/hierarchy.ts";
-import { DEFAULT_NAMING, analyzeArea, areaCodes, detectAreaCode, duplicateCodes, duplicateCodesMessage, duplicateIds, slug } from "./naming.ts";
+import { DEFAULT_HOUSE_GROUP, DEFAULT_NAMING, analyzeArea, areaCodes, detectAreaCode, duplicateCodes, duplicateCodesMessage, duplicateIds, floorCodeAdvice, floorCodes, houseGroupId, slug } from "./naming.ts";
 import type { Hierarchy } from "./types.ts";
 
 // A house shaped like a real one: areas renamed after their ids were set, old
@@ -233,5 +233,98 @@ describe("duplicate codes", () => {
     const msg = duplicateCodesMessage(new Map([["kit", ["k1", "k2"]]]), (id) => ({ k1: "Kitchen", k2: "Kitchenette" })[id]!);
     expect(msg).toBe("The code “kit” is used by Kitchen and Kitchenette.");
     expect(duplicateCodesMessage(new Map(), String)).toBeNull();
+  });
+});
+
+describe("floor codes", () => {
+  const floor = (id: string, name: string) => ({ floor_id: id, name, level: 0 });
+  const hierarchy = (floors: { floor_id: string; name: string; level: number }[]) => {
+    const reg = buildMockRegistry();
+    reg.floors = floors;
+    reg.areas = [];
+    reg.devices = [];
+    reg.entities = [];
+    reg.states = [];
+    return buildHierarchy(reg, "now");
+  };
+
+  it("defaults to the slug of the floor's id, and uses a code the user set instead, as a slug", () => {
+    const h = hierarchy([floor("ground", "Ground floor"), floor("First-Floor", "First floor"), floor("loft", "Loft")]);
+    expect(floorCodes(h, DEFAULT_NAMING)).toEqual({
+      ground: { code: "ground", detected: "ground", custom: false },
+      "First-Floor": { code: "first_floor", detected: "first_floor", custom: false },
+      loft: { code: "loft", detected: "loft", custom: false },
+    });
+    const own = floorCodes(h, { ...DEFAULT_NAMING, floorCodes: { loft: "Attic Rooms", ground: "" } });
+    expect(own.loft).toEqual({ code: "attic_rooms", detected: "loft", custom: true });
+    // An empty code is no choice.
+    expect(own.ground).toMatchObject({ code: "ground", custom: false });
+  });
+
+  it("falls back to the name of a floor whose id has no letters or digits, and reads its own keys only", () => {
+    const h = hierarchy([floor("__", "Cellar"), floor("constructor", "Odd one")]);
+    expect(floorCodes(h, DEFAULT_NAMING).__.code).toBe("cellar");
+    expect(floorCodes(h, DEFAULT_NAMING).constructor).toMatchObject({ code: "constructor", custom: false });
+  });
+
+  it("can be checked for duplicates like area codes", () => {
+    const h = hierarchy([floor("ground", "Ground floor"), floor("first", "First floor")]);
+    const dupes = duplicateCodes(floorCodes(h, { ...DEFAULT_NAMING, floorCodes: { first: "ground" } }));
+    expect([...dupes].map(([code, ids]) => [code, [...ids].sort()])).toEqual([["ground", ["first", "ground"]]]);
+    expect(duplicateCodes(floorCodes(h, DEFAULT_NAMING)).size).toBe(0);
+  });
+
+  describe("advice", () => {
+    const advice = (id: string, name: string, custom = false) => floorCodeAdvice({ name }, { code: slug(id), custom });
+
+    it("suggests the slug of the name when the id is a generic word, with or without a number", () => {
+      expect(advice("floor_2", "Loft")).toBe("loft");
+      expect(advice("floor", "Upstairs")).toBe("upstairs");
+      expect(advice("level_1", "Cellar")).toBe("cellar");
+      expect(advice("level1", "Ground floor")).toBe("ground_floor");
+      expect(advice("f2", "Attic")).toBe("attic");
+      expect(advice("2", "Attic")).toBe("attic");
+      expect(advice("storey", "Second floor")).toBe("second_floor");
+      expect(advice("default", "Basement")).toBe("basement");
+    });
+
+    it("suggests it when the id has nothing to do with the name", () => {
+      expect(advice("ground", "Basement")).toBe("basement");
+      expect(advice("a1b2c3", "Garden level")).toBe("garden_level");
+    });
+
+    it("says nothing when the id fits the name, however it is spelled", () => {
+      expect(advice("ground", "Ground floor")).toBeNull();
+      expect(advice("first_floor", "First floor")).toBeNull();
+      expect(advice("firstfloor", "First floor")).toBeNull();
+      expect(advice("first", "First floor")).toBeNull();
+      expect(advice("ground_floor", "Ground")).toBeNull();
+      // Even a generic id is fine when the name says the same.
+      expect(advice("floor_2", "Floor 2")).toBeNull();
+      expect(advice("level_1", "Level 1")).toBeNull();
+      expect(advice("level1", "Level 1")).toBeNull();
+    });
+
+    it("says nothing for a code the user typed, or when the name gives nothing better", () => {
+      expect(advice("floor_2", "Loft", true)).toBeNull();
+      expect(advice("floor_2", "!!!")).toBeNull();
+      expect(advice("floor_2", "")).toBeNull();
+    });
+
+    it("is what the settings screen shows for the mock house's floors", () => {
+      const h = buildHierarchy(buildMockRegistry(), "now");
+      const codes = floorCodes(h, DEFAULT_NAMING);
+      const found = Object.fromEntries(h.floors.map((f) => [f.id, floorCodeAdvice(f, codes[f.id])]));
+      expect(found).toEqual({ ground: null, first: null, floor_2: "loft", level_1: "cellar" });
+    });
+  });
+});
+
+describe("the house light group", () => {
+  it("is light.all unless Settings say another end", () => {
+    expect(houseGroupId(DEFAULT_NAMING)).toBe("light.all");
+    expect(houseGroupId({ houseGroup: "" })).toBe("light.all");
+    expect(houseGroupId({ houseGroup: "everything" })).toBe("light.everything");
+    expect(DEFAULT_HOUSE_GROUP).toBe("all");
   });
 });

@@ -1,7 +1,7 @@
 import { ENTITY_ID_RE } from "./changes.ts";
-import { areaCodes, type NamingSettings } from "./naming.ts";
+import { areaCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
 import { areaInventory, type AreaInventory, type InventorySettings } from "./inventory.ts";
-import type { Change, ChangeInput, EntityItem, Hierarchy } from "./types.ts";
+import type { AreaNode, Change, ChangeInput, EntityItem, Hierarchy } from "./types.ts";
 
 // Canonical helpers: for each area, one entity per capability that rolls the
 // area's counted sensors (or lights, or players) up into a single one. The
@@ -135,16 +135,26 @@ export function helperExclusions(h: Hierarchy, naming: NamingSettings): (areaId:
 
 export type HelperStatus = "in-place" | "update-members" | "adopt" | "create" | "conflict";
 
+// Where a helper sits: in an area (every helper above), on a floor (the light
+// group of the floor's areas) or in the house (the light group of the floors).
+export type HelperLevel = "area" | "floor" | "house";
+
 export type HelperRow = {
-  areaId: string;
+  level: HelperLevel;
+  // Area rows: the area. A floor's or the house's group has none: it goes in no area.
+  areaId: string | null;
+  // The name of the area, of the floor, or "House".
   areaName: string;
+  // Floor rows: the floor.
+  floorId: string | null;
   key: HelperKey;
   // The entity id this helper should have, and the name it is created with.
   canonicalId: string;
   name: string;
   helper: "group" | "min_max";
   groupType?: "light" | "binary_sensor" | "media_player";
-  // The counted entities that feed it, by entity id.
+  // The counted entities that feed it, by entity id. A floor's or the house's
+  // group: the light groups it gathers.
   sources: string[];
   status: HelperStatus;
   // A min/max helper's members can't be read, so "in place" is not checked.
@@ -185,20 +195,88 @@ function adoptable(e: EntityItem, spec: HelperSpec, taken: ReadonlySet<string>):
   return e.platform === "group" && e.domain === spec.domain && e.members.length > 0 && !e.disabled && e.inRegistry && !taken.has(e.entityId);
 }
 
-export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: NamingSettings): HelperRow[] {
+// The name of the light group of the whole house.
+export const HOUSE_GROUP_NAME = "All lights";
+
+// `changes`: the change list. A light group an area is about to get (created, or
+// renamed from another group) counts as having one, so the floor and house groups
+// can be planned in the same sitting.
+export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: NamingSettings, changes: readonly Change[] = []): HelperRow[] {
   const codes = areaCodes(h, naming);
+  const floors = floorCodes(h, naming);
   const suffix = effectiveSuffixes(naming.helperNames);
   const exclusions = helperExclusions(h, naming);
-  // Every canonical id of every area: none of them is a group to adopt.
-  const everyCanonical = new Set<string>();
+  const lightSpec = HELPER_SPEC.lights;
+  const houseId = houseGroupId(naming);
+  const floorIds = new Map(h.floors.map((f) => [f.id, canonicalId("light", floors[f.id].code, suffix.lights)]));
+  // Every canonical id of every area, and who it is for: none of them is a group
+  // to adopt, and no other helper may sit on it. The ids of the floors and the
+  // house are added as their rows are planned.
+  const reserved = new Map<string, string>();
   for (const area of Object.values(h.areas)) {
-    for (const s of HELPERS) everyCanonical.add(canonicalId(s.domain, codes[area.id].code, suffix[s.key]));
+    for (const s of HELPERS) reserved.set(canonicalId(s.domain, codes[area.id].code, suffix[s.key]), helperName(area.name, s));
   }
+  const everyCanonical = new Set<string>([...reserved.keys(), ...floorIds.values(), houseId]);
   const groups = Object.values(h.entities).filter((e) => e.platform === "group" && e.members.length > 0);
   // A group is adopted by one row only.
   const claimed = new Set<string>();
   const taken = (): ReadonlySet<string> => new Set([...everyCanonical, ...claimed]);
   const rows: HelperRow[] = [];
+
+  // What Home Assistant holds at the row's canonical id (or a group to adopt)
+  // makes the row: in place, update members, adopt, create or conflict.
+  const settle = (row: HelperRow, spec: HelperSpec, area: AreaNode | null) => {
+    const id = row.canonicalId;
+    const sources = row.sources;
+    const held = h.entities[id];
+    if (held) {
+      const mine = held.domain === spec.domain && held.platform === spec.helper;
+      if (!mine) {
+        Object.assign(row, { status: "conflict", conflict: "taken", heldBy: id, heldByName: held.name, actionable: false });
+      } else if (spec.helper === "min_max") {
+        Object.assign(row, { status: "in-place", membersUnknown: true, actionable: false });
+      } else if (held.members.length === 0) {
+        // A group that reports no members: nothing to compare.
+        Object.assign(row, { status: "in-place", membersUnknown: true, actionable: false });
+      } else {
+        const added = missingFrom(sources, held.members);
+        const removed = missingFrom(held.members, sources);
+        if (added.length === 0 && removed.length === 0) Object.assign(row, { status: "in-place", actionable: false });
+        // Members can only be changed on a helper set up in the UI.
+        else if (!held.configEntryId) Object.assign(row, { status: "conflict", conflict: "not-editable", heldBy: id, heldByName: held.name, actionable: false });
+        else Object.assign(row, { status: "update-members", added, removed });
+      }
+    } else if (spec.helper === "group") {
+      const free = taken();
+      const candidates = groups.filter((e) => adoptable(e, spec, free));
+      const rank = (e: EntityItem) => (area && e.areaId === area.id ? 0 : 1);
+      const byName = (a: EntityItem, b: EntityItem) => rank(a) - rank(b) || a.name.localeCompare(b.name) || a.entityId.localeCompare(b.entityId);
+      const exact = candidates.filter((e) => sameSet(e.members, sources)).sort(byName)[0];
+      if (exact) {
+        Object.assign(row, { status: "adopt", adoptFrom: exact.entityId, adoptFromName: exact.name });
+      } else if (area) {
+        // Not the same members, but the same group in all but a few: adopt it
+        // and bring its members in line. Only a group in this area, set up in
+        // the UI, so its members can be edited.
+        const near = candidates
+          .filter((e) => e.areaId === area.id && e.configEntryId)
+          .map((e) => ({ e, shared: e.members.filter((m) => sources.includes(m)).length }))
+          .filter(({ e, shared }) => shared >= 1 && shared * 2 >= e.members.length)
+          .sort((a, b) => b.shared - a.shared || a.e.members.length - b.e.members.length || byName(a.e, b.e))[0];
+        if (near) {
+          Object.assign(row, {
+            status: "adopt",
+            adoptFrom: near.e.entityId,
+            adoptFromName: near.e.name,
+            membersDiffer: true,
+            added: missingFrom(sources, near.e.members),
+            removed: missingFrom(near.e.members, sources),
+          });
+        }
+      }
+      if (row.adoptFrom) claimed.add(row.adoptFrom);
+    }
+  };
 
   for (const area of Object.values(h.areas)) {
     const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
@@ -210,8 +288,10 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
       if (!ENTITY_ID_RE.test(id)) continue;
 
       const row: HelperRow = {
+        level: "area",
         areaId: area.id,
         areaName: area.name,
+        floorId: null,
         key: spec.key,
         canonicalId: id,
         name: helperName(area.name, spec),
@@ -223,55 +303,7 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
         removed: [],
         actionable: true,
       };
-
-      const held = h.entities[id];
-      if (held) {
-        const mine = held.domain === spec.domain && held.platform === spec.helper;
-        if (!mine) {
-          Object.assign(row, { status: "conflict", conflict: "taken", heldBy: id, heldByName: held.name, actionable: false });
-        } else if (spec.helper === "min_max") {
-          Object.assign(row, { status: "in-place", membersUnknown: true, actionable: false });
-        } else if (held.members.length === 0) {
-          // A group that reports no members: nothing to compare.
-          Object.assign(row, { status: "in-place", membersUnknown: true, actionable: false });
-        } else {
-          const added = missingFrom(sources, held.members);
-          const removed = missingFrom(held.members, sources);
-          if (added.length === 0 && removed.length === 0) Object.assign(row, { status: "in-place", actionable: false });
-          // Members can only be changed on a helper set up in the UI.
-          else if (!held.configEntryId) Object.assign(row, { status: "conflict", conflict: "not-editable", heldBy: id, heldByName: held.name, actionable: false });
-          else Object.assign(row, { status: "update-members", added, removed });
-        }
-      } else if (spec.helper === "group") {
-        const free = taken();
-        const candidates = groups.filter((e) => adoptable(e, spec, free));
-        const rank = (e: EntityItem) => (e.areaId === area.id ? 0 : 1);
-        const byName = (a: EntityItem, b: EntityItem) => rank(a) - rank(b) || a.name.localeCompare(b.name) || a.entityId.localeCompare(b.entityId);
-        const exact = candidates.filter((e) => sameSet(e.members, sources)).sort(byName)[0];
-        if (exact) {
-          Object.assign(row, { status: "adopt", adoptFrom: exact.entityId, adoptFromName: exact.name });
-        } else {
-          // Not the same members, but the same group in all but a few: adopt it
-          // and bring its members in line. Only a group in this area, set up in
-          // the UI, so its members can be edited.
-          const near = candidates
-            .filter((e) => e.areaId === area.id && e.configEntryId)
-            .map((e) => ({ e, shared: e.members.filter((m) => sources.includes(m)).length }))
-            .filter(({ e, shared }) => shared >= 1 && shared * 2 >= e.members.length)
-            .sort((a, b) => b.shared - a.shared || a.e.members.length - b.e.members.length || byName(a.e, b.e))[0];
-          if (near) {
-            Object.assign(row, {
-              status: "adopt",
-              adoptFrom: near.e.entityId,
-              adoptFromName: near.e.name,
-              membersDiffer: true,
-              added: missingFrom(sources, near.e.members),
-              removed: missingFrom(near.e.members, sources),
-            });
-          }
-        }
-        if (row.adoptFrom) claimed.add(row.adoptFrom);
-      }
+      settle(row, spec, area);
 
       // The area's temperature and humidity setting should point at the
       // canonical sensor, whether it exists or is about to.
@@ -286,6 +318,64 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
       rows.push(row);
     }
   }
+
+  // ---- Floors and the house -----------------------------------------------
+  // A floor's light group gathers the light groups of its areas, and the house's
+  // gathers the floors' and those of the areas on no floor. Only the groups that
+  // are there (or about to be, in the change list) are members: a group that
+  // doesn't exist can't be nested, and adding it to the list makes the next plan
+  // include it.
+  const isGroup = (id: string) => h.entities[id]?.domain === "light" && h.entities[id]?.platform === "group";
+  const incoming = (id: string) => changes.some((c) => (c.kind === "helper" && c.op === "create" && c.after.entity_id === id) || (c.kind === "entity" && c.after.new_entity_id === id));
+  const willExist = (id: string) => isGroup(id) || incoming(id);
+  const areaGroup = (areaId: string) => canonicalId("light", codes[areaId].code, suffix.lights);
+
+  const groupRow = (level: "floor" | "house", id: string, name: string, scopeName: string, floorId: string | null, members: readonly string[]): HelperRow | null => {
+    if (members.length === 0 || !ENTITY_ID_RE.test(id)) return null;
+    const row: HelperRow = {
+      level,
+      areaId: null,
+      areaName: scopeName,
+      floorId,
+      key: "lights",
+      canonicalId: id,
+      name,
+      helper: "group",
+      groupType: "light",
+      sources: [...new Set(members)].sort(),
+      status: "create",
+      added: [],
+      removed: [],
+      actionable: true,
+    };
+    const by = reserved.get(id);
+    if (by) {
+      Object.assign(row, { status: "conflict", conflict: "taken", heldBy: id, heldByName: by, actionable: false });
+      return row;
+    }
+    reserved.set(id, name);
+    settle(row, lightSpec, null);
+    return row;
+  };
+
+  // The floors' groups that belong to Taxis: planned, or already there without a row.
+  const floorMembers: string[] = [];
+  for (const floor of h.floors) {
+    const id = floorIds.get(floor.id)!;
+    const free = !reserved.has(id);
+    const members = floor.areaIds.filter((a) => h.areas[a]).map(areaGroup).filter(willExist);
+    const row = groupRow("floor", id, `${floor.name} ${lightSpec.nameWord}`, floor.name, floor.id, members);
+    if (row) {
+      rows.push(row);
+      if (row.status !== "conflict") floorMembers.push(id);
+    } else if (free && isGroup(id)) {
+      floorMembers.push(id);
+      reserved.set(id, `${floor.name} ${lightSpec.nameWord}`);
+    }
+  }
+  const looseMembers = h.looseAreaIds.filter((a) => h.areas[a]).map(areaGroup).filter(willExist);
+  const house = groupRow("house", houseId, HOUSE_GROUP_NAME, "House", null, [...floorMembers.filter(willExist), ...looseMembers]);
+  if (house) rows.push(house);
   return rows;
 }
 
@@ -300,7 +390,7 @@ export function hasPendingChange(row: HelperRow, changes: readonly Change[]): bo
   return changes.some((c) => {
     if (c.kind === "helper") return c.targetId === row.canonicalId || c.after.entity_id === row.canonicalId || (row.adoptFrom !== undefined && c.targetId === row.adoptFrom);
     if (c.kind === "entity") return c.after.new_entity_id === row.canonicalId || (row.adoptFrom !== undefined && c.targetId === row.adoptFrom && c.after.new_entity_id !== undefined);
-    if (c.kind === "area") return Boolean(row.areaSensor) && c.targetId === row.areaId && c.after[row.areaSensor!.field] === row.canonicalId;
+    if (c.kind === "area") return Boolean(row.areaSensor) && row.areaId !== null && c.targetId === row.areaId && c.after[row.areaSensor!.field] === row.canonicalId;
     return false;
   });
 }
@@ -329,13 +419,14 @@ export function helperChangeInputs(row: HelperRow): ChangeInput[] {
             name: row.name,
             entity_id: row.canonicalId,
             entities: row.sources,
-            area_id: row.areaId,
+            // A floor's or the house's group goes in no area.
+            ...(row.areaId !== null ? { area_id: row.areaId } : {}),
             ...(row.areaSensor ? { set_area_sensor: row.key as "temperature" | "humidity" } : {}),
           },
         },
       ];
     case "in-place":
-      return row.areaSensor ? [{ kind: "area", op: "update", targetId: row.areaId, fields: { [row.areaSensor.field]: row.canonicalId } }] : [];
+      return row.areaSensor && row.areaId !== null ? [{ kind: "area", op: "update", targetId: row.areaId, fields: { [row.areaSensor.field]: row.canonicalId } }] : [];
     case "conflict":
       return [];
   }

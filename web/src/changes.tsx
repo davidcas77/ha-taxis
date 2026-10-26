@@ -305,6 +305,7 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
     const sensor = c.after.set_area_sensor;
     return (
       <div className="flex flex-col gap-1 text-xs">
+        {!("area_id" in c.after) && c.after.group_type === "light" && <p className="text-muted">The light group of a floor or of the house, in no area. Its members are light groups.</p>}
         <details>
           <summary className="cursor-pointer text-muted">
             Named “{String(c.after.name)}”, {plural(((c.after.entities as string[]) ?? []).length, "member")}

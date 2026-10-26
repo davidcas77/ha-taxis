@@ -338,20 +338,34 @@ describe("motion lights", () => {
     expect(variable(tree, "override_minutes")).toEqual({ input: "override_minutes" });
   });
 
-  it("works out the profile: sleep, then night, then day; sleep never uses the main lights", () => {
+  it("works out the profile: sleep, then night, then day; sleep never uses the main lights; day uses the entry lights", () => {
     expect(String(variable(tree, "profile"))).toBe("{{ 'sleep' if asleep else ('night' if in_night else 'day') }}");
     expect(String(variable(tree, "asleep"))).toMatch(/bed_entities \| select\('is_state', 'on'\)/);
     // The night window, across midnight or not.
     expect(String(variable(tree, "in_night"))).toMatch(/\(t >= night_start or t < night_end\) if night_start > night_end else \(night_start <= t < night_end\)/);
-    // The lights: night lights while asleep, or at night when there are some; the main lights otherwise.
+    // The lights: night lights while asleep, or at night when there are some; by day the
+    // entry lights, and the main lights when there are none (also at night with no night lights).
     expect(String(variable(tree, "profile_lights"))).toBe(
-      "{{ night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else main_lights }}",
+      "{{ night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else (entry_lights if (profile == 'day' and (entry_lights | count) > 0) else main_lights) }}",
     );
     expect(String(variable(tree, "brightness"))).toMatch(/day_brightness if profile == 'day' else night_brightness/);
     expect(String(variable(tree, "kelvin"))).toMatch(/day_kelvin if profile == 'day' else night_kelvin/);
-    for (const name of ["main_lights", "accent_lights", "night_lights", "bed_entities", "night_start", "night_end", "day_brightness", "day_kelvin", "night_brightness", "night_kelvin"]) {
+    for (const name of ["entry_lights", "main_lights", "accent_lights", "night_lights", "bed_entities", "night_start", "night_end", "day_brightness", "day_kelvin", "night_brightness", "night_kelvin"]) {
       expect(variable(tree, name)).toEqual({ input: name });
     }
+  });
+
+  it("is version 4: the entry lights are an optional list of lights, empty by default, and the day profile turns them on", () => {
+    expect(BLUEPRINTS.find((b) => b.path === "taxis/motion_lights.yaml")!.version).toBe(4);
+    const entry = obj(obj(obj(tree.blueprint).input).entry_lights);
+    expect(entry.default).toEqual([]);
+    expect(obj(obj(entry.selector).entity).multiple).toBe(true);
+    expect(BLUEPRINTS.find((b) => b.path === "taxis/motion_lights.yaml")!.inputs.entry_lights).toEqual({ kind: "entities", required: false, domain: "light" });
+    // By day, with entry lights, only they go on at the start: the main lights are the fallback.
+    expect(String(variable(tree, "profile_lights"))).toContain("(entry_lights if (profile == 'day' and (entry_lights | count) > 0) else main_lights)");
+    // Night and sleep are unchanged: the night lights, or the main lights at night when there are none.
+    expect(String(variable(tree, "profile_lights"))).toContain("night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else");
+    expect(String(variable(tree, "brightness"))).toMatch(/day_brightness if profile == 'day' else night_brightness/);
   });
 
   it("on occupied: ends an override after a real clear, stops while one is on, then turns on the profile's lights", () => {

@@ -20,7 +20,7 @@ import {
 } from "../shared/ai.ts";
 import { checkBaseUrl } from "../shared/ai-url.ts";
 import { GROUP_ID, GROUP_LISTS, MAX_GROUPS, MAX_ITEMS, MAX_NAME, type GroupSettings } from "../shared/groups.ts";
-import { HELPERS, effectiveSuffixes, helperNameErrors, isHelperKey, type HelperNames } from "../shared/helpers.ts";
+import { HELPERS, HELPER_SUFFIX_RE, effectiveSuffixes, helperNameErrors, isHelperKey, type HelperNames } from "../shared/helpers.ts";
 import {
   AREA_TYPES,
   EMPTY_INVENTORY,
@@ -48,7 +48,7 @@ import {
   type ParamValues,
   type ParameterSettings,
 } from "../shared/parameters.ts";
-import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, slug, type NamingSettings } from "../shared/naming.ts";
+import { DEFAULT_HOUSE_GROUP, DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, floorCodes, slug, type NamingSettings } from "../shared/naming.ts";
 import type { EntityRole, Hierarchy } from "../shared/types.ts";
 
 // App settings, one JSON value per key in SQLite: naming, groups, the
@@ -161,10 +161,12 @@ export function settingsStore(db: DatabaseSync) {
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
 // areaIds: the areas Home Assistant has; codes for any other id are dropped.
-export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>): { ok: true; value: NamingSettings } | { ok: false; error: string } {
+export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>, floorIds?: ReadonlySet<string>): { ok: true; value: NamingSettings } | { ok: false; error: string } {
   if (!isRecord(input)) return { ok: false, error: "The settings weren't readable." };
   const s = input as Partial<NamingSettings>;
   if (s.areaCodes !== undefined && !isRecord(s.areaCodes)) return { ok: false, error: "The area codes weren't readable." };
+  if (s.floorCodes !== undefined && !isRecord(s.floorCodes)) return { ok: false, error: "The floor codes weren't readable." };
+  if (s.houseGroup !== undefined && typeof s.houseGroup !== "string") return { ok: false, error: "The name of the house light group wasn't readable." };
   if (s.typeWords !== undefined && !isRecord(s.typeWords)) return { ok: false, error: "The type words weren't readable." };
   if (s.helperNames !== undefined && !isRecord(s.helperNames)) return { ok: false, error: "The helper names weren't readable." };
   const pattern = (v: unknown, need: string[], what: string) => {
@@ -186,6 +188,19 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>): {
     codes[area] = clean;
   }
   if (Object.keys(codes).length > 1000) return { ok: false, error: "Too many area codes." };
+  // Floor codes: the same rules as area codes.
+  const floors: Record<string, string> = {};
+  for (const [floor, code] of Object.entries(s.floorCodes ?? {})) {
+    if (typeof code !== "string" || floor.length > 100 || (floorIds && !floorIds.has(floor))) continue;
+    const clean = slug(code);
+    if (!clean) return { ok: false, error: `The code for floor ${floor} has no letters or digits.` };
+    if (clean.length > 40) return { ok: false, error: `The code for floor ${floor} is longer than 40 characters.` };
+    floors[floor] = clean;
+  }
+  if (Object.keys(floors).length > 1000) return { ok: false, error: "Too many floor codes." };
+  // The end of the house group's id: a helper name, kept only when it isn't "all".
+  const house = (s.houseGroup ?? "").trim() || DEFAULT_HOUSE_GROUP;
+  if (!HELPER_SUFFIX_RE.test(house)) return { ok: false, error: "The name of the house light group uses a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled." };
   const words: Partial<Record<EntityRole, string>> = {};
   for (const [role, word] of Object.entries(s.typeWords ?? {})) {
     if (!Object.hasOwn(DEFAULT_TYPE_WORDS, role) || typeof word !== "string") continue;
@@ -206,7 +221,7 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>): {
   if (bad) return { ok: false, error: `The helper name for ${HELPERS.find((x) => x.key === bad[0])!.label.toLowerCase()}: ${bad[1]}` };
   const defaults = effectiveSuffixes({});
   for (const key of Object.keys(helperNames) as (keyof HelperNames)[]) if (helperNames[key] === defaults[key]) delete helperNames[key];
-  return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, typeWords: words, helperNames } };
+  return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, floorCodes: floors, houseGroup: house, typeWords: words, helperNames } };
 }
 
 // Null when no two areas end up with the same code. Runs against the live
@@ -217,7 +232,11 @@ export function checkAreaCodes(settings: NamingSettings, h: Hierarchy, rawAreaId
   if (ids.length) return `Home Assistant lists the area id ${ids.join(", ")} more than once.`;
   const dupes = duplicateCodes(areaCodes(h, settings));
   const message = duplicateCodesMessage(dupes, (id) => h.areas[id]?.name ?? id);
-  return message && `${message} Give each area its own code.`;
+  if (message) return `${message} Give each area its own code.`;
+  // Floors are held to the same rule: two floors with one code would share a light group.
+  const floorDupes = duplicateCodes(floorCodes(h, settings));
+  const floorMessage = duplicateCodesMessage(floorDupes, (id) => h.floors.find((f) => f.id === id)?.name ?? id);
+  return floorMessage && `${floorMessage} Give each floor its own code.`;
 }
 
 // Groups for labels and categories. Only the five known lists are kept; an
@@ -343,11 +362,12 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   if (Object.keys(floors).length > MAX_PARAMETER_FLOORS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_FLOORS} floors.` };
   if (Object.keys(areas).length > MAX_PARAMETER_AREAS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_AREAS} areas.` };
 
-  const values = (raw: unknown, where: string): { ok: true; value: ParamValues } | { ok: false; error: string } => {
+  const values = (raw: unknown, where: string, area = false): { ok: true; value: ParamValues } | { ok: false; error: string } => {
     if (!isRecord(raw)) return { ok: false, error: `The parameters for ${where} weren't readable.` };
     const out: [string, ParamValue][] = [];
     for (const [key, v] of Object.entries(raw)) {
       if (!isParamKey(key)) return { ok: false, error: `${key.slice(0, 40)} isn't a parameter (${where}).` };
+      if (PARAM_DEF[key].areaOnly && !area) return { ok: false, error: `${PARAM_DEF[key].label} can only be set for one area (${where}).` };
       const problem = checkValue(PARAM_DEF[key], v);
       if (problem) return { ok: false, error: `${problem.replace(/\.$/, "")} (${where}).` };
       out.push([key, v as ParamValue]);
@@ -375,7 +395,7 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   const areaEntries: [string, ParamValues][] = [];
   for (const [id, raw] of Object.entries(areas)) {
     if (!PARAMETER_AREA_ID.test(id)) return { ok: false, error: `${id.slice(0, 60)} isn't an area id.` };
-    const v = values(raw, `area ${id}`);
+    const v = values(raw, `area ${id}`, true);
     if (!v.ok) return v;
     if (Object.keys(v.value).length > 0) areaEntries.push([id, v.value]);
   }

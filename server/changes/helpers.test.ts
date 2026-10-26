@@ -15,7 +15,7 @@ import type { Change } from "../../shared/types.ts";
 import { buildHierarchy } from "../model/hierarchy.ts";
 import { fakeHa } from "../references/fake-ha.ts";
 import { applyChanges, isRename } from "./apply.ts";
-import { applyHelperChanges, verify, type HelperIO } from "./helpers.ts";
+import { applyHelperChanges, inOrder, verify, type HelperIO } from "./helpers.ts";
 import { changeStore } from "./store.ts";
 
 let nextId = 1;
@@ -533,5 +533,111 @@ describe("a schedule and the house switches", () => {
     expect((await applyHelperChanges([update], t.io({ ha: lying })))[0]).toMatchObject({ ok: false, message: expect.stringMatching(/answered with other periods/) });
     const refusing: HelperIO["ha"] = { command: t.fake.ha.command, write: async () => Promise.reject(new Error("Unable to find schedule")) };
     expect((await applyHelperChanges([update], t.io({ ha: refusing })))[0]).toMatchObject({ ok: false, message: "Unable to find schedule" });
+  });
+});
+
+describe("the light groups of the floors and of the house", () => {
+  const groupChange = (id: string, name: string, entities: string[]) =>
+    change({ op: "create", targetId: id, after: { helper: "group", group_type: "light", name, entity_id: id, entities } });
+
+  it("orders the creations so a group comes after the groups it gathers, and keeps the rest as they were", () => {
+    const house = groupChange("light.all", "All lights", ["light.ground_all", "light.garage_all"]);
+    const floor = groupChange("light.ground_all", "Ground floor lights", ["light.kitchen_all", "light.living_all"]);
+    const kitchen = groupChange("light.kitchen_all", "Kitchen lights", ["light.kitchen_main"]);
+    const sensor = createMean();
+    expect(inOrder([house, floor, kitchen]).map((c) => c.targetId)).toEqual(["light.kitchen_all", "light.ground_all", "light.all"]);
+    // Independent creations stay in the order they were added.
+    expect(inOrder([sensor, house, kitchen, floor]).map((c) => c.targetId)).toEqual(["sensor.study_temperature", "light.kitchen_all", "light.ground_all", "light.all"]);
+    expect(inOrder([kitchen, sensor]).map((c) => c.targetId)).toEqual(["light.kitchen_all", "sensor.study_temperature"]);
+    // A member that was renamed earlier in the Apply is looked up under its new id.
+    const renamed = (id: string) => (id === "light.old_hall" ? "light.hall_all" : id);
+    const upper = groupChange("light.first_all", "First floor lights", ["light.old_hall"]);
+    const hall = groupChange("light.hall_all", "Hall lights", ["light.hall_ceiling"]);
+    expect(inOrder([upper, hall], renamed).map((c) => c.targetId)).toEqual(["light.hall_all", "light.first_all"]);
+    // A loop can't hang it.
+    const a = groupChange("light.a_all", "A", ["light.b_all"]);
+    const b = groupChange("light.b_all", "B", ["light.a_all"]);
+    expect(inOrder([a, b])).toHaveLength(2);
+  });
+
+  it("plans, adds, and applies a floor group and the house group in one go, nested, with no area", async () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`CREATE TABLE changes (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, op TEXT NOT NULL, target_id TEXT NOT NULL,
+      scope TEXT, before TEXT NOT NULL, after TEXT NOT NULL, created_at TEXT NOT NULL)`);
+    const store = changeStore(db);
+    const fake = fakeHa(buildMockRegistry());
+    const live = () => buildHierarchy(structuredClone(fake.home), "now");
+    const plan = () => planHelpers(live(), EMPTY_INVENTORY, DEFAULT_NAMING, store.list());
+    const upper = () => plan().filter((r) => r.level !== "area");
+    const add = (canonicalId: string) => {
+      const row = plan().find((r) => r.canonicalId === canonicalId)!;
+      expect(row, canonicalId).toBeDefined();
+      for (const input of helperChangeInputs(row)) {
+        expect(validateInput(input)).toBeNull();
+        expect(store.add(input, live())).toBeNull();
+      }
+    };
+
+    // The living room's group is there, the hall's is adopted, the kitchen's is made. The ground
+    // floor's group gathers what is there now; the groups still to come are not in it.
+    expect(upper().find((r) => r.floorId === "ground")).toMatchObject({ canonicalId: "light.ground_all", status: "create", sources: ["light.living_all"] });
+    add("light.hall_all");
+    add("light.kitchen_all");
+    // Now they are in the list, the floor gathers them.
+    const ground = upper().find((r) => r.floorId === "ground")!;
+    expect(ground.sources).toEqual(["light.hall_all", "light.kitchen_all", "light.living_all"]);
+    add("light.ground_all");
+    // The garage group is in place and the garage is on no floor; with the ground floor's group in the
+    // list, the house has something to gather.
+    const house = upper().find((r) => r.level === "house")!;
+    expect(house).toMatchObject({ canonicalId: "light.all", status: "create", sources: ["light.garage_all", "light.ground_all"] });
+    add("light.all");
+    // Everything planned is in the list, and the same rows say so.
+    expect(store.list().map((c) => `${c.kind}:${c.op}:${c.targetId}`)).toEqual([
+      "entity:update:light.hall_lights",
+      "helper:create:light.kitchen_all",
+      "helper:create:light.ground_all",
+      "helper:create:light.all",
+    ]);
+    const floorCreate = store.list().find((c) => c.targetId === "light.ground_all")!;
+    expect(floorCreate.after).not.toHaveProperty("area_id");
+
+    // Apply, with the creations handed over backwards: the order is worked out.
+    const pending = store.list();
+    const registry = await applyChanges(pending, fake.ha, fake.readFresh, { ha: fake.ha, rest: fake.api });
+    const renamed = new Map(pending.filter(isRename).map((c) => [c.targetId, String(c.after.new_entity_id)]));
+    const helpers = await applyHelperChanges([...pending].reverse(), { ha: fake.ha, rest: fake.api, readFresh: fake.readFresh, realIds: registry.realIds, renamed, sleep: async () => {} });
+    expect(helpers.map((r) => [r.ok, r.message])).toEqual(expect.arrayContaining([[true, "Applied."]]));
+    expect([...registry.results, ...helpers].every((r) => r.ok), JSON.stringify([...registry.results, ...helpers])).toBe(true);
+
+    const h = live();
+    expect([...h.entities["light.ground_all"].members].sort()).toEqual(["light.hall_all", "light.kitchen_all", "light.living_all"]);
+    expect([...h.entities["light.all"].members].sort()).toEqual(["light.garage_all", "light.ground_all"]);
+    expect(h.entities["light.ground_all"]).toMatchObject({ platform: "group", areaId: null });
+    expect(h.entities["light.all"]).toMatchObject({ platform: "group", areaId: null });
+    // Neither was put in an area, and every group flow asked for a light group.
+    const placed = fake.writes().ws.filter((w) => w.type === "config/entity_registry/update" && ["light.ground_floor_lights", "light.all_lights"].includes(String(w.payload.entity_id)));
+    expect(placed.map((w) => Object.keys(w.payload).sort())).toEqual([["entity_id", "new_entity_id"], ["entity_id", "new_entity_id"]]);
+    const flowForms = fake.rest.filter((c) => c.method === "POST" && c.body && (c.body as { entities?: unknown }).entities).map((c) => (c.body as { name: string }).name);
+    expect(flowForms).toEqual(expect.arrayContaining(["Kitchen lights", "Ground floor lights", "All lights"]));
+
+    // A second plan has nothing left to do for the floor and the house.
+    const again = planHelpers(h, EMPTY_INVENTORY, DEFAULT_NAMING).filter((r) => r.level !== "area" && ["light.ground_all", "light.all"].includes(r.canonicalId));
+    expect(again.map((r) => [r.canonicalId, r.status, r.actionable])).toEqual([
+      ["light.ground_all", "in-place", false],
+      ["light.all", "in-place", false],
+    ]);
+    // Nothing was ever deleted or called as a service.
+    expect(fake.rest.every((c) => c.method === "GET" || c.method === "POST")).toBe(true);
+    expect(fake.ws.filter((c) => c.kind === "write").every((c) => !c.type.endsWith("/delete"))).toBe(true);
+  });
+
+  it("stops a floor's group whose member group was not made, saying which member is gone, and still makes the others", async () => {
+    const t = setup();
+    const floor = groupChange("light.ground_all", "Ground floor lights", ["light.kitchen_all", "light.living_all"]);
+    const [r] = await applyHelperChanges([floor], t.io());
+    expect(r).toMatchObject({ ok: false, message: "“light.kitchen_all” is no longer in Home Assistant." });
+    // Nothing was sent to Home Assistant for it.
+    expect(t.fake.rest.filter((c) => c.method === "POST")).toEqual([]);
   });
 });

@@ -47,10 +47,10 @@ type E = {
 
 type Dev = { id: string; name: string; area?: string };
 
-function house(entities: E[], o: { devices?: Dev[]; areas?: RawRegistry["areas"] } = {}) {
+function house(entities: E[], o: { devices?: Dev[]; areas?: RawRegistry["areas"]; floors?: RawRegistry["floors"] } = {}) {
   const reg: RawRegistry = {
     config: { location_name: "Test house" },
-    floors: [{ floor_id: "ground", name: "Ground floor", level: 0 }],
+    floors: o.floors ?? [{ floor_id: "ground", name: "Ground floor", level: 0 }],
     areas: o.areas ?? [
       { area_id: "living_room", name: "Living room", floor_id: "ground" },
       { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
@@ -100,6 +100,7 @@ type Opts = {
   changes?: Change[];
   options?: Parameters<typeof runHealth>[0]["options"];
   areas?: RawRegistry["areas"];
+  floors?: RawRegistry["floors"];
 };
 
 function check(entities: E[], o: Opts = {}): HealthReport {
@@ -817,6 +818,145 @@ describe("7: Taxis setup", () => {
     expect(ids(check([mean], { areas: areas("sensor.living_temperature") }), "setup").filter((id) => id.startsWith("setup:area-sensor"))).toEqual([]);
     const pending = change({ kind: "area", targetId: "living_room", after: { temperature_entity_id: null } });
     expect(ids(check([light("living_spots")], { areas: areas("sensor.old_temp"), changes: [pending] }), "setup").filter((id) => id.startsWith("setup:area-sensor"))).toEqual([]);
+  });
+});
+
+describe("7b: lights without an area, and areas without a floor", () => {
+  const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">): Change => ({ id: 1, op: "update", scope: null, before: {}, createdAt: "", ...c });
+  const lost = [light("stairs", { area: null }), light("hall_lamp", { area: null, name: "Hall lamp" })];
+
+  it("is a check of its own, after Taxis's setup, with the names the page shows", () => {
+    const keys = HEALTH_CHECKS.map((c) => c.key);
+    expect(keys.slice(keys.indexOf("setup"), keys.indexOf("setup") + 3)).toEqual(["setup", "light-areas", "area-floors"]);
+    expect(HEALTH_CHECKS.find((c) => c.key === "light-areas")!.label).toBe("Lights without an area");
+    expect(HEALTH_CHECKS.find((c) => c.key === "area-floors")!.label).toBe("Areas without a floor");
+  });
+
+  it("warns once about every light in no area, by name, with a link to where they are placed", () => {
+    const r = check([...lost, light("living_spots")]);
+    const f = one(r, "light-areas:none");
+    expect(f).toMatchObject({ check: "light-areas", severity: "warning", title: "2 lights have no area", entity: "light.hall_lamp", entities: ["light.hall_lamp", "light.stairs"] });
+    expect(f.area).toBeUndefined();
+    expect(f.detail).toContain("Hall lamp and stairs");
+    expect(f.fix).toEqual({ kind: "link", label: "Choose their areas", to: { page: "parameters", tab: "capabilities" } });
+    expect(by(r, "light-areas")).toHaveLength(1);
+    // One light says it in the singular.
+    expect(one(check([lost[0]]), "light-areas:none").title).toBe("1 light has no area");
+  });
+
+  it("says nothing when every light has an area", () => {
+    expect(by(check([light("living_spots"), light("kitchen_main", { area: "kitchen" })]), "light-areas")).toEqual([]);
+  });
+
+  it("leaves out groups (a floor's and the house's have no area on purpose), disabled lights and lights whose area is in the list", () => {
+    const groups = [
+      light("ground_all", { area: null, platform: "group", entry: "G1", members: ["light.living_spots"] }),
+      light("all", { area: null, platform: "group", entry: "G2", members: ["light.ground_all"] }),
+      light("yaml_group", { area: null, platform: "group", members: ["light.living_spots"] }),
+      light("old_one", { area: null, disabled: true }),
+    ];
+    expect(ids(check([...groups, light("living_spots")]), "light-areas")).toEqual([]);
+    const placed = change({ kind: "entity", targetId: "light.stairs", after: { area_id: "kitchen" } });
+    expect(one(check([...lost], { changes: [placed] }), "light-areas:none").entities).toEqual(["light.hall_lamp"]);
+    // A change that takes an area away doesn't hide it.
+    const cleared = change({ kind: "entity", targetId: "light.stairs", after: { area_id: null } });
+    expect(one(check([...lost], { changes: [cleared] }), "light-areas:none").entities).toEqual(["light.hall_lamp", "light.stairs"]);
+  });
+
+  it("counts a light whose device has an area as being in it", () => {
+    const r = check([{ id: "light.stairs", area: null, device: "d1" }], { devices: [{ id: "d1", name: "Stair lamp", area: "kitchen" }] });
+    expect(by(r, "light-areas")).toEqual([]);
+  });
+
+  it("notes an area on no floor, as information, with a link to the area", () => {
+    const areas = [
+      { area_id: "living_room", name: "Living room", floor_id: "ground" },
+      { area_id: "kitchen", name: "Kitchen", floor_id: null },
+    ];
+    const r = check([], { areas });
+    expect(ids(r, "area-floors")).toEqual(["area-floors:kitchen"]);
+    const f = one(r, "area-floors:kitchen");
+    expect(f).toMatchObject({ check: "area-floors", severity: "info", area: "kitchen", title: "Kitchen is on no floor" });
+    expect(f.detail).toContain("1 floor");
+    expect(f.fix).toEqual({ kind: "link", label: "Open the area", to: { page: "area", areaId: "kitchen", tab: "overview" } });
+    // It belongs to the area's own Health tab too.
+    expect(findingsForArea(r, "kitchen").map((x) => x.id)).toContain("area-floors:kitchen");
+  });
+
+  it("says nothing where the house has no floors at all, or the floor is already in the list", () => {
+    const areas = [{ area_id: "kitchen", name: "Kitchen", floor_id: null }];
+    expect(ids(check([], { areas, floors: [] }), "area-floors")).toEqual([]);
+    const moved = change({ kind: "area", targetId: "kitchen", after: { floor_id: "ground" } });
+    expect(ids(check([], { areas, changes: [moved] }), "area-floors")).toEqual([]);
+    const cleared = change({ kind: "area", targetId: "kitchen", after: { floor_id: null } });
+    expect(ids(check([], { areas, changes: [cleared] }), "area-floors")).toEqual(["area-floors:kitchen"]);
+  });
+});
+
+describe("7c: the light groups of the floors and the house", () => {
+  const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">): Change => ({ id: 1, op: "update", scope: null, before: {}, createdAt: "", ...c });
+  const living = light("living_all", { platform: "group", entry: "G1", members: ["light.living_spots"] });
+  const kitchen = light("kitchen_all", { area: "kitchen", platform: "group", entry: "G2", members: ["light.kitchen_main"] });
+  const lamps = [light("living_spots"), light("kitchen_main", { area: "kitchen" })];
+
+  it("reports a floor's group that lacks the light group of one of its areas, with the change that adds it", () => {
+    const ground = light("ground_all", { area: null, platform: "group", entry: "G3", members: ["light.living_all"] });
+    const r = check([...lamps, living, kitchen, ground]);
+    const f = one(r, "setup:light-group:ground");
+    expect(f).toMatchObject({ check: "setup", severity: "warning", entity: "light.ground_all", entities: ["light.ground_all", "light.kitchen_all"], title: "light.ground_all is missing 1 light group" });
+    expect(f.detail).toContain("The light group of “Ground floor” should gather kitchen all and living all, and it lacks kitchen all");
+    expect(f.fix).toMatchObject({ kind: "changes", label: "Update the members" });
+    if (f.fix?.kind !== "changes") throw new Error("no fix");
+    expect(f.fix.inputs).toEqual([{ kind: "helper", op: "update", targetId: "light.ground_all", fields: { entities: ["light.kitchen_all", "light.living_all"] } }]);
+    for (const input of f.fix.inputs) expect(validateInput(input)).toBeNull();
+  });
+
+  it("reports the house's group that lacks a floor's group, and says what it has that it shouldn't", () => {
+    const ground = light("ground_all", { area: null, platform: "group", entry: "G3", members: ["light.living_all", "light.kitchen_all"] });
+    const all = light("all", { area: null, platform: "group", entry: "G4", members: ["light.old_group"] });
+    const garage = light("garage_all", { area: "garage", platform: "group", entry: "G5", members: ["light.living_spots"] });
+    const r = check([...lamps, living, kitchen, ground, all, garage, light("old_group", { area: null, platform: "group", entry: "G6", members: ["light.living_spots"] })], {
+      areas: [
+        { area_id: "living_room", name: "Living room", floor_id: "ground" },
+        { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
+        { area_id: "garage", name: "Garage", floor_id: null },
+      ],
+    });
+    const f = one(r, "setup:light-group:house");
+    expect(f.title).toBe("light.all is missing 2 light groups");
+    expect(f.detail).toContain("The light group of the house should gather");
+    expect(f.detail).toContain("which are not among them");
+    expect(f.fix?.kind).toBe("changes");
+  });
+
+  it("does not report one that has all its members, one that is already being updated, or members that are only in the list", () => {
+    const done = light("ground_all", { area: null, platform: "group", entry: "G3", members: ["light.living_all", "light.kitchen_all"] });
+    expect(ids(check([...lamps, living, kitchen, done]), "setup").filter((id) => id.startsWith("setup:light-group"))).toEqual([]);
+    const behind = light("ground_all", { area: null, platform: "group", entry: "G3", members: ["light.living_all"] });
+    const queued = change({ kind: "helper", targetId: "light.ground_all", after: { entities: ["light.kitchen_all", "light.living_all"] } });
+    expect(ids(check([...lamps, living, kitchen, behind], { changes: [queued] }), "setup").filter((id) => id.startsWith("setup:light-group"))).toEqual([]);
+    // An area group that is in the list is a member the floor should have too; one that is nowhere is not.
+    const queuedGroup = change({ kind: "helper", op: "create", targetId: "light.kitchen_all", after: { helper: "group", entity_id: "light.kitchen_all" } });
+    expect(ids(check([...lamps, living, behind], { changes: [queuedGroup] }), "setup").filter((id) => id.startsWith("setup:light-group")).length).toBe(1);
+    expect(ids(check([...lamps, living, behind]), "setup").filter((id) => id.startsWith("setup:light-group"))).toEqual([]);
+  });
+
+  it("reports a floor's group id that something else holds, and points at the codes in Settings", () => {
+    const strip = light("ground_all", { area: null, name: "Strip" });
+    const r = check([...lamps, living, kitchen, strip]);
+    const f = one(r, "setup:helper:floor:ground");
+    expect(f).toMatchObject({ severity: "warning", entity: "light.ground_all", title: "light.ground_all cannot be the light group of “Ground floor”", fix: { kind: "link", label: "Change the codes", to: { page: "settings" } } });
+    expect(f.area).toBeUndefined();
+    expect(f.detail).toContain("“Strip”");
+    expect(f.detail).toContain("floor code or house group name");
+  });
+
+  it("keeps the groups of the floors and of the house out of the unused helpers", () => {
+    const ground = light("ground_all", { area: null, platform: "group", entry: "G3", members: ["light.living_all", "light.kitchen_all"] });
+    const all = light("all", { area: null, platform: "group", entry: "G4", members: ["light.ground_all"] });
+    const r = check([...lamps, living, kitchen, ground, all]);
+    expect(ids(r, "helpers")).not.toContain("helpers:light.ground_all");
+    expect(ids(r, "helpers")).not.toContain("helpers:light.all");
   });
 });
 

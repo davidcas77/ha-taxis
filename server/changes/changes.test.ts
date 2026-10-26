@@ -177,6 +177,24 @@ describe("Apply", () => {
   });
 });
 
+describe("placing a light that is in no area", () => {
+  it("sets the entity's own area, the way the entity editor does", () => {
+    const t = setup();
+    expect(t.add({ kind: "entity", op: "update", targetId: "light.stair_lamp", fields: { area_id: "kitchen" } })).toBeNull();
+    expect(t.store.list()[0]).toMatchObject({ kind: "entity", op: "update", targetId: "light.stair_lamp", before: { area_id: null }, after: { area_id: "kitchen" } });
+    // The preview shows it in the area, so it drops out of the lights with no area.
+    const h = buildHierarchy(overlayChanges(structuredClone(t.ha) as RawRegistry, t.store.list()), "now");
+    expect(h.entities["light.stair_lamp"].areaId).toBe("kitchen");
+  });
+
+  it("refuses a device's main entity with no name of its own, until the same edit names it", () => {
+    const t = setup();
+    expect(t.add({ kind: "entity", op: "update", targetId: "light.porch_lamp", fields: { area_id: "kitchen" } })).toMatch(/only lets this entity have an area of its own once it has a name/);
+    expect(t.add({ kind: "entity", op: "update", targetId: "light.porch_lamp", fields: { area_id: "kitchen", name: "Porch lamp" } })).toBeNull();
+    expect(t.store.list()[0].after).toEqual({ area_id: "kitchen", name: "Porch lamp" });
+  });
+});
+
 describe("helper changes", () => {
   const group = (fields: Record<string, unknown> = {}): ChangeInput => ({
     kind: "helper",
@@ -215,6 +233,43 @@ describe("helper changes", () => {
     expect(t.add({ kind: "entity", op: "update", targetId: "light.desk", fields: { new_entity_id: "light.study_all" } })).toMatch(/already creates a helper/);
     t.store.remove(made.id);
     expect(t.store.list()).toEqual([]);
+  });
+
+  it("lets a light group of a floor or the house have no area, and nothing else", () => {
+    const floating = (fields: Record<string, unknown> = {}): ChangeInput => ({
+      kind: "helper",
+      op: "create",
+      fields: { helper: "group", group_type: "light", name: "Ground floor lights", entity_id: "light.ground_all", entities: ["light.garage_all", "light.desk"], ...fields },
+    });
+    expect(validateInput(floating())).toBeNull();
+    // Another kind of group, a min/max helper or a timer still needs an area.
+    const { area_id: _a, ...noArea } = group().fields!;
+    expect(validateInput({ kind: "helper", op: "create", fields: { ...noArea, group_type: "binary_sensor", entity_id: "binary_sensor.x", entities: ["binary_sensor.a"] } })).toMatch(/needs an area/);
+    expect(validateInput({ kind: "helper", op: "create", fields: { helper: "min_max", name: "x", entity_id: "sensor.x", entities: ["sensor.a"] } })).toMatch(/needs an area/);
+    expect(validateInput({ kind: "helper", op: "create", fields: { helper: "timer", name: "x", entity_id: "timer.x", duration: 60 } })).toMatch(/needs an area/);
+    // A light group still can't set an area's sensor.
+    expect(validateInput(floating({ set_area_sensor: "temperature" }))).toMatch(/Only a min\/max/);
+  });
+
+  it("accepts a group whose members are groups the list creates, or renames to that id, and no other missing member", () => {
+    const t = setup();
+    const floor = (entities: string[]): ChangeInput => ({
+      kind: "helper",
+      op: "create",
+      fields: { helper: "group", group_type: "light", name: "Ground floor lights", entity_id: "light.ground_all", entities },
+    });
+    // Nothing in the list makes light.study_all yet.
+    expect(t.add(floor(["light.study_all", "light.garage_all"]))).toMatch(/“light.study_all” isn't in Home Assistant/);
+    expect(t.add(group())).toBeNull();
+    expect(t.add(floor(["light.study_all", "light.garage_all"]))).toBeNull();
+    expect(t.store.list().map((c) => c.targetId)).toEqual(["light.study_all", "light.ground_all"]);
+    expect(t.store.list()[1].after).not.toHaveProperty("area_id");
+    // A rename to the id counts the same.
+    const r = setup();
+    expect(r.add({ kind: "entity", op: "update", targetId: "light.downstairs", fields: { new_entity_id: "light.kitchen_all" } })).toBeNull();
+    expect(r.add({ ...floor(["light.kitchen_all"]), fields: { ...floor(["light.kitchen_all"]).fields, entity_id: "light.first_all" } })).toBeNull();
+    // A member that nothing makes is still refused.
+    expect(r.add({ ...floor(["light.nope_all"]), fields: { ...floor(["light.nope_all"]).fields, entity_id: "light.loft_all" } })).toMatch(/isn't in Home Assistant/);
   });
 
   it("refuses a creation when the list renames an entity to its id", () => {

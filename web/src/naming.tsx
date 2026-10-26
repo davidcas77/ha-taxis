@@ -1,8 +1,20 @@
 import { useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
-import { HELPERS, canonicalId, effectiveSuffixes, helperNameErrors } from "../../shared/helpers.ts";
-import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, duplicateCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
+import { HELPERS, HELPER_SUFFIX_RE, canonicalId, effectiveSuffixes, helperNameErrors } from "../../shared/helpers.ts";
+import {
+  DEFAULT_HOUSE_GROUP,
+  DEFAULT_NAMING,
+  DEFAULT_TYPE_WORDS,
+  analyzeArea,
+  areaCodes,
+  duplicateCodes,
+  floorCodeAdvice,
+  floorCodes,
+  slug,
+  type NamingSettings,
+  type NamingStatus,
+} from "../../shared/naming.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
 import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { AiSection } from "./ai.tsx";
@@ -40,6 +52,25 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
     for (const ids of duplicateCodes(codes).values()) for (const id of ids) out.set(id, ids.filter((x) => x !== id).map((x) => h.areas[x]?.name ?? x));
     return out;
   }, [codes, h]);
+  // Floor codes: the same rule as area codes, so two floors can't share one. A
+  // floor code that is also an area's would put the floor's light group on the
+  // area's: a warning, since the planner shows it as a conflict.
+  const floorCodeMap = useMemo(() => floorCodes(h, draft), [h, draft]);
+  const floorClashes = useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const ids of duplicateCodes(floorCodeMap).values()) for (const id of ids) out.set(id, ids.filter((x) => x !== id).map((x) => h.floors.find((f) => f.id === x)?.name ?? x));
+    return out;
+  }, [floorCodeMap, h]);
+  const areaWithFloorCode = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const f of h.floors) {
+      const same = Object.entries(codes).find(([, c]) => c.code === floorCodeMap[f.id].code);
+      if (same) out.set(f.id, h.areas[same[0]]?.name ?? same[0]);
+    }
+    return out;
+  }, [codes, floorCodeMap, h]);
+  const houseGroup = draft.houseGroup || DEFAULT_HOUSE_GROUP;
+  const houseGroupError = HELPER_SUFFIX_RE.test(houseGroup) ? null : "Use a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled.";
   // "floor order" is the neutral start: no column is sorted until one is clicked.
   const sortColumns = useMemo(
     () => ({
@@ -170,6 +201,101 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
 
         <section className="flex flex-col gap-3">
           <div className="flex flex-wrap items-baseline gap-2">
+            <h2 className="text-sm font-semibold">Floor codes</h2>
+            <p className="text-xs text-muted">
+              What the entity id of a floor's light group starts with: <code className="font-mono">{"light.<floor code>_<lights name>"}</code>. The default is the floor's id.
+            </p>
+          </div>
+          {h.floors.length === 0 ? (
+            <p className="text-[13px] text-muted">Home Assistant has no floors.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+              <table className="w-full text-[13px]">
+                <thead className="bg-sunken text-left text-xs text-muted">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Floor</th>
+                    <th className="px-3 py-2 font-medium">Floor id</th>
+                    <th className="px-3 py-2 font-medium">Code</th>
+                    <th className="px-3 py-2 font-medium">Light group</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {h.floors.map((f) => {
+                    const c = floorCodeMap[f.id];
+                    const also = floorClashes.get(f.id);
+                    const advice = floorCodeAdvice(f, c);
+                    const sameAsArea = areaWithFloorCode.get(f.id);
+                    return (
+                      <tr key={f.id} className={`border-t border-line align-top ${also ? "bg-danger-soft" : ""}`}>
+                        <td className="px-3 py-1.5">{f.name}</td>
+                        <td className="px-3 py-1.5 font-mono text-xs text-muted">{f.id}</td>
+                        <td className="px-3 py-1.5">
+                          <input
+                            aria-label={`Code for floor ${f.name}`}
+                            aria-invalid={also ? true : undefined}
+                            className={`${inputClass} w-40 font-mono ${also ? "border-danger text-danger" : ""}`}
+                            value={draft.floorCodes[f.id] ?? ""}
+                            placeholder={c.detected}
+                            spellCheck={false}
+                            onChange={(e) => {
+                              const next = { ...draft.floorCodes };
+                              if (e.target.value.trim()) next[f.id] = e.target.value;
+                              else delete next[f.id];
+                              setDraft({ ...draft, floorCodes: next });
+                            }}
+                            onBlur={(e) => e.target.value.trim() && setDraft((d) => ({ ...d, floorCodes: { ...d.floorCodes, [f.id]: slug(e.target.value) } }))}
+                          />
+                          {also && <div className="mt-1 text-xs text-danger">Also used by {also.join(", ")}</div>}
+                          {!also && advice && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-warn">
+                              <span>
+                                “{c.code}” says little about this floor. Suggested: <code className="font-mono">{advice}</code>
+                              </span>
+                              <Button tone="ghost" className="px-2 py-0.5 text-xs" onClick={() => setDraft((d) => ({ ...d, floorCodes: { ...d.floorCodes, [f.id]: advice } }))}>
+                                Use it
+                              </Button>
+                            </div>
+                          )}
+                          {!also && sameAsArea && <div className="mt-1 text-xs text-warn">The area {sameAsArea} has the same code, so the floor's light group would sit on the area's. Give one of them another code.</div>}
+                        </td>
+                        <td className="px-3 py-1.5 font-mono text-xs text-muted">{canonicalId("light", c.code, suffixes.lights)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="flex max-w-sm flex-col gap-1">
+            <label htmlFor="house-group" className="text-xs font-medium text-muted">
+              Light group of the whole house
+            </label>
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-[13px] text-muted">light.</span>
+              <input
+                id="house-group"
+                className={`${inputClass} font-mono ${houseGroupError ? "border-danger text-danger" : ""}`}
+                value={draft.houseGroup === DEFAULT_HOUSE_GROUP ? "" : draft.houseGroup}
+                placeholder={DEFAULT_HOUSE_GROUP}
+                spellCheck={false}
+                aria-invalid={houseGroupError ? true : undefined}
+                onChange={(e) => setDraft({ ...draft, houseGroup: e.target.value || DEFAULT_HOUSE_GROUP })}
+              />
+            </div>
+            {houseGroupError ? (
+              <p role="alert" className="text-[11px] text-danger">
+                {houseGroupError}
+              </p>
+            ) : (
+              <p className="text-[11px] text-muted">
+                Gathers the light groups of the floors and of the areas on no floor: <code className="font-mono">light.{houseGroup}</code>.
+              </p>
+            )}
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-baseline gap-2">
             <h2 className="text-sm font-semibold">Type words</h2>
             <p className="text-xs text-muted">The {"{type}"} part of an entity id, for each kind of entity.</p>
           </div>
@@ -237,7 +363,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
         </section>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
-          <Button tone="primary" disabled={clashes.size > 0 || Object.keys(helperErrors).length > 0} onClick={() => void save()}>
+          <Button tone="primary" disabled={clashes.size > 0 || floorClashes.size > 0 || Object.keys(helperErrors).length > 0 || houseGroupError !== null} onClick={() => void save()}>
             Save settings
           </Button>
           <Button tone="ghost" onClick={() => setDraft(naming)}>
@@ -249,6 +375,11 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           {clashes.size > 0 && (
             <span role="alert" className="text-xs text-danger">
               Two areas share a code. Give each area its own before saving.
+            </span>
+          )}
+          {floorClashes.size > 0 && (
+            <span role="alert" className="text-xs text-danger">
+              Two floors share a code. Give each floor its own before saving.
             </span>
           )}
           {error && (

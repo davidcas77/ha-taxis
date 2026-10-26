@@ -167,7 +167,9 @@ function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>):
   // The house's away and sleep switches belong to no area.
   const house = fields.helper === "input_boolean" && HOUSE_HELPER_IDS.includes(String(fields.entity_id));
   if (house && "area_id" in fields) return "The house's away and sleep switches have no area.";
-  if (!house && !("area_id" in fields)) return "A new helper needs an area.";
+  // A light group of a floor or of the house gathers other groups and goes in no area.
+  const floating = fields.helper === "group" && fields.group_type === "light";
+  if (!house && !floating && !("area_id" in fields)) return "A new helper needs an area.";
   const domain = String(fields.entity_id).split(".")[0];
   const kind = fields.helper as string;
   if (kind === "timer" || kind === "input_boolean" || kind === "template" || kind === "schedule") {
@@ -465,7 +467,10 @@ const none = (reason: string): MergePlan => ({ action: "none", reason });
 function planHelper(existing: Change[], input: ChangeInput, h: Hierarchy): MergePlan {
   const fields = input.fields ?? {};
   const members = (fields.entities ?? []) as string[];
-  const absent = members.find((m) => !h.entities[m]);
+  // A member may be a group the list creates (or a group it renames to that id):
+  // a floor's light group is added beside the groups of its areas.
+  const coming = (m: string) => existing.some((c) => (c.kind === "helper" && c.op === "create" && c.after.entity_id === m) || (c.kind === "entity" && c.after.new_entity_id === m));
+  const absent = members.find((m) => !h.entities[m] && !coming(m));
   if (absent) return none(`“${absent}” isn't in Home Assistant any more.`);
   if (input.op === "update" && "duration" in fields) return planTimerDuration(existing, input, h);
   if (input.op === "update" && "periods" in fields) return planSchedulePeriods(existing, input, h);

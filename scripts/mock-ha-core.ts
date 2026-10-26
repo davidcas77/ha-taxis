@@ -111,6 +111,19 @@ const house: Spec[] = [
       { name: "Skylight sensor", model: "AS006", entities: [["binary_sensor.study_skylight", "off", "opening"]] },
     ],
   },
+  // Floors whose ids say little about them (floor_2, level_1): Settings suggests
+  // a better floor code.
+  {
+    area: "Loft",
+    floor: "floor_2",
+    devices: [{ name: "Loft lamp", model: "IKEA E27", entities: [["light.loft_lamp", "off"]] }],
+  },
+  {
+    area: "Cellar",
+    floor: "level_1",
+    devices: [{ name: "Cellar bulb", model: "Hue White", entities: [["light.cellar_bulb", "off"]] }],
+  },
+  // On no floor.
   {
     area: "Garage",
     floor: null,
@@ -135,6 +148,8 @@ export function buildMockRegistry(): MockHome {
     floors: [
       { floor_id: "ground", name: "Ground floor", level: 0 },
       { floor_id: "first", name: "First floor", level: 1 },
+      { floor_id: "floor_2", name: "Loft", level: 2 },
+      { floor_id: "level_1", name: "Cellar", level: -1 },
     ],
     areas: [],
     devices: [{ id: "hub", name: "Zigbee hub", manufacturer: "Aqara", model: "M3", area_id: "living_room" }],
@@ -309,6 +324,16 @@ export function buildMockRegistry(): MockHome {
     const members = reg.states.find((s) => s.entity_id === entityId)!.attributes!.entity_id as string[];
     reg.configEntries.push({ entry_id: entryId, domain: "group", title, entities: [...members], hide_members: false, all: false });
   }
+
+  // Lights with no area, on devices that have none either. The stair lamp has a name of
+  // its own; the porch lamp is its device's main entity with none, so Home Assistant
+  // wants it named before it can have an area of its own.
+  reg.devices.push({ id: "stairs", name: "Stair lamp", manufacturer: "Demo", model: "Hue Go" });
+  reg.entities.push({ entity_id: "light.stair_lamp", device_id: "stairs", platform: "demo", original_name: "Stair lamp" });
+  reg.states.push({ entity_id: "light.stair_lamp", state: "off", attributes: { friendly_name: "Stair lamp" } });
+  reg.devices.push({ id: "porch", name: "Porch lamp", manufacturer: "Demo", model: "Hue White" });
+  reg.entities.push({ entity_id: "light.porch_lamp", device_id: "porch", platform: "demo" });
+  reg.states.push({ entity_id: "light.porch_lamp", state: "off", attributes: { friendly_name: "Porch lamp" } });
 
   reg.entities.push({ entity_id: "input_boolean.guest_mode", platform: "input_boolean" });
   reg.states.push({ entity_id: "input_boolean.guest_mode", state: "off", attributes: { friendly_name: "Guest mode" } });

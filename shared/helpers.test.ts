@@ -14,6 +14,7 @@ import {
   type HelperRow,
 } from "./helpers.ts";
 import { areaInventory, EMPTY_INVENTORY, setCounts, type InventorySettings } from "./inventory.ts";
+import { validateInput } from "./changes.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "./naming.ts";
 import type { Change } from "./types.ts";
 
@@ -226,7 +227,7 @@ describe("the area's temperature and humidity sensor", () => {
 });
 
 describe("the change a row makes", () => {
-  const base: Omit<HelperRow, "status"> = { areaId: "living_room", areaName: "Living room", key: "lights", canonicalId: "light.living_all", name: "Living room lights", helper: "group", groupType: "light", sources: ["light.a", "light.b"], added: [], removed: [], actionable: true };
+  const base: Omit<HelperRow, "status"> = { level: "area", floorId: null, areaId: "living_room", areaName: "Living room", key: "lights", canonicalId: "light.living_all", name: "Living room lights", helper: "group", groupType: "light", sources: ["light.a", "light.b"], added: [], removed: [], actionable: true };
 
   it("renames the group to adopt it, and updates its members only when they differ", () => {
     expect(helperChangeInputs({ ...base, status: "adopt", adoptFrom: "light.both" })).toEqual([{ kind: "entity", op: "update", targetId: "light.both", fields: { new_entity_id: "light.living_all" } }]);
@@ -247,7 +248,7 @@ describe("the change a row makes", () => {
 });
 
 describe("rows already in the change list", () => {
-  const r = { areaId: "living_room", areaName: "Living room", key: "temperature", canonicalId: "sensor.living_temperature", name: "x", helper: "min_max", sources: [], status: "create", added: [], removed: [], actionable: true } as HelperRow;
+  const r = { level: "area", floorId: null, areaId: "living_room", areaName: "Living room", key: "temperature", canonicalId: "sensor.living_temperature", name: "x", helper: "min_max", sources: [], status: "create", added: [], removed: [], actionable: true } as HelperRow;
   const change = (c: Partial<Change>): Change => ({ id: 1, kind: "helper", op: "create", targetId: "", scope: null, before: {}, after: {}, createdAt: "", ...c });
 
   it("sees a helper being created or updated, a rename to the id, and the area setting", () => {
@@ -311,5 +312,224 @@ describe("the demo house", () => {
     expect(at("sensor.living_temperature")).toMatchObject({ status: "conflict", conflict: "taken" });
     expect(at("sensor.study_temperature")).toMatchObject({ status: "create", helper: "min_max", areaSensor: { field: "temperature_entity_id", current: null } });
     expect(at("binary_sensor.kitchen_motions")).toMatchObject({ status: "create", helper: "group" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The light groups of the floors and of the house.
+// ---------------------------------------------------------------------------
+
+describe("floor and house light groups", () => {
+  // Two floors, three areas on them and a garage on none. Everything with a code of its own.
+  function tiers(specs: Spec[], o: { floors?: RawRegistry["floors"]; areas?: RawRegistry["areas"] } = {}) {
+    const reg: RawRegistry = {
+      config: { location_name: "Test house" },
+      floors: o.floors ?? [
+        { floor_id: "ground", name: "Ground floor", level: 0 },
+        { floor_id: "first", name: "First floor", level: 1 },
+      ],
+      areas: o.areas ?? [
+        { area_id: "living_room", name: "Living room", floor_id: "ground" },
+        { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
+        { area_id: "bedroom", name: "Bedroom", floor_id: "first" },
+        { area_id: "garage", name: "Garage", floor_id: null },
+      ],
+      devices: [],
+      entities: [],
+      labels: [],
+      states: [],
+    };
+    for (const s of specs) {
+      reg.entities.push({ entity_id: s.id, platform: s.platform ?? "demo", area_id: s.area ?? "living_room", config_entry_id: s.entry, original_name: s.name });
+      reg.states.push({ entity_id: s.id, state: s.state ?? "off", attributes: { friendly_name: s.name ?? s.id.split(".")[1].replace(/_/g, " "), device_class: s.dc, entity_id: s.members } });
+    }
+    return buildHierarchy(reg, "now");
+  }
+  const n: NamingSettings = { ...DEFAULT_NAMING, areaCodes: { living_room: "living", kitchen: "kitchen", bedroom: "bedroom", garage: "garage" } };
+  const upper = (rows: HelperRow[]) => rows.filter((r) => r.level !== "area");
+  const run = (specs: Spec[], naming: NamingSettings = n, changes: Change[] = [], o?: Parameters<typeof tiers>[1]) => upper(planHelpers(tiers(specs, o), EMPTY_INVENTORY, naming, changes));
+  // entry: the group's config entry (null: written in YAML).
+  const grp = (id: string, area: string, members: string[], entry: string | null = "E"): Spec => ({ id, platform: "group", members, area, entry: entry ?? undefined });
+  const change = (c: Partial<Change>): Change => ({ id: 1, kind: "helper", op: "create", targetId: "", scope: null, before: {}, after: {}, createdAt: "", ...c });
+
+  const living = grp("light.living_all", "living_room", ["light.living_spots"], "E1");
+  const kitchen = grp("light.kitchen_all", "kitchen", ["light.kitchen_main"], "E2");
+  const garage = grp("light.garage_all", "garage", ["light.garage_ceiling"], "E4");
+  const lamps = [
+    { id: "light.living_spots" },
+    { id: "light.kitchen_main", area: "kitchen" },
+    { id: "light.bedside", area: "bedroom" },
+    { id: "light.garage_ceiling", area: "garage" },
+  ];
+
+  it("has none while no area has a light group, in Home Assistant or in the list", () => {
+    expect(run([...lamps])).toEqual([]);
+    // The area's group is only planned (a row to create), not there: nothing to gather yet.
+    expect(planHelpers(tiers(lamps), EMPTY_INVENTORY, n).some((r) => r.level === "area" && r.key === "lights")).toBe(true);
+    expect(upper(planHelpers(tiers(lamps), EMPTY_INVENTORY, n))).toEqual([]);
+  });
+
+  it("creates a floor's group from the light groups of its areas, named after the floor and the lights suffix", () => {
+    const rows = run([...lamps, living, kitchen]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      level: "floor",
+      floorId: "ground",
+      areaId: null,
+      areaName: "Ground floor",
+      key: "lights",
+      canonicalId: "light.ground_all",
+      name: "Ground floor lights",
+      helper: "group",
+      groupType: "light",
+      sources: ["light.kitchen_all", "light.living_all"],
+      status: "create",
+      actionable: true,
+    });
+    // The other floor has no area group, so no row.
+    expect(rows.some((r) => r.floorId === "first")).toBe(false);
+  });
+
+  it("gathers the area groups of areas on no floor into the house group, with the floors' groups", () => {
+    const floorGroup = grp("light.ground_all", "living_room", ["light.kitchen_all", "light.living_all"], "E5");
+    const rows = run([...lamps, living, kitchen, garage, floorGroup]);
+    const ground = rows.find((r) => r.level === "floor")!;
+    expect(ground).toMatchObject({ canonicalId: "light.ground_all", status: "in-place", actionable: false });
+    const house = rows.find((r) => r.level === "house")!;
+    expect(house).toMatchObject({
+      areaId: null,
+      floorId: null,
+      areaName: "House",
+      canonicalId: "light.all",
+      name: "All lights",
+      groupType: "light",
+      sources: ["light.garage_all", "light.ground_all"],
+      status: "create",
+    });
+  });
+
+  it("leaves a floor out of the house group until its group exists or is in the list", () => {
+    // The ground floor's group is only planned: the house gathers just the garage.
+    const planned = run([...lamps, living, kitchen, garage]);
+    expect(planned.find((r) => r.level === "floor")!.status).toBe("create");
+    expect(planned.find((r) => r.level === "house")!.sources).toEqual(["light.garage_all"]);
+    // Once its creation is in the list, the house gathers it too.
+    const queued = [change({ targetId: "light.ground_all", after: { helper: "group", entity_id: "light.ground_all" } })];
+    expect(run([...lamps, living, kitchen, garage], n, queued).find((r) => r.level === "house")!.sources).toEqual(["light.garage_all", "light.ground_all"]);
+    // No house group when there is nothing at all for it.
+    expect(run([...lamps, living, kitchen]).some((r) => r.level === "house")).toBe(false);
+  });
+
+  it("counts an area group that is in the list: created, or renamed from another group", () => {
+    const only = run([...lamps, living]);
+    expect(only[0].sources).toEqual(["light.living_all"]);
+    const created = [change({ targetId: "light.kitchen_all", after: { helper: "group", entity_id: "light.kitchen_all" } })];
+    expect(run([...lamps, living], n, created)[0].sources).toEqual(["light.kitchen_all", "light.living_all"]);
+    const renamed = [change({ kind: "entity", op: "update", targetId: "light.old_kitchen", after: { new_entity_id: "light.kitchen_all" } })];
+    expect(run([...lamps, living], n, renamed)[0].sources).toEqual(["light.kitchen_all", "light.living_all"]);
+    // A change for some other id doesn't.
+    const other = [change({ targetId: "light.pantry_all", after: { helper: "group", entity_id: "light.pantry_all" } })];
+    expect(run([...lamps, living], n, other)[0].sources).toEqual(["light.living_all"]);
+  });
+
+  it("is in place when the group has the members, in any order", () => {
+    const floorGroup = grp("light.ground_all", "living_room", ["light.living_all", "light.kitchen_all"], "E5");
+    const row = run([...lamps, living, kitchen, floorGroup])[0];
+    expect(row).toMatchObject({ status: "in-place", actionable: false, added: [], removed: [] });
+    expect(helperChangeInputs(row)).toEqual([]);
+  });
+
+  it("updates the members of a floor's group set up in the UI", () => {
+    const floorGroup = grp("light.ground_all", "living_room", ["light.living_all", "light.old"], "E5");
+    const row = run([...lamps, living, kitchen, floorGroup, { id: "light.old", area: "garage" }])[0];
+    expect(row).toMatchObject({ status: "update-members", added: ["light.kitchen_all"], removed: ["light.old"], actionable: true });
+    expect(helperChangeInputs(row)).toEqual([{ kind: "helper", op: "update", targetId: "light.ground_all", fields: { entities: ["light.kitchen_all", "light.living_all"] } }]);
+  });
+
+  it("is a conflict when the id is a group written in YAML with other members, or something that isn't a group", () => {
+    const yaml = grp("light.ground_all", "living_room", ["light.living_all"], null);
+    expect(run([...lamps, living, kitchen, yaml])[0]).toMatchObject({ status: "conflict", conflict: "not-editable", heldBy: "light.ground_all", actionable: false });
+    const strip = { id: "light.ground_all", name: "Strip", area: "living_room" };
+    expect(run([...lamps, living, kitchen, strip])[0]).toMatchObject({ status: "conflict", conflict: "taken", heldByName: "Strip", actionable: false });
+    // A conflicting floor group isn't gathered by the house.
+    const rows = run([...lamps, living, kitchen, garage, strip]);
+    expect(rows.find((r) => r.level === "house")!.sources).toEqual(["light.garage_all"]);
+  });
+
+  it("adopts a group with exactly the members, once, by renaming it", () => {
+    const downstairs = grp("light.downstairs", "living_room", ["light.kitchen_all", "light.living_all"], "E6");
+    const rows = run([...lamps, living, kitchen, downstairs]);
+    expect(rows[0]).toMatchObject({ status: "adopt", adoptFrom: "light.downstairs", adoptFromName: "downstairs" });
+    expect(helperChangeInputs(rows[0])).toEqual([{ kind: "entity", op: "update", targetId: "light.downstairs", fields: { new_entity_id: "light.ground_all" } }]);
+    // No near match for a floor: other members mean a group of its own.
+    const near = grp("light.downstairs", "living_room", ["light.kitchen_all", "light.living_all", "light.porch"], "E6");
+    expect(run([...lamps, living, kitchen, near, { id: "light.porch" }])[0].status).toBe("create");
+  });
+
+  it("adopts a group for the house the same way", () => {
+    const floorGroup = grp("light.ground_all", "living_room", ["light.kitchen_all", "light.living_all"], "E5");
+    const all = grp("light.everything", "garage", ["light.garage_all", "light.ground_all"], "E7");
+    const house = run([...lamps, living, kitchen, garage, floorGroup, all]).find((r) => r.level === "house")!;
+    expect(house).toMatchObject({ status: "adopt", adoptFrom: "light.everything", canonicalId: "light.all" });
+  });
+
+  it("is a conflict when a floor's code is an area's, naming the area's helper", () => {
+    const rows = run([...lamps, living, kitchen], { ...n, floorCodes: { ground: "kitchen" } });
+    expect(rows[0]).toMatchObject({ canonicalId: "light.kitchen_all", status: "conflict", conflict: "taken", heldByName: "Kitchen lights", actionable: false });
+    // The same when the area's group doesn't exist yet: the id is the area's.
+    expect(run([...lamps, living, kitchen], { ...n, floorCodes: { ground: "garage" } })[0]).toMatchObject({ canonicalId: "light.garage_all", status: "conflict", heldByName: "Garage lights" });
+  });
+
+  it("is a conflict for the second of two floors with one code, and for a house id that is a floor's", () => {
+    const bedroom = grp("light.bedroom_all", "bedroom", ["light.bedside"], "E3");
+    const rows = run([...lamps, living, bedroom], { ...n, floorCodes: { first: "ground" } });
+    const floors = rows.filter((r) => r.level === "floor");
+    expect(floors.map((f) => [f.floorId, f.status])).toEqual([["ground", "create"], ["first", "conflict"]]);
+    expect(floors[1]).toMatchObject({ conflict: "taken", heldByName: "Ground floor lights" });
+    const onFloor = run([...lamps, living, garage, grp("light.ground_all", "living_room", ["light.living_all"], "E5")], { ...n, houseGroup: "ground_all" });
+    expect(onFloor.find((r) => r.level === "house")).toMatchObject({ canonicalId: "light.ground_all", status: "conflict" });
+  });
+
+  it("follows the settings: floor codes, the lights suffix and the house group's id", () => {
+    const settings: NamingSettings = { ...n, floorCodes: { ground: "downstairs" }, helperNames: { lights: "lamps" }, houseGroup: "everything" };
+    const l = grp("light.living_lamps", "living_room", ["light.living_spots"], "E1");
+    const g = grp("light.garage_lamps", "garage", ["light.garage_ceiling"], "E4");
+    const rows = run([...lamps, l, g], settings);
+    expect(rows.map((r) => r.canonicalId)).toEqual(["light.downstairs_lamps", "light.everything"]);
+    expect(rows[0].sources).toEqual(["light.living_lamps"]);
+  });
+
+  it("does nothing for a floor with no areas", () => {
+    const loose = { floors: [{ floor_id: "attic", name: "Attic", level: 2 }], areas: [{ area_id: "living_room", name: "Living room", floor_id: null }] };
+    expect(run([...lamps, living], n, [], loose).map((r) => r.level)).toEqual(["house"]);
+  });
+
+  it("creates with no area, through the same change a group of an area makes", () => {
+    const row = run([...lamps, living, kitchen])[0];
+    const inputs = helperChangeInputs(row);
+    expect(inputs).toEqual([
+      { kind: "helper", op: "create", fields: { helper: "group", group_type: "light", name: "Ground floor lights", entity_id: "light.ground_all", entities: ["light.kitchen_all", "light.living_all"] } },
+    ]);
+    expect(inputs[0].fields).not.toHaveProperty("area_id");
+    expect(validateInput(inputs[0])).toBeNull();
+  });
+
+  it("is in the list once a change creates its id, or renames a group to it", () => {
+    const row = run([...lamps, living, kitchen])[0];
+    expect(hasPendingChange(row, [])).toBe(false);
+    expect(hasPendingChange(row, [change({ targetId: "light.ground_all", after: { helper: "group", entity_id: "light.ground_all" } })])).toBe(true);
+    expect(hasPendingChange(row, [change({ kind: "entity", op: "update", targetId: "light.x", after: { new_entity_id: "light.ground_all" } })])).toBe(true);
+    // An area change for the same id means nothing to a floor row.
+    expect(hasPendingChange(row, [change({ kind: "area", op: "update", targetId: "living_room", after: { temperature_entity_id: "light.ground_all" } })])).toBe(false);
+  });
+});
+
+describe("the mock house", () => {
+  it("has a light with no area, an area with no floor and floors with ids that say little", () => {
+    const h = buildHierarchy(buildMockRegistry(), "now");
+    expect(h.entities["light.stair_lamp"]).toMatchObject({ areaId: null, needsOwnName: false });
+    expect(h.entities["light.porch_lamp"]).toMatchObject({ areaId: null, needsOwnName: true });
+    expect(h.areas.garage.floorId).toBeNull();
+    expect(h.floors.map((f) => f.id)).toEqual(expect.arrayContaining(["floor_2", "level_1"]));
   });
 });

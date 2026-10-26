@@ -1,6 +1,6 @@
 # Smart areas: capabilities, parameters, canonical helpers and recipes
 
-Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers), a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights, Media off and [Area climate](#area-climate-built) recipes) and the rule-based [Health](#health) checks are implemented; the rest is not.
+Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers, and the [light groups of the floors and the house](#floor-and-house-light-groups)), a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights, Media off and [Area climate](#area-climate-built) recipes) and the rule-based [Health](#health) checks are implemented; the rest is not.
 
 ## Goal
 
@@ -147,6 +147,47 @@ A min/max helper is never adopted: its members are not readable, so there is no
 way to tell that an existing one does the job. Rows whose helper is already in
 the change list show as "In changes".
 
+### Floor and house light groups
+
+Two more light groups, planned by the same function with the same statuses
+(in place, update members, adopt, create, conflict) and added to the change list the
+same way. Their rows have `level` `floor` or `house` and no `areaId`; the Helpers tab
+shows them under "Floors and house".
+
+| Entity | Name | Members |
+|---|---|---|
+| `light.<floor code>_<lights suffix>` (`light.ground_all`) | "<Floor name> lights" | the canonical `light.<area code>_all` of every area on the floor that has one |
+| `light.<house>` (`light.all`; the end is `houseGroup` in the naming settings) | "All lights" | the floor groups above, and the area light groups of areas on no floor |
+
+- **A floor has a code**, like an area: `floorCodes` in the naming settings, default
+  the slug of the floor id (its name's slug when the id has none), unique among
+  floors (the save is refused otherwise, as for areas), the same slug rules and
+  length. Settings flags a floor id that says little, a generic word (`floor`,
+  `level_1`, `f2`, a number) or one with nothing in common with the name, and offers
+  the slug of the name (`floorCodeAdvice`). A code the user typed is never flagged.
+- **A member has to be there.** An area's group is a member when it exists as a light
+  group in Home Assistant, or the change list creates it or renames a group to its id
+  (`planHelpers` takes the list). A floor's group is a member of the house group on
+  the same terms. So the order is: area groups, then floors, then the house, each
+  added to the list before the next is planned; the plan does not run ahead and make
+  a group nest one that doesn't exist. A floor group already in the list does not
+  follow area groups added later (remove it and add it again). A floor or house group
+  that exists but has no row (nothing to gather any more) still counts as a member.
+- **Adopt is exact.** There is no near match: a floor has no area to look in.
+- **Conflict also covers a clash of Taxis's own ids**: a floor code equal to an area
+  code (the id is the area's lights helper), two floors with one code (the second
+  one), a house id equal to a floor's. `heldByName` says whose it is.
+- **No area.** Both are created with no `area_id`. `validateInput` allows that for a
+  light group only (a `group` of type `light`); every other new helper still needs an
+  area, except the house switches, which must not have one. Apply already skipped the
+  area when there is none.
+- **Applying** orders the creations so a group follows the groups it gathers that are
+  made in the same Apply (`inOrder`, stable otherwise), and counts what was just
+  made as present for the next group's members. A member group that was not made
+  stops the group that gathers it, with the usual message, and nothing is sent for
+  it. `planMerge` accepts a member that the list creates, or renames to that id;
+  anything else not in Home Assistant is still refused.
+
 ### Applying
 
 New change kind `helper`, operations `create` and `update`, never delete. A
@@ -225,15 +266,15 @@ ids by pattern, size limits), saved at once like the inventory. Defined so far:
 night start/end (House tab); hold timeout, extended after, extended hold timeout
 and sleep hold timeout (Occupancy tab); dark threshold, day and night brightness
 and colour temperature, transition, dim before off, dim level and manual
-override duration (Lighting tab); speakers off when clear for and TVs off when
-clear for (Media tab); the Climate tab (Area climate, below) and, on the House tab, the away and sleep mode switches. The kinds a parameter can have are number, time, enum, bool, text (a preset name), entity (an `input_boolean`) and periods (comfort periods, `shared/periods.ts`). The Parameters page has a table per tab: a row for the
+override duration and entry lights (Lighting tab; the entry lights are for one area only, see [Entry lights](#entry-lights)); speakers off when clear for and TVs off when
+clear for (Media tab); the Climate tab (Area climate, below) and, on the House tab, the away and sleep mode switches. The kinds a parameter can have are number, time, enum, bool, text (a preset name), entity (an `input_boolean`), entities (a list of entities of one domain) and periods (comfort periods, `shared/periods.ts`). The Parameters page has a table per tab: a row for the
 house default, interior, exterior, each floor and each area; a cell shows its own
 value or the inherited one in grey ("from <source>"); click to set, clear to
 inherit.
 
 **Recipes** (`shared/recipes.ts`, `shared/blueprints.ts`). Four recipes, one
 blueprint each, written by Taxis at `taxis/occupancy.yaml` (version 3),
-`taxis/motion_lights.yaml` (version 3), `taxis/media_off.yaml` (version 1) and
+`taxis/motion_lights.yaml` (version 4), `taxis/media_off.yaml` (version 1) and
 `taxis/area_climate.yaml` (version 1) through `blueprint/save`. The text is a constant in
 code with "Taxis blueprint version N." in the description; Home Assistant lists
 the description back, and a blueprint is (re)written only when missing or of
@@ -257,14 +298,15 @@ the recipes run while `input_boolean.<code>_paused` is off.
   canonical light group (in place or in the list). Light level is optional (the
   canonical min/max illuminance sensor, when in place). Mode restart. Inputs add
   the lights by role (main, accent, night; the counted lights of the area with that
-  role in the inventory; task lights are never switched on), the bed sensors, the
+  role in the inventory; task lights are never switched on), the entry lights (see
+  [Entry lights](#entry-lights)), the bed sensors, the
   extended time, the override timer and the override duration. Which lights, and
   how bright, comes from the **profile**, worked out when the automation is
   triggered: *sleep* (a bed sensor on) → night lights only, at the night
   brightness, never the main lights; *night* (inside the night window) → night
   lights, or the main lights at the night brightness when there are none; *day* →
-  main lights, with the accent lights joining once the area has been occupied for
-  the extended time. Occupied off → on: lights that are off, and dark enough if
+  the entry lights (the main lights when the blueprint is given none), with the
+  accent lights joining once the area has been occupied for the extended time. Occupied off → on: lights that are off, and dark enough if
   there is a light sensor, go on with the profile's lights, `brightness_pct` and
   `color_temp_kelvin`. Occupied on → off (after 2 s, so the occupied sensor
   blinking off and on when the hold timer restarts is not a clear): with
@@ -311,6 +353,37 @@ the change list to allow and no state of Taxis's at runtime:
   area whose sensors stay on without changing for a whole hold period lets the
   occupied sensor blink off and on when the timer restarts, which also starts the
   count again; the longer *hold timeout* is the remedy for still-presence sensors.
+
+#### Entry lights (built)
+
+The lights that come on by day when the area becomes occupied. Before version 4 of
+the Motion lights blueprint that was every main light, so a room with a wall of main
+lights lit them all at the door. Now it is the *entry lights*, a Lighting parameter
+(`entry_lights`, a list of lights, kind `entities`):
+
+- **Area level only.** `ParamDef.areaOnly`: `resolveIn` looks at the area's own scope
+  and nothing above it, `setParameter` ignores the other scopes, and
+  `validateParameters` refuses it at the house, interior or exterior, or floor level.
+  The Lighting table shows a dash on those rows.
+- **Default** (nothing set): the only counted light of the area, whatever its role; else
+  its counted main-role lights; else none. `entryLights()` (`shared/parameters.ts`)
+  returns the lights, where they came from (`set`, `only`, `main`, `none`), what was
+  set and the suggestion. The Lighting tab shows the suggestion muted with "suggested".
+- **A choice** is kept only for lights that still count in the area; if none does, the
+  suggestion applies again and the recipe cell notes it. An empty list is no value.
+- **The blueprint** takes `entry_lights` (optional, default empty). The day profile's
+  lights are `entry_lights` when there are some, else `main_lights`; night and sleep are
+  as before. The accent lights still join at the extended time. The planner always
+  sends the resolved list, so the fallback only matters for an automation written by
+  hand against the blueprint.
+- **Out of date.** The input is in the automation's differences ("Entry lights: none →
+  light.x"), and the blueprint version is 4, so every installed Motion lights
+  automation shows as out of date until it is updated.
+- **Notes.** "No entry or main lights" replaces "No main lights" when the resolved list
+  is empty.
+- **Where.** The Lighting tab (any number of lights, set per area) and an area's
+  Capabilities tab, Lights section: an **Entry light** picker (the suggestion, or one
+  light).
 
 #### Manual override (built in Motion lights)
 
@@ -487,7 +560,8 @@ otherwise.
 - "All off" for speakers, TVs, media: **label targets** (`target: label_id`),
   native and dynamic. A group is created only when a state is needed ("is any
   TV on?").
-- Light groups per floor (`light.<floor>_all`) and house (`light.house_all`).
+- Light groups per floor (`light.<floor code>_all`) and house (`light.all`): built, see
+  [Floor and house light groups](#floor-and-house-light-groups).
 
 ## Parameters
 
@@ -541,8 +615,9 @@ runtime without Taxis (e.g. from a dashboard). The rest are blueprint inputs.
 | Transition | 1 s on, 3 s off |
 | Dim before off (warning) | 15 s at 30 % |
 | Manual override lasts | until area clear (or a fixed time, e.g. 30 min); built, parameter 0 = until clear |
+| Entry lights | the area's only light, else its main lights; built, [area level only](#entry-lights) |
 | Door opens turns lights on | off |
-| Roles on per state | occupied: main; extended: main + accent; night: night; sleep: none (night lights only on motion); built as fixed, not a parameter |
+| Roles on per state | occupied: entry lights (main when none given); extended: entry + accent; night: night; sleep: none (night lights only on motion); built as fixed, not a parameter |
 | Priority states | sleep, accented (switch other roles off) |
 
 ### Media (per area)
@@ -656,6 +731,8 @@ close match in the same area is adopted with a members update.
 
 New writes, all through the change list with backup and verify:
 
+- The light groups of the floors and the house add none: the same `group` config flow, the same options flow for their members and the same entity registry update, with no area.
+
 - Area climate adds two more WebSocket writes, `schedule/create` and `schedule/update` (the calls Home Assistant's Helpers page makes; payload checked in `server/ha/socket.ts`: a name, an optional icon and the seven days of from/to times, nothing else). No schedule read was added.
 - helper config flows: `group` and `min_max` (stage 3, built: REST `POST /config/config_entries/flow` for those two handlers and its steps, and the options flow of a group's config entry to change its members); `template` (built, for the occupied sensor) and `threshold` later, with the recipes that need them;
 - storage helpers: `timer`, `input_boolean` and `schedule` (built: `timer/create`,
@@ -744,15 +821,18 @@ inputs are checked as *Taxis setup*.
 | 4a | `conditions` (never) | A `state` or `numeric_state` condition that gates the run (the top-level `conditions` of an automation, also inside `and`; condition steps at the top of a script's `sequence`) on an entity that doesn't exist, or a numeric one with `above` ≥ `below`. `or`, `not`, `if` and `choose` are not judged: a false condition there picks another branch. | error; warning when the automation is off | none |
 | 4b | `conditions` (by hand) | A `state` condition, anywhere, on an input boolean that no automation, script or scene turns on or off (see 5) and that isn't a Taxis helper. | info | none |
 | 5 | `switches` | An input boolean that is turned on and never off, or off and never on, by `input_boolean.turn_on/turn_off/toggle` and the same `homeassistant.*` services (target by id, area, floor, label or device; a toggle counts both ways), or by a scene's states. A target that is a template or `all`, or a non-Taxis blueprint given the switch, counts as anything and silences the finding. Taxis's pause switches and disabled switches are skipped. | warning | none |
-| 6 | `lights` | Automations that are **on**, with `light.turn_on/turn_off/toggle` or `homeassistant.*` reaching a light directly, by area/floor/label/device, through a group and its members, or through a script they call (to depth 4); plus the Taxis Motion lights automations from their inputs (`light_target`, `main_lights`, `accent_lights`, `night_lights`). A light with two or more controllers is contested; lights with the same controllers are one finding. | warning | none |
+| 6 | `lights` | Automations that are **on**, with `light.turn_on/turn_off/toggle` or `homeassistant.*` reaching a light directly, by area/floor/label/device, through a group and its members, or through a script they call (to depth 4); plus the Taxis Motion lights automations from their inputs (`light_target`, `entry_lights`, `main_lights`, `accent_lights`, `night_lights`). A light with two or more controllers is contested; lights with the same controllers are one finding. | warning | none |
 | 6b | `climate` | For an area with Area climate: a thermostat it controls (from the automation's inputs) `unavailable` or `unknown` for 10 minutes or more (the sources check 7d leaves these thermostats to this one); no temperature helper in the automation's inputs (info; a warning when `auto_hvac_on` is on); and `climate.set_temperature`, `set_hvac_mode`, `set_preset_mode`, `turn_on`, `turn_off`, `toggle` or the `homeassistant` ones of another automation that is on, reaching the same thermostat the way check 6 follows lights (by id, area, floor, label, device or a script), when Area climate is one of the controllers | warning; info for the missing reference | link (Capabilities, Helpers) |
 | 7a | `setup` | A recipe cell (`planRecipes`) that is **out of date**. | warning | the cell's `inputs` |
 | 7b | `setup` | A canonical helper (`planHelpers`) whose status is **conflict**. | warning | link to Settings |
 | 7c | `setup` | An area with counted lights whose Occupancy cell is **ready** or **missing**. | info | the cell's `inputs` when ready; else a link to the area's Capabilities |
+| 7f | `setup` | A floor's or the house's canonical light group (a `planHelpers` row of level floor or house) that is **update members** with members to add, and not already in the list: it lacks the light group of one of its areas or floors. A **conflict** on such a row is reported as 7b, with the Settings link naming the floor codes and the house group. | warning | an `update` of the group's members |
 | 7d | `setup` | A counted inventory row that has been unavailable or unknown for at least 1 hour and less than `unavailableHours` (longer is check 2). One finding per area. A thermostat that Area climate controls is left to check 6b. | warning | link to the area's Capabilities |
 | 7e | `setup` | An area's temperature or humidity entity that doesn't exist, and isn't already being changed in the list. | warning | an `area` update to the area's own min/max helper if there is one, else to `null` |
 | 8 | `helpers` | An `input_*`, counter, timer or schedule, or a UI helper (template, group, min/max, threshold, derivative, statistics, bayesian, trend, filter, utility_meter, integration, history_stats), used by no readable config, group member or area setting. Taxis's canonical and runtime helper ids and disabled helpers are skipped. | info | none |
 | 9 | `devices` | An automation or script with a `device_id` in its triggers, conditions or actions (device kinds, and `target.device_id`); blueprint inputs aren't read. | info; warning if a device isn't in Home Assistant | none |
+| 10 | `light-areas` | One finding for every light (not disabled, not a group) with no area, its own or its device's, whose entity change is not already in the list. | warning | link to Parameters → Capabilities, where each gets an area (an `entity` update of its own area) |
+| 11 | `area-floors` | An area on no floor, where the house has at least one floor, and no `floor_id` change for it in the list. One finding per area. | info | link to the area's Overview, where its floor is chosen |
 
 Check 6 does not count scripts as controllers (they don't run on their own) and
 follows calls to scripts only to find the lights; checks 5 and 4b read scripts,

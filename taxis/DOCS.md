@@ -50,6 +50,11 @@ config or diagnostic ones.
   doesn't, so a room with only a presence sensor still works. A presence sensor
   can also be marked **Bed**. Lights are **Main**, **Accent**, **Task** or
   **Night**.
+- **Entry light.** In the Lights section, the light that comes on by day when the
+  area becomes occupied. Leave it on **Suggested** and Taxis uses the area's only
+  light, or else its main lights; pick one light to choose it yourself (the
+  Lighting tab of Parameters takes several). Saved with the other choices,
+  in Taxis only.
 - **Switching a kind.** An "opening" sensor is listed as a window; change it to
   a door if it is one. A media player is a TV when Home Assistant says so, a
   speaker otherwise; switch it if that's wrong.
@@ -103,6 +108,17 @@ for its full name, and click a header to sort. Click an area or a cell to open
 that area's Capabilities tab. Areas with nothing in them are hidden until you
 tick **Show empty areas**. The bottom row adds up the home.
 
+When some lights are in no area, a box at the top says **N lights have no
+area** and lists them: name, entity id, device, and a picker for the area. Choose
+areas and use **Add N to changes**: each is a change of the light's own area (the
+same as setting it in the light's editor), so its device stays where it is. A
+light that is a device's main entity with no name of its own is shown with the
+reason it can't be placed here: Home Assistant only allows such an entity an area
+of its own once it has a name. A light in no area is in none of the area light
+groups, so the recipes and the floor and house groups can't switch it. Light
+groups are not listed: the groups of the floors and of the house have no area on
+purpose.
+
 ### Helpers
 
 The helpers Taxis proposes per area, from the capabilities. Each area gets one
@@ -153,6 +169,29 @@ sensor setting is pointed at the canonical sensor in the same step. If the
 sensor is already in place but the area points elsewhere, that is a row of its
 own. Each area's Capabilities tab ends with its own Helpers table.
 
+**Floors and house.** A second table below, with the same statuses and the same
+**Add to changes**, for two more light groups:
+
+| Group | Entity id | Made of |
+|---|---|---|
+| A floor's lights | `light.<floor code>_all` | the `light.<code>_all` group of every area on the floor that has one |
+| The house's lights | `light.all` | the floors' groups, and the `light.<code>_all` groups of areas on no floor |
+
+The floor code is set in **Settings → Floor codes** (default: the floor's id) and
+the end (`all`) is the Lights helper name, like the areas'. The house group's id
+is also a setting (**Light group of the whole house**). A new group is named
+"Ground floor lights" or "All lights". They are ordinary groups, nested in each
+other; Home Assistant handles that. They go in **no area**.
+
+Only groups that exist, or that are in the list of changes, are members: a group
+that is only planned is not. So add the areas' light groups first, then the
+floors', then the house's; the table counts what is in the list and updates as
+you go (a floor group already in the list does not change when an area group is
+added after it: take it out and add it again). Apply makes a group after the groups
+it gathers. An **Adopt** needs a group with exactly the members (there is no
+near match for a floor or the house). A floor group whose code is also an area's
+is a **Conflict**, and so is the second of two floors with one code.
+
 ### House, Occupancy, Lighting, Media and Climate
 
 The numbers and times the recipes are filled in with. Each tab is a table with a
@@ -184,6 +223,7 @@ areas by it.
 | Lighting | Dim before off | 15 s | 0 to 300 (0: no dimming, the lights go off at once) |
 | Lighting | Dim level | 30 % | 1 to 100 |
 | Lighting | Manual override lasts | 0 min | 0 to 240 (0: until the area next clears) |
+| Lighting | Entry lights | empty: the area's only light, else its main lights | up to 20 lights of the area; **area level only** |
 | Media | Speakers off when clear for | 15 min | 1 to 720 |
 | Media | TVs off when clear for | 30 min | 1 to 720 |
 | Climate | Comfort, Eco, Night, Sleep, Away | 21, 19, 18, 17.5, 16 | 5 to 35, in steps of 0.5 |
@@ -198,6 +238,14 @@ areas by it.
 | Climate | Open doors count | no | yes or no |
 | Climate | Comfort periods | `Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00` | days, then times (below) |
 | Climate | Preset: comfort, eco, away, sleep and night | empty | a preset name the thermostat offers (the box suggests them) |
+
+**Entry lights** are the lights that come on by day when the area becomes occupied.
+They are set for one area and never inherited: the house, interior, exterior and
+floor rows show a dash. Left empty, the cell shows the suggestion in grey with
+"suggested": the area's only counted light (whatever its role), or else its main
+lights, or nothing when the area has several lights and none is a main light. A
+chosen light that stops counting in the area (excluded, or gone) is left out, and
+if none is left the suggestion is used again; the Recipes cell says so.
 
 Temperatures are in the unit Home Assistant is set to; the defaults are degrees
 Celsius. **Comfort periods** are written as days followed by time ranges, with a
@@ -236,8 +284,10 @@ filled in with the area's sensors, lights and parameters. There are four:
   lights are off, so the lights don't feed back). Which lights go on depends on
   their role (set on the area's Capabilities tab: main, accent, task or night)
   and on the time:
-  - **By day**: the main lights, and the accent lights once the area has been
-    occupied for *Extended after*.
+  - **By day**: the entry lights (the area's only light, else its main lights,
+    unless you chose others; the blueprint falls back to the main lights if it
+    is given none), and the accent lights once the area has been occupied for
+    *Extended after*. Main lights that are not entry lights stay as they are.
   - **Inside the night window**: the night lights, or, when the area has none,
     the main lights at the night brightness and colour.
   - **While someone is in bed** (bedroom with a bed sensor on): only the night
@@ -291,8 +341,10 @@ The Recipes tab is a table of areas by recipes. A cell says:
 Tick cells and use **Add to changes**. If other automations already use the
 area's light group, the Motion lights cell lists them: installing would make two
 automations control the same lights. It is a warning, not a stop. A note says
-when the area has no main lights (nothing goes on by day) or no night lights
-(nothing goes on while someone is in bed).
+when the area has no entry or main lights (nothing goes on by day) or no night
+lights (nothing goes on while someone is in bed). The Motion lights blueprint is
+now version 4: an installed automation shows as out of date until it is updated
+(blueprint version, and *Entry lights: none → …*).
 
 Installing a recipe adds these changes (the Changes page shows each):
 
@@ -465,11 +517,21 @@ The checks, and the exact rules:
   there is one, and clears it otherwise). Info: an area with lights that count
   and no Occupancy installed (the fix adds it when it is ready; otherwise the
   link goes to the area's Capabilities).
+  Also a warning: the light group of a floor or of the house that lacks the light
+  group of one of its areas or floors (the Helpers tab's *Update members*; the fix
+  adds the change), and a floor or house group id something else holds.
+- **Lights without an area.** Warning, one finding for all of them: a light (not a
+  group, not disabled) that is in no area, its own or its device's. The link goes
+  to Parameters → Capabilities, where each gets an area.
+- **Areas without a floor.** Info, one per area: an area on no floor, where the
+  house has floors. Its own light group goes straight into the house group
+  instead of a floor's. The link opens the area, where its floor is chosen.
 - **Unused helpers.** Info. An `input_*`, counter, timer or schedule, or a helper
   set up in the UI (a template, group, min/max, threshold…) that no automation,
   script, scene or dashboard Taxis can read uses, that is not a member of a
   group and that no area uses as its temperature or humidity sensor. Helpers
-  Taxis makes itself are skipped. A template or a YAML package may still use it,
+  Taxis makes itself are skipped (the light groups of the floors and of the house
+  too). A template or a YAML package may still use it,
   and Taxis can't read those.
 - **Device-based.** Info for an automation or script with a trigger, condition or
   action that names a device by id (a device trigger, or a service whose target
@@ -492,6 +554,17 @@ Under **Settings → Naming**:
   clear winner), the code is the area's id, which never changes. Two areas
   can't share a code, detected or set: Settings marks both rows and won't save
   until each area has its own. The columns sort when you click their headers.
+- **Floor codes.** The word a floor's light group starts with:
+  `light.<floor code>_all`. The default is the floor's id as a slug, and you can
+  type your own (letters, digits and `_`, up to 40, like an area code). Two
+  floors can't share a code: Settings marks both rows and won't save. A floor id
+  that says little (`floor_2`, `level_1`, or a word that has nothing to do with the
+  floor's name, such as `floor_2` for the Loft) is flagged with the slug of its
+  name as a suggestion and a **Use it** button; a code you typed is never
+  flagged. A floor code that is also an area's is warned about, since the floor's
+  group would sit on the area's (the Helpers tab shows it as a conflict).
+- **Light group of the whole house.** The end of the house group's id,
+  `light.all` by default. Lower-case letters, digits and `_`, up to 30 characters.
 - **Patterns.** For entity ids (default `{area}_{type}_{name}`) and display
   names (default `{Area} {Name}`). The type word goes in only where the domain
   doesn't already say it: `binary_sensor.livingroom_motion_sofa`, but
@@ -557,6 +630,13 @@ Taxis stops and says so instead of making a copy.
 The helpers of the recipes are made the same way: a timer and a toggle the way
 the Helpers page makes them, the occupied sensor through the template helper
 dialog, then each gets its id and area. A timer's length is changed in place.
+
+The light groups of the floors and of the house are made with the same group
+dialog, with no area. A group that gathers other groups is made after them, even
+when the list has them the other way round, and a member that is a group made
+earlier in the same Apply counts as being there. If an area's group did not go
+through, the floor's group that gathers it says that member is not in Home
+Assistant and stays in the list.
 
 A **blueprint** is saved under `taxis/` in Home Assistant's blueprints, with the
 text Taxis holds, and only when Home Assistant has none or another version

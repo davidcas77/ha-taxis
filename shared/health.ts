@@ -1,8 +1,8 @@
 import { HOUSE_HELPER_IDS } from "./climate.ts";
-import { canonicalId, effectiveSuffixes, HELPERS, helperExclusions, planHelpers } from "./helpers.ts";
+import { canonicalId, effectiveSuffixes, HELPERS, hasPendingChange, helperChangeInputs, helperExclusions, planHelpers } from "./helpers.ts";
 import { deviceUses, emptyRange, ENTITY_DOMAINS, entityIdsIn, gatingConditions, serviceCalls, stateConditions, type ServiceCall } from "./health-scan.ts";
 import { areaInventory, CAPABILITY_LABEL, type AreaInventory, type InventoryRow, type InventorySettings } from "./inventory.ts";
-import { areaCodes, type NamingSettings } from "./naming.ts";
+import { areaCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
 import type { ParameterSettings } from "./parameters.ts";
 import { automationIdFor, planRecipes, RECIPE_LABEL, runtimeIds, type RecipeInstalled } from "./recipes.ts";
 import type { Change, ChangeInput, EntityItem, Hierarchy, RefKind } from "./types.ts";
@@ -24,6 +24,8 @@ export const HEALTH_CHECKS = [
   { key: "lights", label: "Competing automations" },
   { key: "climate", label: "Climate" },
   { key: "setup", label: "Taxis setup" },
+  { key: "light-areas", label: "Lights without an area" },
+  { key: "area-floors", label: "Areas without a floor" },
   { key: "helpers", label: "Unused helpers" },
   { key: "devices", label: "Device-based" },
 ] as const;
@@ -236,6 +238,9 @@ function context(input: HealthInput): Ctx {
     for (const id of Object.values(runtimeIds(code))) taxisIds.add(id);
   }
   for (const id of HOUSE_HELPER_IDS) taxisIds.add(id);
+  // The light groups of the floors and of the house.
+  for (const code of Object.values(floorCodes(h, input.naming))) taxisIds.add(canonicalId("light", code.code, suffix.lights));
+  taxisIds.add(houseGroupId(input.naming));
   const climateAreas = new Map<string, Record<string, unknown>>();
   for (const area of Object.values(h.areas)) {
     const item = readable.find((i) => i.kind === "automation" && i.id === automationIdFor("area_climate", codes[area.id].code) && isTaxisItem(i));
@@ -612,7 +617,7 @@ function lightChecks(c: Ctx): HealthFinding[] {
       // The recipes' automations take their lights as blueprint inputs.
       const input = isObject(item.config) && isObject(item.config.use_blueprint) ? item.config.use_blueprint.input : undefined;
       if (isObject(input)) {
-        for (const k of ["light_target", "main_lights", "accent_lights", "night_lights"]) {
+        for (const k of ["light_target", "entry_lights", "main_lights", "accent_lights", "night_lights"]) {
           for (const id of entityIdsIn(input[k], c.domains)) if (id.startsWith("light.")) for (const l of lightsBehind(c, id)) lights.add(l);
         }
       }
@@ -818,22 +823,37 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
     }
   }
 
-  // Canonical helpers that something else is sitting on.
-  for (const row of planHelpers(c.h, c.inventory, c.naming)) {
-    if (row.status !== "conflict") continue;
+  // Canonical helpers that something else is sitting on, and the light groups of
+  // the floors and the house that lack members.
+  for (const row of planHelpers(c.h, c.inventory, c.naming, c.changes)) {
     const spec = HELPERS.find((s) => s.key === row.key)!;
+    // Where the helper is: an area, a floor or the house.
+    const where = row.level === "area" ? areaName(row.areaId!) : row.level === "floor" ? `“${row.areaName}”` : "the house";
+    if (row.status === "update-members" && row.level !== "area" && row.added.length > 0 && !hasPendingChange(row, c.changes)) {
+      out.push({
+        id: `setup:light-group:${row.floorId ?? "house"}`,
+        check: "setup",
+        severity: "warning",
+        entity: row.canonicalId,
+        entities: [row.canonicalId, ...row.added],
+        title: `${row.canonicalId} is missing ${plural(row.added.length, "light group")}`,
+        detail: `The light group of ${where} should gather ${names(row.sources.map((id) => nameOf(c, id)))}, and it lacks ${names(row.added.map((id) => nameOf(c, id)))}${row.removed.length > 0 ? `; it also has ${names(row.removed.map((id) => nameOf(c, id)))}, which are not among them` : ""}. Turning it on or off leaves ${row.added.length === 1 ? "that group" : "those groups"} as they are.`,
+        fix: { kind: "changes", label: "Update the members", inputs: helperChangeInputs(row) },
+      });
+    }
+    if (row.status !== "conflict") continue;
     out.push({
-      id: `setup:helper:${row.areaId}:${row.key}`,
+      id: row.level === "area" ? `setup:helper:${row.areaId}:${row.key}` : `setup:helper:${row.level}:${row.floorId ?? "house"}`,
       check: "setup",
       severity: "warning",
-      area: row.areaId,
+      area: row.areaId ?? undefined,
       entity: row.canonicalId,
-      title: `${row.canonicalId} cannot be the ${areaName(row.areaId)} ${spec.label.toLowerCase()} helper`,
+      title: row.level === "area" ? `${row.canonicalId} cannot be the ${where} ${spec.label.toLowerCase()} helper` : `${row.canonicalId} cannot be the light group of ${where}`,
       detail:
         row.conflict === "not-editable"
-          ? `It is a group set up in YAML whose members differ from the ${spec.label.toLowerCase()} that count in ${areaName(row.areaId)}, and Taxis can only change a group made in the UI. Edit the file, or pick another name.`
-          : `The id is used by “${row.heldByName}”, which is not a ${spec.helper === "group" ? "group" : "min/max"} helper, so Taxis cannot make the helper there. Pick another name for it in Settings.`,
-      fix: { kind: "link", label: "Change the helper names", to: { page: "settings" } },
+          ? `It is a group set up in YAML whose members differ from the ${row.level === "area" ? `${spec.label.toLowerCase()} that count in ${where}` : "light groups it should gather"}, and Taxis can only change a group made in the UI. Edit the file, or pick another name.`
+          : `The id is used by “${row.heldByName}”, which is not a ${spec.helper === "group" ? "group" : "min/max"} helper${row.level === "area" ? "" : " of its own"}, so Taxis cannot make the ${row.level === "area" ? "helper" : "group"} there. Pick another ${row.level === "area" ? "name for it" : "floor code or house group name"} in Settings.`,
+      fix: { kind: "link", label: row.level === "area" ? "Change the helper names" : "Change the codes", to: { page: "settings" } },
     });
   }
 
@@ -887,6 +907,53 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
         title: `${area.name}'s ${spec} sensor does not exist`,
         detail: `The area is set to use ${id} for its ${spec}, and Home Assistant has no such entity. ${better ? `${better} is this area's ${spec} helper.` : "Clear the setting or pick a sensor."}`,
         fix: { kind: "changes", label: better ? `Use ${better}` : "Clear the setting", inputs: [{ kind: "area", op: "update", targetId: area.id, fields: { [field]: better } }] },
+      });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// 7b: lights in no area, and areas on no floor.
+// ---------------------------------------------------------------------------
+
+function placementChecks(c: Ctx): HealthFinding[] {
+  const out: HealthFinding[] = [];
+
+  // A light with no area is left out of every area's recipes and light groups.
+  // Groups are not counted: the groups of the floors and of the house have no
+  // area on purpose.
+  const placing = (id: string) => c.changes.some((ch) => ch.kind === "entity" && ch.targetId === id && typeof ch.after.area_id === "string");
+  const lights = Object.values(c.h.entities)
+    .filter((e) => e.domain === "light" && !e.disabled && e.areaId === null && e.platform !== "group" && e.members.length === 0 && !placing(e.entityId))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.entityId.localeCompare(b.entityId));
+  if (lights.length > 0) {
+    out.push({
+      id: "light-areas:none",
+      check: "light-areas",
+      severity: "warning",
+      entity: lights[0].entityId,
+      entities: lights.map((e) => e.entityId),
+      title: `${plural(lights.length, "light")} ${lights.length === 1 ? "has" : "have"} no area`,
+      detail: `${names(lights.map((e) => e.name))}. A light in no area is not in any area's light group, so the area's recipes and the floor and house groups cannot switch ${lights.length === 1 ? "it" : "them"}. Choose an area for ${lights.length === 1 ? "it" : "each"} on the Capabilities tab of Parameters.`,
+      fix: { kind: "link", label: "Choose their areas", to: { page: "parameters", tab: "capabilities" } },
+    });
+  }
+
+  // An area on no floor is left out of the floor groups. Only worth saying where
+  // the house has floors at all.
+  if (c.h.floors.length > 0) {
+    for (const area of Object.values(c.h.areas)) {
+      if (area.floorId !== null) continue;
+      if (c.changes.some((ch) => ch.kind === "area" && ch.targetId === area.id && typeof ch.after.floor_id === "string")) continue;
+      out.push({
+        id: `area-floors:${area.id}`,
+        check: "area-floors",
+        severity: "info",
+        area: area.id,
+        title: `${area.name} is on no floor`,
+        detail: `The area is not on any of the ${plural(c.h.floors.length, "floor")}, so no floor light group gathers its lights (its own group goes straight into the house group). Pick its floor in the area's settings.`,
+        fix: { kind: "link", label: "Open the area", to: { page: "area", areaId: area.id, tab: "overview" } },
       });
     }
   }
@@ -974,6 +1041,7 @@ export function runHealth(input: HealthInput): HealthReport {
     ...lightChecks(c),
     ...climateChecks(c),
     ...setupChecks(c, input.snapshot.installed),
+    ...placementChecks(c),
     ...helperChecks(c),
     ...deviceChecks(c),
   ].sort((a, b) => RANK[a.severity] - RANK[b.severity] || CHECK_ORDER.indexOf(a.check) - CHECK_ORDER.indexOf(b.check) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));

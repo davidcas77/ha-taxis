@@ -4,7 +4,7 @@ import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID } from "./climate.ts";
 import { RECIPE_HELPER_SUFFIX, canonicalId, effectiveSuffixes, helperExclusions } from "./helpers.ts";
 import { areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
-import { resolve, resolveAll, withSeconds, type ParameterSettings } from "./parameters.ts";
+import { entryLights, resolve, resolveAll, withSeconds, type ParameterSettings } from "./parameters.ts";
 import { canonicalPeriods, DEFAULT_COMFORT_PERIODS } from "./periods.ts";
 import type { Change, ChangeInput, Hierarchy } from "./types.ts";
 
@@ -109,6 +109,7 @@ const INPUT_LABEL: Record<string, string> = {
   pause_switch: "Pause switch",
   occupied_entity: "Occupied sensor",
   light_target: "Lights",
+  entry_lights: "Entry lights",
   main_lights: "Main lights",
   accent_lights: "Accent lights",
   night_lights: "Night lights",
@@ -382,6 +383,9 @@ export function planRecipes(
     // recipe; the light group still turns them off.
     const lightsOf = (role: LightRole) => inv.lights.filter((r) => r.counts && r.light === role).map((r) => r.entityId).sort();
     const mainLights = lightsOf("main");
+    // The lights that come on by day: the chosen entry lights, else the only light
+    // of the area, else its main lights.
+    const entry = entryLights(params, area.id, inv.lights);
     const accentLights = lightsOf("accent");
     const nightLights = lightsOf("night");
     const overrideMinutes = values.override_duration as number;
@@ -391,6 +395,7 @@ export function planRecipes(
     const motionInput: Record<string, unknown> = {
       occupied_entity: ids.occupied,
       light_target: lightsId,
+      entry_lights: entry.lights,
       main_lights: mainLights,
       accent_lights: accentLights,
       night_lights: nightLights,
@@ -442,9 +447,14 @@ export function planRecipes(
     }
     const notes: string[] = [];
     if (!lux) notes.push("No light level helper yet, so the lights go on at any light level");
-    if (mainLights.length === 0 && inv.lights.some((r) => r.counts)) {
-      notes.push(nightLights.length > 0 ? "No main lights, so only the night lights go on" : "No main lights, so no light goes on by day (set a light's role on the area's Capabilities tab)");
+    if (entry.lights.length === 0 && inv.lights.some((r) => r.counts)) {
+      notes.push(
+        nightLights.length > 0
+          ? "No entry or main lights, so only the night lights go on"
+          : "No entry or main lights, so no light goes on by day (set an entry light, or a light's role, on the area's Capabilities tab)",
+      );
     }
+    if (entry.set && entry.source !== "set") notes.push("The entry lights set for this area don't count here any more, so the suggested ones are used");
     if (bedSensors.length > 0 && nightLights.length === 0) notes.push("No night lights, so no light goes on while someone is in bed");
     out.push({
       areaId: area.id,

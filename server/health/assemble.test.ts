@@ -72,6 +72,9 @@ describe("the demo house", () => {
         "setup:occupancy:hallway",
         "setup:sources:study",
         "setup:area-sensor:study:temperature",
+        // 7b: the stair lamp has no area, and the garage is on no floor
+        "light-areas:none",
+        "area-floors:garage",
         // 8: unused helpers
         "helpers:input_number.spare_threshold",
         "helpers:timer.laundry_done",
@@ -80,6 +83,7 @@ describe("the demo house", () => {
         "devices:automation:1700000000019",
       ]),
     );
+    expect(report.findings.find((f) => f.id === "light-areas:none")!.entities).toEqual(["light.porch_lamp", "light.stair_lamp"]);
     // 6: the living room lights are switched by two automations.
     expect(report.findings.some((f) => f.check === "lights" && f.area === "living_room")).toBe(true);
     // Climate: the valve is down, the room has no temperature helper, and "Heating schedule" sets the same valve.

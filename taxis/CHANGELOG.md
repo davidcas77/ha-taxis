@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- **Entry lights.** A new Lighting parameter, **Entry lights**: the lights that
+  come on by day when an area becomes occupied. It is set for one area and never
+  inherited (the house, interior, exterior and floor rows show a dash). Left
+  empty, Taxis suggests the area's only light, or else its main lights, shown in
+  grey as "suggested". The area's Capabilities tab has an **Entry light** picker
+  in its Lights section. A chosen light that stops counting in the area is left
+  out. The Motion lights blueprint is now **version 4**: the day profile turns on
+  the entry lights (the main lights if it is given none), the accent lights still
+  join once the area has been occupied for the extended time, and the night and
+  sleep behaviour is unchanged. An installed Motion lights automation shows as
+  out of date until it is updated.
+- **Floor codes.** Like area codes: a code per floor, the floor's id as a slug by
+  default, editable in Settings next to the area codes, unique, with the same
+  checks. A floor id that says little (`floor_2`, `level_1`, or one that has
+  nothing to do with the floor's name) is flagged with the slug of the name as a
+  suggestion.
+- **Floor and house light groups.** The Helpers tab has a **Floors and house**
+  section: `light.<floor code>_all` gathers the light groups of the areas on a
+  floor, and `light.all` (the end is a setting) gathers the floors' groups and
+  those of areas on no floor. Same statuses as the area helpers (in place,
+  update members, adopt, create, conflict) and the same Add to changes. They are
+  made with the existing group dialog, in no area, and a group is made after the
+  groups it gathers. Only groups that exist or are in the list are members. No new
+  write: the group flow and the entity registry update were already allowed.
+- **Lights without an area.** Parameters → Capabilities lists the lights that are
+  in no area, with a picker per light and **Add N to changes** (a change of the
+  light's own area). Health has two new checks, **Lights without an area**
+  (warning) and **Areas without a floor** (info, linking to the area), and the
+  Taxis setup check warns when a floor's or the house's light group lacks the
+  light group of one of its areas or floors.
+- **Mock demo.** The demo house has a stair lamp in no area, the Garage on no
+  floor, and two floors whose ids say little (`floor_2` for the Loft, `level_1`
+  for the Cellar).
+
 - **Recipe: Area climate.** A fourth recipe that sets an area's thermostats by
   fixed rules, first match wins, worked out again at every change: a window open
   for a while (frost protection, or off), away mode, sleep (a bedroom with a bed

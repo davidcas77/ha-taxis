@@ -1,9 +1,12 @@
 import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { helperExclusions } from "../../shared/helpers.ts";
+import { areaInventory } from "../../shared/inventory.ts";
 import {
   PARAM_TAB_LABEL,
   checkValue,
+  entryLights,
   ownValue,
   paramRows,
   paramsOf,
@@ -31,7 +34,8 @@ const NOTES: Record<ParamTab, string> = {
   house:
     "When night starts and ends. The lights use the night brightness and colour inside this window, and Area climate its night temperature. The away and sleep mode switches are the toggles Area climate reads: leave them empty and Taxis makes its own (input_boolean.taxis_away and taxis_sleep) when it installs Area climate, or pick toggles you already have.",
   occupancy: "How long an area stays occupied after its sensors last changed: normally, once it has been occupied for a long time (extended), and while someone is in bed (bedrooms with a bed sensor).",
-  lighting: "How the lights come on and go off. Brightness, colour, light level and timing. Manual override: how long the automation leaves an area alone after a light is changed by hand; 0 is until the area next clears.",
+  lighting:
+    "How the lights come on and go off. Brightness, colour, light level and timing. Manual override: how long the automation leaves an area alone after a light is changed by hand; 0 is until the area next clears. Entry lights: the lights that come on by day when the area becomes occupied. They are set for one area only and never inherited; left empty, the area's only light, or else its main lights, is used (shown in grey as suggested).",
   media: "How long an area is clear before its speakers and its TVs are turned off.",
   climate:
     "Area climate sets an area's thermostats by fixed rules, first match wins: a window open for a while (frost protection, or off), away mode, sleep, the night window, comfort while the comfort periods are on and the area is occupied, eco otherwise. Temperatures are in the unit Home Assistant uses and stay between lowest and highest. Comfort periods are days, then times, like Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00 (the end can be 23:59 at the latest). Presets are the thermostat's own names, offered from what each thermostat reports; a thermostat that has one gets the preset, the others a temperature. Switch on and off itself lets Area climate switch a thermostat on, and a window switch it off; otherwise a thermostat that is off is left alone. A bedroom needs no one in the room for comfort unless you set it. Cooling uses the same temperatures.",
@@ -58,6 +62,7 @@ function parseInput(def: ParamDef, text: string): { value: ParamValue | null } |
 // How a value reads in a cell.
 function show(def: ParamDef, value: ParamValue): string {
   if (def.kind === "bool") return value ? "yes" : "no";
+  if (Array.isArray(value)) return value.length === 0 ? "–" : value.join(", ");
   if (value === "") return "–";
   return String(value);
 }
@@ -202,6 +207,74 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
   );
 }
 
+// The entry lights of an area: the ones chosen, or the suggested ones in grey. Other
+// levels show a dash, since the parameter is not inherited.
+function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; def: ParamDef; editing: boolean; onEdit: (on: boolean) => void }) {
+  const { parameters, parametersSaving, saveParameters, notify, inventory, naming } = useTaxis();
+  const areaId = row.scope.level === "area" ? row.scope.id : null;
+  const entry = useMemo(() => {
+    if (!areaId) return null;
+    const rows = areaInventory(h, inventory, areaId, helperExclusions(h, naming)(areaId)).lights;
+    return { rows: rows.filter((r) => r.counts), resolved: entryLights(parameters, areaId, rows) };
+  }, [h, inventory, naming, parameters, areaId]);
+  if (!areaId || !entry) return <span className="px-1.5 text-muted" title="Set for one area only: it is not inherited from a floor or the house">—</span>;
+
+  const name = (id: string) => h.entities[id]?.name ?? id;
+  const { resolved, rows } = entry;
+  const save = async (value: string[] | null) => {
+    const error = await saveParameters((p) => setParameter(p, row.scope, def.key, value));
+    if (error) notify({ tone: "error", text: error });
+  };
+
+  if (rows.length === 0) return <span className="px-1.5 text-muted">–</span>;
+
+  if (editing) {
+    return (
+      <div role="group" aria-label={`${def.label} for ${row.label}`} className="flex min-w-[12rem] flex-col gap-1 rounded-md border border-accent bg-bg p-2">
+        {rows.map((r) => (
+          <label key={r.entityId} className="flex cursor-pointer items-center gap-1.5 text-[13px]">
+            <input
+              type="checkbox"
+              aria-label={`${r.name} is an entry light of ${row.label}`}
+              checked={resolved.lights.includes(r.entityId)}
+              disabled={parametersSaving}
+              onChange={(e) => void save(rows.map((x) => x.entityId).filter((id) => (id === r.entityId ? e.target.checked : resolved.lights.includes(id))))}
+              className="accent-[var(--accent)]"
+            />
+            {r.name}
+          </label>
+        ))}
+        <button type="button" onClick={() => onEdit(false)} className="self-start rounded px-1.5 py-0.5 text-xs text-accent hover:bg-sunken">
+          Done
+        </button>
+      </div>
+    );
+  }
+
+  const own = resolved.source === "set";
+  const text = resolved.lights.length === 0 ? "–" : resolved.lights.map(name).join(", ");
+  return (
+    <span className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        disabled={parametersSaving}
+        onClick={() => onEdit(true)}
+        title={own ? "Set here. Click to change it." : resolved.lights.length === 0 ? "Nothing to suggest: the area has several lights and none is a main light. Click to choose." : "Suggested: the only light of the area, or its main lights. Click to choose."}
+        aria-label={`${def.label} for ${row.label}: ${text}, ${own ? "set here" : resolved.lights.length === 0 ? "none" : "suggested"}`}
+        className={`max-w-[16rem] rounded px-1.5 py-0.5 text-left hover:bg-sunken disabled:opacity-60 ${own ? "font-medium" : "text-muted"}`}
+      >
+        {text}
+        {!own && resolved.lights.length > 0 && <span className="ml-1.5 rounded-full border border-line px-1.5 py-px text-[11px]">suggested</span>}
+      </button>
+      {resolved.set && (
+        <button type="button" disabled={parametersSaving} onClick={() => void save(null)} aria-label={`Clear ${def.label} for ${row.label}`} title="Clear, so the suggestion is used again" className="rounded p-0.5 text-muted hover:text-fg disabled:opacity-60">
+          <X className="size-3" aria-hidden />
+        </button>
+      )}
+    </span>
+  );
+}
+
 export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   const { inventory, inventoryLoaded, parameters, parametersLoaded } = useTaxis();
   const defs = paramsOf(tab);
@@ -220,7 +293,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
           d.key,
           (r: ParamRow) => {
             const v = resolveIn(parameters, r.chain, d.key).value;
-            return typeof v === "boolean" ? Number(v) : v;
+            return typeof v === "boolean" ? Number(v) : Array.isArray(v) ? v.join(",") : v;
           },
         ]),
       ),
@@ -240,7 +313,11 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       </th>
       {defs.map((d) => (
         <td key={d.key} className="px-3 py-1.5">
-          <Cell h={h} row={r} def={d} editing={editing === `${rowKey(r)}|${d.key}`} onEdit={(on) => setEditing(on ? `${rowKey(r)}|${d.key}` : null)} />
+          {d.kind === "entities" ? (
+            <EntryLightsCell h={h} row={r} def={d} editing={editing === `${rowKey(r)}|${d.key}`} onEdit={(on) => setEditing(on ? `${rowKey(r)}|${d.key}` : null)} />
+          ) : (
+            <Cell h={h} row={r} def={d} editing={editing === `${rowKey(r)}|${d.key}`} onEdit={(on) => setEditing(on ? `${rowKey(r)}|${d.key}` : null)} />
+          )}
         </td>
       ))}
     </tr>

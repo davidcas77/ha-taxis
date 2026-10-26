@@ -1,5 +1,5 @@
 import type { HelperNames } from "./helpers.ts";
-import type { AreaNode, EntityItem, EntityRole, Hierarchy } from "./types.ts";
+import type { AreaNode, EntityItem, EntityRole, FloorNode, Hierarchy } from "./types.ts";
 
 // Naming: a code per area, a pattern for entity ids and display names, and an
 // analysis of every area against them. Pure functions; nothing here changes
@@ -14,6 +14,12 @@ export type NamingSettings = {
   namePattern: string;
   // Area id -> the code its entity ids start with. Missing: the detected one.
   areaCodes: Record<string, string>;
+  // Floor id -> the code its light group's entity id starts with. Missing: the
+  // floor id, as a slug.
+  floorCodes: Record<string, string>;
+  // The end of the entity id of the light group of the whole house:
+  // light.<houseGroup>. Empty or missing: "all".
+  houseGroup: string;
   // Role -> the word for it in entity ids. Missing: the default.
   typeWords: Partial<Record<EntityRole, string>>;
   // Helper key -> the end of its canonical entity id (shared/helpers.ts).
@@ -48,6 +54,8 @@ export const DEFAULT_NAMING: NamingSettings = {
   idPattern: "{area}_{type}_{name}",
   namePattern: "{Area} {Name}",
   areaCodes: {},
+  floorCodes: {},
+  houseGroup: "all",
   typeWords: {},
   helperNames: {},
 };
@@ -144,6 +152,52 @@ export function areaCodes(h: Hierarchy, s: NamingSettings): Record<string, AreaC
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Floor codes: what the entity id of a floor's light group starts with.
+// ---------------------------------------------------------------------------
+
+export type FloorCode = {
+  code: string;
+  // The code without a choice of the user's: the floor id as a slug.
+  detected: string;
+  custom: boolean;
+};
+
+export function floorCodes(h: Hierarchy, s: NamingSettings): Record<string, FloorCode> {
+  const out: Record<string, FloorCode> = {};
+  for (const floor of h.floors) {
+    // The id never changes, so it stays the default; its name is the second
+    // choice for an id that says nothing usable.
+    const detected = slug(floor.id) || slug(floor.name) || floor.id;
+    // Own keys only: a floor called "constructor" mustn't find Object's.
+    const custom = Object.hasOwn(s.floorCodes ?? {}, floor.id) ? s.floorCodes[floor.id] : undefined;
+    out[floor.id] = { code: custom ? slug(custom) : detected, detected, custom: Boolean(custom) };
+  }
+  return out;
+}
+
+// Words that name a floor without saying which: "floor", "level", "floor_2".
+const GENERIC_FLOOR_CODE = /^(floor|level|storey|story|etage|piso|f|l|lvl|fl|new|default|unnamed|untitled)(_?\d+)?$|^\d+$/;
+
+const compact = (t: string) => t.replace(/_/g, "");
+
+// A better code for a floor than the one it has, or null when the code is fine
+// or nothing better is known. A code is poor when it is a generic word ("floor_2",
+// "level") or has nothing to do with the floor's name ("floor_2" for the Attic);
+// the better one is the slug of the name. Only a code that comes from the floor id
+// is judged: a code the user typed is a choice.
+export function floorCodeAdvice(floor: Pick<FloorNode, "name">, code: Pick<FloorCode, "code" | "custom">): string | null {
+  if (code.custom) return null;
+  const better = slug(floor.name);
+  if (!better || compact(better) === compact(code.code)) return null;
+  const related = compact(better).startsWith(compact(code.code)) || compact(code.code).startsWith(compact(better));
+  return GENERIC_FLOOR_CODE.test(code.code) || !related ? better : null;
+}
+
+// The light group of the whole house: light.<houseGroup>, "light.all" by default.
+export const DEFAULT_HOUSE_GROUP = "all";
+export const houseGroupId = (s: Pick<NamingSettings, "houseGroup">): string => `light.${s.houseGroup || DEFAULT_HOUSE_GROUP}`;
 
 // Codes that more than one area ends up with: code -> the areas sharing it.
 // Takes anything with a code (the effective ones from areaCodes), so detected

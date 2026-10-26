@@ -18,7 +18,7 @@ describe("validateNaming", () => {
 
   it("keeps only real roles, and only areas Home Assistant has", () => {
     const r = validateNaming({ ...base, areaCodes: { kitchen: "Kit", gone: "x" }, typeWords: { light: "lamp", constructor: "x", toString: "y" } }, new Set(["kitchen"]));
-    expect(r).toEqual({ ok: true, value: { ...base, areaCodes: { kitchen: "kit" }, typeWords: { light: "lamp" }, helperNames: {} } });
+    expect(r).toEqual({ ok: true, value: { ...base, areaCodes: { kitchen: "kit" }, floorCodes: {}, houseGroup: "all", typeWords: { light: "lamp" }, helperNames: {} } });
   });
 
   it("says when a pattern is too long rather than empty", () => {
@@ -206,6 +206,49 @@ describe("checkAreaCodes", () => {
   it("refuses an area id Home Assistant lists twice", () => {
     expect(checkAreaCodes(DEFAULT_NAMING, hierarchy(), ["kitchen", "pantry", "kitchen"])).toContain("kitchen more than once");
   });
+
+  it("holds floors to the same rule: two floors can't end up with one code, whatever its source", () => {
+    // The mock house has the floors ground, first, floor_2 and level_1.
+    expect(checkAreaCodes({ ...DEFAULT_NAMING, floorCodes: { first: "Ground" } }, hierarchy())).toContain("The code “ground” is used by Ground floor and First floor.");
+    expect(checkAreaCodes({ ...DEFAULT_NAMING, floorCodes: { floor_2: "upstairs", level_1: "basement" } }, hierarchy())).toBeNull();
+    expect(checkAreaCodes({ ...DEFAULT_NAMING, floorCodes: { first: "ground" } }, hierarchy())).toContain("Give each floor its own code.");
+  });
+});
+
+describe("validateNaming: floor codes and the house group", () => {
+  it("keeps floor codes as slugs, only for floors Home Assistant has", () => {
+    const r = validateNaming({ ...base, floorCodes: { ground: "Down Stairs", gone: "x", constructor: "y" } }, undefined, new Set(["ground", "first"]));
+    expect(r).toMatchObject({ ok: true, value: { floorCodes: { ground: "down_stairs" } } });
+    // Without the floors to check against (Home Assistant can't be read), every code is kept.
+    expect(validateNaming({ ...base, floorCodes: { gone: "x" } })).toMatchObject({ ok: true, value: { floorCodes: { gone: "x" } } });
+  });
+
+  it("refuses floor codes that are unreadable, empty or too long", () => {
+    expect(validateNaming({ ...base, floorCodes: "x" })).toMatchObject({ ok: false });
+    expect(validateNaming({ ...base, floorCodes: ["x"] })).toMatchObject({ ok: false });
+    expect(validateNaming({ ...base, floorCodes: { ground: "!!!" } })).toMatchObject({ ok: false, error: expect.stringContaining("floor ground has no letters or digits") });
+    expect(validateNaming({ ...base, floorCodes: { ground: "x".repeat(41) } })).toMatchObject({ ok: false, error: expect.stringContaining("longer than 40") });
+  });
+
+  it("takes the end of the house group's id as a helper name, all by default", () => {
+    expect(validateNaming({ ...base })).toMatchObject({ ok: true, value: { houseGroup: "all" } });
+    expect(validateNaming({ ...base, houseGroup: "" })).toMatchObject({ ok: true, value: { houseGroup: "all" } });
+    expect(validateNaming({ ...base, houseGroup: " house_lights " })).toMatchObject({ ok: true, value: { houseGroup: "house_lights" } });
+    for (const bad of ["Bad Id", "_x", "x_", "a__b", "x".repeat(31)]) {
+      expect(validateNaming({ ...base, houseGroup: bad }), bad).toMatchObject({ ok: false, error: expect.stringContaining("house light group") });
+    }
+    expect(validateNaming({ ...base, houseGroup: 5 })).toMatchObject({ ok: false });
+  });
+
+  it("keeps old stored settings readable: no floor codes or house group stored means the defaults", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const store = settingsStore(db);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('naming', ?)").run(JSON.stringify({ idPattern: "{area}_{name}", namePattern: "{Name}", areaCodes: {}, typeWords: {}, helperNames: {} }));
+    expect(store.naming()).toMatchObject({ floorCodes: {}, houseGroup: "all" });
+    store.saveNaming({ ...DEFAULT_NAMING, floorCodes: { ground: "down" }, houseGroup: "house" });
+    expect(store.naming()).toMatchObject({ floorCodes: { ground: "down" }, houseGroup: "house" });
+  });
 });
 
 describe("validateNaming: helper names", () => {
@@ -244,6 +287,17 @@ describe("validateNaming: helper names", () => {
 
 describe("validateParameters", () => {
   const ok = { house: { night_start: "22:00", hold_timeout: 8 }, types: { exterior: { hold_timeout: 2 } }, floors: { ground: { dim_level: 40 } }, areas: { kitchen: { day_kelvin: 3500, transition: 0 } } };
+
+  it("takes entry lights for an area only", () => {
+    const entry = { entry_lights: ["light.kitchen_main", "light.kitchen_spots"] };
+    expect(validateParameters({ areas: { kitchen: entry } })).toEqual({ ok: true, value: { house: {}, types: {}, floors: {}, areas: { kitchen: entry } } });
+    expect(validateParameters({ house: entry })).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for one area (the house)") });
+    expect(validateParameters({ types: { interior: entry } })).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for one area") });
+    expect(validateParameters({ floors: { ground: entry } })).toMatchObject({ ok: false, error: expect.stringContaining("(floor ground)") });
+    for (const bad of [[], "light.a", ["switch.a"], ["light.a", "light.a"], [1]]) {
+      expect(validateParameters({ areas: { kitchen: { entry_lights: bad } } }), JSON.stringify(bad)).toMatchObject({ ok: false, error: expect.stringContaining("Entry lights must be a list") });
+    }
+  });
 
   it("accepts what the editor produces, and empty settings", () => {
     expect(validateParameters(ok)).toEqual({ ok: true, value: ok });
