@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - **Entry lights.** A new Lighting parameter, **Entry lights**: the lights that
   come on by day when an area becomes occupied. It is set for one area and never
