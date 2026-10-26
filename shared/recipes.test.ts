@@ -14,12 +14,13 @@ import {
   planRecipes,
   recipeChangeInputs,
   runtimeIds,
+  RECIPE_LABEL,
   type RecipeCell,
   type RecipeInstalled,
 } from "./recipes.ts";
 import type { Change, ChangeInput } from "./types.ts";
 
-type Spec = { id: string; state?: string; dc?: string; platform?: string; area?: string; entry?: string; name?: string; members?: string[] };
+type Spec = { id: string; state?: string; dc?: string; platform?: string; area?: string; entry?: string; name?: string; members?: string[]; attrs?: Record<string, unknown> };
 
 // A small invented house: a living room and a kitchen, with the codes their
 // entity ids use.
@@ -38,7 +39,7 @@ function house(specs: Spec[]) {
   };
   for (const s of specs) {
     reg.entities.push({ entity_id: s.id, platform: s.platform ?? "demo", area_id: s.area ?? "living_room", config_entry_id: s.entry, original_name: s.name, unique_id: s.id.split(".")[1] });
-    reg.states.push({ entity_id: s.id, state: s.state ?? "off", attributes: { friendly_name: s.name ?? s.id.split(".")[1].replace(/_/g, " "), device_class: s.dc, entity_id: s.members } });
+    reg.states.push({ entity_id: s.id, state: s.state ?? "off", attributes: { friendly_name: s.name ?? s.id.split(".")[1].replace(/_/g, " "), device_class: s.dc, entity_id: s.members, ...s.attrs } });
   }
   return buildHierarchy(reg, "now");
 }
@@ -74,7 +75,7 @@ const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">
 const OCC = blueprintForRecipe("occupancy");
 const MOT = blueprintForRecipe("motion_lights");
 const MEDIA = blueprintForRecipe("media_off");
-const BLUEPRINTS_THERE = { [OCC.path]: OCC.version, [MOT.path]: MOT.version, [MEDIA.path]: MEDIA.version };
+const BLUEPRINTS_THERE = { [OCC.path]: OCC.version, [MOT.path]: MOT.version, [MEDIA.path]: MEDIA.version, [blueprintForRecipe("area_climate").path]: blueprintForRecipe("area_climate").version };
 
 // What Taxis would write for the living room with the defaults.
 const occupancyInput = {
@@ -98,6 +99,7 @@ describe("names", () => {
       occupied: "binary_sensor.living_occupied",
       switch: "input_boolean.living_paused",
       override: "timer.living_override",
+      schedule: "schedule.living_climate",
     });
     expect(automationIdFor("motion_lights", "living")).toBe("taxis_motion_lights_living");
     expect(automationIdFor("media_off", "living")).toBe("taxis_media_off_living");
@@ -142,9 +144,11 @@ describe("occupancy: what is missing", () => {
       "living_room:occupancy",
       "living_room:motion_lights",
       "living_room:media_off",
+      "living_room:area_climate",
       "kitchen:occupancy",
       "kitchen:motion_lights",
       "kitchen:media_off",
+      "kitchen:area_climate",
     ]);
     expect(cell(cells, "occupancy", "living_room").status).toBe("ready");
     expect(cell(cells, "occupancy", "kitchen").status).toBe("missing");
@@ -734,6 +738,501 @@ describe("media off", () => {
   });
 });
 
+describe("area climate", () => {
+  const CLIMATE = blueprintForRecipe("area_climate");
+  const valve = { id: "climate.living_valve", state: "heat", name: "Radiator valve" };
+  const tado = { id: "climate.living_tado", state: "heat", name: "Tado", attrs: { preset_modes: ["eco", "comfort", "sleep", "away"], hvac_modes: ["off", "heat", "auto"] } };
+  const windows = { id: "binary_sensor.living_windows", platform: "group", dc: "window", members: ["binary_sensor.living_window"], entry: "W1" };
+  const doors = { id: "binary_sensor.living_doors", platform: "group", dc: "door", members: ["binary_sensor.living_balcony"], entry: "D1" };
+  const tempMean = { id: "sensor.living_temperature", platform: "min_max", dc: "temperature", state: "21.3", entry: "T1" };
+  const schedule = { id: "schedule.living_climate", platform: "schedule", state: "off" };
+  const away = { id: "input_boolean.taxis_away", platform: "input_boolean", area: "" };
+  const sleep = { id: "input_boolean.taxis_sleep", platform: "input_boolean", area: "" };
+  const occupancyThere = { blueprints: BLUEPRINTS_THERE, automations: { taxis_occupancy_living: installedOccupancy }, timers: { "timer.living_hold": 300 } };
+
+  // The blueprint is in place unless a test says it isn't.
+  const climate = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { ...o, installed: { blueprints: BLUEPRINTS_THERE, ...o.installed } }), "area_climate");
+  const kinds = (c: RecipeCell) => c.inputs.map((i) => `${i.kind}:${i.op}:${i.fields?.helper ?? i.fields?.path ?? i.fields?.automation_id ?? i.targetId}`);
+
+  // What Taxis writes for the living room with the defaults and one valve.
+  const defaults = {
+    climate_entities: ["climate.living_valve"],
+    opening_entities: [],
+    occupied_entities: [],
+    bed_entities: [],
+    is_bedroom: false,
+    away_entity: "input_boolean.taxis_away",
+    sleep_entity: "input_boolean.taxis_sleep",
+    schedule_entity: "schedule.living_climate",
+    comfort_periods: "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00",
+    comfort_needs_occupancy: true,
+    season: "heating",
+    auto_hvac_on: false,
+    comfort_temp: 21,
+    eco_temp: 19,
+    night_temp: 18,
+    sleep_temp: 17.5,
+    away_temp: 16,
+    frost_temp: 7,
+    min_temp: 16,
+    max_temp: 24,
+    window_delay: 2,
+    restore_delay: 1,
+    eco_after_clear: 30,
+    night_start: "23:00:00",
+    night_end: "07:00:00",
+    preset_comfort: "",
+    preset_eco: "",
+    preset_away: "",
+    preset_sleep: "",
+    pause_switch: "input_boolean.living_paused",
+  };
+  // Everything in place, so only the automation is left to make.
+  const inPlace = [valve, schedule, away, sleep, toggle];
+
+  it("builds the ids and the alias", () => {
+    expect(runtimeIds("living").schedule).toBe("schedule.living_climate");
+    expect(automationIdFor("area_climate", "living")).toBe("taxis_area_climate_living");
+    expect(automationAlias("Living room", "area_climate")).toBe("Living room – Area climate (Taxis)");
+    expect(RECIPE_LABEL.area_climate).toBe("Area climate");
+  });
+
+  describe("what is missing", () => {
+    it("needs a thermostat that counts", () => {
+      expect(climate([spots])).toMatchObject({ status: "missing", missing: ["A thermostat that counts (Capabilities)"], actionable: false, inputs: [], notes: [] });
+      const h = house([valve]);
+      const inv = setCounts(h, EMPTY_INVENTORY, "climate.living_valve", false);
+      expect(climate([valve], { inv }).missing).toEqual(["A thermostat that counts (Capabilities)"]);
+    });
+
+    it("is judged by the area's own thermostats", () => {
+      const cells = plan([valve, { ...tado, id: "climate.kitchen_tado", area: "kitchen" }]);
+      expect(cell(cells, "area_climate", "living_room").inputs.length).toBeGreaterThan(0);
+      expect(cell(cells, "area_climate", "kitchen").inputs.length).toBeGreaterThan(0);
+      expect(autoInput(cell(cells, "area_climate", "kitchen")).climate_entities).toEqual(["climate.kitchen_tado"]);
+      expect(autoInput(cell(cells, "area_climate", "living_room")).climate_entities).toEqual(["climate.living_valve"]);
+    });
+
+    it("names an id that something else holds: the schedule, the pause switch, the house switches", () => {
+      expect(climate([valve, { id: "schedule.living_climate", platform: "demo", name: "Old schedule" }]).missing).toEqual(["schedule.living_climate is already used by “Old schedule”"]);
+      expect(climate([valve, { id: "input_boolean.living_paused", platform: "demo", name: "Nope" }]).missing).toEqual(["input_boolean.living_paused is already used by “Nope”"]);
+      expect(climate([valve, { id: "input_boolean.taxis_away", platform: "demo", name: "Mine", area: "" }]).missing).toEqual([
+        "input_boolean.taxis_away is already used by “Mine”. Pick a switch of your own for away mode (Parameters, House)",
+      ]);
+    });
+
+    it("refuses a lowest temperature above the highest", () => {
+      let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "min_temp", 25);
+      expect(climate([valve], { params: p }).missing).toEqual(["The lowest temperature is above the highest (Parameters, Climate)"]);
+      p = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "max_temp", 15);
+      expect(climate([valve], { params: p }).status).toBe("missing");
+      // Equal is fine.
+      p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "min_temp", 20), { level: "house" }, "max_temp", 20);
+      expect(climate([valve], { params: p }).status).toBe("ready");
+    });
+  });
+
+  describe("ready", () => {
+    it("needs nothing else: it makes the blueprint, the house switches, the pause switch and the schedule, then the automation", () => {
+      const c = climate([valve], { installed: { blueprints: {} } });
+      expect(c.status).toBe("ready");
+      expect(c.actionable).toBe(true);
+      expect(kinds(c)).toEqual([
+        "blueprint:create:taxis/area_climate.yaml",
+        "helper:create:input_boolean",
+        "helper:create:input_boolean",
+        "helper:create:input_boolean",
+        "helper:create:schedule",
+        "automation:create:taxis_area_climate_living",
+      ]);
+      const helper = (id: string) => c.inputs.find((i) => i.fields?.entity_id === id)!.fields;
+      // The house switches have no area; the pause switch and the schedule are the area's.
+      expect(helper("input_boolean.taxis_away")).toEqual({ helper: "input_boolean", name: "Taxis away mode", entity_id: "input_boolean.taxis_away", icon: "mdi:home-export-outline" });
+      expect(helper("input_boolean.taxis_sleep")).toEqual({ helper: "input_boolean", name: "Taxis sleep mode", entity_id: "input_boolean.taxis_sleep", icon: "mdi:sleep" });
+      expect(helper("input_boolean.living_paused")).toEqual({ helper: "input_boolean", name: "Living room automations paused", entity_id: "input_boolean.living_paused", area_id: "living_room", icon: "mdi:pause-circle-outline" });
+      expect(helper("schedule.living_climate")).toEqual({
+        helper: "schedule",
+        name: "Living room climate",
+        entity_id: "schedule.living_climate",
+        area_id: "living_room",
+        periods: "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00",
+      });
+    });
+
+    it("fills the blueprint from the defaults of the design", () => {
+      const c = climate(inPlace);
+      expect(c.status).toBe("ready");
+      expect(kinds(c)).toEqual(["automation:create:taxis_area_climate_living"]);
+      expect(c.inputs[0].fields).toMatchObject({ recipe: "area_climate", area_id: "living_room", alias: "Living room – Area climate (Taxis)", use_blueprint: { path: "taxis/area_climate.yaml" } });
+      // The schedule is the user's own, so nothing was written into it.
+      expect(autoInput(c)).toEqual({ ...defaults, comfort_periods: "" });
+    });
+
+    it("writes the blueprint too only when Home Assistant has none of this version", () => {
+      expect(kinds(climate(inPlace, { installed: { blueprints: { [CLIMATE.path]: CLIMATE.version } } }))).toEqual(["automation:create:taxis_area_climate_living"]);
+      expect(kinds(climate(inPlace, { installed: { blueprints: { [CLIMATE.path]: CLIMATE.version - 1 } } }))).toEqual(["blueprint:update:taxis/area_climate.yaml", "automation:create:taxis_area_climate_living"]);
+    });
+
+    it("all of it passes the change list's own checks", () => {
+      for (const specs of [[valve], inPlace, [tado, windows, doors, tempMean, ...runtime]]) {
+        const c = climate(specs, { installed: occupancyThere });
+        expect(c.inputs.length).toBeGreaterThan(0);
+        for (const input of c.inputs) expect(validateInput(input), JSON.stringify(input)).toBeNull();
+      }
+    });
+
+    it("skips what the change list already holds, and says in changes once the automation is there", () => {
+      const queued = [
+        change({ kind: "helper", targetId: "input_boolean.taxis_away", after: { entity_id: "input_boolean.taxis_away" } }),
+        change({ kind: "helper", targetId: "input_boolean.living_paused", after: { entity_id: "input_boolean.living_paused" } }),
+        change({ kind: "helper", targetId: "schedule.living_climate", after: { entity_id: "schedule.living_climate" } }),
+        change({ kind: "blueprint", targetId: CLIMATE.path, after: { path: CLIMATE.path, version: CLIMATE.version } }),
+      ];
+      expect(kinds(climate([valve], { changes: queued }))).toEqual(["helper:create:input_boolean", "automation:create:taxis_area_climate_living"]);
+      const withAutomation = [...queued, change({ kind: "automation", targetId: "taxis_area_climate_living", after: {} })];
+      expect(climate([valve], { changes: withAutomation })).toMatchObject({ status: "in-changes", actionable: false, inputs: [] });
+    });
+
+    it("a user's own schedule is used as it is, and Taxis says nothing is written into it", () => {
+      const c = climate([valve, schedule, away, sleep, toggle]);
+      expect(kinds(c)).toEqual(["automation:create:taxis_area_climate_living"]);
+      expect(autoInput(c).comfort_periods).toBe("");
+    });
+  });
+
+  describe("the house switches", () => {
+    it("uses the ones the user picked, and makes none", () => {
+      const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "away_mode_entity", "input_boolean.away_mode"), { level: "house" }, "sleep_mode_entity", "input_boolean.sleep_mode");
+      const c = climate([valve, schedule, toggle, { id: "input_boolean.away_mode", platform: "input_boolean", area: "" }, { id: "input_boolean.sleep_mode", platform: "input_boolean", area: "" }], { params: p });
+      expect(c.status).toBe("ready");
+      expect(kinds(c)).toEqual(["automation:create:taxis_area_climate_living"]);
+      expect(autoInput(c)).toMatchObject({ away_entity: "input_boolean.away_mode", sleep_entity: "input_boolean.sleep_mode" });
+    });
+
+    it("says when a switch the user picked isn't there, or isn't a toggle", () => {
+      const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "away_mode_entity", "input_boolean.away_mode"), { level: "house" }, "sleep_mode_entity", "input_boolean.sleep_mode");
+      expect(climate([valve], { params: p }).missing).toEqual([
+        "The away mode switch “input_boolean.away_mode” isn't in Home Assistant (Parameters, House)",
+        "The sleep mode switch “input_boolean.sleep_mode” isn't in Home Assistant (Parameters, House)",
+      ]);
+      const wrong = climate([valve, { id: "input_boolean.sleep_mode", platform: "input_boolean", area: "" }, { id: "input_boolean.away_mode", platform: "input_boolean", area: "" }], { params: setParameter(p, { level: "house" }, "away_mode_entity", "light.living_spots") });
+      expect(wrong.missing).toEqual(["The away mode switch “light.living_spots” isn't in Home Assistant (Parameters, House)"]);
+      const notToggle = climate([valve, spots, { id: "input_boolean.sleep_mode", platform: "input_boolean", area: "" }], { params: setParameter(p, { level: "house" }, "away_mode_entity", "light.living_spots") });
+      expect(notToggle.missing).toEqual(["The away mode switch “light.living_spots” isn't a toggle (an input boolean)"]);
+    });
+
+    it("can differ for an area: a floor's own sleep switch", () => {
+      const p = setParameter(EMPTY_PARAMETERS, { level: "area", id: "kitchen" }, "sleep_mode_entity", "input_boolean.kitchen_sleep");
+      const cells = plan([valve, { ...tado, id: "climate.kitchen_tado", area: "kitchen" }, { id: "input_boolean.kitchen_sleep", platform: "input_boolean", area: "" }], { params: p });
+      expect(autoInput(cell(cells, "area_climate", "kitchen")).sleep_entity).toBe("input_boolean.kitchen_sleep");
+      expect(autoInput(cell(cells, "area_climate", "living_room")).sleep_entity).toBe("input_boolean.taxis_sleep");
+    });
+
+    it("are made once when two areas are added together", () => {
+      const cells = plan([valve, { ...valve, id: "climate.kitchen_valve", area: "kitchen" }]);
+      const inputs = recipeChangeInputs([cell(cells, "area_climate", "living_room"), cell(cells, "area_climate", "kitchen")]);
+      expect(inputs.filter((i) => i.fields?.entity_id === "input_boolean.taxis_away")).toHaveLength(1);
+      expect(inputs.filter((i) => i.fields?.entity_id === "input_boolean.taxis_sleep")).toHaveLength(1);
+      expect(inputs.filter((i) => i.kind === "blueprint")).toHaveLength(1);
+      // The area's own helpers are still one each.
+      expect(inputs.filter((i) => i.fields?.helper === "schedule")).toHaveLength(2);
+    });
+  });
+
+  describe("what it is told about", () => {
+    it("takes the occupied sensor once Occupancy is installed or in the list, and says when it isn't", () => {
+      const without = climate(inPlace);
+      expect(autoInput(without).occupied_entities).toEqual([]);
+      expect(without.notes).toContain("No Occupancy yet, so comfort follows the schedule alone");
+      const withOccupancy = climate([...inPlace, occupied], { installed: occupancyThere });
+      expect(autoInput(withOccupancy).occupied_entities).toEqual(["binary_sensor.living_occupied"]);
+      expect(withOccupancy.notes).not.toContain("No Occupancy yet, so comfort follows the schedule alone");
+      const pending = [
+        change({ kind: "automation", targetId: "taxis_occupancy_living", after: {} }),
+        change({ kind: "helper", targetId: "binary_sensor.living_occupied", after: { entity_id: "binary_sensor.living_occupied" } }),
+      ];
+      expect(autoInput(climate(inPlace, { changes: pending })).occupied_entities).toEqual(["binary_sensor.living_occupied"]);
+      // Occupancy in the list but its sensor nowhere: not named.
+      expect(autoInput(climate(inPlace, { changes: pending.slice(0, 1) })).occupied_entities).toEqual([]);
+    });
+
+    it("takes the window group in place or in the list, the door group only when open doors count, and the temperature helper", () => {
+      expect(autoInput(climate([...inPlace, windows])).opening_entities).toEqual(["binary_sensor.living_windows"]);
+      expect(autoInput(climate([...inPlace, windows, doors])).opening_entities).toEqual(["binary_sensor.living_windows"]);
+      const doorsCount = setParameter(EMPTY_PARAMETERS, { level: "house" }, "doors_open_count", true);
+      expect(autoInput(climate([...inPlace, windows, doors], { params: doorsCount })).opening_entities).toEqual(["binary_sensor.living_windows", "binary_sensor.living_doors"]);
+      const queued = [change({ kind: "helper", targetId: "binary_sensor.living_windows", after: { helper: "group", entity_id: "binary_sensor.living_windows" } })];
+      expect(autoInput(climate(inPlace, { changes: queued })).opening_entities).toEqual(["binary_sensor.living_windows"]);
+      expect(autoInput(climate([...inPlace, tempMean])).temperature_entity).toBe("sensor.living_temperature");
+      expect(autoInput(climate(inPlace))).not.toHaveProperty("temperature_entity");
+      // A real sensor on the helper's id isn't the helper.
+      expect(autoInput(climate([...inPlace, { ...tempMean, platform: "demo" }]))).not.toHaveProperty("temperature_entity");
+      expect(autoInput(climate([...inPlace, { ...windows, platform: "demo" }])).opening_entities).toEqual([]);
+    });
+
+    it("says when windows or doors are counted but their group isn't made, and when the room can't be checked", () => {
+      const window = { id: "binary_sensor.living_window", dc: "window" };
+      expect(climate([...inPlace, window]).notes).toContain("The window group isn't made yet, so open windows are not seen (Helpers tab)");
+      expect(climate([...inPlace, window, windows]).notes).not.toContain("The window group isn't made yet, so open windows are not seen (Helpers tab)");
+      const door = { id: "binary_sensor.living_door", dc: "door" };
+      const doorsCount = setParameter(EMPTY_PARAMETERS, { level: "house" }, "doors_open_count", true);
+      expect(climate([...inPlace, door], { params: doorsCount }).notes).toContain("The door group isn't made yet, so open doors are not seen (Helpers tab)");
+      expect(climate([...inPlace, door]).notes.join(" ")).not.toMatch(/door group/);
+      const auto = setParameter(EMPTY_PARAMETERS, { level: "house" }, "auto_hvac_on", true);
+      expect(climate(inPlace, { params: auto }).notes).toContain("No temperature helper yet, so a thermostat is switched on without checking the room (Helpers tab)");
+      expect(climate([...inPlace, tempMean], { params: auto }).notes.join(" ")).not.toMatch(/temperature helper/);
+      expect(climate(inPlace).notes.join(" ")).not.toMatch(/temperature helper/);
+    });
+
+    it("passes the bed sensors of a bedroom and says so, and a bedroom doesn't need anyone in it for comfort unless told", () => {
+      const bedSensor = { id: "binary_sensor.living_bed", dc: "occupancy" };
+      let inv = setBed(EMPTY_INVENTORY, "binary_sensor.living_bed", true);
+      // Not a bedroom: no bed sensors, comfort needs occupancy.
+      expect(autoInput(climate([...inPlace, bedSensor], { inv }))).toMatchObject({ bed_entities: [], is_bedroom: false, comfort_needs_occupancy: true });
+      inv = setBedroom(inv, "living_room", true);
+      const c = climate([...inPlace, bedSensor], { inv });
+      expect(autoInput(c)).toMatchObject({ bed_entities: ["binary_sensor.living_bed"], is_bedroom: true, comfort_needs_occupancy: false });
+      expect(c.notes).toContain("A bedroom: comfort doesn't need anyone in the room unless you set it to");
+      // Told otherwise at the house, interior or area level, it is: a choice is a choice.
+      for (const scope of [{ level: "house" }, { level: "type", id: "interior" }, { level: "area", id: "living_room" }] as const) {
+        const p = setParameter(EMPTY_PARAMETERS, scope, "comfort_needs_occupancy", true);
+        const told = climate([...inPlace, bedSensor], { inv, params: p });
+        expect(autoInput(told).comfort_needs_occupancy, JSON.stringify(scope)).toBe(true);
+        expect(told.notes).not.toContain("A bedroom: comfort doesn't need anyone in the room unless you set it to");
+      }
+      // And a room that isn't a bedroom can be told it doesn't need anyone.
+      const none = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "comfort_needs_occupancy", false);
+      expect(autoInput(climate(inPlace, { params: none })).comfort_needs_occupancy).toBe(false);
+    });
+
+    it("uses the parameters: temperatures, delays, season, switching, presets and the night window", () => {
+      let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_temp", 22);
+      p = setParameter(p, { level: "area", id: "living_room" }, "eco_temp", 17.5);
+      p = setParameter(p, { level: "floor", id: "ground" }, "window_delay", 5);
+      p = setParameter(p, { level: "type", id: "interior" }, "restore_delay", 3);
+      p = setParameter(p, { level: "house" }, "night_start", "22:30");
+      p = setParameter(p, { level: "house" }, "season", "cooling");
+      p = setParameter(p, { level: "house" }, "auto_hvac_on", true);
+      p = setParameter(p, { level: "house" }, "preset_eco", "Eco");
+      p = setParameter(p, { level: "house" }, "eco_after_clear", 45);
+      expect(autoInput(climate(inPlace, { params: p }))).toEqual({
+        ...defaults,
+        comfort_periods: "",
+        comfort_temp: 22,
+        eco_temp: 17.5,
+        window_delay: 5,
+        restore_delay: 3,
+        night_start: "22:30:00",
+        season: "cooling",
+        auto_hvac_on: true,
+        preset_eco: "Eco",
+        eco_after_clear: 45,
+      });
+    });
+
+    it("writes the comfort periods in one spelling", () => {
+      const p = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "comfort_periods", "sat-sun 08:00-23:00;  mon-fri 17:00-22:00");
+      expect(autoInput(climate(inPlace.filter((s) => s !== schedule), { params: p })).comfort_periods).toBe("Mon-Fri 17:00-22:00; Sat-Sun 08:00-23:00");
+      const create = climate([valve], { params: p }).inputs.find((i) => i.fields?.helper === "schedule")!;
+      expect(create.fields!.periods).toBe("Mon-Fri 17:00-22:00; Sat-Sun 08:00-23:00");
+    });
+  });
+
+  describe("which thermostats use presets and which temperatures", () => {
+    const presets = (over: Record<string, string> = {}) =>
+      Object.entries({ preset_comfort: "comfort", preset_eco: "eco", preset_away: "away", preset_sleep: "sleep", ...over }).reduce((p, [k, v]) => setParameter(p, { level: "house" }, k as "preset_eco", v), EMPTY_PARAMETERS);
+
+    it("names every thermostat and says temperatures when no preset is mapped", () => {
+      const c = climate([...inPlace, tado]);
+      expect(autoInput(c).climate_entities).toEqual(["climate.living_tado", "climate.living_valve"]);
+      expect(c.notes.filter((n) => /^(Tado|Radiator valve):/.test(n))).toEqual(["Tado: temperatures", "Radiator valve: temperatures"]);
+    });
+
+    it("says presets for the thermostat that offers all four, temperatures for the valve", () => {
+      const c = climate([...inPlace, tado], { params: presets() });
+      expect(c.notes.filter((n) => /^(Tado|Radiator valve):/.test(n))).toEqual(["Tado: presets", "Radiator valve: temperatures"]);
+    });
+
+    it("says which of the four a thermostat doesn't offer, and that it gets temperatures for those", () => {
+      const c = climate([...inPlace, tado], { params: presets({ preset_eco: "economy", preset_away: "" }) });
+      expect(c.notes).toContain("Tado: presets for comfort, sleep, temperatures for the rest");
+      expect(c.notes).toContain("Tado doesn't offer “economy” (eco); it gets temperatures for that");
+      // A thermostat that reports no presets at all has nothing to say about them.
+      expect(c.notes.join(" ")).not.toMatch(/Radiator valve doesn't offer/);
+      expect(autoInput(c)).toMatchObject({ preset_comfort: "comfort", preset_eco: "economy", preset_away: "", preset_sleep: "sleep" });
+    });
+
+    it("keeps the notes off a recipe that can't be added", () => {
+      expect(climate([spots]).notes).toEqual([]);
+    });
+
+    it("says when the season is off", () => {
+      const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "season", "off");
+      expect(climate(inPlace, { params: p }).notes).toContain("The season is off, so the recipe does nothing");
+    });
+  });
+
+  describe("the comfort schedule", () => {
+    const installedWith = (input: Record<string, unknown>) => ({
+      blueprints: BLUEPRINTS_THERE,
+      automations: { taxis_area_climate_living: { alias: "Living room – Area climate (Taxis)", path: CLIMATE.path, input } },
+    });
+
+    it("is installed when everything matches", () => {
+      expect(climate(inPlace, { installed: installedWith(defaults) })).toMatchObject({ status: "installed", inputs: [], reasons: [] });
+    });
+
+    it("updates a schedule Taxis made when the periods setting changed, and says how", () => {
+      const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_periods", "Mon-Fri 18:00-22:00");
+      const c = climate(inPlace, { installed: installedWith(defaults), params: p });
+      expect(c.status).toBe("out-of-date");
+      expect(c.reasons).toEqual(["Comfort periods: Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00 → Mon-Fri 18:00-22:00"]);
+      expect(kinds(c)).toEqual(["helper:update:schedule.living_climate", "automation:update:taxis_area_climate_living"]);
+      expect(c.inputs[0]).toEqual({ kind: "helper", op: "update", targetId: "schedule.living_climate", fields: { periods: "Mon-Fri 18:00-22:00" } });
+      expect(autoInput(c).comfort_periods).toBe("Mon-Fri 18:00-22:00");
+      for (const input of c.inputs) expect(validateInput(input)).toBeNull();
+      // The same spelled differently is the same periods.
+      const same = setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_periods", "Sat-Sun 08:00-23:00; Mon-Fri 17:00-23:00 06:30-08:30");
+      expect(climate(inPlace, { installed: installedWith(defaults), params: same }).status).toBe("installed");
+    });
+
+    it("asks for the update once", () => {
+      const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_periods", "Mon-Fri 18:00-22:00");
+      const queued = [change({ kind: "helper", op: "update", targetId: "schedule.living_climate", after: { periods: "Mon-Fri 18:00-22:00" } })];
+      expect(kinds(climate(inPlace, { installed: installedWith(defaults), params: p, changes: queued }))).toEqual(["automation:update:taxis_area_climate_living"]);
+    });
+
+    it("never writes into a schedule the user brought", () => {
+      const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_periods", "Mon-Fri 18:00-22:00");
+      const mine = { ...defaults, comfort_periods: "" };
+      const c = climate(inPlace, { installed: installedWith(mine), params: p });
+      expect(c.status).toBe("installed");
+      expect(c.inputs).toEqual([]);
+    });
+
+    it("makes the schedule again when it is gone", () => {
+      const c = climate([valve, away, sleep, toggle], { installed: installedWith(defaults) });
+      expect(c.status).toBe("out-of-date");
+      expect(c.reasons).toEqual(["schedule.living_climate is missing"]);
+      expect(kinds(c)).toEqual(["helper:create:schedule", "automation:update:taxis_area_climate_living"]);
+    });
+
+    it("is out of date for the pause switch gone, and for another blueprint version", () => {
+      expect(climate([valve, schedule, away, sleep], { installed: installedWith(defaults) }).reasons).toEqual(["input_boolean.living_paused is missing"]);
+      const old = climate(inPlace, { installed: { ...installedWith(defaults), blueprints: { [CLIMATE.path]: 0 } } });
+      expect(old.reasons).toEqual([`The blueprint is version 0, Taxis has ${CLIMATE.version}`]);
+      expect(kinds(old)).toEqual(["blueprint:update:taxis/area_climate.yaml", "automation:update:taxis_area_climate_living"]);
+    });
+  });
+
+  describe("installed and out of date", () => {
+    const installedWith = (input: Record<string, unknown>) => ({
+      blueprints: BLUEPRINTS_THERE,
+      automations: { taxis_area_climate_living: { alias: "Living room – Area climate (Taxis)", path: CLIMATE.path, input } },
+    });
+
+    it("sees a thermostat added, a window group appearing and Occupancy installed", () => {
+      const added = climate([...inPlace, tado], { installed: installedWith(defaults) });
+      expect(added.status).toBe("out-of-date");
+      expect(added.reasons).toEqual(["Thermostats: climate.living_valve → climate.living_tado, climate.living_valve"]);
+      const group = climate([...inPlace, windows], { installed: installedWith(defaults) });
+      expect(group.reasons).toEqual(["Windows and doors: none → binary_sensor.living_windows"]);
+      const occ = climate([...inPlace, occupied], { installed: { ...occupancyThere, ...installedWith(defaults), automations: { ...occupancyThere.automations, ...installedWith(defaults).automations } } });
+      expect(occ.reasons).toEqual(["Occupied sensor: none → binary_sensor.living_occupied"]);
+    });
+
+    it("sees a changed parameter, a changed preset and a changed switch", () => {
+      const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_temp", 22), { level: "house" }, "auto_hvac_on", true);
+      expect(climate(inPlace, { installed: installedWith(defaults), params: p }).reasons).toEqual(["Switch thermostats on and off: false → true", "Comfort temperature: 21 → 22"]);
+      const q = setParameter(EMPTY_PARAMETERS, { level: "house" }, "preset_away", "Away");
+      expect(climate(inPlace, { installed: installedWith(defaults), params: q }).reasons).toEqual(["Away preset: none → Away"]);
+    });
+
+    it("is out of date when the area was renamed, or the automation isn't from the blueprint", () => {
+      const renamed = { blueprints: BLUEPRINTS_THERE, automations: { taxis_area_climate_living: { alias: "Lounge – Area climate (Taxis)", path: CLIMATE.path, input: defaults } } };
+      expect(climate(inPlace, { installed: renamed }).reasons).toEqual(["Name: Lounge – Area climate (Taxis) → Living room – Area climate (Taxis)"]);
+      const other = { blueprints: BLUEPRINTS_THERE, automations: { taxis_area_climate_living: { alias: "Living room – Area climate (Taxis)", path: "other/x.yaml", input: defaults } } };
+      expect(climate(inPlace, { installed: other }).reasons).toEqual(["It isn't made from the Taxis blueprint"]);
+    });
+
+    it("an input a later version adds is a difference, and one it drops is named", () => {
+      const { frost_temp: _frost, ...older } = defaults;
+      expect(climate(inPlace, { installed: installedWith({ ...older, legacy: 1 }) }).reasons).toEqual(["Frost protection temperature: none → 7", "legacy: not used any more"]);
+    });
+  });
+
+  describe("other automations on the same thermostats", () => {
+    it("warns, without blocking, and says it is thermostats", () => {
+      const controllers = { "climate.living_valve": [{ entityId: "automation.heating_schedule", name: "Heating schedule" }], "climate.other": [{ entityId: "automation.x", name: "X" }] };
+      const c = climate(inPlace, { installed: { controllers } });
+      expect(c.status).toBe("ready");
+      expect(c.actionable).toBe(true);
+      expect(c.controls).toBe("thermostats");
+      expect(c.controlledBy).toEqual([{ entityId: "automation.heating_schedule", name: "Heating schedule" }]);
+      // The same automation on two thermostats is listed once.
+      const both = { "climate.living_valve": controllers["climate.living_valve"], "climate.living_tado": controllers["climate.living_valve"] };
+      expect(climate([...inPlace, tado], { installed: { controllers: both } }).controlledBy).toHaveLength(1);
+      // Nothing is said while it can't be installed anyway; the lights recipes say lights.
+      expect(climate([spots], { installed: { controllers } }).controlledBy).toEqual([]);
+      expect(cell(plan(inPlace), "motion_lights").controls).toBe("lights");
+    });
+  });
+
+  describe("the change list accepts what it asks for", () => {
+    const schedule = (over: Record<string, unknown> = {}): ChangeInput => ({
+      kind: "helper",
+      op: "create",
+      fields: { helper: "schedule", name: "Living room climate", entity_id: "schedule.living_climate", area_id: "living_room", periods: "Mon-Fri 06:30-08:30", ...over },
+    });
+    const houseSwitch = (over: Record<string, unknown> = {}): ChangeInput => ({
+      kind: "helper",
+      op: "create",
+      fields: { helper: "input_boolean", name: "Taxis away mode", entity_id: "input_boolean.taxis_away", icon: "mdi:home-export-outline", ...over },
+    });
+
+    it("takes a schedule with its periods, in its own domain, with nothing else", () => {
+      expect(validateInput(schedule())).toBeNull();
+      expect(validateInput(schedule({ periods: "Mon-Fri 17:00-23:00; Sat-Sun 08:00-23:00" }))).toBeNull();
+      for (const periods of ["", "Mon", "Mon-Fri 25:00-26:00", "Mon 09:00-08:00", 5, null, "x".repeat(400)]) expect(validateInput(schedule({ periods })), String(periods)).toMatch(/wouldn't accept/);
+      expect(validateInput(schedule({ entity_id: "timer.living_climate" }))).toMatch(/has to start with “schedule\.”/);
+      expect(validateInput({ kind: "helper", op: "create", fields: { helper: "schedule", name: "x", entity_id: "schedule.x", area_id: "a" } })).toMatch(/needs its periods/);
+      expect(validateInput(schedule({ duration: 60 }))).toMatch(/can't be set on a schedule/);
+      expect(validateInput(schedule({ entities: ["light.a"] }))).toMatch(/can't be set on a schedule/);
+      expect(validateInput({ kind: "helper", op: "create", fields: { helper: "timer", name: "x", entity_id: "timer.x", area_id: "a", duration: 60, periods: "Mon 08:00-09:00" } })).toMatch(/can't be set on a timer/);
+      expect(validateInput({ kind: "helper", op: "create", fields: { helper: "group", group_type: "light", name: "x", entity_id: "light.x", entities: ["light.a"], area_id: "a", periods: "Mon 08:00-09:00" } })).toMatch(/Only a timer/);
+    });
+
+    it("changes a schedule's periods, and nothing else about it", () => {
+      expect(validateInput({ kind: "helper", op: "update", targetId: "schedule.living_climate", fields: { periods: "Mon 08:00-09:00" } })).toBeNull();
+      expect(validateInput({ kind: "helper", op: "update", targetId: "schedule.living_climate", fields: { periods: "nope" } })).toMatch(/wouldn't accept/);
+      expect(validateInput({ kind: "helper", op: "update", targetId: "schedule.living_climate", fields: { periods: "Mon 08:00-09:00", name: "x" } })).toMatch(/only change its members, a timer's duration or a schedule's periods/);
+      expect(validateInput({ kind: "helper", op: "update", targetId: "schedule.living_climate", fields: { name: "x" } })).toMatch(/only change its members, a timer's duration or a schedule's periods/);
+      expect(validateInput({ kind: "helper", op: "delete", targetId: "schedule.living_climate" })).toMatch(/not deleted/);
+    });
+
+    it("takes the house's two switches with no area, and only those", () => {
+      expect(validateInput(houseSwitch())).toBeNull();
+      expect(validateInput(houseSwitch({ name: "Taxis sleep mode", entity_id: "input_boolean.taxis_sleep" }))).toBeNull();
+      expect(validateInput(houseSwitch({ area_id: "living_room" }))).toMatch(/have no area/);
+      // Any other toggle needs its area.
+      expect(validateInput(houseSwitch({ entity_id: "input_boolean.guest_mode" }))).toMatch(/needs an area/);
+      expect(validateInput(houseSwitch({ entity_id: "input_boolean.taxis_other" }))).toMatch(/needs an area/);
+      expect(validateInput(houseSwitch({ entity_id: "input_boolean.living_paused", area_id: "living_room" }))).toBeNull();
+      // A timer cannot take the house id.
+      expect(validateInput({ kind: "helper", op: "create", fields: { helper: "timer", name: "x", entity_id: "timer.taxis_away", duration: 60 } })).toMatch(/needs an area/);
+    });
+
+    it("takes the climate automation with its blueprint and inputs, and no other recipe's", () => {
+      const c = climate(inPlace);
+      expect(validateInput(c.inputs[0])).toBeNull();
+      const fields = c.inputs[0].fields as { use_blueprint: { path: string; input: Record<string, unknown> } };
+      expect(validateInput({ ...c.inputs[0], fields: { ...fields, use_blueprint: { path: OCC.path, input: fields.use_blueprint.input } } })).toMatch(/another blueprint|wouldn't accept/);
+      expect(validateInput({ ...c.inputs[0], fields: { ...fields, use_blueprint: { path: CLIMATE.path, input: { ...fields.use_blueprint.input, season: "auto" } } } })).toMatch(/wouldn't accept/);
+      expect(validateInput({ ...c.inputs[0], fields: { ...fields, automation_id: "taxis_occupancy_living" } })).toMatch(/taxis_<recipe>_<area code>/);
+    });
+  });
+});
+
 describe("the chosen cells", () => {
   it("send each blueprint once", () => {
     const cells = plan([motion, spots, { id: "binary_sensor.kitchen_pir", dc: "motion", area: "kitchen" }, { id: "light.kitchen_x", area: "kitchen" }]);
@@ -875,9 +1374,9 @@ describe("what the change list accepts", () => {
 
   it("changes a timer's duration, and nothing else about a timer", () => {
     expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 480 } })).toBeNull();
-    expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 480, name: "x" } })).toMatch(/only change its members or a timer's duration/);
-    expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { name: "x" } })).toMatch(/only change its members or a timer's duration/);
-    expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 480, entities: ["light.a"] } })).toMatch(/only change its members or a timer's duration/);
+    expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 480, name: "x" } })).toMatch(/only change its members, a timer's duration or a schedule's periods/);
+    expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { name: "x" } })).toMatch(/only change its members, a timer's duration or a schedule's periods/);
+    expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 480, entities: ["light.a"] } })).toMatch(/only change its members, a timer's duration or a schedule's periods/);
     expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 5 } })).toMatch(/wouldn't accept/);
     expect(validateInput({ kind: "helper", op: "delete", targetId: "timer.living_hold" })).toMatch(/not deleted/);
   });

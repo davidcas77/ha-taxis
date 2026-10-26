@@ -24,7 +24,7 @@ import type {
   RenameRefs,
 } from "../shared/types.ts";
 import { runHealth, type HealthReportResponse } from "../shared/health.ts";
-import { canonicalLightGroups, type RecipesResponse } from "../shared/recipes.ts";
+import { areaThermostats, canonicalLightGroups, type RecipesResponse } from "../shared/recipes.ts";
 import { isRename } from "./changes/apply.ts";
 import { applyAll } from "./changes/all.ts";
 import { overlayChanges } from "./changes/overlay.ts";
@@ -334,7 +334,7 @@ app.get("/api/recipes/state", async (c) => {
   if (!ha || !rest) return c.json<RecipesResponse>({ ok: false, error: target.ok ? "Home Assistant is not configured." : target.reason }, 503);
   try {
     const { read } = await loadRead(c.req.query("refresh") === "1");
-    const installed = await readInstalled({ ha, rest }, read.raw, canonicalLightGroups(read.live, settings.naming()));
+    const installed = await readInstalled({ ha, rest }, read.raw, canonicalLightGroups(read.live, settings.naming()), areaThermostats(read.live));
     return c.json<RecipesResponse>({ ok: true, installed });
   } catch (e) {
     const message = errorText(e);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { BLUEPRINTS, BLUEPRINT_PATH_RE, RECIPE_KEYS, blueprintByPath, blueprintForRecipe, blueprintVersion, checkBlueprintInput } from "./blueprints.ts";
 import { ENTITY_ID_RE } from "./changes.ts";
+import { PRECEDENCE } from "./climate.ts";
 
 // A parser for the small part of YAML the blueprints use: block mappings and
 // sequences, plain and double-quoted scalars, `!input name`, and `[]` / `{}`.
@@ -469,6 +470,167 @@ describe("media off", () => {
   it("refers only to trigger ids it has", () => checkTriggerIds(tree));
 });
 
+describe("area climate", () => {
+  const tree = parsed("taxis/area_climate.yaml");
+  const triggers = list(tree.triggers).map(obj);
+  const actions = list(tree.actions).map(obj);
+  // The rules: the variables step after the start-up wait.
+  const rules = obj(obj(actions[1]).variables);
+  const text = (name: string) => String(rules[name]);
+  const inputOf = (t: Obj) => (t.entity_id as { input?: string } | undefined)?.input;
+  // The per-thermostat steps: the variables, then the check and the branches.
+  const perThermostat = list(obj(obj(list(obj(actions[2]).then)[0]).repeat).sequence).map(obj);
+  const each = obj(perThermostat[0].variables);
+  const branches = list(obj(list(obj(perThermostat[1]).then)[0]).choose).map(obj);
+
+  it("restarts when it is triggered again, so the newest picture replaces one still running", () => {
+    expect(tree.mode).toBe("restart");
+  });
+
+  it("is triggered by the inputs, never by the thermostats it sets", () => {
+    expect(triggers.map((t) => t.trigger)).toEqual(["homeassistant", ...Array(9).fill("state"), "time", "time"]);
+    expect(triggers.map(inputOf).filter(Boolean)).toEqual([
+      "opening_entities",
+      "opening_entities",
+      "opening_entities",
+      "away_entity",
+      "sleep_entity",
+      "bed_entities",
+      "occupied_entities",
+      "occupied_entities",
+      "schedule_entity",
+    ]);
+    expect(triggers[0]).toEqual({ trigger: "homeassistant", id: "start", event: "start" });
+    // A change of state only (to: null): a schedule's next event and a sensor's battery change all the time.
+    const plain = triggers.filter((t) => t.trigger === "state" && !("for" in t) && t.to !== "on" && t.to !== "off");
+    expect(plain).toHaveLength(6);
+    for (const t of plain) expect(t.to).toBeNull();
+  });
+
+  it("gives the window delay, the restore delay and the eco delay a trigger of their own", () => {
+    const withFor = triggers.filter((t) => "for" in t).map((t) => [inputOf(t), t.to, obj(t.for).minutes]);
+    expect(withFor).toEqual([
+      ["opening_entities", "on", { input: "window_delay" }],
+      ["opening_entities", "off", { input: "restore_delay" }],
+      ["occupied_entities", "off", { input: "eco_after_clear" }],
+    ]);
+  });
+
+  it("comes back at the start and at the edges of the night window", () => {
+    expect(triggers.filter((t) => t.trigger === "time").map((t) => t.at)).toEqual([{ input: "night_start" }, { input: "night_end" }]);
+    // After a restart the states were just set: it waits out the restore delay first.
+    expect(actions[0]).toEqual({ if: [{ condition: "trigger", id: "start" }], then: [{ delay: { minutes: { input: "restore_delay" } } }] });
+    checkTriggerIds(tree);
+  });
+
+  it("does nothing while the pause switch is on", () => {
+    expect(list(tree.conditions).map(obj)).toEqual([{ condition: "state", entity_id: { input: "pause_switch" }, state: "off" }]);
+  });
+
+  it("follows the precedence of shared/climate.ts, in that order, and eco last", () => {
+    const chain = [...text("decision").matchAll(/\{% (?:el)?if (\w+) %\}(\w+)/g)].map((m) => [m[1], m[2]]);
+    expect(chain).toEqual(PRECEDENCE.map(([flag, decision]) => [flag, decision]));
+    expect(text("decision")).toMatch(/\{% else %\}eco\{% endif %\}$/);
+    // Every flag in the chain is a variable of the same name, worked out before the decision.
+    const names = Object.keys(rules);
+    for (const [flag] of PRECEDENCE) {
+      expect(names.indexOf(flag), flag).toBeGreaterThanOrEqual(0);
+      expect(names.indexOf(flag), flag).toBeLessThan(names.indexOf("decision"));
+    }
+  });
+
+  it("keeps each rule as the TypeScript says it", () => {
+    expect(text("season_off")).toBe("{{ season == 'off' }}");
+    // Window: open for the delay. Pending: open for less, or closed less than the restore delay ago.
+    expect(text("window_rule")).toBe("{{ (open_now | count) > 0 and (open_seconds | float(0)) >= (window_delay | float(0)) * 60 }}");
+    expect(text("window_pending")).toMatch(/\(open_seconds \| float\(0\)\) < \(window_delay \| float\(0\)\) \* 60/);
+    expect(text("window_pending")).toMatch(/\(open_now \| count\) == 0 and \(shut_now \| count\) > 0 and \(shut_seconds \| float\(0\)\) < \(restore_delay \| float\(0\)\) \* 60/);
+    // The longest an opening has been open; the shortest one has been closed.
+    expect(text("open_seconds")).toMatch(/if s > ns\.v %\}\{% set ns\.v = s/);
+    expect(text("shut_seconds")).toMatch(/if s < ns\.v %\}\{% set ns\.v = s/);
+    expect(text("open_now")).toMatch(/select\('is_state', 'on'\)/);
+    expect(text("shut_now")).toMatch(/select\('is_state', 'off'\)/);
+    // Away is the house switch; sleep needs a bedroom, then a bed sensor on or the house sleep switch.
+    expect(text("away")).toBe("{{ is_state(away_entity, 'on') }}");
+    expect(text("sleeping")).toBe("{{ is_bedroom and ((bed_entities | select('is_state', 'on') | list | count) > 0 or is_state(sleep_entity, 'on')) }}");
+    expect(text("in_night")).toMatch(/\(t >= night_start or t < night_end\) if night_start > night_end else \(night_start <= t < night_end\)/);
+    // Comfort: the schedule on, and (occupancy not needed, or occupied, or clear for less than the eco delay).
+    expect(text("comfort_now")).toBe("{{ is_state(schedule_entity, 'on') and ((not needs_occupancy) or occupied_ok) }}");
+    expect(text("occupied_ok")).toBe(
+      "{{ occupied_entity == '' or not is_state(occupied_entity, 'off') or (now() - states[occupied_entity].last_changed).total_seconds() < (eco_after_clear | float(0)) * 60 }}",
+    );
+  });
+
+  it("clamps the target to lowest and highest, and gives frost protection no clamp", () => {
+    expect(text("target_temp")).toBe("{{ ([[base_temp | float(0), min_temp | float(0)] | max, max_temp | float(0)] | min) if base_temp is not none else none }}");
+    expect(text("base_temp")).toMatch(/^\{\{ \{'comfort': comfort_temp, 'eco': eco_temp, 'night': night_temp, 'sleep': sleep_temp, 'away': away_temp\}\[decision\]/);
+    // A window and the others that set no temperature have none.
+    expect(text("base_temp")).toMatch(/if decision in \['comfort', 'eco', 'night', 'sleep', 'away'\] else none \}\}$/);
+    // Night uses the sleep preset.
+    expect(text("preset_name")).toMatch(/'sleep': preset_sleep, 'night': preset_sleep\}\[decision\]/);
+    expect(text("mode_wanted")).toBe("{{ 'cool' if season == 'cooling' else 'heat' }}");
+  });
+
+  it("does nothing for idle and hold, then goes through each thermostat", () => {
+    const gate = obj(actions[2]);
+    expect(obj(list(gate.if)[0]).value_template).toBe("{{ decision not in ['idle', 'hold'] }}");
+    const repeat = obj(obj(list(gate.then)[0]).repeat);
+    expect(repeat.for_each).toBe("{{ climate_entities }}");
+    expect(perThermostat).toHaveLength(2);
+  });
+
+  it("works out for each thermostat the device's own limits and step, and what differs", () => {
+    const goal = String(each.goal);
+    expect(goal).toMatch(/^\{% set raw = frost_temp if decision == 'window' else target_temp %\}/);
+    expect(goal).toMatch(/state_attr\(t, 'min_temp'\)/);
+    expect(goal).toMatch(/state_attr\(t, 'max_temp'\)/);
+    expect(goal).toMatch(/state_attr\(t, 'target_temp_step'\)/);
+    // Rounded half up to the step, the way goalFor does.
+    expect(goal).toMatch(/\(\(v \/ step \+ 0\.5\) \| int\) \* step/);
+    expect(String(each.differs)).toBe("{{ cur_temp is not number or ((cur_temp | float(0)) - goal) | abs >= 0.05 }}");
+    expect(String(each.skip)).toBe("{{ st in ['unavailable', 'unknown'] or (st == 'off' and not auto_hvac_on) }}");
+    expect(String(each.use_preset)).toBe("{{ preset_name != '' and preset_name in presets }}");
+    expect(String(each.presets)).toMatch(/state_attr\(t, 'preset_modes'\) or \[\]/);
+    expect(String(each.on_ok)).toBe("{{ st != 'off' or (mode_wanted in modes and (reference is none or (reference > goal if season == 'cooling' else reference < goal))) }}");
+  });
+
+  it("calls climate services only, each tolerant of a thermostat that refuses, on the one thermostat", () => {
+    expect(servicesOf(tree)).toEqual(["climate.set_hvac_mode", "climate.set_preset_mode", "climate.set_temperature"]);
+    for (const o of everyObject(tree).filter((x) => typeof x.action === "string")) {
+      expect(o.continue_on_error, String(o.action)).toBe(true);
+      expect(obj(o.target).entity_id).toBe("{{ t }}");
+    }
+  });
+
+  it("sends the temperature and the preset only when they differ from what the thermostat shows", () => {
+    const json = JSON.stringify(branches);
+    expect(json).toMatch(/"value_template":"\{\{ differs \}\}"\}\],"then":\[\{"action":"climate\.set_temperature"/);
+    expect(json).toMatch(/"value_template":"\{\{ cur_preset != preset_name \}\}"\}\],"then":\[\{"action":"climate\.set_preset_mode"/);
+  });
+
+  it("switches a thermostat off only when allowed, and on only when allowed, wanted and the room needs it", () => {
+    expect(branches).toHaveLength(2);
+    const [window, normal] = branches;
+    expect(JSON.stringify(window.conditions)).toBe(JSON.stringify([{ condition: "template", value_template: "{{ decision == 'window' }}" }]));
+    const json = JSON.stringify(window);
+    // Off: the switch is on and the thermostat has the mode. Frost protection otherwise, in heating only.
+    expect(json).toMatch(/"value_template":"\{\{ auto_hvac_on and 'off' in modes \}\}"[^]*"hvac_mode":"off"/);
+    expect(json).toMatch(/"value_template":"\{\{ season == 'heating' and st != 'off' and differs \}\}"/);
+    // A window never uses a preset.
+    expect(json).not.toMatch(/set_preset_mode/);
+    // On: only a thermostat on_ok lets through; a thermostat that is off got this far only because the switch is on.
+    expect(JSON.stringify(normal.conditions)).toBe(JSON.stringify([{ condition: "template", value_template: "{{ on_ok }}" }]));
+    expect(JSON.stringify(normal)).toMatch(/"value_template":"\{\{ st == 'off' \}\}"\}\],"then":\[\{"action":"climate\.set_hvac_mode"[^]*"hvac_mode":"\{\{ mode_wanted \}\}"/);
+    expect(JSON.stringify(perThermostat[1])).toMatch(/^\{"if":\[\{"condition":"template","value_template":"\{\{ not skip \}\}"\}\]/);
+  });
+
+  it("keeps the comfort periods only to tell when the schedule needs updating", () => {
+    expect(variable(tree, "comfort_periods")).toEqual({ input: "comfort_periods" });
+    expect(inputsUsed(tree.triggers as Node)).not.toContain("comfort_periods");
+    expect(inputsUsed(tree.actions as Node)).not.toContain("comfort_periods");
+  });
+});
+
 describe("blueprintVersion", () => {
   it("reads the version line, and nothing else", () => {
     expect(blueprintVersion("A blueprint. Taxis blueprint version 12.")).toBe(12);
@@ -533,6 +695,65 @@ describe("checkBlueprintInput", () => {
     expect(checkBlueprintInput("taxis/media_off.yaml", { ...media, hold_timer: "timer.x" }, isId)).toMatch(/isn't an input/);
   });
 
+  describe("area climate", () => {
+    const climate = {
+      climate_entities: ["climate.living_valve"],
+      away_entity: "input_boolean.taxis_away",
+      sleep_entity: "input_boolean.taxis_sleep",
+      schedule_entity: "schedule.living_climate",
+      pause_switch: "input_boolean.living_paused",
+    };
+    const path = "taxis/area_climate.yaml";
+
+    it("accepts the required inputs alone, and every optional kind", () => {
+      expect(checkBlueprintInput(path, climate, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(
+          path,
+          {
+            ...climate,
+            opening_entities: ["binary_sensor.living_windows"],
+            occupied_entities: ["binary_sensor.living_occupied"],
+            bed_entities: [],
+            is_bedroom: false,
+            temperature_entity: "sensor.living_temperature",
+            comfort_periods: "Mon-Fri 17:00-23:00",
+            comfort_needs_occupancy: true,
+            season: "cooling",
+            auto_hvac_on: false,
+            comfort_temp: 21,
+            frost_temp: 7,
+            window_delay: 0,
+            night_start: "23:00:00",
+            preset_comfort: "Comfort",
+            preset_sleep: "",
+          },
+          isId,
+        ),
+      ).toBeNull();
+    });
+
+    it("refuses a value of the wrong kind", () => {
+      const bad = (extra: Record<string, unknown>) => checkBlueprintInput(path, { ...climate, ...extra }, isId);
+      expect(bad({ is_bedroom: "yes" })).toMatch(/is_bedroom/);
+      expect(bad({ auto_hvac_on: 1 })).toMatch(/auto_hvac_on/);
+      expect(bad({ season: "auto" })).toMatch(/season/);
+      expect(bad({ season: 5 })).toMatch(/season/);
+      expect(bad({ preset_eco: 5 })).toMatch(/preset_eco/);
+      expect(bad({ preset_eco: "x".repeat(301) })).toMatch(/preset_eco/);
+      expect(bad({ comfort_periods: "line one\nline two" })).toMatch(/comfort_periods/);
+      expect(bad({ away_entity: "switch.away" })).toMatch(/away_entity/);
+      expect(bad({ schedule_entity: "input_boolean.x" })).toMatch(/schedule_entity/);
+      expect(bad({ climate_entities: ["sensor.x"] })).toMatch(/climate_entities/);
+      expect(bad({ temperature_entity: "binary_sensor.x" })).toMatch(/temperature_entity/);
+      expect(bad({ comfort_temp: "21" })).toMatch(/comfort_temp/);
+      expect(bad({ night_end: "07:00" })).toMatch(/night_end/);
+      expect(bad({ hold_timer: "timer.x" })).toMatch(/isn't an input/);
+      const { schedule_entity: _s, ...noSchedule } = climate;
+      expect(checkBlueprintInput(path, noSchedule, isId)).toMatch(/“schedule_entity” is missing/);
+    });
+  });
+
   it("refuses inputs that are not an object, and a path with no blueprint", () => {
     for (const bad of [null, "x", 5, [], undefined]) expect(checkBlueprintInput("taxis/occupancy.yaml", bad, isId)).toMatch(/weren't readable/);
     expect(checkBlueprintInput("taxis/other.yaml", occupancy, isId)).toMatch(/no Taxis blueprint/);
@@ -542,7 +763,7 @@ describe("checkBlueprintInput", () => {
 
 describe("blueprint paths", () => {
   it("allow taxis/<lower-case name>.yaml and nothing else", () => {
-    for (const ok of ["taxis/occupancy.yaml", "taxis/motion_lights.yaml", "taxis/media_off.yaml", "taxis/a1.yaml"]) expect(ok).toMatch(BLUEPRINT_PATH_RE);
+    for (const ok of ["taxis/occupancy.yaml", "taxis/motion_lights.yaml", "taxis/media_off.yaml", "taxis/area_climate.yaml", "taxis/a1.yaml"]) expect(ok).toMatch(BLUEPRINT_PATH_RE);
     for (const bad of ["taxis/Occupancy.yaml", "taxis/sub/x.yaml", "taxis/../x.yaml", "taxis/x.yml", "taxis/.yaml", "other/x.yaml", "/taxis/x.yaml", "taxis/x.yaml\n", "taxis/x y.yaml", "taxis/x.yaml/", "taxis/x-y.yaml"]) {
       expect(bad, bad).not.toMatch(BLUEPRINT_PATH_RE);
     }

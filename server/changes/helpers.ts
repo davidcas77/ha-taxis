@@ -1,12 +1,13 @@
 import { isTempId, sameValue } from "../../shared/changes.ts";
+import { parsePeriods, sameSchedule, scheduleDays } from "../../shared/periods.ts";
 import { formatDuration, parseDuration } from "../../shared/recipes.ts";
 import type { Change } from "../../shared/types.ts";
 import type { RawEntity, RawRegistry } from "../model/hierarchy.ts";
 import type { Outcome } from "./apply.ts";
 
 // Applying helper changes: creating a group, a min/max helper or one of the
-// recipes' helpers (a timer, a toggle, a template sensor), and changing a
-// group's members or a timer's duration. Groups, min/max and template sensors
+// recipes' helpers (a timer, a toggle, a template sensor, a schedule), and
+// changing a group's members, a timer's duration or a schedule's periods. Groups, min/max and template sensors
 // are offered by Home Assistant only as config flows over REST (the same
 // dialogs the UI shows), so each is a short conversation:
 //
@@ -17,9 +18,12 @@ import type { Outcome } from "./apply.ts";
 //   change a group    start the options flow of its config entry, send the form
 //                     with the members changed and every other value as it was
 //
-// A timer and a toggle are made the way Home Assistant's Helpers page makes
-// them, over the WebSocket (timer/create, input_boolean/create), and a timer's
-// duration is changed with timer/update.
+// A timer, a toggle and a schedule are made the way Home Assistant's Helpers page
+// makes them, over the WebSocket (timer/create, input_boolean/create,
+// schedule/create), a timer's duration is changed with timer/update and a
+// schedule's periods with schedule/update. Home Assistant answers a schedule
+// write with the schedule it stored, which is what the periods are checked
+// against (there is no schedule read).
 //
 // A created helper gets the name Home Assistant derives from its title, so a
 // last step finds its entity in the entity registry (by its config entry, or for
@@ -60,9 +64,9 @@ export type HelperIO = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-type Kind = "group" | "min_max" | "timer" | "input_boolean" | "template";
-const PLATFORM: Record<Kind, string> = { group: "group", min_max: "min_max", timer: "timer", input_boolean: "input_boolean", template: "template" };
-const TITLES: Record<Kind, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor" };
+type Kind = "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule";
+const PLATFORM: Record<Kind, string> = { group: "group", min_max: "min_max", timer: "timer", input_boolean: "input_boolean", template: "template", schedule: "schedule" };
+const TITLES: Record<Kind, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule" };
 // Made by a config flow, so their entity has a config entry. A timer and a
 // toggle are storage helpers: no config entry, found by the id they were given.
 const FLOW_MADE: ReadonlySet<Kind> = new Set<Kind>(["group", "min_max", "template"]);
@@ -202,6 +206,7 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
       icon?: string | null;
       state_template?: string;
       device_class?: string;
+      periods?: string;
     };
     const canonical = a.entity_id;
     const kind = TITLES[a.helper];
@@ -250,6 +255,14 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
           if (typeof item?.id !== "string") throw new Error("Home Assistant didn't say which timer it made.");
           uniqueId = item.id;
           made = await entityOfStorage("timer", item.id).catch(() => null);
+        } else if (a.helper === "schedule") {
+          const parsed = parsePeriods(a.periods);
+          if (!parsed.ok) throw new Error(parsed.error);
+          const item = await io.ha.write<Record<string, unknown>>("schedule/create", { name: a.name, ...scheduleDays(parsed.days) });
+          if (typeof item?.id !== "string") throw new Error("Home Assistant didn't say which schedule it made.");
+          uniqueId = item.id;
+          if (!sameSchedule(item, parsed.days)) throw new Error(`Home Assistant made the schedule, but stored other periods than Taxis sent. Check ${canonical} in Home Assistant.`);
+          made = await entityOfStorage("schedule", item.id).catch(() => null);
         } else if (a.helper === "input_boolean") {
           // No initial state: a new toggle is off, so the area's recipes run until it is turned on.
           const item = await io.ha.write<{ id?: unknown }>("input_boolean/create", { name: a.name, ...(a.icon ? { icon: a.icon } : {}) });
@@ -328,6 +341,26 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
     return { ok: true, message: "Applied." };
   };
 
+  // A schedule's periods: one call, checked against the schedule Home Assistant
+  // answers with. Skipped when it has no storage id (a YAML schedule).
+  const updateSchedule = async (c: Change): Promise<Done> => {
+    const parsed = parsePeriods(c.after.periods);
+    if (!parsed.ok) return { ok: false, message: parsed.error };
+    const target = current(c.targetId);
+    const item = entryOf(target);
+    if (!item) return { ok: false, message: "It's no longer in Home Assistant." };
+    if (item.platform !== "schedule" || !item.unique_id) return { ok: false, message: "It isn't a schedule set up in the Home Assistant UI, so its periods can't be changed here." };
+    const name = item.name ?? item.original_name ?? String(before.states.find((s) => s.entity_id === target)?.attributes?.friendly_name ?? "");
+    if (!name) return { ok: false, message: "Taxis couldn't read the schedule's name, which Home Assistant needs to change it." };
+    try {
+      const answer = await io.ha.write<Record<string, unknown>>("schedule/update", { schedule_id: item.unique_id, name, ...scheduleDays(parsed.days) });
+      if (!sameSchedule(answer, parsed.days)) return { ok: false, message: "Home Assistant answered with other periods than Taxis sent. Check the schedule in Home Assistant." };
+    } catch (e) {
+      return { ok: false, message: (e as Error).message };
+    }
+    return { ok: true, message: "Applied." };
+  };
+
   const updateOne = async (c: Change): Promise<Done> => {
     const wanted = ((c.after.entities as string[]) ?? []).map(current);
     const target = current(c.targetId);
@@ -352,7 +385,7 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
   // Creations first, so a group's update never races the helper it was planned
   // beside; each one on its own, because the next needs the registry as it is.
   for (const c of [...changes.filter((x) => x.op === "create"), ...changes.filter((x) => x.op === "update")]) {
-    const done = await (c.op === "create" ? createOne(c) : "duration" in c.after ? updateTimer(c) : updateOne(c));
+    const done = await (c.op === "create" ? createOne(c) : "duration" in c.after ? updateTimer(c) : "periods" in c.after ? updateSchedule(c) : updateOne(c));
     outcome.set(c.id, { changeId: c.id, ok: done.ok, message: done.message, ...(done.ok && done.details?.length ? { details: done.details } : {}) });
   }
 
@@ -390,6 +423,8 @@ function durationOf(reg: RawRegistry, entityId: string): number | null {
 
 // Null when Home Assistant now shows what the change set out to do.
 export function verify(c: Change, fresh: RawRegistry, current: (id: string) => string = (id) => id, area: (id: string) => string = (id) => id): string | null {
+  // A schedule's periods were checked against Home Assistant's answer to the write.
+  if (c.op === "update" && "periods" in c.after) return null;
   if (c.op === "update" && "duration" in c.after) {
     const seconds = durationOf(fresh, current(c.targetId));
     return seconds === c.after.duration ? null : `Its duration reads ${seconds === null ? "nothing" : `${seconds / 60} min`} in Home Assistant, not ${(c.after.duration as number) / 60} min.`;

@@ -1,9 +1,10 @@
+import { HOUSE_HELPER_IDS } from "./climate.ts";
 import { canonicalId, effectiveSuffixes, HELPERS, helperExclusions, planHelpers } from "./helpers.ts";
 import { deviceUses, emptyRange, ENTITY_DOMAINS, entityIdsIn, gatingConditions, serviceCalls, stateConditions, type ServiceCall } from "./health-scan.ts";
 import { areaInventory, CAPABILITY_LABEL, type AreaInventory, type InventoryRow, type InventorySettings } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import type { ParameterSettings } from "./parameters.ts";
-import { planRecipes, RECIPE_LABEL, runtimeIds, type RecipeInstalled } from "./recipes.ts";
+import { automationIdFor, planRecipes, RECIPE_LABEL, runtimeIds, type RecipeInstalled } from "./recipes.ts";
 import type { Change, ChangeInput, EntityItem, Hierarchy, RefKind } from "./types.ts";
 
 // Health: rule-based checks over what Taxis already reads, to find what is broken
@@ -21,6 +22,7 @@ export const HEALTH_CHECKS = [
   { key: "conditions", label: "Conditions" },
   { key: "switches", label: "One-way switches" },
   { key: "lights", label: "Competing automations" },
+  { key: "climate", label: "Climate" },
   { key: "setup", label: "Taxis setup" },
   { key: "helpers", label: "Unused helpers" },
   { key: "devices", label: "Device-based" },
@@ -42,6 +44,9 @@ export type HealthOptions = {
 
 export const DEFAULT_HEALTH_OPTIONS: HealthOptions = { unavailableHours: 24, staleDays: 30 };
 export const HEALTH_LIMITS = { unavailableHours: { min: 1, max: 720 }, staleDays: { min: 1, max: 365 } } as const;
+
+// A thermostat that Area climate controls is reported after this long (check "Climate").
+export const THERMOSTAT_UNAVAILABLE_MINUTES = 10;
 
 // A sensor an area counts on is reported after this long (check "Taxis setup"),
 // which is sooner than the general check so a dead sensor shows up the same day.
@@ -192,6 +197,8 @@ type Ctx = {
   exclusions: (areaId: string) => ReadonlySet<string>;
   // Ids Taxis makes itself (an area's canonical and runtime helpers).
   taxisIds: Set<string>;
+  // The areas that have Area climate installed, with the inputs of its automation.
+  climateAreas: Map<string, Record<string, unknown>>;
   exists: (id: string) => boolean;
   stateOf: (id: string) => string | undefined;
 };
@@ -228,6 +235,13 @@ function context(input: HealthInput): Ctx {
     for (const spec of HELPERS) taxisIds.add(canonicalId(spec.domain, code, suffix[spec.key]));
     for (const id of Object.values(runtimeIds(code))) taxisIds.add(id);
   }
+  for (const id of HOUSE_HELPER_IDS) taxisIds.add(id);
+  const climateAreas = new Map<string, Record<string, unknown>>();
+  for (const area of Object.values(h.areas)) {
+    const item = readable.find((i) => i.kind === "automation" && i.id === automationIdFor("area_climate", codes[area.id].code) && isTaxisItem(i));
+    const ub = item && isObject(item.config) ? item.config.use_blueprint : undefined;
+    if (item && isObject(ub)) climateAreas.set(area.id, isObject(ub.input) ? ub.input : {});
+  }
   return {
     h,
     states: snapshot.states,
@@ -249,6 +263,7 @@ function context(input: HealthInput): Ctx {
     inv,
     exclusions: helperExclusions(h, input.naming),
     taxisIds,
+    climateAreas,
     exists: (id) => Object.hasOwn(h.entities, id) || Object.hasOwn(snapshot.states, id),
     stateOf: (id) => (Object.hasOwn(snapshot.states, id) ? snapshot.states[id].state : h.entities[id]?.state ?? undefined),
   };
@@ -569,9 +584,9 @@ function lightsBehind(c: Ctx, id: string, seen = new Set<string>()): string[] {
   return [id, ...(e?.members ?? []).filter((m) => m.startsWith("light.")).flatMap((m) => lightsBehind(c, m, seen))];
 }
 
-function lightChecks(c: Ctx): HealthFinding[] {
+// The service calls an item makes, and those of the scripts it calls (to depth 4).
+function callCollector(c: Ctx): (item: HealthItem, seen?: Set<string>, depth?: number) => ServiceCall[] {
   const scripts = new Map(c.readable.filter((i) => i.kind === "script" && i.entityId).map((i) => [i.entityId!, i]));
-  // The calls an item makes, and those of the scripts it calls.
   const callsOf = (item: HealthItem, seen = new Set<string>(), depth = 0): ServiceCall[] => {
     if (seen.has(itemKey(item)) || depth > 4) return [];
     seen.add(itemKey(item));
@@ -582,6 +597,11 @@ function lightChecks(c: Ctx): HealthFinding[] {
     });
     return [...own, ...called];
   };
+  return callsOf;
+}
+
+function lightChecks(c: Ctx): HealthFinding[] {
+  const callsOf = callCollector(c);
 
   const controllers = new Map<string, Set<string>>();
   const automations = c.readable.filter((i) => i.kind === "automation" && enabled(c, i));
@@ -633,6 +653,115 @@ function lightChecks(c: Ctx): HealthFinding[] {
       item: asItem(items[0]),
       title: `${items.length} automations switch ${nameOf(c, lead)}${lights.length > 1 ? ` and ${plural(lights.length - 1, "other light")}` : ""}`,
       detail: `${names(items.map(label))} ${items.length === 2 ? "both" : "all"} turn the same lights on or off: ${names(lights.map((id) => nameOf(c, id)))}. They can undo each other. Scripts they call count. Keep one automation in charge of these lights, or make the others wait for it.`,
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// 6b: the thermostats Area climate controls.
+// ---------------------------------------------------------------------------
+
+const CLIMATE_SERVICES = new Set([
+  "climate.set_temperature",
+  "climate.set_hvac_mode",
+  "climate.set_preset_mode",
+  "climate.turn_on",
+  "climate.turn_off",
+  "climate.toggle",
+  "homeassistant.turn_on",
+  "homeassistant.turn_off",
+  "homeassistant.toggle",
+]);
+
+const stringList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+function climateChecks(c: Ctx): HealthFinding[] {
+  const out: HealthFinding[] = [];
+  const areaName = (id: string) => c.h.areas[id]?.name ?? id;
+
+  for (const [areaId, input] of c.climateAreas) {
+    // A thermostat that has stopped answering: the area keeps whatever it was last set to.
+    const down: { id: string; ms: number | null }[] = [];
+    for (const id of stringList(input.climate_entities)) {
+      const s = c.states[id];
+      if (s && (s.state === "unavailable" || s.state === "unknown")) {
+        const t = timeOf(s.lastChanged);
+        const ms = t === null ? null : c.now - t;
+        if (ms === null || ms >= THERMOSTAT_UNAVAILABLE_MINUTES * 60_000) down.push({ id, ms });
+      }
+    }
+    if (down.length > 0) {
+      out.push({
+        id: `climate:thermostat:${areaId}`,
+        check: "climate",
+        severity: "warning",
+        area: areaId,
+        entity: down[0].id,
+        entities: down.map((d) => d.id),
+        title: `${areaName(areaId)} has ${plural(down.length, "thermostat")} that ${down.length === 1 ? "is" : "are"} not answering`,
+        detail: `${down.map((d) => `${nameOf(c, d.id)}${d.ms === null ? "" : ` for ${ageText(d.ms)}`}`).join(", ")}. Area climate cannot set ${down.length === 1 ? "it" : "them"} meanwhile, and ${down.length === 1 ? "it keeps" : "they keep"} the last setpoint. Check the batteries, the hub or the integration.`,
+        fix: { kind: "link", label: "Open the area's Capabilities", to: { page: "area", areaId, tab: "capabilities" } },
+      });
+    }
+
+    // No temperature reference: a thermostat is switched on again without looking at the room.
+    if (typeof input.temperature_entity !== "string" || input.temperature_entity === "") {
+      out.push({
+        id: `climate:reference:${areaId}`,
+        check: "climate",
+        severity: input.auto_hvac_on === true ? "warning" : "info",
+        area: areaId,
+        title: `${areaName(areaId)} has Area climate but no temperature reference`,
+        detail: `The area has no temperature helper, so ${
+          input.auto_hvac_on === true ? "a thermostat that is off is switched on again without checking whether the room needs it" : "nothing can tell Area climate how warm the room is, and a thermostat that takes an outside sensor has none to take"
+        }. The helper averages the area's temperature sensors; make it on the Helpers tab.`,
+        fix: { kind: "link", label: "Open Helpers", to: { page: "parameters", tab: "helpers" } },
+      });
+    }
+  }
+
+  // Other automations that set the same thermostats. Only where Area climate is one
+  // of the controllers: its target is worked out again at every change and would be
+  // undone by, or would undo, theirs.
+  const callsOf = callCollector(c);
+  const controllers = new Map<string, Set<string>>();
+  const taxis = new Set<string>();
+  for (const item of c.readable.filter((i) => i.kind === "automation" && enabled(c, i))) {
+    const key = itemKey(item);
+    const set = new Set<string>();
+    const area = [...c.climateAreas.keys()].find((a) => item.id === automationIdFor("area_climate", c.codes[a].code));
+    if (area !== undefined) {
+      for (const id of stringList(c.climateAreas.get(area)!.climate_entities)) set.add(id);
+      taxis.add(key);
+    } else if (!isTaxisItem(item)) {
+      for (const call of callsOf(item)) if (CLIMATE_SERVICES.has(call.service)) for (const id of reached(c, call, "climate")) set.add(id);
+    }
+    for (const id of set) controllers.set(id, (controllers.get(id) ?? new Set<string>()).add(key));
+  }
+  const groups = new Map<string, { controllers: string[]; thermostats: string[] }>();
+  for (const [id, who] of controllers) {
+    if (who.size < 2 || ![...who].some((k) => taxis.has(k))) continue;
+    const list = [...who].sort();
+    const g = groups.get(list.join("+")) ?? { controllers: list, thermostats: [] };
+    g.thermostats.push(id);
+    groups.set(list.join("+"), g);
+  }
+  for (const [key, g] of groups) {
+    const thermostats = g.thermostats.sort((a, b) => nameOf(c, a).localeCompare(nameOf(c, b)) || a.localeCompare(b));
+    const items = g.controllers.map((k) => c.readable.find((i) => itemKey(i) === k)!);
+    const areas = new Set(thermostats.map((id) => areaOf(c, id) ?? ""));
+    const label = (i: HealthItem) => `${i.name}${taxis.has(itemKey(i)) ? " (Taxis recipe)" : ""}`;
+    out.push({
+      id: `climate:competing:${key}`,
+      check: "climate",
+      severity: "warning",
+      area: areas.size === 1 && [...areas][0] ? [...areas][0] : undefined,
+      entity: thermostats[0],
+      entities: thermostats,
+      item: asItem(items[0]),
+      title: `${items.length} automations set ${nameOf(c, thermostats[0])}${thermostats.length > 1 ? ` and ${plural(thermostats.length - 1, "other thermostat")}` : ""}`,
+      detail: `${names(items.map(label))} ${items.length === 2 ? "both" : "all"} set the same thermostats: ${names(thermostats.map((id) => nameOf(c, id)))}. Area climate works out the target again at every change of the area, so they can undo each other. Scripts they call count. Keep one automation in charge of these thermostats.`,
     });
   }
   return out;
@@ -716,6 +845,8 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
     const down: { row: InventoryRow; ms: number }[] = [];
     const inv = inventoryOf(c, area.id);
     for (const cap of Object.keys(inv) as (keyof AreaInventory)[]) {
+      // Area climate reports its own thermostats (check "Climate").
+      if (cap === "thermostat" && c.climateAreas.has(area.id)) continue;
       for (const row of inv[cap]) {
         if (!row.counts || !row.flags.includes("unavailable")) continue;
         const t = timeOf(c.states[row.entityId]?.lastChanged);
@@ -841,6 +972,7 @@ export function runHealth(input: HealthInput): HealthReport {
     ...activityChecks(c),
     ...switchChecks(c, w),
     ...lightChecks(c),
+    ...climateChecks(c),
     ...setupChecks(c, input.snapshot.installed),
     ...helperChecks(c),
     ...deviceChecks(c),

@@ -13,7 +13,7 @@ import { helperChangeInputs, planHelpers } from "../../shared/helpers.ts";
 import { EMPTY_INVENTORY } from "../../shared/inventory.ts";
 import { DEFAULT_NAMING } from "../../shared/naming.ts";
 import { EMPTY_PARAMETERS, setParameter, type ParameterSettings } from "../../shared/parameters.ts";
-import { canonicalLightGroups, planRecipes, recipeChangeInputs, type RecipeCell } from "../../shared/recipes.ts";
+import { areaThermostats, canonicalLightGroups, planRecipes, recipeChangeInputs, type RecipeCell } from "../../shared/recipes.ts";
 import type { Change, ChangeInput } from "../../shared/types.ts";
 import { WRITE_COMMANDS } from "../ha/socket.ts";
 import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
@@ -25,6 +25,7 @@ import { changeStore } from "./store.ts";
 const OCC = blueprintForRecipe("occupancy");
 const MOT = blueprintForRecipe("motion_lights");
 const MEDIA = blueprintForRecipe("media_off");
+const CLIMATE = blueprintForRecipe("area_climate");
 
 function setup(home = buildMockRegistry()) {
   const db = new DatabaseSync(":memory:");
@@ -33,7 +34,7 @@ function setup(home = buildMockRegistry()) {
   const store = changeStore(db);
   const fake = fakeHa(home);
   const live = () => buildHierarchy(structuredClone(fake.home), "now");
-  const installed = () => readInstalled({ ha: fake.ha, rest: fake.api }, fake.home as RawRegistry, canonicalLightGroups(live(), DEFAULT_NAMING));
+  const installed = () => readInstalled({ ha: fake.ha, rest: fake.api }, fake.home as RawRegistry, canonicalLightGroups(live(), DEFAULT_NAMING), areaThermostats(live()));
   const plan = async (params: ParameterSettings = EMPTY_PARAMETERS) => planRecipes(live(), EMPTY_INVENTORY, DEFAULT_NAMING, params, await installed(), store.list());
   const add = (inputs: ChangeInput[]) => {
     for (const input of inputs) {
@@ -496,16 +497,19 @@ describe("the change list", () => {
 describe("what Taxis reads to plan the recipes", () => {
   const demo = () => setup(withRecipeDemo(buildMockRegistry()));
 
-  it("reads only: blueprint versions, Taxis's own automations, timer durations and who else controls each light group", async () => {
+  it("reads only: blueprint versions, Taxis's own automations, timer durations and who else controls each light group and thermostat", async () => {
     const t = demo();
     const installed = await t.installed();
-    expect(installed.blueprints).toEqual({ [OCC.path]: OCC.version, [MOT.path]: null, [MEDIA.path]: null });
+    expect(installed.blueprints).toEqual({ [OCC.path]: OCC.version, [MOT.path]: null, [MEDIA.path]: null, [CLIMATE.path]: null });
     expect(Object.keys(installed.automations).sort()).toEqual(["taxis_occupancy_kitchen", "taxis_occupancy_living"]);
     expect(installed.automations.taxis_occupancy_kitchen).toMatchObject({ alias: "Kitchen – Occupancy (Taxis)", path: OCC.path });
     expect(installed.timers["timer.living_hold"]).toBe(300);
     expect(installed.timers["timer.kitchen_hold"]).toBe(180);
     // The household's own automation is listed; Taxis's own is not.
-    expect(installed.controllers).toEqual({ "light.living_all": [{ entityId: "automation.living_room_evening_lights", name: "Living room evening lights" }] });
+    expect(installed.controllers).toEqual({
+      "light.living_all": [{ entityId: "automation.living_room_evening_lights", name: "Living room evening lights" }],
+      "climate.living_valve": [{ entityId: "automation.heating_schedule", name: "Heating schedule" }],
+    });
     expect(t.fake.writes()).toEqual({ ws: [], rest: [] });
     // Only GETs of automations Taxis made: nothing else was read over REST.
     expect(t.fake.rest.map((x) => x.path)).toEqual(expect.arrayContaining(["/api/config/automation/config/taxis_occupancy_living", "/api/config/automation/config/taxis_occupancy_kitchen"]));
@@ -547,6 +551,225 @@ describe("what Taxis reads to plan the recipes", () => {
     expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true, true]);
     expect(Object.keys(t.fake.home.blueprints).sort()).toEqual([MOT.path, OCC.path].sort());
     expect(t.fake.home.automations.taxis_motion_lights_living.use_blueprint).toMatchObject({ input: { override_timer: "timer.living_override", main_lights: ["light.living_lamp", "light.living_spots"] } });
+  });
+});
+
+describe("installing area climate", () => {
+  const demo = () => setup(withRecipeDemo(buildMockRegistry()));
+  const PERIODS = "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00";
+  const written = (t: ReturnType<typeof setup>) => t.fake.ws.filter((x) => x.kind === "write");
+
+  it("writes the blueprint, the house switches, the schedule, then the automation, and Home Assistant ends up as planned", async () => {
+    const t = demo();
+    const c = t.cell(await t.plan(), "area_climate", "living_room");
+    expect(c.status).toBe("ready");
+    // The living room has Occupancy and its pause switch, so those aren't made again.
+    t.add(recipeChangeInputs([c]));
+    expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual([
+      "blueprint:create:taxis/area_climate.yaml",
+      "helper:create:input_boolean.taxis_away",
+      "helper:create:input_boolean.taxis_sleep",
+      "helper:create:schedule.living_climate",
+      "automation:create:taxis_area_climate_living",
+    ]);
+
+    const { results } = await t.apply();
+    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true, true, true, true]);
+
+    // The order: the blueprint, the toggles, the schedule, the automation.
+    const at = (call: string) => t.index(call);
+    expect(at("write blueprint/save")).toBeLessThan(at("write input_boolean/create"));
+    expect(at("write input_boolean/create")).toBeLessThan(at("write schedule/create"));
+    expect(at("write schedule/create")).toBeLessThan(at(AUTOMATION_PATH("taxis_area_climate_living")));
+
+    // What was sent: the toggles with no area, the schedule with seven days.
+    const w = written(t);
+    expect(w.find((x) => x.type === "blueprint/save")!.payload).toEqual({ domain: "automation", path: CLIMATE.path, yaml: CLIMATE.yaml, allow_override: true });
+    expect(w.filter((x) => x.type === "input_boolean/create").map((x) => x.payload)).toEqual([
+      { name: "Taxis away mode", icon: "mdi:home-export-outline" },
+      { name: "Taxis sleep mode", icon: "mdi:sleep" },
+    ]);
+    expect(w.find((x) => x.type === "schedule/create")!.payload).toEqual({
+      name: "Living room climate",
+      monday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
+      tuesday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
+      wednesday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
+      thursday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
+      friday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
+      saturday: [{ from: "08:00:00", to: "23:00:00" }],
+      sunday: [{ from: "08:00:00", to: "23:00:00" }],
+    });
+    // Nothing else: no service is called, nothing is deleted, and the only writes are these.
+    expect(t.fake.ws.some((x) => x.type === "call_service")).toBe(false);
+    expect(new Set(w.map((x) => x.type))).toEqual(new Set(["blueprint/save", "input_boolean/create", "schedule/create", "config/entity_registry/update"]));
+    expect(w.every((x) => WRITE_COMMANDS.has(x.type) && !/delete|remove/.test(x.type))).toBe(true);
+    expect(t.fake.rest.every((x) => x.method === "GET" || x.method === "POST")).toBe(true);
+
+    // What Home Assistant holds now: the id, the area, the stored periods.
+    expect(t.entity("input_boolean.taxis_away")).toMatchObject({ platform: "input_boolean" });
+    expect(t.entity("input_boolean.taxis_away")!.area_id).toBeUndefined();
+    expect(t.state("input_boolean.taxis_away")!.state).toBe("off");
+    expect(t.entity("schedule.living_climate")).toMatchObject({ platform: "schedule", area_id: "living_room", unique_id: "living_room_climate" });
+    expect(t.fake.home.schedules.living_room_climate).toMatchObject({ name: "Living room climate", saturday: [{ from: "08:00:00", to: "23:00:00" }] });
+    expect(t.fake.home.blueprints[CLIMATE.path]).toBe(CLIMATE.yaml);
+    expect(t.fake.home.automations.taxis_area_climate_living).toMatchObject({
+      alias: "Living room – Area climate (Taxis)",
+      use_blueprint: {
+        path: CLIMATE.path,
+        input: {
+          climate_entities: ["climate.living_valve"],
+          occupied_entities: ["binary_sensor.living_occupied"],
+          away_entity: "input_boolean.taxis_away",
+          sleep_entity: "input_boolean.taxis_sleep",
+          schedule_entity: "schedule.living_climate",
+          comfort_periods: PERIODS,
+          pause_switch: "input_boolean.living_paused",
+        },
+      },
+    });
+
+    // Nothing is left to do, and the schedule and toggles aren't taken for the area's sensors.
+    t.store.list().forEach((x) => t.store.done(x.id));
+    const again = t.cell(await t.plan(), "area_climate", "living_room");
+    expect(again).toMatchObject({ status: "installed", inputs: [] });
+    // Applying the same changes again makes nothing twice.
+    expect(await t.apply([])).toMatchObject({ results: [] });
+  });
+
+  it("checks the periods against Home Assistant's answer, and says when it stored other ones", async () => {
+    const t = demo();
+    t.add(recipeChangeInputs([t.cell(await t.plan(), "area_climate", "living_room")]));
+    // A Home Assistant that stores less than it was sent.
+    const ha = {
+      command: t.fake.ha.command,
+      write: async <T,>(type: string, payload: Record<string, unknown>) => {
+        const answer = await t.fake.ha.write<Record<string, unknown>>(type, payload);
+        return (type === "schedule/create" ? { ...answer, monday: [] } : answer) as T;
+      },
+    };
+    const { results } = await t.apply(t.store.list(), { ha });
+    const byTarget = (target: string) => results.find((r) => t.store.list().find((x) => x.id === r.changeId)?.targetId === target)!;
+    expect(byTarget("schedule.living_climate")).toMatchObject({ ok: false, message: expect.stringMatching(/stored other periods than Taxis sent/) });
+    // The automation named a schedule that was never placed: it says so.
+    expect(byTarget("taxis_area_climate_living").ok).toBe(false);
+    expect(byTarget("taxis_area_climate_living").message).toMatch(/schedule\.living_climate/);
+  });
+
+  it("changes the schedule when the periods setting changes, and the automation follows", async () => {
+    const t = demo();
+    t.add(recipeChangeInputs([t.cell(await t.plan(), "area_climate", "living_room")]));
+    await t.apply();
+    t.store.list().forEach((x) => t.store.done(x.id));
+
+    const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_periods", "Mon-Fri 18:00-22:00");
+    const c = t.cell(await t.plan(p), "area_climate", "living_room");
+    expect(c.status).toBe("out-of-date");
+    expect(c.reasons).toEqual([`Comfort periods: ${PERIODS} → Mon-Fri 18:00-22:00`]);
+    t.add(c.inputs);
+    expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual(["helper:update:schedule.living_climate", "automation:update:taxis_area_climate_living"]);
+
+    const before = t.fake.ws.length;
+    const { results } = await t.apply();
+    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true]);
+    const w = t.fake.ws.slice(before).filter((x) => x.kind === "write");
+    expect(w.map((x) => x.type)).toEqual(["schedule/update"]);
+    expect(w[0].payload).toMatchObject({ schedule_id: "living_room_climate", name: "Living room climate" });
+    expect(w[0].payload.monday).toEqual([{ from: "18:00:00", to: "22:00:00" }]);
+    expect(w[0].payload.saturday).toEqual([]);
+    expect(t.fake.home.schedules.living_room_climate.monday).toEqual([{ from: "18:00:00", to: "22:00:00" }]);
+    expect((t.fake.home.automations.taxis_area_climate_living.use_blueprint as { input: Record<string, unknown> }).input.comfort_periods).toBe("Mon-Fri 18:00-22:00");
+
+    t.store.list().forEach((x) => t.store.done(x.id));
+    expect(t.cell(await t.plan(p), "area_climate", "living_room").status).toBe("installed");
+  });
+
+  it("refuses to change a schedule that isn't a Home Assistant UI helper, and one that is gone", async () => {
+    const t = demo();
+    t.fake.home.states.push({ entity_id: "schedule.yaml_one", state: "off", attributes: { friendly_name: "YAML schedule" } });
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.yaml_one", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toMatch(/isn't set up in the Home Assistant UI/);
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.nowhere", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toBe("That schedule isn't in Home Assistant any more.");
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "light.desk", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toBe("Taxis only changes the periods of a schedule.");
+    // A second edit of the same schedule replaces the first.
+    t.fake.home.entities.push({ entity_id: "schedule.mine", platform: "schedule", unique_id: "mine", original_name: "Mine" });
+    t.fake.home.states.push({ entity_id: "schedule.mine", state: "off", attributes: { friendly_name: "Mine" } });
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.mine", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toBeNull();
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.mine", fields: { periods: "Tue 08:00-09:00" } }, t.live())).toBeNull();
+    expect(t.store.list().filter((x) => x.targetId === "schedule.mine").map((x) => x.after)).toEqual([{ periods: "Tue 08:00-09:00" }]);
+  });
+
+  it("uses a schedule and switches that are already there, and writes nothing into them", async () => {
+    const t = demo();
+    for (const [id, platform] of [["schedule.living_climate", "schedule"], ["input_boolean.my_away", "input_boolean"], ["input_boolean.my_sleep", "input_boolean"]] as const) {
+      t.fake.home.entities.push({ entity_id: id, platform, unique_id: id.split(".")[1], original_name: id });
+      t.fake.home.states.push({ entity_id: id, state: "off", attributes: { friendly_name: id } });
+    }
+    const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "away_mode_entity", "input_boolean.my_away"), { level: "house" }, "sleep_mode_entity", "input_boolean.my_sleep");
+    const c = t.cell(await t.plan(p), "area_climate", "living_room");
+    expect(c.inputs.map((i) => i.kind)).toEqual(["blueprint", "automation"]);
+    t.add(c.inputs);
+    const { results } = await t.apply();
+    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(written(t).map((x) => x.type)).toEqual(["blueprint/save"]);
+    expect(t.fake.home.schedules).toEqual({});
+    expect((t.fake.home.automations.taxis_area_climate_living.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({ away_entity: "input_boolean.my_away", sleep_entity: "input_boolean.my_sleep", comfort_periods: "" });
+  });
+
+  it("installs a bedroom that has presets and no Occupancy: the pause switch is made here", async () => {
+    const t = demo();
+    const presets = ["comfort", "eco", "away", "sleep"].reduce((p, k) => setParameter(p, { level: "house" }, `preset_${k}` as "preset_eco", k), EMPTY_PARAMETERS);
+    const c = t.cell(await t.plan(presets), "area_climate", "bedroom");
+    expect(c.status).toBe("ready");
+    // The thermostat offers all four.
+    expect(c.notes).toContain("Bedroom: presets");
+    expect(c.notes).toContain("No Occupancy yet, so comfort follows the schedule alone");
+    t.add(recipeChangeInputs([c]));
+    // The pause switch is made here, since Occupancy hasn't been.
+    expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual([
+      "blueprint:create:taxis/area_climate.yaml",
+      "helper:create:input_boolean.taxis_away",
+      "helper:create:input_boolean.taxis_sleep",
+      "helper:create:input_boolean.bedroom_paused",
+      "helper:create:schedule.bedroom_climate",
+      "automation:create:taxis_area_climate_bedroom",
+    ]);
+    const { results } = await t.apply();
+    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(t.entity("input_boolean.bedroom_paused")).toMatchObject({ area_id: "bedroom" });
+    expect((t.fake.home.automations.taxis_area_climate_bedroom.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({
+      climate_entities: ["climate.bedroom"],
+      preset_comfort: "comfort",
+      preset_sleep: "sleep",
+      occupied_entities: [],
+    });
+  });
+
+  it("two areas added together make the house switches once", async () => {
+    const t = demo();
+    const cells = await t.plan();
+    t.add(recipeChangeInputs([t.cell(cells, "area_climate", "living_room"), t.cell(cells, "area_climate", "bedroom")]));
+    expect(t.store.list().filter((x) => x.targetId === "input_boolean.taxis_away")).toHaveLength(1);
+    const { results } = await t.apply();
+    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(t.fake.home.entities.filter((e) => e.entity_id === "input_boolean.taxis_away")).toHaveLength(1);
+  });
+
+  it("does not write when the thermostat is gone, and the automation says why", async () => {
+    const t = demo();
+    t.add(recipeChangeInputs([t.cell(await t.plan(), "area_climate", "living_room")]));
+    t.fake.home.entities = t.fake.home.entities.filter((e) => e.entity_id !== "climate.living_valve");
+    t.fake.home.states = t.fake.home.states.filter((s) => s.entity_id !== "climate.living_valve");
+    const { results } = await t.apply();
+    const auto = results[results.length - 1];
+    expect(auto).toMatchObject({ ok: false, message: expect.stringMatching(/climate\.living_valve.*isn't in Home Assistant/) });
+    expect(t.fake.home.automations.taxis_area_climate_living).toBeUndefined();
+  });
+
+  it("warns about the household's own automation on the same valve", async () => {
+    const t = demo();
+    const c = t.cell(await t.plan(), "area_climate", "living_room");
+    expect(c.controls).toBe("thermostats");
+    expect(c.controlledBy).toEqual([{ entityId: "automation.heating_schedule", name: "Heating schedule" }]);
+    expect(t.cell(await t.plan(), "area_climate", "bedroom").controlledBy).toEqual([]);
   });
 });
 

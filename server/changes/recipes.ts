@@ -242,7 +242,7 @@ export async function applyAutomationChanges(all: Change[], io: RecipeIO): Promi
 // Taxis's own automations carry its id.
 const isTaxisAutomation = (s: RawRegistry["states"][number]) => s.entity_id.startsWith("automation.") && String((s.attributes as { id?: unknown } | undefined)?.id ?? "").startsWith("taxis_");
 
-export async function readInstalled(io: Pick<RecipeIO, "ha" | "rest">, raw: RawRegistry, lightGroups: readonly string[]): Promise<RecipeInstalled> {
+export async function readInstalled(io: Pick<RecipeIO, "ha" | "rest">, raw: RawRegistry, lightGroups: readonly string[], thermostats: readonly string[] = []): Promise<RecipeInstalled> {
   const out: RecipeInstalled = { blueprints: await blueprintVersions(io.ha), automations: {}, timers: {}, controllers: {} };
 
   for (const s of raw.states) {
@@ -265,11 +265,11 @@ export async function readInstalled(io: Pick<RecipeIO, "ha" | "rest">, raw: RawR
     out.automations[id] = installed;
   });
 
-  // Other automations that already use an area's light group: installing a
-  // recipe would make two things control the same lights.
+  // Other automations that already use an area's light group or a thermostat:
+  // installing a recipe would make two things control the same lights or heating.
   const taxisEntities = new Set(mine.map((s) => s.entity_id));
   const nameOf = new Map(raw.states.map((s) => [s.entity_id, String((s.attributes as { friendly_name?: unknown } | undefined)?.friendly_name ?? s.entity_id)]));
-  await mapLimit([...lightGroups], 6, async (group) => {
+  await mapLimit([...lightGroups, ...thermostats], 6, async (group) => {
     const related = await searchRelated(io.ha, group);
     const others = (related.automation ?? []).filter((e) => !taxisEntities.has(e)).map((entityId) => ({ entityId, name: nameOf.get(entityId) ?? entityId }));
     if (others.length > 0) out.controllers[group] = others.sort((a, b) => a.name.localeCompare(b.name));

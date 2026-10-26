@@ -51,9 +51,9 @@ describe("the definitions", () => {
     expect(PARAMS.map((p) => p.key)).toEqual([...PARAM_KEYS]);
     for (const p of PARAMS) {
       expect(checkValue(p, p.default), p.key).toBeNull();
-      expect(["house", "occupancy", "lighting", "media"]).toContain(p.tab);
+      expect(["house", "occupancy", "lighting", "media", "climate"]).toContain(p.tab);
     }
-    expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end"]);
+    expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end", "away_mode_entity", "sleep_mode_entity"]);
     expect(PARAMS.filter((p) => p.tab === "occupancy").map((p) => p.key)).toEqual(["hold_timeout", "extended_after", "extended_hold", "sleep_hold"]);
     expect(PARAMS.filter((p) => p.tab === "lighting").map((p) => p.key)).toEqual([
       "lux_threshold",
@@ -67,6 +67,28 @@ describe("the definitions", () => {
       "override_duration",
     ]);
     expect(PARAMS.filter((p) => p.tab === "media").map((p) => p.key)).toEqual(["media_off_after", "tv_off_after"]);
+    expect(PARAMS.filter((p) => p.tab === "climate").map((p) => p.key)).toEqual([
+      "comfort_temp",
+      "eco_temp",
+      "night_temp",
+      "sleep_temp",
+      "away_temp",
+      "frost_temp",
+      "min_temp",
+      "max_temp",
+      "window_delay",
+      "restore_delay",
+      "eco_after_clear",
+      "comfort_needs_occupancy",
+      "season",
+      "auto_hvac_on",
+      "doors_open_count",
+      "comfort_periods",
+      "preset_comfort",
+      "preset_eco",
+      "preset_away",
+      "preset_sleep",
+    ]);
   });
 
   it("has the documented defaults", () => {
@@ -76,6 +98,51 @@ describe("the definitions", () => {
     expect([d("transition"), d("dim_before_off"), d("dim_level")]).toEqual([1, 15, 30]);
     expect([d("extended_after"), d("extended_hold"), d("sleep_hold")]).toEqual([30, 15, 60]);
     expect([d("override_duration"), d("media_off_after"), d("tv_off_after")]).toEqual([0, 15, 30]);
+  });
+
+  it("has the climate defaults of the design", () => {
+    const d = (k: (typeof PARAM_KEYS)[number]) => PARAM_DEF[k].default;
+    expect([d("comfort_temp"), d("eco_temp"), d("night_temp"), d("sleep_temp"), d("away_temp"), d("frost_temp"), d("min_temp"), d("max_temp")]).toEqual([21, 19, 18, 17.5, 16, 7, 16, 24]);
+    expect([d("window_delay"), d("restore_delay"), d("eco_after_clear")]).toEqual([2, 1, 30]);
+    expect([d("comfort_needs_occupancy"), d("auto_hvac_on"), d("doors_open_count"), d("season")]).toEqual([true, false, false, "heating"]);
+    expect(d("comfort_periods")).toBe("Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00");
+    expect([d("away_mode_entity"), d("sleep_mode_entity"), d("preset_comfort"), d("preset_sleep")]).toEqual(["", "", "", ""]);
+  });
+});
+
+describe("checkValue: the climate kinds", () => {
+  it("takes yes or no for a bool, one of the options for an enum", () => {
+    expect(checkValue(PARAM_DEF.auto_hvac_on, true)).toBeNull();
+    expect(checkValue(PARAM_DEF.auto_hvac_on, false)).toBeNull();
+    for (const bad of ["true", 1, 0, null, undefined]) expect(checkValue(PARAM_DEF.auto_hvac_on, bad), String(bad)).toMatch(/yes or no/);
+    for (const ok of ["heating", "cooling", "off"]) expect(checkValue(PARAM_DEF.season, ok), ok).toBeNull();
+    expect(checkValue(PARAM_DEF.season, "auto")).toMatch(/one of heating, cooling, off/);
+  });
+
+  it("takes a toggle's entity id, or nothing, for the house switches", () => {
+    expect(checkValue(PARAM_DEF.away_mode_entity, "")).toBeNull();
+    expect(checkValue(PARAM_DEF.away_mode_entity, "input_boolean.away_mode")).toBeNull();
+    for (const bad of ["switch.away", "input_boolean.", "input_boolean.Away", "away_mode", 5, null]) expect(checkValue(PARAM_DEF.away_mode_entity, bad), String(bad)).not.toBeNull();
+  });
+
+  it("takes a preset name of letters, digits and a few marks, up to 40", () => {
+    for (const ok of ["", "eco", "Comfort", "Home 2", "away_mode", "frost-protect"]) expect(checkValue(PARAM_DEF.preset_eco, ok), ok).toBeNull();
+    for (const bad of ["x".repeat(41), "eco<script>", "a;b", "v1.2", "comfort.eco", 3, null]) expect(checkValue(PARAM_DEF.preset_eco, bad), String(bad)).not.toBeNull();
+  });
+
+  it("takes comfort periods in the short form, and says what is wrong with others", () => {
+    expect(checkValue(PARAM_DEF.comfort_periods, "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00")).toBeNull();
+    expect(checkValue(PARAM_DEF.comfort_periods, "Sat,Sun 10:00-12:00")).toBeNull();
+    for (const bad of ["", "Mon", "Mon-Fri 25:00-26:00", "Mon-Fri 08:00-07:00", "Funday 08:00-09:00", 5]) expect(checkValue(PARAM_DEF.comfort_periods, bad), String(bad)).toMatch(/Comfort periods:/);
+  });
+
+  it("keeps the temperatures in half degrees", () => {
+    expect(checkValue(PARAM_DEF.sleep_temp, 17.5)).toBeNull();
+    expect(checkValue(PARAM_DEF.sleep_temp, 17.3)).toMatch(/steps of 0.5/);
+    expect(checkValue(PARAM_DEF.sleep_temp, 4.5)).toMatch(/between 5 and 35/);
+    expect(checkValue(PARAM_DEF.frost_temp, 0)).toBeNull();
+    expect(checkValue(PARAM_DEF.window_delay, 0)).toBeNull();
+    expect(checkValue(PARAM_DEF.eco_after_clear, 0)).not.toBeNull();
   });
 });
 

@@ -1,4 +1,6 @@
 import { BLUEPRINT_PATH_RE, blueprintByPath, blueprintForRecipe, checkBlueprintInput, isRecipeKey } from "./blueprints.ts";
+import { HOUSE_HELPER_IDS } from "./climate.ts";
+import { checkPeriods } from "./periods.ts";
 import { CATEGORY_SCOPES, type CategoryScope, type Change, type ChangeInput, type ChangeKind, type Hierarchy } from "./types.ts";
 
 // The change list: what may be changed, and how a new edit folds into the edits
@@ -49,7 +51,7 @@ export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
   label: { name: str(), color: strOrNull(32), icon, description: strOrNull(1000) },
   category: { name: str(), icon },
   helper: {
-    helper: oneOf("group", "min_max", "timer", "input_boolean", "template"),
+    helper: oneOf("group", "min_max", "timer", "input_boolean", "template", "schedule"),
     group_type: oneOf("light", "binary_sensor", "media_player"),
     name: str(),
     entity_id: entityIdCheck,
@@ -61,6 +63,7 @@ export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
     icon,
     state_template: (v) => typeof v === "string" && OCCUPIED_TEMPLATE_RE.test(v),
     device_class: oneOf("occupancy"),
+    periods: (v) => checkPeriods(v) === null,
   },
   blueprint: { path: (v) => typeof v === "string" && BLUEPRINT_PATH_RE.test(v), version: positiveInt(1000) },
   automation: {
@@ -144,35 +147,40 @@ function validateAutomation(fields: Record<string, unknown>): string | null {
 
 // What a helper change needs beyond each field being valid on its own. A group
 // or min/max has an entity id and members in the domain it works on. A recipe's
-// helpers are a timer, an input boolean and a template sensor: each has its
-// entity id in its own domain, an area, and nothing a group has.
+// helpers are a timer, an input boolean, a template sensor and a schedule: each
+// has its entity id in its own domain, an area (except the house's two switches),
+// and nothing a group has.
 const OWN_FIELDS = {
   timer: ["helper", "name", "entity_id", "area_id", "duration"],
   input_boolean: ["helper", "name", "entity_id", "area_id", "icon"],
   template: ["helper", "name", "entity_id", "area_id", "state_template", "device_class"],
+  schedule: ["helper", "name", "entity_id", "area_id", "periods"],
 } as const;
 
 function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>): string | null {
   if (op === "update") {
-    const members = Object.keys(fields).every((k) => k === "entities");
-    const duration = Object.keys(fields).every((k) => k === "duration");
-    return members || duration ? null : "A helper update can only change its members or a timer's duration.";
+    const only = (key: string) => Object.keys(fields).every((k) => k === key);
+    return only("entities") || only("duration") || only("periods") ? null : "A helper update can only change its members, a timer's duration or a schedule's periods.";
   }
   if (!("helper" in fields)) return "A new helper needs a kind.";
   if (!("entity_id" in fields)) return "A new helper needs an entity id.";
-  if (!("area_id" in fields)) return "A new helper needs an area.";
+  // The house's away and sleep switches belong to no area.
+  const house = fields.helper === "input_boolean" && HOUSE_HELPER_IDS.includes(String(fields.entity_id));
+  if (house && "area_id" in fields) return "The house's away and sleep switches have no area.";
+  if (!house && !("area_id" in fields)) return "A new helper needs an area.";
   const domain = String(fields.entity_id).split(".")[0];
   const kind = fields.helper as string;
-  if (kind === "timer" || kind === "input_boolean" || kind === "template") {
+  if (kind === "timer" || kind === "input_boolean" || kind === "template" || kind === "schedule") {
     const stray = Object.keys(fields).find((k) => !(OWN_FIELDS[kind] as readonly string[]).includes(k));
     if (stray) return `"${stray}" can't be set on a ${kind.replace("_", " ")} helper.`;
     const wanted = kind === "template" ? "binary_sensor" : kind;
     if (domain !== wanted) return `A ${kind.replace("_", " ")} helper's entity id has to start with “${wanted}.”.`;
     if (kind === "timer" && !("duration" in fields)) return "A new timer needs a duration.";
     if (kind === "template" && !("state_template" in fields && "device_class" in fields)) return "A new template sensor needs its template and device class.";
+    if (kind === "schedule" && !("periods" in fields)) return "A new schedule needs its periods.";
     return null;
   }
-  if ("duration" in fields || "icon" in fields || "state_template" in fields || "device_class" in fields) return "Only a timer, an input boolean or a template sensor sets those.";
+  if ("duration" in fields || "icon" in fields || "state_template" in fields || "device_class" in fields || "periods" in fields) return "Only a timer, an input boolean, a template sensor or a schedule sets those.";
   if (!("entities" in fields)) return "A new helper needs members.";
   if (fields.helper === "group") {
     if (!("group_type" in fields)) return "A new group needs a group type.";
@@ -460,6 +468,7 @@ function planHelper(existing: Change[], input: ChangeInput, h: Hierarchy): Merge
   const absent = members.find((m) => !h.entities[m]);
   if (absent) return none(`“${absent}” isn't in Home Assistant any more.`);
   if (input.op === "update" && "duration" in fields) return planTimerDuration(existing, input, h);
+  if (input.op === "update" && "periods" in fields) return planSchedulePeriods(existing, input, h);
 
   if (input.op === "create") {
     const entityId = String(fields.entity_id);
@@ -500,6 +509,20 @@ function planTimerDuration(existing: Change[], input: ChangeInput, h: Hierarchy)
   const pending = existing.find((c) => c.kind === "helper" && c.op === "update" && c.targetId === targetId && "duration" in c.after);
   if (pending) return { action: "replace", id: pending.id, after: { duration }, before: {} };
   return { action: "insert", change: { kind: "helper", op: "update", targetId, scope: null, before: {}, after: { duration } } };
+}
+
+// A schedule's comfort periods: like a timer's duration, what they were is not
+// in the registries, so the update carries no "before" and Apply writes them.
+function planSchedulePeriods(existing: Change[], input: ChangeInput, h: Hierarchy): MergePlan {
+  const periods = (input.fields ?? {}).periods;
+  const targetId = input.targetId!;
+  const e = h.entities[targetId];
+  if (!e) return none("That schedule isn't in Home Assistant any more.");
+  if (e.domain !== "schedule") return none("Taxis only changes the periods of a schedule.");
+  if (!e.inRegistry) return none("This schedule isn't set up in the Home Assistant UI, so Taxis can't change it.");
+  const pending = existing.find((c) => c.kind === "helper" && c.op === "update" && c.targetId === targetId && "periods" in c.after);
+  if (pending) return { action: "replace", id: pending.id, after: { periods }, before: {} };
+  return { action: "insert", change: { kind: "helper", op: "update", targetId, scope: null, before: {}, after: { periods } } };
 }
 
 // A blueprint or an automation is keyed by its path or its id: adding it again

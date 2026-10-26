@@ -75,6 +75,8 @@ export type RawState = {
     duration?: unknown;
     last_triggered?: unknown;
     restored?: unknown;
+    // A thermostat's: the presets it offers.
+    preset_modes?: unknown;
   };
 };
 export type RawConfig = { location_name?: string; version?: string };
@@ -193,6 +195,7 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
       inRegistry: Boolean(reg),
       platform,
       configEntryId: text(reg?.config_entry_id),
+      presetModes: domain === "climate" && Array.isArray(st?.attributes?.preset_modes) ? st.attributes.preset_modes.filter((m): m is string => typeof m === "string") : [],
     };
     if (device) device.entityIds.push(entityId);
     if (areaId) areas[areaId].entityIds.push(entityId);

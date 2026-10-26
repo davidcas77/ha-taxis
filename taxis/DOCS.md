@@ -93,7 +93,7 @@ in the list of changes.
 
 What Taxis knows about each area, and the choices later features build on. The
 page has a bar of tabs: **Capabilities**, **Helpers**, **House**, **Occupancy**,
-**Lighting**, **Media** and **Recipes**.
+**Lighting**, **Media**, **Climate** and **Recipes**.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, thermostats, speakers, TVs,
@@ -153,7 +153,7 @@ sensor setting is pointed at the canonical sensor in the same step. If the
 sensor is already in place but the area points elsewhere, that is a row of its
 own. Each area's Capabilities tab ends with its own Helpers table.
 
-### House, Occupancy, Lighting and Media
+### House, Occupancy, Lighting, Media and Climate
 
 The numbers and times the recipes are filled in with. Each tab is a table with a
 row for the **House default**, one for **Interior** and one for **Exterior**
@@ -164,13 +164,15 @@ area, then its floor, then interior or exterior (chosen per area on its
 Capabilities tab), then the house default, then the built-in default. A cell
 shows the value set at that level, or the one it takes from above in grey; hover
 to see where from. Click a cell to set it, press Enter to save or Escape to
-cancel. Empty the box, or click the cross next to a value, to inherit again.
+cancel. A yes/no flips when you click it, and a choice (the season) is picked from
+a list. Empty the box, or click the cross next to a value, to inherit again.
 Values are saved at once, in Taxis only. Click a header to sort the floors and
 areas by it.
 
 | Tab | Parameter | Built-in default | Allowed |
 |---|---|---|---|
 | House | Night starts, Night ends | 23:00, 07:00 | a time |
+| House | Away mode switch, Sleep mode switch | empty: Taxis makes `input_boolean.taxis_away` and `taxis_sleep` when it installs Area climate | an `input_boolean` you already have (the box suggests them) |
 | Occupancy | Hold timeout | 5 min | 1 to 240 |
 | Occupancy | Extended after | 30 min | 1 to 720 |
 | Occupancy | Extended hold timeout | 15 min | 1 to 240 |
@@ -184,11 +186,31 @@ areas by it.
 | Lighting | Manual override lasts | 0 min | 0 to 240 (0: until the area next clears) |
 | Media | Speakers off when clear for | 15 min | 1 to 720 |
 | Media | TVs off when clear for | 30 min | 1 to 720 |
+| Climate | Comfort, Eco, Night, Sleep, Away | 21, 19, 18, 17.5, 16 | 5 to 35, in steps of 0.5 |
+| Climate | Frost protection | 7 | 0 to 15, in steps of 0.5 |
+| Climate | Lowest, Highest | 16, 24 | 5 to 35, in steps of 0.5; the target never leaves them |
+| Climate | Window open for | 2 min | 0 to 60 |
+| Climate | Restore after close | 1 min | 0 to 60 |
+| Climate | Eco when clear for | 30 min | 1 to 720 |
+| Climate | Comfort needs occupancy | yes (a bedroom with no choice of its own: no) | yes or no |
+| Climate | Season | heating | heating, cooling or off |
+| Climate | Switch on and off itself | no | yes or no |
+| Climate | Open doors count | no | yes or no |
+| Climate | Comfort periods | `Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00` | days, then times (below) |
+| Climate | Preset: comfort, eco, away, sleep and night | empty | a preset name the thermostat offers (the box suggests them) |
+
+Temperatures are in the unit Home Assistant is set to; the defaults are degrees
+Celsius. **Comfort periods** are written as days followed by time ranges, with a
+semicolon between groups of days: `Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun
+08:00-23:00`. A day is `Mon`, a range `Mon-Fri` or a list `Sat,Sun`; a range
+runs from one time to a later one on the same day (the end can be 23:59 at the
+latest); a day is in one group only, and a day in none has no comfort time. Taxis
+writes the line in one spelling, and hovering over it spells it out.
 
 ### Recipes
 
 A recipe is an automation Taxis makes for an area from a blueprint of its own,
-filled in with the area's sensors, lights and parameters. There are three:
+filled in with the area's sensors, lights and parameters. There are four:
 
 - **Occupancy** keeps an area occupied with a hold timer. A sensor that starts
   occupancy (a motion sensor, or a presence sensor when the area has no motion
@@ -246,6 +268,7 @@ filled in with the area's sensors, lights and parameters. There are three:
   does not stop the others. An area with one kind of player and the media group
   (`media_player.<code>_media`) uses the group; with both kinds it uses the
   players, since each kind has its own time.
+- **Area climate** sets the area's thermostats by fixed rules (described below).
 
 The Recipes tab is a table of areas by recipes. A cell says:
 
@@ -256,6 +279,8 @@ The Recipes tab is a table of areas by recipes. A cell says:
   (`light.<code>_all`, in place or in the list; make it on the Helpers tab). A
   light level helper is optional: without one the lights go on at any light level.
   Media off needs Occupancy too, and a speaker or a TV that counts.
+  Area climate needs a thermostat that counts, and the away, sleep and pause
+  switches and the schedule, which installing makes if they are missing.
 - **Installed**: the area's automation matches its sensors, lights, parameters
   and helpers, and the blueprint is the current version.
 - **Out of date**: it is installed but differs; the cell says how (a parameter
@@ -287,8 +312,78 @@ Installing a recipe adds these changes (the Changes page shows each):
   that uses the blueprint with its inputs.
 
 Everything is an ordinary Home Assistant object. The automations keep working if
-Taxis is stopped or uninstalled. Not in this version: climate, the bathroom
-fan, exterior lights, covers, announcements and the other recipes.
+Taxis is stopped or uninstalled. Not in this version: boost, the bathroom fan,
+exterior lights, covers, announcements and the other recipes.
+
+#### Area climate
+
+**Area climate** sets an area's thermostats (`climate.*` entities that count in the
+area's Capabilities) by fixed rules. It works the target out again whenever an
+input changes, and the first rule that fits wins:
+
+1. **Window.** A window (or, with *Open doors count*, a door) of the area has been
+   open for *Window open for*: the heating goes down to *Frost protection*, or,
+   if *Switch on and off itself* is on and the thermostat can be switched off,
+   off. For *Restore after close* after the last one closes nothing is changed;
+   then the target is worked out again. While a window has been open for less
+   than the delay, nothing is changed either.
+2. **Away.** The house away switch is on: the *Away* temperature.
+3. **Sleep.** In a bedroom, a bed sensor is on or the house sleep switch is on:
+   the *Sleep* temperature.
+4. **Night.** Inside the night window (House tab): the *Night* temperature.
+5. **Comfort.** The area's schedule is on and the area is occupied, or was
+   clear for less than *Eco when clear for*, or *Comfort needs occupancy* is no:
+   the *Comfort* temperature.
+6. **Eco.** Anything else: the *Eco* temperature.
+
+The target stays between *Lowest* and *Highest*. Frost protection is the one
+value that doesn't. The *Season* is heating, cooling (the thermostat is put in
+cool instead of heat, with the same temperatures) or off (the recipe does nothing).
+
+**Presets or temperatures.** Where you map a preset on the Climate tab (comfort,
+eco, away, sleep; night uses the sleep one) and the thermostat offers it, the
+thermostat gets the preset; any other thermostat, or any case with no preset, gets
+a temperature (kept inside the thermostat's own lowest and highest, and on its
+step). The Recipes cell lists each thermostat and which of the two it will get.
+Only what differs from what the thermostat shows is sent, so nothing is sent when
+it is already right. A thermostat that is unavailable is left alone.
+
+**Switching on and off.** Taxis does not change a thermostat's mode unless you say
+so with *Switch on and off itself*. When it is off, a thermostat that is off is
+left alone, and a window lowers the setpoint to frost protection. When it is on,
+a thermostat that is off is switched on again (heat, or cool when cooling; and, if
+the area has a temperature helper, only when the room is colder than the target,
+or warmer when cooling), and a window switches the thermostat off, to be switched
+on again when the target is worked out again.
+
+**Away and sleep.** They come from two toggles. If you set neither on the House
+tab, installing the recipe makes `input_boolean.taxis_away` ("Taxis away mode") and
+`input_boolean.taxis_sleep` ("Taxis sleep mode"), with no area, once for all areas;
+turn them on yourself or from your own automations (Taxis does not decide when you
+are away). The sleep switch puts only bedrooms to sleep.
+
+**The schedule.** Each area gets `schedule.<code>_climate` ("Kitchen climate"), a
+Home Assistant schedule helper made from the *Comfort periods*. When you change
+the periods, the cell says **Out of date** and installing updates the schedule.
+Taxis keeps the periods it wrote in the automation, because it can't read a
+schedule back; a schedule you already have at that id is used as it is and never
+written to. You can also edit the schedule in Home Assistant, but the next time
+the periods setting changes Taxis writes it again.
+
+**Needs.** A thermostat that counts. Optional: the Occupancy recipe (comfort then
+needs the area to be occupied; without it comfort follows the schedule alone), the
+area's window group (and door group), the temperature helper, bed sensors in a
+bedroom. Installing adds the blueprint `taxis/area_climate.yaml`, the two house
+toggles, the area's pause switch (if the area has none) and schedule, and the
+automation `taxis_area_climate_<code>`. The automation runs again whenever the
+window group, the away or sleep switch, a bed sensor, the occupied sensor or the
+schedule changes, at the edges of the night window, and when Home Assistant
+starts (after the restore delay). A changed parameter reaches the thermostats at the next of those.
+It does not trigger on the thermostats, and does nothing while the area's pause
+switch is on.
+
+If other automations already set the area's thermostats, the cell lists them: two
+things setting the same thermostat undo each other.
 
 ## Health
 
@@ -353,6 +448,14 @@ The checks, and the exact rules:
   `homeassistant` services), directly, by area, floor, label or device, through a
   light group and its members, or by calling a script that does. The Taxis Motion
   lights recipes count, marked as such. Warning.
+- **Climate.** About areas that have Area climate. Warning: a thermostat it
+  controls has been unavailable or unknown for 10 minutes (the general sensor
+  check leaves those thermostats to this one); and another automation that is on
+  sets one of its thermostats (`climate.set_temperature`, `set_hvac_mode`,
+  `set_preset_mode`, `turn_on`, `turn_off`, `toggle` or the `homeassistant`
+  ones, directly, by area, floor, label or device, or through a script). Info,
+  warning when it switches thermostats itself: the area has no temperature
+  helper, so a thermostat that is off is switched on without looking at the room.
 - **Taxis setup.** Warning: a recipe whose installed automation no longer matches
   (the fix is the recipe's update); a canonical helper id that something else
   holds (the Helpers tab's *conflict*; the link goes to Settings); a sensor or

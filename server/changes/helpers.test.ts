@@ -428,3 +428,110 @@ describe("a whole plan, from the planner to Home Assistant", () => {
     expect(fake.ws.filter((c) => c.kind === "write").every((c) => !c.type.endsWith("/delete"))).toBe(true);
   });
 });
+
+describe("a schedule and the house switches", () => {
+  const PERIODS = "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00";
+  const createSchedule = (after: Record<string, unknown> = {}) =>
+    change({
+      op: "create",
+      targetId: "schedule.kitchen_climate",
+      after: { helper: "schedule", name: "Kitchen climate", entity_id: "schedule.kitchen_climate", area_id: "kitchen", periods: PERIODS, ...after },
+    });
+  const createAway = (after: Record<string, unknown> = {}) =>
+    change({ op: "create", targetId: "input_boolean.taxis_away", after: { helper: "input_boolean", name: "Taxis away mode", entity_id: "input_boolean.taxis_away", icon: "mdi:home-export-outline", ...after } });
+
+  it("makes a schedule with schedule/create, then gives it the canonical id and the area", async () => {
+    const t = setup();
+    const c = createSchedule();
+    expect(validateInput({ kind: "helper", op: "create", fields: c.after })).toBeNull();
+    const [r] = await applyHelperChanges([c], t.io());
+    expect(r).toMatchObject({ ok: true, message: "Applied." });
+    expect(r.details).toEqual(["Created schedule.kitchen_climate.", "Put in Kitchen."]);
+    const writes = t.fake.writes().ws.map((w) => [w.type, w.payload.name ?? w.payload.entity_id]);
+    expect(writes).toEqual([["schedule/create", "Kitchen climate"], ["config/entity_registry/update", "schedule.kitchen_climate"]]);
+    expect(t.fake.writes().ws[0].payload).toMatchObject({ monday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }], sunday: [{ from: "08:00:00", to: "23:00:00" }] });
+    expect(t.fake.writes().rest).toEqual([]);
+    expect(t.entity("schedule.kitchen_climate")).toMatchObject({ platform: "schedule", area_id: "kitchen", unique_id: "kitchen_climate" });
+    expect(t.state("schedule.kitchen_climate")?.state).toBe("off");
+  });
+
+  it("makes a house switch with no area, and only renames it", async () => {
+    const t = setup();
+    const [r] = await applyHelperChanges([createAway()], t.io());
+    expect(r).toMatchObject({ ok: true });
+    expect(r.details).toEqual(["Created input_boolean.taxis_away_mode.", "Renamed to input_boolean.taxis_away."]);
+    expect(t.fake.writes().ws.map((w) => w.type)).toEqual(["input_boolean/create", "config/entity_registry/update"]);
+    expect(t.fake.writes().ws[0].payload).toEqual({ name: "Taxis away mode", icon: "mdi:home-export-outline" });
+    expect(t.fake.writes().ws[1].payload).toEqual({ entity_id: "input_boolean.taxis_away_mode", new_entity_id: "input_boolean.taxis_away" });
+    expect(t.entity("input_boolean.taxis_away")?.area_id).toBeUndefined();
+    expect(t.state("input_boolean.taxis_away")?.state).toBe("off");
+  });
+
+  it("applying again makes nothing twice, and a schedule of that name somewhere else is not copied", async () => {
+    const t = setup();
+    expect(await applyHelperChanges([createSchedule()], t.io())).toMatchObject([{ ok: true }]);
+    const writes = t.fake.writes().ws.length;
+    expect(await applyHelperChanges([createSchedule()], t.io())).toMatchObject([{ ok: true, message: "Applied (it was already there)." }]);
+    expect(t.fake.writes().ws.length).toBe(writes);
+
+    // The same name under another id: made by hand, or by an earlier Apply that stopped before renaming it.
+    const t2 = setup();
+    t2.fake.home.entities.push({ entity_id: "schedule.heating", platform: "schedule", unique_id: "heating", original_name: "Kitchen climate" });
+    t2.fake.home.states.push({ entity_id: "schedule.heating", state: "off", attributes: { friendly_name: "Kitchen climate" } });
+    const [twin] = await applyHelperChanges([createSchedule()], t2.io());
+    expect(twin).toMatchObject({ ok: false, message: expect.stringMatching(/schedule named “Kitchen climate” already exists as schedule\.heating/) });
+    expect(t2.fake.writes().ws).toEqual([]);
+    // An id held by something else.
+    const t3 = setup();
+    t3.fake.home.entities.push({ entity_id: "schedule.kitchen_climate", platform: "demo" });
+    const [taken] = await applyHelperChanges([createSchedule()], t3.io());
+    expect(taken).toMatchObject({ ok: false, message: expect.stringContaining("schedule.kitchen_climate is already taken by something else (demo)") });
+  });
+
+  it("changes a schedule's periods with schedule/update, from its storage id and name", async () => {
+    const t = setup();
+    await applyHelperChanges([createSchedule()], t.io());
+    const before = t.fake.writes().ws.length;
+    const update = change({ op: "update", targetId: "schedule.kitchen_climate", after: { periods: "Mon 10:00-11:00" } });
+    const [r] = await applyHelperChanges([update], t.io());
+    expect(r).toMatchObject({ ok: true, message: "Applied." });
+    const w = t.fake.writes().ws.slice(before);
+    expect(w.map((x) => x.type)).toEqual(["schedule/update"]);
+    expect(w[0].payload).toEqual({
+      schedule_id: "kitchen_climate",
+      name: "Kitchen climate",
+      monday: [{ from: "10:00:00", to: "11:00:00" }],
+      tuesday: [],
+      wednesday: [],
+      thursday: [],
+      friday: [],
+      saturday: [],
+      sunday: [],
+    });
+    expect(t.fake.home.schedules.kitchen_climate.monday).toEqual([{ from: "10:00:00", to: "11:00:00" }]);
+    // verify() has nothing to read it back from: the answer to the write was checked.
+    expect(verify(update, structuredClone(t.fake.home))).toBeNull();
+  });
+
+  it("refuses to change a schedule that is gone, or isn't one made in the UI, and says so", async () => {
+    const t = setup();
+    const gone = change({ op: "update", targetId: "schedule.nowhere", after: { periods: "Mon 10:00-11:00" } });
+    expect((await applyHelperChanges([gone], t.io()))[0]).toMatchObject({ ok: false, message: "It's no longer in Home Assistant." });
+    t.fake.home.entities.push({ entity_id: "schedule.yaml_one", platform: "schedule" });
+    const yaml = change({ op: "update", targetId: "schedule.yaml_one", after: { periods: "Mon 10:00-11:00" } });
+    expect((await applyHelperChanges([yaml], t.io()))[0]).toMatchObject({ ok: false, message: expect.stringMatching(/isn't a schedule set up in the Home Assistant UI/) });
+    const bad = change({ op: "update", targetId: "schedule.kitchen_climate", after: { periods: "nope" } });
+    expect((await applyHelperChanges([bad], t.io()))[0].ok).toBe(false);
+    expect(t.fake.writes().ws).toEqual([]);
+  });
+
+  it("fails when Home Assistant answers with other periods than were sent, or refuses", async () => {
+    const t = setup();
+    await applyHelperChanges([createSchedule()], t.io());
+    const update = change({ op: "update", targetId: "schedule.kitchen_climate", after: { periods: "Mon 10:00-11:00" } });
+    const lying: HelperIO["ha"] = { command: t.fake.ha.command, write: async <T,>(type: string, p: Record<string, unknown>) => ({ ...(await t.fake.ha.write<Record<string, unknown>>(type, p)), monday: [] }) as T };
+    expect((await applyHelperChanges([update], t.io({ ha: lying })))[0]).toMatchObject({ ok: false, message: expect.stringMatching(/answered with other periods/) });
+    const refusing: HelperIO["ha"] = { command: t.fake.ha.command, write: async () => Promise.reject(new Error("Unable to find schedule")) };
+    expect((await applyHelperChanges([update], t.io({ ha: refusing })))[0]).toMatchObject({ ok: false, message: "Unable to find schedule" });
+  });
+});

@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- **Recipe: Area climate.** A fourth recipe that sets an area's thermostats by
+  fixed rules, first match wins, worked out again at every change: a window open
+  for a while (frost protection, or off), away mode, sleep (a bedroom with a bed
+  sensor on, or the house sleep mode), the night window, comfort while the area's
+  schedule is on and the area is occupied, eco otherwise. The target is kept
+  between a lowest and a highest temperature. A thermostat that offers a preset
+  you mapped gets the preset, the others a temperature, and only what differs
+  from what the thermostat shows is sent. The Recipes cell lists each thermostat
+  and which of the two it gets. Taxis only switches a thermostat on or off if you
+  allow it; a thermostat that is off is otherwise left alone. Heating or cooling
+  by season. It needs a thermostat that counts; the Occupancy recipe, the area's
+  window and door groups, a temperature helper and bed sensors are used when
+  they are there.
+- **Parameters: Climate tab, and away and sleep switches.** The temperatures,
+  delays, season, presets, comfort periods and the yes/no options of Area
+  climate, with the same inheritance as the others (a yes/no flips when
+  clicked, the season is a list, preset names are suggested from what the
+  thermostats report, and the comfort periods are an editable line such as
+  `Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00`). The House tab picks the
+  away and sleep mode toggles; with none picked, installing the recipe makes
+  `input_boolean.taxis_away` and `taxis_sleep`.
+- **A schedule per area.** The recipe makes `schedule.<code>_climate` from the
+  comfort periods and updates it when they change. Two new writes, the calls
+  Home Assistant's own Helpers page makes: `schedule/create` and
+  `schedule/update`, checked before they are sent (a name, an icon and the seven
+  days' times, nothing else). Taxis still calls no service and deletes nothing.
+- **Health: Climate.** A thermostat Area climate controls that doesn't answer for
+  10 minutes; Area climate with no temperature helper; and another automation
+  that sets the same thermostats as Area climate. No new reads.
+- **Mock demo.** The demo house has a radiator valve (no presets), a thermostat
+  with presets, a "Heating schedule" automation on the valve, and Area climate
+  installed in the Living room.
+
 - **Health.** A new **Health** page after Parameters: rule-based checks over your
   home (no AI) that find what is broken or forgotten. A summary counts errors,
   warnings and info; filter by severity, check, area or text; sort any column;

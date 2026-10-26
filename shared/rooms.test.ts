@@ -30,6 +30,7 @@ function entity(entityId: string, role: EntityItem["role"], state: string | null
     needsOwnName: false,
     inRegistry: true,
     configEntryId: null,
+    presetModes: [],
     platform: "x",
     ...extra,
   };

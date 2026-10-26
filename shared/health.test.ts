@@ -556,6 +556,146 @@ describe("6: several automations switching the same lights", () => {
   });
 });
 
+describe("6b: Area climate and its thermostats", () => {
+  const CLIMATE = blueprintForRecipe("area_climate");
+  const valve = (o: Partial<E> = {}): E => ({ id: "climate.living_valve", state: "heat", name: "Radiator valve", ...o });
+  const tado = (o: Partial<E> = {}): E => ({ id: "climate.living_tado", state: "heat", name: "Tado", ...o });
+  const tempMean = { id: "sensor.living_temperature", platform: "min_max", dc: "temperature", state: "21", entry: "T1" } satisfies E;
+  const recipeInput = (over: Record<string, unknown> = {}) => ({
+    climate_entities: ["climate.living_valve"],
+    opening_entities: [],
+    occupied_entities: [],
+    away_entity: "input_boolean.taxis_away",
+    sleep_entity: "input_boolean.taxis_sleep",
+    schedule_entity: "schedule.living_climate",
+    pause_switch: "input_boolean.living_paused",
+    ...over,
+  });
+  const climateItem = (input = recipeInput(), name = "Living room – Area climate (Taxis)") =>
+    automation("taxis_area_climate_living", { alias: name, use_blueprint: { path: CLIMATE.path, input } }, name);
+  const recipeEntity: E = { id: "automation.taxis_area_climate_living", area: null, state: "on", triggered: H };
+  const turn = (service: string, entity: unknown, key = "entity_id") => ({ actions: [{ action: service, target: { [key]: entity } }] });
+  const withRecipe = (entities: E[], extra: HealthItem[] = [], o: Opts = {}) => check([...entities, recipeEntity], { ...o, items: [climateItem(), ...extra, ...(o.items ?? [])] });
+
+  it("reports a thermostat that has not answered for 10 minutes, and not before", () => {
+    const r = withRecipe([valve({ state: "unavailable", changed: 3 * H })]);
+    expect(one(r, "climate:thermostat:living_room")).toMatchObject({
+      check: "climate",
+      severity: "warning",
+      area: "living_room",
+      entity: "climate.living_valve",
+      title: "Living room has 1 thermostat that is not answering",
+      fix: { kind: "link", to: { page: "area", areaId: "living_room", tab: "capabilities" } },
+    });
+    expect(one(r, "climate:thermostat:living_room").detail).toContain("Radiator valve for 3 hours");
+    expect(ids(withRecipe([valve({ state: "unavailable", changed: 5 * 60_000 })]), "climate")).not.toContain("climate:thermostat:living_room");
+    expect(ids(withRecipe([valve({ state: "unavailable", changed: 11 * 60_000 })]), "climate")).toContain("climate:thermostat:living_room");
+    // Unknown counts, and a state with no time is reported.
+    expect(ids(withRecipe([valve({ state: "unknown", changed: H })]), "climate")).toContain("climate:thermostat:living_room");
+    expect(ids(withRecipe([valve({ state: "unavailable" })]), "climate")).toContain("climate:thermostat:living_room");
+    expect(ids(withRecipe([valve()]), "climate")).not.toContain("climate:thermostat:living_room");
+  });
+
+  it("lists every thermostat of the recipe that is down in one finding", () => {
+    const r = withRecipe([valve({ state: "unavailable", changed: H }), tado({ state: "unavailable", changed: 2 * H })]);
+    // The recipe only knows the valve.
+    expect(one(r, "climate:thermostat:living_room").entities).toEqual(["climate.living_valve"]);
+    const both = check([valve({ state: "unavailable", changed: H }), tado({ state: "unavailable", changed: 2 * H }), recipeEntity], { items: [climateItem(recipeInput({ climate_entities: ["climate.living_valve", "climate.living_tado"] }))] });
+    expect(one(both, "climate:thermostat:living_room")).toMatchObject({ title: "Living room has 2 thermostats that are not answering", entities: ["climate.living_valve", "climate.living_tado"] });
+  });
+
+  it("leaves a thermostat alone where Area climate isn't installed, and takes it from the sources check where it is", () => {
+    const r = check([valve({ state: "unavailable", changed: 3 * H })]);
+    expect(ids(r, "climate")).toEqual([]);
+    // Not installed: the general sources check reports it.
+    expect(ids(r, "setup")).toContain("setup:sources:living_room");
+    // Installed: the climate check does, not both.
+    const installed = withRecipe([valve({ state: "unavailable", changed: 3 * H })]);
+    expect(ids(installed, "setup").filter((id) => id.startsWith("setup:sources"))).toEqual([]);
+    // Another sensor of the same area is still the sources check's.
+    const other = withRecipe([valve({ state: "unavailable", changed: 3 * H }), { id: "binary_sensor.living_pir", dc: "motion", state: "unavailable", changed: 3 * H }]);
+    expect(one(other, "setup:sources:living_room").entities).toEqual(["binary_sensor.living_pir"]);
+  });
+
+  it("notes an Area climate with no temperature reference: info, a warning when it switches thermostats itself", () => {
+    const r = withRecipe([valve()]);
+    expect(one(r, "climate:reference:living_room")).toMatchObject({
+      check: "climate",
+      severity: "info",
+      area: "living_room",
+      title: "Living room has Area climate but no temperature reference",
+      fix: { kind: "link", to: { page: "parameters", tab: "helpers" } },
+    });
+    expect(one(r, "climate:reference:living_room").detail).toMatch(/nothing can tell Area climate how warm the room is/);
+    const auto = check([valve(), recipeEntity], { items: [climateItem(recipeInput({ auto_hvac_on: true }))] });
+    expect(one(auto, "climate:reference:living_room").severity).toBe("warning");
+    expect(one(auto, "climate:reference:living_room").detail).toMatch(/switched on again without checking/);
+    // With a reference there is nothing to say; and no recipe, nothing either.
+    const ok = check([valve(), tempMean, recipeEntity], { items: [climateItem(recipeInput({ temperature_entity: "sensor.living_temperature" }))] });
+    expect(ids(ok, "climate")).toEqual([]);
+    expect(ids(check([valve()]), "climate")).toEqual([]);
+  });
+
+  it("warns when another automation sets the same thermostat as Area climate", () => {
+    const other = automation("heat", turn("climate.set_temperature", "climate.living_valve"), "Heating schedule");
+    const r = withRecipe([valve(), autoEntity("heat")], [other]);
+    const f = by(r, "climate").find((x) => x.id.startsWith("climate:competing"))!;
+    expect(f).toMatchObject({
+      severity: "warning",
+      area: "living_room",
+      entity: "climate.living_valve",
+      entities: ["climate.living_valve"],
+      title: "2 automations set Radiator valve",
+    });
+    expect(f.detail).toMatch(/Heating schedule and Living room – Area climate \(Taxis\) \(Taxis recipe\) both set the same thermostats: Radiator valve/);
+    expect(f.item).toMatchObject({ id: "heat" });
+    expect(f.id).toBe("climate:competing:automation:heat+automation:taxis_area_climate_living");
+  });
+
+  it("sees every service that sets a thermostat, an area target, a script, and the same thermostats once", () => {
+    for (const service of ["climate.set_hvac_mode", "climate.set_preset_mode", "climate.turn_off", "climate.turn_on", "climate.toggle", "homeassistant.turn_off"]) {
+      const r = withRecipe([valve(), autoEntity("heat")], [automation("heat", turn(service, "climate.living_valve"))]);
+      expect(by(r, "climate").filter((x) => x.id.startsWith("climate:competing")), service).toHaveLength(1);
+    }
+    // By area, and through a script.
+    const byArea = withRecipe([valve(), autoEntity("heat")], [automation("heat", turn("climate.set_temperature", "living_room", "area_id"))]);
+    expect(by(byArea, "climate").some((x) => x.id.startsWith("climate:competing"))).toBe(true);
+    const viaScript = withRecipe([valve(), autoEntity("heat"), scriptEntity("warm")], [automation("heat", { actions: [{ action: "script.warm" }] }), item("script", "warm", { sequence: [{ action: "climate.set_temperature", target: { entity_id: "climate.living_valve" } }] })]);
+    expect(by(viaScript, "climate").some((x) => x.id.startsWith("climate:competing"))).toBe(true);
+    // Two thermostats with the same two controllers are one finding.
+    const both = check([valve(), tado(), recipeEntity, autoEntity("heat")], {
+      items: [climateItem(recipeInput({ climate_entities: ["climate.living_valve", "climate.living_tado"], temperature_entity: "sensor.x" })), automation("heat", turn("climate.set_temperature", ["climate.living_valve", "climate.living_tado"]))],
+    });
+    expect(by(both, "climate").filter((x) => x.id.startsWith("climate:competing"))).toHaveLength(1);
+    expect(by(both, "climate").find((x) => x.id.startsWith("climate:competing"))!.title).toBe("2 automations set Radiator valve and 1 other thermostat");
+  });
+
+  it("does not warn for automations that don't set the thermostat, one that is off, a service that isn't a setting, or two automations of the household's own", () => {
+    const heat = (service: string, entity = "climate.living_valve") => automation("heat", turn(service, entity));
+    expect(ids(withRecipe([valve(), tado(), autoEntity("heat")], [heat("climate.set_temperature", "climate.living_tado")]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
+    expect(ids(withRecipe([valve(), autoEntity("heat", { state: "off" })], [heat("climate.set_temperature")]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
+    expect(ids(withRecipe([valve(), autoEntity("heat")], [heat("climate.set_fan_mode")]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
+    expect(ids(withRecipe([valve(), autoEntity("heat")], [heat("light.turn_on")]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
+    // Two of the household's own on the same thermostat is the household's business, with no recipe in it.
+    const twoOfTheirs = check([valve(), autoEntity("a"), autoEntity("b")], { items: [automation("a", turn("climate.set_temperature", "climate.living_valve")), automation("b", turn("climate.set_hvac_mode", "climate.living_valve"))] });
+    expect(ids(twoOfTheirs, "climate")).toEqual([]);
+    // Another recipe of Taxis's is not a rival.
+    const motion = automation("taxis_motion_lights_living", { use_blueprint: { path: "taxis/motion_lights.yaml", input: { light_target: "light.living_all" } } });
+    expect(ids(withRecipe([valve(), { id: "automation.taxis_motion_lights_living", area: null, state: "on", triggered: H }], [motion]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
+  });
+
+  it("leaves a call that might reach any thermostat to nobody", () => {
+    const r = withRecipe([valve(), autoEntity("heat")], [automation("heat", turn("climate.set_temperature", "all"))]);
+    expect(ids(r, "climate").filter((id) => id.includes("competing"))).toEqual([]);
+  });
+
+  it("is a check of its own in the report, between the lights and Taxis's setup", () => {
+    const names = HEALTH_CHECKS.map((c) => c.key);
+    expect(names.slice(names.indexOf("lights"), names.indexOf("lights") + 3)).toEqual(["lights", "climate", "setup"]);
+    expect(HEALTH_CHECKS.find((c) => c.key === "climate")!.label).toBe("Climate");
+  });
+});
+
 describe("7: Taxis setup", () => {
   const OCC = blueprintForRecipe("occupancy");
   const pir = { id: "binary_sensor.living_pir", dc: "motion" };

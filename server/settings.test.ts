@@ -281,6 +281,48 @@ describe("validateParameters", () => {
     }
   });
 
+  it("takes the climate values: temperatures, delays, yes/no, the season, presets, the house switches and the comfort periods", () => {
+    const good = {
+      house: {
+        comfort_temp: 22.5,
+        frost_temp: 5,
+        window_delay: 0,
+        comfort_needs_occupancy: false,
+        auto_hvac_on: true,
+        season: "cooling",
+        comfort_periods: "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00",
+        preset_eco: "Eco",
+        away_mode_entity: "input_boolean.away_mode",
+        sleep_mode_entity: "input_boolean.sleep_mode",
+      },
+      areas: { bedroom: { comfort_needs_occupancy: true, sleep_temp: 17 } },
+    };
+    expect(validateParameters(good)).toEqual({ ok: true, value: { types: {}, floors: {}, ...good } });
+    // Booleans stay booleans through the check.
+    const checked = validateParameters(good);
+    expect(checked.ok && checked.value.house.auto_hvac_on).toBe(true);
+    for (const bad of [
+      { house: { comfort_temp: 22.3 } },
+      { house: { comfort_temp: 36 } },
+      { house: { frost_temp: 16 } },
+      { house: { window_delay: 61 } },
+      { house: { eco_after_clear: 0 } },
+      { house: { auto_hvac_on: "true" } },
+      { house: { auto_hvac_on: 1 } },
+      { house: { season: "auto" } },
+      { house: { comfort_periods: "nope" } },
+      { house: { comfort_periods: "Mon-Fri 08:00-07:00" } },
+      { house: { preset_eco: "x".repeat(41) } },
+      { house: { preset_eco: 5 } },
+      { house: { away_mode_entity: "switch.away" } },
+      { house: { away_mode_entity: "input_boolean." } },
+      { areas: { kitchen: { sleep_mode_entity: 5 } } },
+    ]) {
+      expect(validateParameters(bad), JSON.stringify(bad)).toMatchObject({ ok: false });
+    }
+    expect(validateParameters({ areas: { kitchen: { comfort_periods: "Mon 8:00-9:00" } } })).toMatchObject({ ok: false, error: expect.stringMatching(/Comfort periods.*area kitchen/) });
+  });
+
   it("allows only interior and exterior as types, and ids as the editor writes them", () => {
     expect(validateParameters({ types: { basement: { hold_timeout: 3 } } })).toMatchObject({ ok: false });
     expect(validateParameters({ floors: { "Ground Floor": {} } })).toMatchObject({ ok: false });

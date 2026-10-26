@@ -71,6 +71,8 @@ export type EntityItem = {
   // The config entry behind a helper set up in the UI (a group, a min/max…).
   // Null for YAML and for anything an integration made without one.
   configEntryId: string | null;
+  // A thermostat's presets (the preset_modes attribute), empty for anything else.
+  presetModes: string[];
 };
 
 export type DeviceItem = {
@@ -157,10 +159,12 @@ export type ChangeFields = {
   // A native helper. Created: a group or min/max, named and filled in one go,
   // with its canonical entity id and area; for a temperature or humidity sensor
   // the area can be pointed at it in the same step. A recipe's own helpers are a
-  // timer (with its duration), an input boolean and a template binary sensor.
-  // Updated: a group's members, or a timer's duration. Never deleted.
+  // timer (with its duration), an input boolean, a template binary sensor and a
+  // schedule (with its comfort periods); the house's away and sleep switches are
+  // input booleans with no area.
+  // Updated: a group's members, a timer's duration or a schedule's periods. Never deleted.
   helper: {
-    helper?: "group" | "min_max" | "timer" | "input_boolean" | "template";
+    helper?: "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule";
     group_type?: "light" | "binary_sensor" | "media_player";
     name?: string;
     entity_id?: string;
@@ -171,6 +175,8 @@ export type ChangeFields = {
     icon?: string | null;
     state_template?: string;
     device_class?: "occupancy";
+    // A schedule helper's comfort periods, as shared/periods.ts writes them.
+    periods?: string;
   };
   // A Taxis blueprint written into Home Assistant: its path and the version of
   // the text Taxis holds. Never deleted.
@@ -179,7 +185,7 @@ export type ChangeFields = {
   // deleted.
   automation: {
     automation_id?: string;
-    recipe?: "occupancy" | "motion_lights" | "media_off";
+    recipe?: "occupancy" | "motion_lights" | "media_off" | "area_climate";
     area_id?: string;
     alias?: string;
     use_blueprint?: { path: string; input: Record<string, unknown> };

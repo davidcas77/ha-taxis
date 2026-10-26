@@ -29,6 +29,9 @@ export type MockHome = RawRegistry & {
   configEntries: { entry_id: string; domain: string; title: string; entities: string[]; hide_members?: boolean; all?: boolean; state?: string; device_class?: string }[];
   // Automation blueprints, by path, as the YAML text that was saved.
   blueprints: Record<string, string>;
+  // Schedule helpers made in the UI, by their storage id: the name and the seven
+  // days' periods as Home Assistant keeps them ("06:30:00").
+  schedules: Record<string, Config>;
   // Config flows in progress (helper creation, group options), and a counter
   // for the ids Home Assistant would generate.
   flows: { next: number; open: Record<string, MockFlow> };
@@ -58,6 +61,8 @@ const house: Spec[] = [
       { name: "Window sensor", model: "AS008", entities: [["sensor.living_window_temperature", "19.9", "temperature", "°C"]] },
       { name: "TV", model: "QE65", entities: [["media_player.living_tv", "playing", "tv"]] },
       { name: "Balcony door", model: "AS006", entities: [["binary_sensor.living_balcony_door", "off", "door"]] },
+      // A radiator valve with no presets: Area climate sets its temperature.
+      { name: "Radiator valve", model: "TRV-1", entities: [["climate.living_valve", "heat"]] },
     ],
   },
   {
@@ -149,6 +154,7 @@ export function buildMockRegistry(): MockHome {
     dashboards: [],
     configEntries: [],
     blueprints: {},
+    schedules: {},
     flows: { next: 1, open: {} },
   };
   for (const room of house) {
@@ -163,6 +169,24 @@ export function buildMockRegistry(): MockHome {
       }
     });
   }
+  // Thermostats say what they can do in their attributes, which Area climate reads.
+  Object.assign(reg.states.find((s) => s.entity_id === "climate.living_valve")!.attributes!, {
+    hvac_modes: ["off", "heat"],
+    temperature: 20,
+    min_temp: 5,
+    max_temp: 30,
+    target_temp_step: 0.5,
+  });
+  // This one has presets, so Area climate can use them.
+  Object.assign(reg.states.find((s) => s.entity_id === "climate.bedroom")!.attributes!, {
+    hvac_modes: ["off", "heat", "auto"],
+    preset_modes: ["eco", "comfort", "sleep", "away"],
+    preset_mode: "comfort",
+    temperature: 19,
+    min_temp: 5,
+    max_temp: 25,
+    target_temp_step: 0.5,
+  });
   // The living room's main temperature sensor, set on the area as HA does.
   reg.areas.find((a) => a.area_id === "living_room")!.temperature_entity_id = "sensor.living_temperature";
 
@@ -498,6 +522,29 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
       reg.states.push({ entity_id: entityId, state: domain === "timer" ? "idle" : p.initial === true ? "on" : "off", attributes } as RawState);
       return ok({ id, name: p.name, ...(domain === "timer" ? { duration: p.duration, restore: p.restore === true } : { ...(p.icon ? { icon: p.icon } : {}), ...(p.initial === true ? { initial: true } : {}) }) });
     }
+    case "schedule/create": {
+      if (typeof p.name !== "string" || !p.name.trim()) return fail("name is required");
+      const days = scheduleDaysOf(p);
+      if (typeof days === "string") return fail(days);
+      const taken = reg.entities.filter((e) => e.platform === "schedule").map((e) => e.unique_id ?? "");
+      const id = uniqueId(slug(p.name), taken);
+      const entityId = freeEntityId(home as MockHome, "schedule", p.name);
+      reg.entities.push({ entity_id: entityId, platform: "schedule", unique_id: id, original_name: p.name });
+      reg.states.push({ entity_id: entityId, state: "off", attributes: { friendly_name: p.name, editable: true } } as RawState);
+      const item = { id, name: p.name, ...days };
+      (home.schedules ??= {})[id] = structuredClone(item);
+      return ok(item);
+    }
+    case "schedule/update": {
+      const entity = reg.entities.find((e) => e.platform === "schedule" && e.unique_id === p.schedule_id);
+      if (!entity) return fail("Unable to find schedule");
+      if (typeof p.name !== "string" || !p.name.trim()) return fail("name is required");
+      const days = scheduleDaysOf(p);
+      if (typeof days === "string") return fail(days);
+      const item = { id: String(p.schedule_id), name: p.name, ...days };
+      (home.schedules ??= {})[item.id] = structuredClone(item);
+      return ok(item);
+    }
     case "timer/update": {
       const entity = reg.entities.find((e) => e.platform === "timer" && e.unique_id === p.timer_id);
       if (!entity) return fail("Unable to find timer");
@@ -560,6 +607,28 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
     default:
       return fail(`Mock HA does not know ${type}.`);
   }
+}
+
+const SCHEDULE_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+// The seven days of a schedule write, checked the way Home Assistant does: times
+// with seconds, each period ending after it starts, none overlapping. A day left
+// out is empty. A string is the reason it was refused.
+function scheduleDaysOf(p: Record<string, unknown>): Record<string, { from: string; to: string }[]> | string {
+  const out: Record<string, { from: string; to: string }[]> = {};
+  for (const day of SCHEDULE_DAYS) {
+    const list = p[day] ?? [];
+    if (!Array.isArray(list)) return `${day} must be a list`;
+    let last = "";
+    for (const r of list as { from?: unknown; to?: unknown }[]) {
+      if (typeof r?.from !== "string" || typeof r?.to !== "string" || !/^\d{2}:\d{2}:\d{2}$/.test(r.from) || !/^\d{2}:\d{2}:\d{2}$/.test(r.to)) return `Invalid time in ${day}`;
+      if (r.from >= r.to) return `Invalid time range, from ${r.from} is after ${r.to}`;
+      if (r.from < last) return "Overlapping time ranges";
+      last = r.to;
+    }
+    out[day] = (list as { from: string; to: string }[]).map((r) => ({ from: r.from, to: r.to }));
+  }
+  return out;
 }
 
 // "00:05:00" as a timer's state writes it: "0:05:00".
@@ -849,6 +918,13 @@ export function withRecipeDemo(reg: MockHome): MockHome {
     actions: [{ action: "light.turn_on", target: { entity_id: "light.living_all" }, data: { brightness_pct: 60 } }],
     mode: "single",
   });
+  // ...and one that already sets the living room's radiator valve, which Area climate would also set.
+  automation("1700000000004", "Heating schedule", {
+    triggers: [{ trigger: "time", at: "06:30:00" }],
+    conditions: [],
+    actions: [{ action: "climate.set_temperature", target: { entity_id: "climate.living_valve" }, data: { temperature: 21 } }],
+    mode: "single",
+  });
   return reg;
 }
 
@@ -878,6 +954,9 @@ export function withRecipeDemo(reg: MockHome): MockHome {
 //                        names a sensor that is gone.
 //   Unused helpers       a spare number and a laundry timer.
 //   Device-based         "Bedroom button", and one tied to a device that is gone.
+//   Climate              the Living room has Area climate (its valve has not
+//                        answered for 3 hours, the room has no temperature
+//                        helper) and "Heating schedule" sets the same valve.
 // ---------------------------------------------------------------------------
 
 export function withHealthDemo(reg: MockHome, now = Date.now()): MockHome {
@@ -1041,5 +1120,63 @@ export function withHealthDemo(reg: MockHome, now = Date.now()): MockHome {
     },
     { triggered: 60 * D },
   );
+
+  // Climate: Area climate in the Living room, written as Taxis would, and the
+  // helpers it makes. The valve has stopped answering, and there is no
+  // temperature helper (the room's sensor is a real one).
+  const climateBlueprint = BLUEPRINTS.find((b) => b.recipe === "area_climate")!;
+  reg.blueprints[climateBlueprint.path] = climateBlueprint.yaml;
+  reg.entities.push({ entity_id: "schedule.living_climate", platform: "schedule", unique_id: "living_climate", original_name: "Living room climate", area_id: "living_room" });
+  reg.states.push({ entity_id: "schedule.living_climate", state: "off", attributes: { friendly_name: "Living room climate", editable: true } } as RawState);
+  for (const [entityId, name] of [
+    ["input_boolean.taxis_away", "Taxis away mode"],
+    ["input_boolean.taxis_sleep", "Taxis sleep mode"],
+  ]) {
+    reg.entities.push({ entity_id: entityId, platform: "input_boolean", unique_id: entityId.split(".")[1], original_name: name });
+    reg.states.push({ entity_id: entityId, state: "off", attributes: { friendly_name: name, editable: true } } as RawState);
+  }
+  automation(
+    "taxis_area_climate_living",
+    "Living room – Area climate (Taxis)",
+    {
+      use_blueprint: {
+        path: climateBlueprint.path,
+        input: {
+          climate_entities: ["climate.living_valve"],
+          opening_entities: [],
+          occupied_entities: ["binary_sensor.living_occupied"],
+          bed_entities: [],
+          is_bedroom: false,
+          away_entity: "input_boolean.taxis_away",
+          sleep_entity: "input_boolean.taxis_sleep",
+          schedule_entity: "schedule.living_climate",
+          comfort_periods: "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00",
+          comfort_needs_occupancy: true,
+          season: "heating",
+          auto_hvac_on: false,
+          comfort_temp: 21,
+          eco_temp: 19,
+          night_temp: 18,
+          sleep_temp: 17.5,
+          away_temp: 16,
+          frost_temp: 7,
+          min_temp: 16,
+          max_temp: 24,
+          window_delay: 2,
+          restore_delay: 1,
+          eco_after_clear: 30,
+          night_start: "23:00:00",
+          night_end: "07:00:00",
+          preset_comfort: "",
+          preset_eco: "",
+          preset_away: "",
+          preset_sleep: "",
+          pause_switch: "input_boolean.living_paused",
+        },
+      },
+    },
+    { triggered: H },
+  );
+  touch("climate.living_valve", { state: "unavailable", ago: 3 * H });
   return reg;
 }

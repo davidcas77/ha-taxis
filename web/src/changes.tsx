@@ -1,6 +1,7 @@
 import { CheckCircle2, CircleAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { describePeriods } from "../../shared/periods.ts";
 import { RECIPE_LABEL } from "../../shared/recipes.ts";
 import type { ApplyResult, Change, Hierarchy, RenameRefs } from "../../shared/types.ts";
 import { api } from "./api.ts";
@@ -46,7 +47,7 @@ function memberChange(c: Change): { added: string[]; removed: string[] } {
   return { added: now.filter((m) => !was.includes(m)), removed: was.filter((m) => !now.includes(m)) };
 }
 
-const HELPER_KINDS: Record<string, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor" };
+const HELPER_KINDS: Record<string, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule" };
 
 const minutes = (seconds: unknown) => `${Number(seconds) / 60} min`;
 
@@ -57,9 +58,11 @@ function helperTitle(h: Hierarchy, c: Change): string {
     const where = `${c.targetId}${area ? ` in ${area}` : ""}`;
     if (c.after.helper === "timer") return `Create timer ${where}: ${minutes(c.after.duration)}`;
     if (c.after.helper === "input_boolean" || c.after.helper === "template") return `Create ${kind} ${where}`;
+    if (c.after.helper === "schedule") return `Create schedule ${where}: ${describePeriods(String(c.after.periods))}`;
     return `Create ${kind} ${where}: ${plural(((c.after.entities as string[]) ?? []).length, "member")}`;
   }
   if ("duration" in c.after) return `Set the duration of ${c.targetId} to ${minutes(c.after.duration)}`;
+  if ("periods" in c.after) return `Set the comfort periods of ${c.targetId}: ${describePeriods(String(c.after.periods))}`;
   const { added, removed } = memberChange(c);
   return `Update members of ${c.targetId}: +${added.length} −${removed.length}`;
 }
@@ -280,9 +283,16 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
   if (c.op === "create" && c.after.helper === "timer") {
     return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Keeps its state through a restart.</p>;
   }
+  if (c.op === "create" && c.after.helper === "input_boolean" && !("area_id" in c.after)) {
+    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Starts off. A house switch with no area: turn it on yourself, or from an automation of yours, to tell Area climate the house is {String(c.after.entity_id).endsWith("away") ? "away" : "asleep"}.</p>;
+  }
   if (c.op === "create" && c.after.helper === "input_boolean") {
     return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Starts off. Turn it on to pause the area's recipes.</p>;
   }
+  if (c.op === "create" && c.after.helper === "schedule") {
+    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. On during the comfort periods: {describePeriods(String(c.after.periods))}. Edit the periods here (Parameters, Climate) or in Home Assistant.</p>;
+  }
+  if (c.op === "update" && "periods" in c.after) return <p className="text-xs text-muted">Replaces the periods of this schedule with the comfort periods setting.</p>;
   if (c.op === "create" && c.after.helper === "template") {
     return (
       <p className="text-xs text-muted">

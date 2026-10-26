@@ -83,7 +83,7 @@ function StatusCell({ cell }: { cell: RecipeCell }) {
           <summary className="cursor-pointer">
             Already controlled by {cell.controlledBy.length} other automation{cell.controlledBy.length === 1 ? "" : "s"}
           </summary>
-          <p className="mt-0.5 text-muted">Installing this would make two automations control the same lights.</p>
+          <p className="mt-0.5 text-muted">Installing this would make two automations control the same {cell.controls === "lights" ? "lights" : "thermostats"}.</p>
           <ul className="mt-0.5 flex flex-col gap-0.5">
             {cell.controlledBy.map((a) => (
               <li key={a.entityId}>

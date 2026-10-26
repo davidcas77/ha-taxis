@@ -316,6 +316,30 @@ describe("what recipes need from Home Assistant", () => {
     expect(fails(home, "input_boolean/create", { name: " " })).toBe("name is required");
   });
 
+  it("creates and updates a schedule the way storage helpers appear, and refuses what Home Assistant would", () => {
+    const home = buildMockRegistry();
+    const days = { monday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }], saturday: [{ from: "08:00:00", to: "23:00:00" }] };
+    const made = ok<Record<string, unknown>>(home, "schedule/create", { name: "Study climate", ...days });
+    // The answer is the schedule as stored: all seven days.
+    expect(made).toEqual({ id: "study_climate", name: "Study climate", ...days, tuesday: [], wednesday: [], thursday: [], friday: [], sunday: [] });
+    expect(home.entities.find((e) => e.entity_id === "schedule.study_climate")).toMatchObject({ platform: "schedule", unique_id: "study_climate", original_name: "Study climate" });
+    expect(home.states.find((s) => s.entity_id === "schedule.study_climate")).toMatchObject({ state: "off", attributes: { friendly_name: "Study climate", editable: true } });
+    expect(home.schedules.study_climate).toEqual(made);
+
+    const updated = ok<Record<string, unknown>>(home, "schedule/update", { schedule_id: "study_climate", name: "Study climate", tuesday: [{ from: "09:00:00", to: "10:00:00" }] });
+    expect(updated).toMatchObject({ id: "study_climate", tuesday: [{ from: "09:00:00", to: "10:00:00" }], monday: [], saturday: [] });
+    expect(home.schedules.study_climate).toEqual(updated);
+    expect(fails(home, "schedule/update", { schedule_id: "nope", name: "x" })).toBe("Unable to find schedule");
+
+    expect(fails(home, "schedule/create", { name: " " })).toBe("name is required");
+    expect(fails(home, "schedule/create", { name: "x", monday: [{ from: "09:00:00", to: "08:00:00" }] })).toMatch(/from 09:00:00 is after 08:00:00/);
+    expect(fails(home, "schedule/create", { name: "x", monday: [{ from: "08:00:00", to: "10:00:00" }, { from: "09:00:00", to: "11:00:00" }] })).toBe("Overlapping time ranges");
+    expect(fails(home, "schedule/create", { name: "x", monday: [{ from: "8:00", to: "9:00" }] })).toMatch(/Invalid time/);
+    expect(fails(home, "schedule/create", { name: "x", monday: "all day" })).toMatch(/must be a list/);
+    // A second schedule of the same name gets another id.
+    expect(ok<{ id: string }>(home, "schedule/create", { name: "Study climate" }).id).toBe("study_climate_2");
+  });
+
   it("walks the template flow to a binary sensor whose state follows its timer", () => {
     const home = buildMockRegistry();
     ok(home, "timer/create", { name: "Study hold", duration: "00:05:00" });

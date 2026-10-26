@@ -82,6 +82,12 @@ describe("the demo house", () => {
     );
     // 6: the living room lights are switched by two automations.
     expect(report.findings.some((f) => f.check === "lights" && f.area === "living_room")).toBe(true);
+    // Climate: the valve is down, the room has no temperature helper, and "Heating schedule" sets the same valve.
+    expect(ids).toEqual(
+      expect.arrayContaining(["climate:thermostat:living_room", "climate:reference:living_room", "climate:competing:automation:1700000000004+automation:taxis_area_climate_living"]),
+    );
+    expect(report.findings.filter((f) => f.check === "climate").map((f) => f.severity).sort()).toEqual(["info", "warning", "warning"]);
+    expect(report.findings.find((f) => f.id === "climate:thermostat:living_room")!.detail).toContain("Living valve for 3 hours");
     // The Hall PIR is used by an automation, so it is an error; the attic sensor is not used.
     expect(report.findings.find((f) => f.id === "unavailable:device:hallway_1")!.severity).toBe("error");
     expect(report.findings.find((f) => f.id === "unavailable:device:attic")!.severity).toBe("warning");
@@ -95,7 +101,9 @@ describe("the demo house", () => {
     expect(ids).not.toContain("helpers:input_boolean.guest_mode");
     expect(ids).not.toContain("helpers:input_boolean.night_mode");
     // The recipes' own automations are checked as recipes, not as references.
-    expect(ids.filter((id) => id.includes("taxis_"))).toEqual([]);
+    expect(ids.filter((id) => id.includes("taxis_") && !id.startsWith("climate:"))).toEqual([]);
+    // Area climate in the living room is installed as planned: not out of date, its inputs all there.
+    expect(ids).not.toContain("setup:recipe:living_room:area_climate");
   });
 
   it("proposes only changes the change list accepts", async () => {
@@ -141,7 +149,7 @@ describe("assembling the snapshot", () => {
   it("takes the recipes' automations and timers from what is already read, without asking again", async () => {
     const { raw, snap, blueprints } = await run();
     const installed = installedFrom(raw.states, snap, blueprints!);
-    expect(Object.keys(installed.automations).sort()).toEqual(["taxis_occupancy_kitchen", "taxis_occupancy_living"]);
+    expect(Object.keys(installed.automations).sort()).toEqual(["taxis_area_climate_living", "taxis_occupancy_kitchen", "taxis_occupancy_living"]);
     expect(installed.automations.taxis_occupancy_kitchen).toMatchObject({ alias: "Kitchen – Occupancy (Taxis)", path: "taxis/occupancy.yaml" });
     expect(installed.automations.taxis_occupancy_kitchen!.input).toMatchObject({ hold_minutes: 3 });
     expect(installed.timers).toMatchObject({ "timer.kitchen_hold": 180, "timer.living_hold": 300 });

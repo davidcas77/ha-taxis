@@ -42,6 +42,12 @@ function fakeHa(opts: { token?: string; answer?: (msg: { id: number; type: strin
 
 const blueprint = (over: Record<string, unknown> = {}) => ({ domain: "automation", path: "taxis/occupancy.yaml", yaml: "blueprint: {}\n", allow_override: true, ...over });
 
+const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const week = (over: Record<string, unknown> = {}) => ({ ...Object.fromEntries(DAYS.map((d) => [d, []])), monday: [{ from: "06:30:00", to: "08:30:00" }], ...over });
+const schedule = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ name: "Living room climate", ...week(), ...over });
+const scheduleUpdate = (over: Record<string, unknown> = {}): Record<string, unknown> => schedule({ schedule_id: "living_room_climate", ...over });
+const payloadFor = (t: string) => (t === "blueprint/save" ? blueprint() : t === "schedule/create" ? schedule() : t === "schedule/update" ? scheduleUpdate() : {});
+
 describe("read-only guard", () => {
   it("allows only registry and state reads", () => {
     for (const t of READ_COMMANDS) expect(() => assertReadCommand(t)).not.toThrow();
@@ -57,14 +63,14 @@ describe("read-only guard", () => {
       await expect(client.write(t, {})).rejects.toThrow(/doesn't make that change/);
     }
     expect(ha.opened()).toBe(0);
-    for (const t of WRITE_COMMANDS) expect(() => assertWriteCommand(t, t === "blueprint/save" ? blueprint() : {})).not.toThrow();
+    for (const t of WRITE_COMMANDS) expect(() => assertWriteCommand(t, payloadFor(t))).not.toThrow();
   });
 
   it("allows the recipe writes and the blueprint read, and no other timer, helper or blueprint command", () => {
-    for (const t of ["blueprint/save", "timer/create", "timer/update", "input_boolean/create"]) expect(WRITE_COMMANDS.has(t), t).toBe(true);
+    for (const t of ["blueprint/save", "timer/create", "timer/update", "input_boolean/create", "schedule/create", "schedule/update"]) expect(WRITE_COMMANDS.has(t), t).toBe(true);
     expect(READ_COMMANDS.has("blueprint/list")).toBe(true);
     // The writes and reads recipes add are exactly these, and nothing next to them.
-    for (const t of ["blueprint/delete", "blueprint/import", "blueprint/substitute", "timer/delete", "timer/start", "timer/list", "input_boolean/delete", "input_boolean/update", "input_number/create", "input_select/create", "input_datetime/create", "schedule/create", "counter/create"]) {
+    for (const t of ["blueprint/delete", "blueprint/import", "blueprint/substitute", "timer/delete", "timer/start", "timer/list", "input_boolean/delete", "input_boolean/update", "input_number/create", "input_select/create", "input_datetime/create", "schedule/delete", "schedule/list", "counter/create"]) {
       expect(WRITE_COMMANDS.has(t), t).toBe(false);
       expect(READ_COMMANDS.has(t), t).toBe(false);
       expect(() => assertWriteCommand(t)).toThrow(/doesn't make that change/);
@@ -114,6 +120,57 @@ describe("read-only guard", () => {
     expect(ha.opened()).toBe(0);
     await client.write("blueprint/save", blueprint());
     expect(ha.sent.at(-1)).toMatchObject({ type: "blueprint/save", domain: "automation", path: "taxis/occupancy.yaml", allow_override: true });
+  });
+
+  it("makes and updates a schedule with a name, an optional icon and seven days of from/to times, and nothing else", () => {
+    expect(() => assertWriteCommand("schedule/create", schedule())).not.toThrow();
+    expect(() => assertWriteCommand("schedule/create", schedule({ icon: "mdi:radiator" }))).not.toThrow();
+    expect(() => assertWriteCommand("schedule/update", scheduleUpdate())).not.toThrow();
+    // Several periods in a day, touching ones too.
+    expect(() => assertWriteCommand("schedule/create", schedule({ friday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:59:00" }] }))).not.toThrow();
+
+    // An id belongs to an update, never a creation; an update needs one.
+    expect(() => assertWriteCommand("schedule/create", scheduleUpdate())).toThrow(/with an id/);
+    const { schedule_id: _id, ...noId } = scheduleUpdate();
+    expect(() => assertWriteCommand("schedule/update", noId)).toThrow(/without saying which/);
+    expect(() => assertWriteCommand("schedule/update", scheduleUpdate({ schedule_id: "../x" }))).toThrow(/without saying which/);
+
+    // The name and the icon.
+    for (const name of ["", "  ", undefined, 5, "x".repeat(256)]) expect(() => assertWriteCommand("schedule/create", schedule({ name })), String(name)).toThrow(/no name/);
+    for (const icon of ["radiator", "MDI:x", 5, ""]) expect(() => assertWriteCommand("schedule/create", schedule({ icon })), String(icon)).toThrow(/icon/);
+
+    // Nothing else rides along: not in the payload, not in a period.
+    expect(() => assertWriteCommand("schedule/create", schedule({ extra: 1 }))).toThrow(/isn't something Taxis sends/);
+    expect(() => assertWriteCommand("schedule/create", schedule({ monday: [{ from: "06:30:00", to: "08:30:00", data: { x: 1 } }] }))).toThrow(/from\/to times/);
+
+    // All seven days, each a short list of well-formed periods that end after they start.
+    const { sunday: _sunday, ...short } = schedule();
+    expect(() => assertWriteCommand("schedule/create", short)).toThrow(/sunday/);
+    expect(() => assertWriteCommand("schedule/create", schedule({ sunday: "none" }))).toThrow(/sunday/);
+    expect(() => assertWriteCommand("schedule/create", schedule({ sunday: Array.from({ length: 9 }, () => ({ from: "01:00:00", to: "02:00:00" })) }))).toThrow(/short list/);
+    for (const bad of [
+      { from: "6:30:00", to: "08:30:00" },
+      { from: "06:30", to: "08:30" },
+      { from: "06:30:00", to: "24:00:00" },
+      { from: "08:30:00", to: "06:30:00" },
+      { from: "08:30:00", to: "08:30:00" },
+      { from: "08:30:30", to: "09:30:00" },
+      { from: 1, to: 2 },
+      null,
+      "06:30-08:30",
+    ]) {
+      expect(() => assertWriteCommand("schedule/create", schedule({ tuesday: [bad] })), JSON.stringify(bad)).toThrow(/from\/to times/);
+    }
+  });
+
+  it("write() checks a schedule's payload before anything is sent", async () => {
+    const ha = fakeHa();
+    const client = new HaSocket("ws://x", "good", ha.factory);
+    await expect(client.write("schedule/create", schedule({ extra: 1 }))).rejects.toThrow(/isn't something Taxis sends/);
+    await expect(client.write("schedule/update", schedule())).rejects.toThrow(/without saying which/);
+    expect(ha.opened()).toBe(0);
+    await client.write("schedule/create", schedule());
+    expect(ha.sent.at(-1)).toMatchObject({ type: "schedule/create", name: "Living room climate" });
   });
 
   it("refuses a write command before anything is sent", async () => {

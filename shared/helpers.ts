@@ -87,9 +87,10 @@ export function helperNameErrors(names: HelperNames | undefined): Partial<Record
 export const canonicalId = (domain: HelperDomain, code: string, suffix: string) => `${domain}.${code}_${suffix}`;
 
 // The helpers the recipes add to an area (shared/recipes.ts): the hold timer,
-// the occupied sensor, the pause switch and the manual override timer. Their ids
-// end like this and, unlike the helpers above, the ends are not settings.
-export const RECIPE_HELPER_SUFFIX = { hold: "hold", occupied: "occupied", switch: "paused", override: "override" } as const;
+// the occupied sensor, the pause switch, the manual override timer and the
+// climate schedule. Their ids end like this and, unlike the helpers above, the
+// ends are not settings.
+export const RECIPE_HELPER_SUFFIX = { hold: "hold", occupied: "occupied", switch: "paused", override: "override", climate: "climate" } as const;
 
 export const helperName = (areaName: string, spec: HelperSpec) => `${areaName} ${spec.nameWord}`;
 

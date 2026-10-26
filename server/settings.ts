@@ -44,6 +44,7 @@ import {
   PARAM_DEF,
   checkValue,
   isParamKey,
+  type ParamValue,
   type ParamValues,
   type ParameterSettings,
 } from "../shared/parameters.ts";
@@ -344,12 +345,12 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
 
   const values = (raw: unknown, where: string): { ok: true; value: ParamValues } | { ok: false; error: string } => {
     if (!isRecord(raw)) return { ok: false, error: `The parameters for ${where} weren't readable.` };
-    const out: [string, number | string][] = [];
+    const out: [string, ParamValue][] = [];
     for (const [key, v] of Object.entries(raw)) {
       if (!isParamKey(key)) return { ok: false, error: `${key.slice(0, 40)} isn't a parameter (${where}).` };
       const problem = checkValue(PARAM_DEF[key], v);
       if (problem) return { ok: false, error: `${problem.replace(/\.$/, "")} (${where}).` };
-      out.push([key, v as number | string]);
+      out.push([key, v as ParamValue]);
     }
     return { ok: true, value: Object.fromEntries(out) as ParamValues };
   };

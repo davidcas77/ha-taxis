@@ -1,6 +1,6 @@
 # Smart areas: capabilities, parameters, canonical helpers and recipes
 
-Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers), a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights and Media off recipes) and the rule-based [Health](#health) checks are implemented; the rest is not.
+Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers), a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights, Media off and [Area climate](#area-climate-built) recipes) and the rule-based [Health](#health) checks are implemented; the rest is not.
 
 ## Goal
 
@@ -186,6 +186,8 @@ the Occupancy and Motion lights blueprints work them out when they run (see
 |---|---|---|
 | `timer.<code>_hold` | Timer, duration = area timeout parameter | motion or presence |
 | `timer.<code>_override` | Timer, duration = manual override parameter (1 h placeholder when it is 0); the automation sets the real length | Motion lights |
+| `schedule.<code>_climate` | Schedule helper made from the comfort periods parameter; built (Area climate) | thermostat |
+| `input_boolean.taxis_away`, `input_boolean.taxis_sleep` | House-level toggles with no area, made when the install has none to pick (House tab); built (Area climate) | thermostat |
 | `binary_sensor.<code>_occupied` | Template: hold timer active or presence on (or door rule, below) | motion or presence |
 | `binary_sensor.<code>_extended` | Template: occupied for longer than the extended parameter. Not built: computed in the blueprints from `_occupied`'s `last_changed` | occupancy |
 | `binary_sensor.<code>_sleep` | Template: bed presence, or house sleep mode for bedroom areas. Not built: computed in the blueprints from the bed sensors | bedroom or bed sensor |
@@ -224,15 +226,15 @@ night start/end (House tab); hold timeout, extended after, extended hold timeout
 and sleep hold timeout (Occupancy tab); dark threshold, day and night brightness
 and colour temperature, transition, dim before off, dim level and manual
 override duration (Lighting tab); speakers off when clear for and TVs off when
-clear for (Media tab). The Parameters page has a table per tab: a row for the
+clear for (Media tab); the Climate tab (Area climate, below) and, on the House tab, the away and sleep mode switches. The kinds a parameter can have are number, time, enum, bool, text (a preset name), entity (an `input_boolean`) and periods (comfort periods, `shared/periods.ts`). The Parameters page has a table per tab: a row for the
 house default, interior, exterior, each floor and each area; a cell shows its own
 value or the inherited one in grey ("from <source>"); click to set, clear to
 inherit.
 
-**Recipes** (`shared/recipes.ts`, `shared/blueprints.ts`). Three recipes, one
+**Recipes** (`shared/recipes.ts`, `shared/blueprints.ts`). Four recipes, one
 blueprint each, written by Taxis at `taxis/occupancy.yaml` (version 3),
-`taxis/motion_lights.yaml` (version 3) and `taxis/media_off.yaml` (version 1)
-through `blueprint/save`. The text is a constant in
+`taxis/motion_lights.yaml` (version 3), `taxis/media_off.yaml` (version 1) and
+`taxis/area_climate.yaml` (version 1) through `blueprint/save`. The text is a constant in
 code with "Taxis blueprint version N." in the description; Home Assistant lists
 the description back, and a blueprint is (re)written only when missing or of
 another version. `planRecipes` gives each area and recipe one of Missing
@@ -272,6 +274,7 @@ the recipes run while `input_boolean.<code>_paused` is off.
   Because the mode is restart, the occupied trigger of the next run is what
   restores lights left at or below the dim level; the wait in the run that was
   waiting is cancelled by it.
+- *Area climate* is described [below](#area-climate-built).
 - *Media off* needs Occupancy (installed or in the change list) and a counted
   speaker or TV. Inputs: the occupied sensor, the speakers, the TVs, the two times
   and the pause switch. The occupied sensor off for the speaker time turns off the
@@ -333,9 +336,11 @@ present with the right platform, area and timer length, automation stored as
 sent and not unavailable). Writes added: WebSocket `blueprint/save` (automation
 blueprints at `taxis/<name>.yaml` only, enforced), `timer/create`,
 `timer/update`, `input_boolean/create`; config-flow handler `template`; one read,
-`blueprint/list`. The override timer and Media off add no write of their own.
+`blueprint/list`. The override timer and Media off add no write of their own. Area
+climate adds `schedule/create` and `schedule/update` (payload checked: a name, an
+icon, seven days of from/to times) and no read.
 
-**Deferred to later stages**: climate (area climate, window open), the bathroom
+**Deferred to later stages**: climate boost, the bathroom
 fan and shower-keeps-occupied, exterior lights, covers by sun, announcements,
 door and appliance notifications, the presence hold switch, the door rule,
 proportional dimming, vacancy lights, night path light, a light profile sensor,
@@ -389,6 +394,85 @@ Climate target, first match wins:
 
 Then clamp to the area's `min_temp`/`max_temp` and set every thermostat in the
 area.
+
+#### Area climate (built)
+
+`taxis/area_climate.yaml` (version 1), one automation per area, `taxis_area_climate_<code>`.
+The rules above are written twice, on purpose: the blueprint's template is what
+runs, and `shared/climate.ts` is the same rules in TypeScript (`decide`,
+`targetTemperature`, `planThermostat`), which the tests feed states into. The
+order is a table (`PRECEDENCE`) and a test reads it back out of the blueprint's
+`decision` variable, so the two cannot drift apart without a test failing. The
+flags carry the same names in both (`window_rule`, `window_pending`, `away`,
+`sleeping`, `in_night`, `comfort_now`).
+
+Decisions that the list above leaves open:
+
+- **Mode restart.** Every run works out the whole picture from the states as they
+  are, so the newest trigger should replace one still running. Queued would run
+  stale pictures in order for no gain. The thermostats are never triggers, so
+  nothing answers its own changes. Consequence: nothing sticks. A setpoint changed
+  by hand lasts until the next input changes (there is no manual override yet;
+  boost is out of scope).
+- **Window delays without any state.** A window group open for the delay is the
+  `window` decision. A group open for less, or closed for less than the restore
+  delay, is `hold`: nothing is changed, because the automation cannot tell from
+  the group alone whether an earlier run switched anything off. A state trigger
+  with `for:` comes back to it at the end of each delay, and after Home Assistant
+  starts it waits out the restore delay before the first run. The delays are
+  measured from the `last_changed` of the window and door groups (the longest
+  open, the shortest closed).
+- **Turning off needs the same permission as turning on.** `auto_hvac_on` (default
+  no) gates every change of a thermostat's mode. With it off, a thermostat that is
+  off is left alone, and a window lowers the setpoint to frost protection (heating
+  only: frost protection on a cooler would cool hard, so nothing is done when
+  cooling). With it on, a window sets `hvac_mode: off` where the thermostat has
+  it, and the normal target switches it back on (`heat`, `cool` when the season
+  is cooling), unless the room is already warm enough (or cool enough) according to
+  the area's temperature helper. The first design said "off if supported, else
+  frost" regardless; with the default setting that would leave a thermostat off
+  after the window closes with nothing to switch it on.
+- **Sleep.** A bedroom (area marked as such) with a bed sensor on, or with the house
+  sleep switch on. The house sleep switch does not put other rooms to sleep: they
+  fall through to the night window and the schedule.
+- **Comfort and occupancy.** With `comfort_needs_occupancy` the area counts as
+  occupied while its occupied sensor is not `off` (so an unavailable sensor does
+  not drop comfort) and for `eco_after_clear` after it went `off`; that grace is
+  what `eco_after_clear` means. Without an Occupancy recipe there is no occupied
+  sensor and the requirement is skipped. The parameter is a bool, default yes; a
+  **bedroom with no choice of its own** at any level reads no (the planner decides:
+  the default is documented, not a stored value).
+- **Presets.** Four per-area (inheritable) names: comfort, eco, away and sleep; the
+  night window uses the sleep one. A thermostat gets a preset only when it lists
+  that name in `preset_modes` (the server puts them on the entity, the Climate tab
+  suggests them, the Recipes cell says which thermostats get presets, which
+  temperatures, and which mapped names a thermostat does not offer); otherwise it gets
+  `climate.set_temperature`. Window protection never uses a preset. A temperature
+  is kept inside the thermostat's own `min_temp` / `max_temp` and rounded half up to
+  its `target_temp_step`; nothing is sent when the setpoint shown is within 0.05 of it,
+  or the preset shown is already the one wanted.
+- **Doors.** Doors count like windows only when the `doors_open_count` parameter is
+  on (default no): the door group of a room includes inner doors, and a hallway door
+  left open must not turn the heating off.
+- **Season.** Heating or cooling (same temperatures; a cooler normally wants
+  different ones, set per area for now) or off (nothing runs).
+- **Away and sleep switches** are blueprint inputs, `away_entity` and
+  `sleep_entity`, taken from the House parameters `away_mode_entity` /
+  `sleep_mode_entity`. Empty means Taxis's own `input_boolean.taxis_away` /
+  `taxis_sleep`, created through the change list with no area (the change list
+  accepts exactly those two ids without one). Taxis invents no away logic.
+- **The schedule** is `schedule.<code>_climate`. Taxis cannot read a schedule back
+  (a read was not added), so it stores the periods it wrote in the automation's
+  `comfort_periods` input (informational; the automation reads the schedule). A
+  difference between that and the parameter is "out of date" and the fix is a
+  `schedule/update` plus the automation; a schedule that was already there when the
+  recipe was installed is the user's, recorded as empty, and never written to. The
+  answer to `schedule/create` and `schedule/update` is the stored schedule, which is
+  compared with what was sent. A change made in the Home Assistant UI is not seen
+  until the parameter changes.
+- **The reference temperature** (`sensor.<code>_temperature`, in place or in the list)
+  is used only to decide whether a thermostat that is off is worth switching on.
+  A valve's own external-sensor setting is a device setting Taxis does not write.
 
 Lights: away → off; manual override active → leave alone; clear → off after
 hold; occupied and dark → night profile during night window, day profile
@@ -531,6 +615,17 @@ Materialised: house temperatures as `input_number.climate_<preset>_temp`; an
 area's comfort temperature as `input_number.<code>_comfort_temp` (tunable from a
 dashboard); schedule as `schedule.<code>_climate`; the rest as blueprint inputs.
 
+**Built** (stage 4, Area climate): every parameter above except boost, preheat,
+hysteresis and the bathroom fan is a Climate-tab parameter (comfort, eco, night,
+sleep, away, frost, lowest, highest, window delay, restore delay, comfort needs
+occupancy, eco after clear, season), plus `auto_hvac_on`, `doors_open_count`,
+`comfort_periods` and the four preset names, and, on the House tab, `away_mode_entity`
+and `sleep_mode_entity` (entity pickers). All of them are blueprint inputs; the
+`input_number` helpers are not made (open question 1: the Taxis database is the
+source, and a changed value reaches the thermostats at the next input change, with
+the automation updated by installing again). The schedule is made. Boost, preheat on
+entering the near-home zone and hysteresis for switch-based heaters are not built.
+
 ### Safety and notifications
 
 | Parameter | Default |
@@ -561,10 +656,11 @@ close match in the same area is adopted with a members update.
 
 New writes, all through the change list with backup and verify:
 
+- Area climate adds two more WebSocket writes, `schedule/create` and `schedule/update` (the calls Home Assistant's Helpers page makes; payload checked in `server/ha/socket.ts`: a name, an optional icon and the seven days of from/to times, nothing else). No schedule read was added.
 - helper config flows: `group` and `min_max` (stage 3, built: REST `POST /config/config_entries/flow` for those two handlers and its steps, and the options flow of a group's config entry to change its members); `template` (built, for the occupied sensor) and `threshold` later, with the recipes that need them;
-- storage helpers: `timer` and `input_boolean` (built: `timer/create`,
-  `timer/update`, `input_boolean/create`); `input_number`, `input_datetime`,
-  `schedule` later;
+- storage helpers: `timer`, `input_boolean` and `schedule` (built: `timer/create`,
+  `timer/update`, `input_boolean/create`, `schedule/create`, `schedule/update`);
+  `input_number`, `input_datetime` later;
 - blueprints (WebSocket `blueprint/save`; built, `taxis/<name>.yaml` only);
 - automation configs (REST `config/automation/config/<id>`, allowed since 0.4 for
   reference rewrites; built for the recipes' `taxis_<recipe>_<code>`);
@@ -606,7 +702,7 @@ Parameters, and the Health tab of every area.
 HealthFinding = {
   id: string;                      // stable, e.g. "references:automation:1700000000010"
   check: "references" | "unavailable" | "activity" | "conditions" | "switches"
-       | "lights" | "setup" | "helpers" | "devices";
+       | "lights" | "climate" | "setup" | "helpers" | "devices";
   severity: "error" | "warning" | "info";
   area?: string; entity?: string; entities?: string[];
   item?: { kind: "automation" | "script" | "scene" | "dashboard"; id; name; entityId };
@@ -649,10 +745,11 @@ inputs are checked as *Taxis setup*.
 | 4b | `conditions` (by hand) | A `state` condition, anywhere, on an input boolean that no automation, script or scene turns on or off (see 5) and that isn't a Taxis helper. | info | none |
 | 5 | `switches` | An input boolean that is turned on and never off, or off and never on, by `input_boolean.turn_on/turn_off/toggle` and the same `homeassistant.*` services (target by id, area, floor, label or device; a toggle counts both ways), or by a scene's states. A target that is a template or `all`, or a non-Taxis blueprint given the switch, counts as anything and silences the finding. Taxis's pause switches and disabled switches are skipped. | warning | none |
 | 6 | `lights` | Automations that are **on**, with `light.turn_on/turn_off/toggle` or `homeassistant.*` reaching a light directly, by area/floor/label/device, through a group and its members, or through a script they call (to depth 4); plus the Taxis Motion lights automations from their inputs (`light_target`, `main_lights`, `accent_lights`, `night_lights`). A light with two or more controllers is contested; lights with the same controllers are one finding. | warning | none |
+| 6b | `climate` | For an area with Area climate: a thermostat it controls (from the automation's inputs) `unavailable` or `unknown` for 10 minutes or more (the sources check 7d leaves these thermostats to this one); no temperature helper in the automation's inputs (info; a warning when `auto_hvac_on` is on); and `climate.set_temperature`, `set_hvac_mode`, `set_preset_mode`, `turn_on`, `turn_off`, `toggle` or the `homeassistant` ones of another automation that is on, reaching the same thermostat the way check 6 follows lights (by id, area, floor, label, device or a script), when Area climate is one of the controllers | warning; info for the missing reference | link (Capabilities, Helpers) |
 | 7a | `setup` | A recipe cell (`planRecipes`) that is **out of date**. | warning | the cell's `inputs` |
 | 7b | `setup` | A canonical helper (`planHelpers`) whose status is **conflict**. | warning | link to Settings |
 | 7c | `setup` | An area with counted lights whose Occupancy cell is **ready** or **missing**. | info | the cell's `inputs` when ready; else a link to the area's Capabilities |
-| 7d | `setup` | A counted inventory row that has been unavailable or unknown for at least 1 hour and less than `unavailableHours` (longer is check 2). One finding per area. | warning | link to the area's Capabilities |
+| 7d | `setup` | A counted inventory row that has been unavailable or unknown for at least 1 hour and less than `unavailableHours` (longer is check 2). One finding per area. A thermostat that Area climate controls is left to check 6b. | warning | link to the area's Capabilities |
 | 7e | `setup` | An area's temperature or humidity entity that doesn't exist, and isn't already being changed in the list. | warning | an `area` update to the area's own min/max helper if there is one, else to `null` |
 | 8 | `helpers` | An `input_*`, counter, timer or schedule, or a UI helper (template, group, min/max, threshold, derivative, statistics, bayesian, trend, filter, utility_meter, integration, history_stats), used by no readable config, group member or area setting. Taxis's canonical and runtime helper ids and disabled helpers are skipped. | info | none |
 | 9 | `devices` | An automation or script with a `device_id` in its triggers, conditions or actions (device kinds, and `target.device_id`); blueprint inputs aren't read. | info; warning if a device isn't in Home Assistant | none |
@@ -838,7 +935,9 @@ id (recipes are checked against real entity ids before writing).
 1. Where parameters live: Taxis database as the source, helpers only where
    runtime-tunable (proposed), or everything as helpers.
 2. Extended occupancy: answered in stage 4: computed in the blueprints from the occupied sensor's `last_changed`, no helper (see "Extended and sleep").
-3. Areas with several thermostats of different kinds (valve + AC).
+3. Areas with several thermostats of different kinds (valve + AC). Area climate
+   treats them alike except that presets are chosen per thermostat; a
+   per-thermostat season is not built.
 4. When purpose-specific area triggers (`motion.detected` with an area target)
    leave Labs, recipes could use them directly; canonical groups stay because
    they respect exclusions.

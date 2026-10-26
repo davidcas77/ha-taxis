@@ -1,4 +1,5 @@
-import { areaChoice, AREA_TYPES, INVENTORY_AREA_ID, type AreaType, type InventorySettings } from "./inventory.ts";
+import { areaChoice, AREA_TYPES, INVENTORY_AREA_ID, INVENTORY_ENTITY_ID, type AreaType, type InventorySettings } from "./inventory.ts";
+import { checkPeriods, DEFAULT_COMFORT_PERIODS } from "./periods.ts";
 import type { Hierarchy } from "./types.ts";
 
 // Parameters: the numbers and times recipes are filled in with. Each has a
@@ -8,13 +9,17 @@ import type { Hierarchy } from "./types.ts";
 // only; nothing is written to Home Assistant until a recipe is installed. Pure
 // functions, no side effects.
 
-export const PARAM_TABS = ["house", "occupancy", "lighting", "media"] as const;
+export const PARAM_TABS = ["house", "occupancy", "lighting", "media", "climate"] as const;
 export type ParamTab = (typeof PARAM_TABS)[number];
 
-export const PARAM_TAB_LABEL: Record<ParamTab, string> = { house: "House", occupancy: "Occupancy", lighting: "Lighting", media: "Media" };
+export const PARAM_TAB_LABEL: Record<ParamTab, string> = { house: "House", occupancy: "Occupancy", lighting: "Lighting", media: "Media", climate: "Climate" };
 
-export type ParamKind = "number" | "time" | "enum";
-export type ParamValue = number | string;
+// number: a number in a range. time: HH:MM. enum: one of a few words. bool: yes or
+// no. text: a short name (a thermostat preset); empty means not set. entity: the
+// id of an entity of one domain; empty means not set. periods: comfort periods
+// (shared/periods.ts).
+export type ParamKind = "number" | "time" | "enum" | "bool" | "text" | "entity" | "periods";
+export type ParamValue = number | string | boolean;
 
 export type ParamDef = {
   key: ParamKey;
@@ -28,12 +33,16 @@ export type ParamDef = {
   step?: number;
   // enum: the values it can take.
   options?: readonly string[];
+  // entity: the domain its entity id has to be in.
+  domain?: string;
   default: ParamValue;
 };
 
 export const PARAM_KEYS = [
   "night_start",
   "night_end",
+  "away_mode_entity",
+  "sleep_mode_entity",
   "hold_timeout",
   "extended_after",
   "extended_hold",
@@ -49,12 +58,35 @@ export const PARAM_KEYS = [
   "override_duration",
   "media_off_after",
   "tv_off_after",
+  "comfort_temp",
+  "eco_temp",
+  "night_temp",
+  "sleep_temp",
+  "away_temp",
+  "frost_temp",
+  "min_temp",
+  "max_temp",
+  "window_delay",
+  "restore_delay",
+  "eco_after_clear",
+  "comfort_needs_occupancy",
+  "season",
+  "auto_hvac_on",
+  "doors_open_count",
+  "comfort_periods",
+  "preset_comfort",
+  "preset_eco",
+  "preset_away",
+  "preset_sleep",
 ] as const;
 export type ParamKey = (typeof PARAM_KEYS)[number];
 
 export const PARAMS: readonly ParamDef[] = [
   { key: "night_start", tab: "house", label: "Night starts", unit: null, kind: "time", default: "23:00" },
   { key: "night_end", tab: "house", label: "Night ends", unit: null, kind: "time", default: "07:00" },
+  // "": Taxis makes input_boolean.taxis_away / taxis_sleep when Area climate is installed.
+  { key: "away_mode_entity", tab: "house", label: "Away mode switch", unit: null, kind: "entity", domain: "input_boolean", default: "" },
+  { key: "sleep_mode_entity", tab: "house", label: "Sleep mode switch", unit: null, kind: "entity", domain: "input_boolean", default: "" },
   { key: "hold_timeout", tab: "occupancy", label: "Hold timeout", unit: "min", kind: "number", min: 1, max: 240, step: 1, default: 5 },
   { key: "extended_after", tab: "occupancy", label: "Extended after", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 30 },
   { key: "extended_hold", tab: "occupancy", label: "Extended hold timeout", unit: "min", kind: "number", min: 1, max: 240, step: 1, default: 15 },
@@ -71,6 +103,28 @@ export const PARAMS: readonly ParamDef[] = [
   { key: "override_duration", tab: "lighting", label: "Manual override lasts", unit: "min", kind: "number", min: 0, max: 240, step: 1, default: 0 },
   { key: "media_off_after", tab: "media", label: "Speakers off when clear for", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 15 },
   { key: "tv_off_after", tab: "media", label: "TVs off when clear for", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 30 },
+  // Climate. Temperatures are in the unit Home Assistant is set to; the defaults are °C.
+  { key: "comfort_temp", tab: "climate", label: "Comfort", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 21 },
+  { key: "eco_temp", tab: "climate", label: "Eco", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 19 },
+  { key: "night_temp", tab: "climate", label: "Night", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 18 },
+  { key: "sleep_temp", tab: "climate", label: "Sleep", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 17.5 },
+  { key: "away_temp", tab: "climate", label: "Away", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 16 },
+  { key: "frost_temp", tab: "climate", label: "Frost protection", unit: "°", kind: "number", min: 0, max: 15, step: 0.5, default: 7 },
+  { key: "min_temp", tab: "climate", label: "Lowest", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 16 },
+  { key: "max_temp", tab: "climate", label: "Highest", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 24 },
+  { key: "window_delay", tab: "climate", label: "Window open for", unit: "min", kind: "number", min: 0, max: 60, step: 1, default: 2 },
+  { key: "restore_delay", tab: "climate", label: "Restore after close", unit: "min", kind: "number", min: 0, max: 60, step: 1, default: 1 },
+  { key: "eco_after_clear", tab: "climate", label: "Eco when clear for", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 30 },
+  // Bedrooms that haven't been given a choice don't need anyone in them (shared/recipes.ts).
+  { key: "comfort_needs_occupancy", tab: "climate", label: "Comfort needs occupancy", unit: null, kind: "bool", default: true },
+  { key: "season", tab: "climate", label: "Season", unit: null, kind: "enum", options: ["heating", "cooling", "off"], default: "heating" },
+  { key: "auto_hvac_on", tab: "climate", label: "Switch on and off itself", unit: null, kind: "bool", default: false },
+  { key: "doors_open_count", tab: "climate", label: "Open doors count", unit: null, kind: "bool", default: false },
+  { key: "comfort_periods", tab: "climate", label: "Comfort periods", unit: null, kind: "periods", default: DEFAULT_COMFORT_PERIODS },
+  { key: "preset_comfort", tab: "climate", label: "Preset: comfort", unit: null, kind: "text", default: "" },
+  { key: "preset_eco", tab: "climate", label: "Preset: eco", unit: null, kind: "text", default: "" },
+  { key: "preset_away", tab: "climate", label: "Preset: away", unit: null, kind: "text", default: "" },
+  { key: "preset_sleep", tab: "climate", label: "Preset: sleep and night", unit: null, kind: "text", default: "" },
 ];
 
 export const PARAM_DEF = Object.fromEntries(PARAMS.map((p) => [p.key, p])) as Record<ParamKey, ParamDef>;
@@ -81,9 +135,22 @@ export const paramsOf = (tab: ParamTab): ParamDef[] => PARAMS.filter((p) => p.ta
 
 export const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+// A thermostat's preset name: letters, digits and a few marks, up to 40. No dot: a lower-case word.word would read as an entity id.
+export const PRESET_NAME_RE = /^[\p{L}\p{N} _+/-]{1,40}$/u;
+
 // Null when `value` is allowed for `def`; otherwise what's wrong, in words.
 export function checkValue(def: ParamDef, value: unknown): string | null {
   switch (def.kind) {
+    case "bool":
+      return typeof value === "boolean" ? null : `${def.label} must be yes or no.`;
+    case "text":
+      return typeof value === "string" && (value === "" || PRESET_NAME_RE.test(value)) ? null : `${def.label} must be a name of up to 40 letters, digits and spaces.`;
+    case "entity":
+      return typeof value === "string" && (value === "" || (value.length <= 255 && INVENTORY_ENTITY_ID.test(value) && value.startsWith(`${def.domain}.`))) ? null : `${def.label} must be an ${def.domain} entity id.`;
+    case "periods": {
+      const problem = checkPeriods(value);
+      return problem ? `${def.label}: ${problem}` : null;
+    }
     case "time":
       return typeof value === "string" && TIME_RE.test(value) ? null : `${def.label} must be a time like 23:00.`;
     case "enum":
