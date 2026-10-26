@@ -6,7 +6,7 @@ organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
 The pages along the top: **Areas**, **Devices**, **Entities**, **Organize**,
-**Changes** and **Settings**.
+**Parameters**, **Changes** and **Settings**.
 
 ## Areas
 
@@ -19,13 +19,45 @@ The pages along the top: **Areas**, **Devices**, **Entities**, **Organize**,
 - Entities are grouped by what they do. A group (a light group, a group of
   motion sensors…) shows its members under it; a member that's in several
   groups appears under each, marked "also in…".
-- Each area has tabs: **Overview** (the summary), **Entities**, **Devices**,
-  **Naming** (below), **Labels** (the labels on this area's entities, and a tool
-  to add or take off a label for many of them at once) and **Health** (entities
-  not reporting, groups with missing members, ids that name another area).
+- Each area has tabs: **Overview** (the summary), **Capabilities** (below),
+  **Entities**, **Devices**, **Naming** (below), **Labels** (the labels on this
+  area's entities, and a tool to add or take off a label for many of them at
+  once) and **Health** (entities not reporting, groups with missing members,
+  ids that name another area).
 - Click an entity or a device to edit it: name, area, labels, category, icon,
   hidden, disabled. Tick several entities to move them, label them or hide them
   together. Areas and floors have an Edit button, and you can add new ones.
+
+### Capabilities tab
+
+What this area has, and what counts. Taxis reads it from Home Assistant: each
+entity's area, domain and device class (never its name). It lists lights,
+motion, presence, door, window, temperature, humidity, light level, thermostat,
+speaker, TV, cover and power entities, and leaves out disabled entities and
+config or diagnostic ones.
+
+- **Counts.** Each entity has a "Counts" box. It is ticked unless the entity is
+  a helper (a group, or made by a template, min/max, threshold or similar
+  helper, which only repeats other entities) or sits on a device that also has a
+  camera (a camera's motion or person sensor may be looking outside the room).
+  Those are still listed, marked **Helper** or **Camera**. An entity that isn't
+  reporting is marked **Unavailable** and still counts. A light made with
+  "Change device type of a switch" is a real light and counts.
+- **Roles.** A motion or presence sensor either **starts** the room (turns it
+  occupied) or **holds** it (keeps an occupied room occupied). Motion starts;
+  presence holds when the area has a counted motion sensor, and starts when it
+  doesn't, so a room with only a presence sensor still works. A presence sensor
+  can also be marked **Bed**. Lights are **Main**, **Accent**, **Task** or
+  **Night**.
+- **Switching a kind.** An "opening" sensor is listed as a window; change it to
+  a door if it is one. A media player is a TV when Home Assistant says so, a
+  speaker otherwise; switch it if that's wrong.
+- **Type and bedroom.** Mark the area **Interior** or **Exterior**, and tick
+  **Bedroom**.
+
+A mark and **Reset** appear on any entity that differs from what Taxis
+detected. Choices are stored in Taxis only and save as soon as you change them;
+nothing changes in Home Assistant and nothing goes in the list of changes.
 
 ## Devices and Entities
 
@@ -55,6 +87,19 @@ renaming or deleting one changes nothing there. Use **New group** to add one,
 and drag a label or category onto a group to move it. Groups can be renamed, moved up and down, and deleted; their
 items go back to Ungrouped. Groups save as soon as you change them and don't go
 in the list of changes.
+
+## Parameters
+
+What Taxis knows about each area, and the choices later features build on. The
+page has a bar of tabs; for now there is one, **Capabilities**.
+
+**Capabilities** is a table of areas by capability: lights, motion, presence,
+doors, windows, temperature, humidity, light level, thermostats, speakers, TVs,
+covers and power. A cell shows how many entities count; when some are listed
+but left out, the rest show beside it in grey (`2 +1`). Hover a column header
+for its full name, and click a header to sort. Click an area or a cell to open
+that area's Capabilities tab. Areas with nothing in them are hidden until you
+tick **Show empty areas**. The bottom row adds up the home.
 
 ## Naming
 

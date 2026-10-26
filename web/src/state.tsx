@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { GroupSettings } from "../../shared/groups.ts";
+import { EMPTY_INVENTORY, type InventorySettings } from "../../shared/inventory.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "../../shared/naming.ts";
 import type { Change, ChangeInput, Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
@@ -37,6 +38,14 @@ type TaxisState = {
   // Applies the edit at once and rolls it back if the save fails. Resolves to
   // an error text, or null when saved.
   saveGroups: (edit: (g: GroupSettings) => GroupSettings) => Promise<string | null>;
+  // The capability inventory (what each area has, and the user's choices):
+  // Taxis only, saved right away like groups.
+  inventory: InventorySettings;
+  // False until the saved inventory settings have arrived; edits wait for it.
+  inventoryLoaded: boolean;
+  // True while an inventory save is in flight; further edits wait for it.
+  inventorySaving: boolean;
+  saveInventory: (edit: (s: InventorySettings) => InventorySettings) => Promise<string | null>;
   saveNaming: (n: NamingSettings) => Promise<string | null>;
   reload: (refresh?: boolean) => Promise<void>;
   propose: (input: ChangeInput | ChangeInput[]) => Promise<boolean>;
@@ -61,8 +70,13 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
   const [groups, setGroups] = useState<GroupSettings>({});
   const [groupsLoaded, setGroupsLoaded] = useState(false);
   const [groupsSaving, setGroupsSaving] = useState(false);
+  const [inventory, setInventory] = useState<InventorySettings>(EMPTY_INVENTORY);
+  const [inventoryLoaded, setInventoryLoaded] = useState(false);
+  const [inventorySaving, setInventorySaving] = useState(false);
   const groupsRef = useRef<GroupSettings>({});
   const groupsBusy = useRef(false);
+  const inventoryRef = useRef<InventorySettings>(EMPTY_INVENTORY);
+  const inventoryBusy = useRef(false);
   const proposing = useRef(false);
 
   useEffect(() => {
@@ -107,6 +121,40 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
     setGroups(r.groups);
     return null;
   }, [groupsLoaded]);
+
+  useEffect(() => {
+    void api.inventory().then((r) => {
+      if (r.ok) {
+        inventoryRef.current = r.inventory;
+        setInventory(r.inventory);
+        setInventoryLoaded(true);
+      } else setError(r.error);
+    });
+  }, []);
+
+  const saveInventory = useCallback(async (edit: (s: InventorySettings) => InventorySettings) => {
+    // Never save before the real settings have arrived: defaults would overwrite them.
+    if (!inventoryLoaded) return "The inventory settings haven't loaded yet.";
+    if (inventoryBusy.current) return "Still saving the last change. Try again in a moment.";
+    const before = inventoryRef.current;
+    const next = edit(before);
+    if (next === before) return null;
+    inventoryBusy.current = true;
+    setInventorySaving(true);
+    inventoryRef.current = next;
+    setInventory(next);
+    const r = await api.saveInventory(next);
+    inventoryBusy.current = false;
+    setInventorySaving(false);
+    if (!r.ok) {
+      inventoryRef.current = before;
+      setInventory(before);
+      return r.error;
+    }
+    inventoryRef.current = r.inventory;
+    setInventory(r.inventory);
+    return null;
+  }, [inventoryLoaded]);
 
   const saveNaming = useCallback(async (n: NamingSettings) => {
     const r = await api.saveNaming(n);
@@ -206,8 +254,8 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
   }, [changes]);
 
   const value = useMemo(
-    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, saveNaming, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
-    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, saveNaming, reload, propose, removeChange, clearChanges],
+    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, saveNaming, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
+    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, saveNaming, reload, propose, removeChange, clearChanges],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -219,7 +267,7 @@ export function useTaxis(): TaxisState {
 }
 
 // The selected screen, kept in the URL hash so a reload or bookmark opens it.
-export const AREA_TABS = ["overview", "entities", "devices", "naming", "labels", "health"] as const;
+export const AREA_TABS = ["overview", "capabilities", "entities", "devices", "naming", "labels", "health"] as const;
 export type AreaTab = (typeof AREA_TABS)[number];
 
 // What the Organize page lists. In "spaces" an id reads "floor:<id>" or "area:<id>".
@@ -229,11 +277,16 @@ export const ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "categ
 export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
 const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
 
+// The sub-tabs of the Parameters page. Later stages add more.
+export const PARAMETER_TABS = ["capabilities"] as const;
+export type ParameterTab = (typeof PARAMETER_TABS)[number];
+
 export type Route =
   | { page: "areas"; sel: Selection; tab: AreaTab }
   | { page: "devices" }
   | { page: "entities" }
   | { page: "organize"; type: OrganizeType; id: string | null }
+  | { page: "parameters"; tab: ParameterTab }
   | { page: "changes" }
   | { page: "settings" };
 
@@ -257,6 +310,8 @@ export function parseHash(hash: string): Route {
   const [head, a, b] = dec;
   const tab = (t: string | undefined): AreaTab => ((AREA_TABS as readonly string[]).includes(t ?? "") ? (t as AreaTab) : "overview");
   switch (head) {
+    case "parameters":
+      return { page: "parameters", tab: (PARAMETER_TABS as readonly string[]).includes(a ?? "") ? (a as ParameterTab) : PARAMETER_TABS[0] };
     case "changes":
       return { page: "changes" };
     case "settings":
@@ -297,6 +352,8 @@ export function toHash(r: Route): string {
     case "devices":
     case "entities":
       return `#${r.page}`;
+    case "parameters":
+      return `#parameters/${r.tab}`;
     case "organize":
       return r.id ? `#organize/${r.type}/${enc(r.id)}` : `#organize/${r.type}`;
     case "areas": {

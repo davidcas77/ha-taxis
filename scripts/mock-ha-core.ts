@@ -40,7 +40,7 @@ const house: Spec[] = [
       { name: "Sofa presence", model: "FP2", entities: [["binary_sensor.living_presence", "on", "occupancy"], ["sensor.living_illuminance", "112", "illuminance", "lx"]] },
       { name: "Climate sensor", model: "AS008", entities: [["sensor.living_temperature", "21.6", "temperature", "°C"], ["sensor.living_humidity", "48", "humidity", "%"], ["sensor.living_climate_battery", "84", "battery", "%"]] },
       { name: "Window sensor", model: "AS008", entities: [["sensor.living_window_temperature", "19.9", "temperature", "°C"]] },
-      { name: "TV", model: "QE65", entities: [["media_player.living_tv", "playing"]] },
+      { name: "TV", model: "QE65", entities: [["media_player.living_tv", "playing", "tv"]] },
       { name: "Balcony door", model: "AS006", entities: [["binary_sensor.living_balcony_door", "off", "door"]] },
     ],
   },
@@ -51,6 +51,11 @@ const house: Spec[] = [
       { name: "Kitchen lights", model: "Shelly 2PM", entities: [["light.kitchen_main", "off"], ["light.kitchen_under_cabinet", "off"], ["sensor.kitchen_lights_power", "0", "power", "W"]] },
       { name: "Kitchen PIR", model: "AS007", entities: [["binary_sensor.kitchen_motion", "off", "motion"], ["sensor.kitchen_pir_battery", "12", "battery", "%"]] },
       { name: "Leak sensor", model: "SJCGQ11LM", entities: [["binary_sensor.kitchen_leak", "off", "moisture"]] },
+      // Presence next to the PIR: with a motion sensor to start the room, this one holds it.
+      { name: "Kitchen mmWave", model: "LD2410", entities: [["binary_sensor.kitchen_presence", "off", "occupancy"], ["sensor.kitchen_illuminance", "230", "illuminance", "lx"]] },
+      { name: "Kitchen climate", model: "AS008", entities: [["sensor.kitchen_temperature", "22.4", "temperature", "°C"]] },
+      // A media player that says nothing about being a TV is a speaker.
+      { name: "Kitchen speaker", model: "HomePod mini", entities: [["media_player.kitchen_speaker", "idle"]] },
     ],
   },
   {
@@ -59,6 +64,8 @@ const house: Spec[] = [
     devices: [
       { name: "Front door lock", model: "Nuki 4", entities: [["lock.front_door", "locked"], ["binary_sensor.front_door", "off", "door"]] },
       { name: "Hall PIR", model: "AS007", entities: [["binary_sensor.hall_motion", "unavailable", "motion"]] },
+      // A camera's own motion sensor sees outside the room, so it is listed but doesn't count.
+      { name: "Porch camera", model: "Cam 2K", entities: [["camera.porch", "idle"], ["binary_sensor.porch_camera_motion", "off", "motion"]] },
     ],
   },
   {
@@ -77,6 +84,8 @@ const house: Spec[] = [
       { name: "Desk light", model: "WLED", entities: [["light.desk", "on"]] },
       { name: "Desk mmWave", model: "LD2410", entities: [["binary_sensor.study_presence", "off", "occupancy"]] },
       { name: "Study window", model: "AS006", entities: [["binary_sensor.study_window", "on", "window"]] },
+      // "opening" is a window until the user says it is a door.
+      { name: "Skylight sensor", model: "AS006", entities: [["binary_sensor.study_skylight", "off", "opening"]] },
     ],
   },
   {
@@ -141,6 +150,9 @@ export function buildMockRegistry(): MockHome {
   };
   group("light.living_all", "living_room", "on", ["light.living_spots", "light.living_lamp"]);
   group("light.downstairs", "living_room", "on", ["light.living_spots", "light.kitchen_main", "light.kitchen_under_cabinet"]);
+  // A template helper that combines the room's motion sensors: listed, not counted.
+  reg.entities.push({ entity_id: "binary_sensor.kitchen_any_motion", platform: "template", area_id: "kitchen" });
+  reg.states.push({ entity_id: "binary_sensor.kitchen_any_motion", state: "off", attributes: { friendly_name: "Kitchen any motion", device_class: "motion" } });
   group("binary_sensor.downstairs_motion", "hallway", "off", ["binary_sensor.kitchen_motion", "binary_sensor.hall_motion"], "motion");
 
   // Entities an integration ships disabled: in the registry, with no state.

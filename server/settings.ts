@@ -1,10 +1,25 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { GROUP_ID, GROUP_LISTS, MAX_GROUPS, MAX_ITEMS, MAX_NAME, type GroupSettings } from "../shared/groups.ts";
+import {
+  AREA_TYPES,
+  EMPTY_INVENTORY,
+  INVENTORY_AREA_ID,
+  INVENTORY_ENTITY_ID,
+  KIND_PAIRS,
+  LIGHT_ROLES,
+  MAX_INVENTORY_AREAS,
+  MAX_INVENTORY_ENTITIES,
+  MOTION_ROLES,
+  type AreaChoice,
+  type EntityChoice,
+  type InventorySettings,
+} from "../shared/inventory.ts";
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, slug, type NamingSettings } from "../shared/naming.ts";
 import type { EntityRole, Hierarchy } from "../shared/types.ts";
 
-// App settings, one JSON value per key in SQLite: naming and groups.
+// App settings, one JSON value per key in SQLite: naming, groups and the
+// capability inventory.
 
 export function settingsStore(db: DatabaseSync) {
   const get = db.prepare("SELECT value FROM settings WHERE key = ?");
@@ -35,6 +50,20 @@ export function settingsStore(db: DatabaseSync) {
     },
     saveGroups(s: GroupSettings): void {
       put.run("groups", JSON.stringify(s));
+    },
+    inventory(): InventorySettings {
+      const row = get.get("inventory") as { value: string } | undefined;
+      if (!row) return structuredClone(EMPTY_INVENTORY);
+      try {
+        // Same as groups: validate again in case the row was edited by hand.
+        const checked = validateInventory(JSON.parse(row.value));
+        return checked.ok ? checked.value : structuredClone(EMPTY_INVENTORY);
+      } catch {
+        return structuredClone(EMPTY_INVENTORY);
+      }
+    },
+    saveInventory(s: InventorySettings): void {
+      put.run("inventory", JSON.stringify(s));
     },
   };
 }
@@ -126,4 +155,69 @@ export function validateGroups(input: unknown): { ok: true; value: GroupSettings
     value[list] = { groups };
   }
   return { ok: true, value };
+}
+
+// The capability inventory: per-entity and per-area choices, only the ones that
+// differ from detection. Anything the editor couldn't have produced is refused
+// with a message, never silently dropped, so a typo can't go unnoticed.
+const KIND_VALUES = new Set<string>(KIND_PAIRS.flat());
+const has = (list: readonly string[], v: unknown): boolean => typeof v === "string" && list.includes(v);
+
+export function validateInventory(input: unknown): { ok: true; value: InventorySettings } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "The inventory settings weren't readable." };
+  for (const key of Object.keys(input)) {
+    if (key !== "entities" && key !== "areas") return { ok: false, error: `${key.slice(0, 40)} isn't part of the inventory settings.` };
+  }
+  const entities = input.entities ?? {};
+  const areas = input.areas ?? {};
+  if (!isRecord(entities)) return { ok: false, error: "The entity choices weren't readable." };
+  if (!isRecord(areas)) return { ok: false, error: "The area choices weren't readable." };
+  if (Object.keys(entities).length > MAX_INVENTORY_ENTITIES) return { ok: false, error: `There are choices for more than ${MAX_INVENTORY_ENTITIES} entities.` };
+  if (Object.keys(areas).length > MAX_INVENTORY_AREAS) return { ok: false, error: `There are choices for more than ${MAX_INVENTORY_AREAS} areas.` };
+
+  // Built from entries, not by assignment: an id is a key, and "__proto__" must stay one.
+  const entityEntries: [string, EntityChoice][] = [];
+  for (const [id, raw] of Object.entries(entities)) {
+    if (id.length > 255 || !INVENTORY_ENTITY_ID.test(id)) return { ok: false, error: `${id.slice(0, 60)} isn't an entity id.` };
+    if (!isRecord(raw)) return { ok: false, error: `The choices for ${id} weren't readable.` };
+    const choice: EntityChoice = {};
+    for (const [key, v] of Object.entries(raw)) {
+      if (key === "counts" || key === "bed") {
+        if (typeof v !== "boolean") return { ok: false, error: `${key} for ${id} must be true or false.` };
+        choice[key] = v;
+      } else if (key === "kind") {
+        if (typeof v !== "string" || !KIND_VALUES.has(v)) return { ok: false, error: `kind for ${id} must be door, window, speaker or tv.` };
+        choice.kind = v as EntityChoice["kind"];
+      } else if (key === "role") {
+        if (!has(MOTION_ROLES, v)) return { ok: false, error: `role for ${id} must be starts or holds.` };
+        choice.role = v as EntityChoice["role"];
+      } else if (key === "light") {
+        if (!has(LIGHT_ROLES, v)) return { ok: false, error: `light for ${id} must be main, accent, task or night.` };
+        choice.light = v as EntityChoice["light"];
+      } else {
+        return { ok: false, error: `${key.slice(0, 40)} isn't a choice for an entity (${id}).` };
+      }
+    }
+    if (Object.keys(choice).length > 0) entityEntries.push([id, choice]);
+  }
+
+  const areaEntries: [string, AreaChoice][] = [];
+  for (const [id, raw] of Object.entries(areas)) {
+    if (!INVENTORY_AREA_ID.test(id)) return { ok: false, error: `${id.slice(0, 60)} isn't an area id.` };
+    if (!isRecord(raw)) return { ok: false, error: `The choices for area ${id} weren't readable.` };
+    const choice: AreaChoice = {};
+    for (const [key, v] of Object.entries(raw)) {
+      if (key === "type") {
+        if (!has(AREA_TYPES, v)) return { ok: false, error: `type for area ${id} must be interior or exterior.` };
+        choice.type = v as AreaChoice["type"];
+      } else if (key === "bedroom") {
+        if (typeof v !== "boolean") return { ok: false, error: `bedroom for area ${id} must be true or false.` };
+        choice.bedroom = v;
+      } else {
+        return { ok: false, error: `${key.slice(0, 40)} isn't a choice for an area (${id}).` };
+      }
+    }
+    if (Object.keys(choice).length > 0) areaEntries.push([id, choice]);
+  }
+  return { ok: true, value: { entities: Object.fromEntries(entityEntries), areas: Object.fromEntries(areaEntries) } };
 }

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Parameters.** A new page between Organize and Changes, with a bar of tabs
+  for the settings later features use. The first tab, **Capabilities**, is a
+  sortable table of areas by capability (lights, motion, presence, doors,
+  windows, temperature, humidity, light level, thermostats, speakers, TVs,
+  covers, power), with a totals row and a switch for areas with nothing in them.
+- **Capabilities tab on each area.** Lists what Taxis detected in the area from
+  its domain and device class, and lets you choose what counts, whether a
+  motion or presence sensor starts or holds the room, bed sensors, light roles,
+  door or window for an opening sensor, speaker or TV, and whether the area is
+  interior or exterior and a bedroom. Helpers (groups, templates…) and sensors
+  on a camera's device are listed but don't count unless you say so. Choices are
+  kept in Taxis only and saved at once; nothing changes in Home Assistant.
+- The demo house (`npm run dev:mock`) has a camera, a template helper, a
+  speaker, a TV, an opening sensor and a presence sensor next to a motion sensor,
+  so the new tab has something of each to show.
 - Area codes: with no entities or no clear winner, the code is the area id (not
   its name); two areas can't share a code, in Settings or on save; the area
   codes table sorts by column.

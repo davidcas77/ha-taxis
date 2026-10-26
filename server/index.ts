@@ -16,6 +16,7 @@ import type {
   HealthResponse,
   Hierarchy,
   HierarchyResponse,
+  InventoryResponse,
   NamingResponse,
   ReferencesResponse,
   RenameRefs,
@@ -23,7 +24,7 @@ import type {
 import { applyChanges, isRename } from "./changes/apply.ts";
 import { overlayChanges } from "./changes/overlay.ts";
 import { changeStore } from "./changes/store.ts";
-import { checkAreaCodes, settingsStore, validateGroups, validateNaming } from "./settings.ts";
+import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
@@ -239,6 +240,18 @@ app.put("/api/settings/groups", bodyLimit({ maxSize: 64 * 1024, onError: (c) => 
   settings.saveGroups(value);
   log.info("Saved groups");
   return c.json<GroupsResponse>({ ok: true, groups: value });
+});
+
+// The capability inventory: what each area has, and the user's choices on top
+// of it. Taxis only; nothing in Home Assistant changes when they do.
+app.get("/api/settings/inventory", (c) => c.json<InventoryResponse>({ ok: true, inventory: settings.inventory() }));
+
+app.put("/api/settings/inventory", bodyLimit({ maxSize: 1024 * 1024, onError: (c) => c.json<InventoryResponse>({ ok: false, error: "The inventory settings are too large." }, 413) }), async (c) => {
+  const checked = validateInventory(await c.req.json().catch(() => null));
+  if (!checked.ok) return c.json<InventoryResponse>({ ok: false, error: checked.error }, 400);
+  settings.saveInventory(checked.value);
+  log.info("Saved inventory settings");
+  return c.json<InventoryResponse>({ ok: true, inventory: checked.value });
 });
 
 app.post("/api/changes", async (c) => {

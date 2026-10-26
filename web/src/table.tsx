@@ -37,12 +37,15 @@ export function useSort<T>(rows: T[], columns: Record<string, (row: T) => SortVa
 
 export function SortHeader({
   label,
+  title,
   k,
   sort,
   onToggle,
   className = "px-3 py-2",
 }: {
   label: string;
+  // The full name, when the label is short.
+  title?: string;
   k: string;
   sort: Sort;
   onToggle: (key: string) => void;
@@ -52,7 +55,7 @@ export function SortHeader({
   const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
   return (
     <th scope="col" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={`${className} font-medium`}>
-      <button type="button" onClick={() => onToggle(k)} className="inline-flex items-center gap-1 hover:text-fg">
+      <button type="button" title={title} onClick={() => onToggle(k)} className="inline-flex items-center gap-1 hover:text-fg">
         {label}
         <Icon className={`size-3 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
       </button>

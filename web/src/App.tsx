@@ -1,10 +1,11 @@
-import { AlertTriangle, CheckCircle2, Cpu, FolderTree, Layers, List, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, FolderTree, Layers, List, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
 import { useCallback, useState, type ReactNode } from "react";
 
 import { ChangesPage } from "./changes.tsx";
 import { DevicesPage, EntitiesPage } from "./lists.tsx";
 import { SettingsPage } from "./naming.tsx";
 import { OrganizePage } from "./organize.tsx";
+import { ParametersPage } from "./parameters.tsx";
 import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx";
 import { TaxisProvider, useRoute, useTaxis, type Selection } from "./state.tsx";
 
@@ -57,6 +58,9 @@ function Shell() {
           </Tab>
           <Tab active={route.page === "organize"} onClick={() => go(route.page === "organize" ? route : { page: "organize", type: "labels", id: null })} icon={<FolderTree className="size-4" aria-hidden />}>
             Organize
+          </Tab>
+          <Tab active={route.page === "parameters"} onClick={() => go(route.page === "parameters" ? route : { page: "parameters", tab: "capabilities" })} icon={<SlidersHorizontal className="size-4" aria-hidden />}>
+            Parameters
           </Tab>
           <Tab active={route.page === "changes"} onClick={() => go({ page: "changes" })} icon={<ListChecks className="size-4" aria-hidden />}>
             Changes
@@ -127,6 +131,8 @@ function Shell() {
         </div>
       ) : route.page === "organize" ? (
         <OrganizePage h={hierarchy} type={route.type} id={route.id} go={go} />
+      ) : route.page === "parameters" ? (
+        <ParametersPage h={hierarchy} tab={route.tab} go={go} />
       ) : route.page === "devices" ? (
         <DevicesPage h={hierarchy} />
       ) : route.page === "entities" ? (

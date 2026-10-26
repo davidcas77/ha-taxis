@@ -221,4 +221,6 @@ export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSet
 
 export type GroupsResponse = { ok: true; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
 
+export type InventoryResponse = { ok: true; inventory: import("./inventory.ts").InventorySettings } | { ok: false; error: string };
+
 export type ApplyResponse = ({ ok: true } & ApplyResult) | { ok: false; error: string };

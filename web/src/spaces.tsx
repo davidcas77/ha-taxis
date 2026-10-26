@@ -37,6 +37,7 @@ import type { AreaNode, ChangeInput, EntityItem, EntityRole, Hierarchy } from ".
 import { analyzeArea } from "../../shared/naming.ts";
 import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
+import { AreaCapabilitiesTab } from "./capabilities.tsx";
 import { AreaNamingTab } from "./naming.tsx";
 import { useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
 import { AreaSelect, Button, ConfirmAction, EditedDot, LabelChip, inputClass } from "./ui.tsx";
@@ -529,6 +530,7 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
   const named = Object.values(nameCheck.counts).reduce((a, b) => a + b, 0);
   const tabs: { key: AreaTab; label: string; count?: string }[] = [
     { key: "overview", label: "Overview" },
+    { key: "capabilities", label: "Capabilities" },
     { key: "entities", label: "Entities", count: String(countVisible(area.entityIds, h, filters)) },
     { key: "devices", label: "Devices", count: String(area.deviceIds.length) },
     { key: "naming", label: "Naming", count: named ? `${nameCheck.counts.ok}/${named}` : undefined },
@@ -594,6 +596,7 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
             </div>
           </div>
         )}
+        {tab === "capabilities" && <AreaCapabilitiesTab h={h} area={area} />}
         {tab === "entities" && <RoleSections h={h} ids={area.entityIds} filters={filters} rows={rows} />}
         {tab === "devices" &&
           (area.deviceIds.length === 0 ? (

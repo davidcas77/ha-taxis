@@ -1,6 +1,7 @@
 import type { GroupSettings } from "../../shared/groups.ts";
+import type { InventorySettings } from "../../shared/inventory.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
-import type { ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, NamingResponse, ReferencesResponse } from "../../shared/types.ts";
+import type { ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, InventoryResponse, NamingResponse, ReferencesResponse } from "../../shared/types.ts";
 
 // Relative URLs on purpose: under Ingress the app lives at
 // /api/hassio_ingress/<token>/, so "/api/…" would miss it.
@@ -28,6 +29,8 @@ export const api = {
   saveNaming: (naming: NamingSettings) => call<NamingResponse>("api/settings/naming", { method: "PUT", body: JSON.stringify(naming) }),
   groups: () => call<GroupsResponse>("api/settings/groups"),
   saveGroups: (groups: GroupSettings) => call<GroupsResponse>("api/settings/groups", { method: "PUT", body: JSON.stringify(groups) }),
+  inventory: () => call<InventoryResponse>("api/settings/inventory"),
+  saveInventory: (inventory: InventorySettings) => call<InventoryResponse>("api/settings/inventory", { method: "PUT", body: JSON.stringify(inventory) }),
   hierarchy: (refresh = false) => call<HierarchyResponse>(`api/hierarchy${refresh ? "?refresh=1" : ""}`),
   changes: () => call<ChangesResponse>("api/changes"),
   // Where each pending rename's old id is used: what Apply updates, what it can't.
