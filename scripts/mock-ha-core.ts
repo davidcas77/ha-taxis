@@ -780,11 +780,13 @@ function handleMockFlow(home: MockHome, method: string, path: string, body: unkn
 // status on the Recipes page shows. Tests start from buildMockRegistry and
 // build on it themselves.
 //
-//   Living room  Occupancy installed and up to date; Motion lights ready (and
-//                another automation already controls its light group).
+//   Living room  Occupancy installed and up to date; Motion lights ready (it makes
+//                the override timer, and another automation already controls
+//                its light group); Media off ready (the TV).
 //   Kitchen      Occupancy installed with a hold timeout of 3 min, older than
 //                the default 5: out of date. Motion lights: no light group yet.
-//   Study        Occupancy ready; Motion lights needs it first.
+//                Media off ready (the speaker).
+//   Study        Occupancy ready; Motion lights and Media off need it first.
 //   Hallway      Occupancy ready (its sensor is unavailable, which still counts).
 //   Bedroom, Garage  no motion or presence sensor: missing.
 // ---------------------------------------------------------------------------
@@ -820,7 +822,18 @@ export function withRecipeDemo(reg: MockHome): MockHome {
   const occupancyOf = (code: string, minutes: number, starts: string[], holds: string[]) => ({
     use_blueprint: {
       path: occupancy.path,
-      input: { starts_entities: starts, holds_entities: holds, hold_timer: `timer.${code}_hold`, hold_minutes: minutes, pause_switch: `input_boolean.${code}_paused` },
+      input: {
+        starts_entities: starts,
+        holds_entities: holds,
+        bed_entities: [],
+        occupied_entity: `binary_sensor.${code}_occupied`,
+        hold_timer: `timer.${code}_hold`,
+        hold_minutes: minutes,
+        extended_after: 30,
+        extended_hold: 15,
+        sleep_hold: 60,
+        pause_switch: `input_boolean.${code}_paused`,
+      },
     },
   });
 

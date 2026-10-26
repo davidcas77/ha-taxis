@@ -2,16 +2,20 @@
 
 ## Unreleased
 
-- **Parameters: House, Occupancy and Lighting.** Three new tabs, each a sortable
+- **Parameters: House, Occupancy, Lighting and Media.** Four new tabs, each a sortable
   table with a row for the house default, interior and exterior areas, each floor
   and each area. Set night start and end, the hold timeout, and the lighting
   values (dark threshold, day and night brightness and colour, transition, dim
-  before off, dim level). The most specific level wins: area, floor, interior or
+  before off, dim level), and, new, the extended and sleep times of Occupancy, how
+  long a manual override lasts, and the Media tab: when speakers and TVs go off
+  after the area clears. The most specific level wins: area, floor, interior or
   exterior, house, built-in default. A cell you haven't set shows the value it
   takes in grey, with where it comes from. Saved at once, in Taxis only.
-- **Recipes.** A new **Recipes** tab: a table of areas by two recipes,
-  **Occupancy** (a hold timer that follows the area's sensors) and **Motion
-  lights** (lights on when the area is occupied, dim and off when it clears).
+- **Recipes.** A new **Recipes** tab: a table of areas by three recipes,
+  **Occupancy** (a hold timer that follows the area's sensors), **Motion
+  lights** (lights on when the area is occupied, dim and off when it clears)
+  and **Media off** (speakers and TVs off after the area has been clear for a
+  while).
   Each cell says Ready, Missing (and what), Installed, Out of date (and how) or
   In changes. Tick cells and **Add to changes**. A warning lists other
   automations that already control the area's light group.
@@ -21,6 +25,31 @@
   `taxis_<recipe>_<area>` and checks that Home Assistant stored and loaded it.
   Nothing is ever deleted. The occupied sensor isn't counted as one of the
   area's sensors.
+- **Occupancy: extended and sleep.** Once an area has been occupied for the
+  *extended after* time, the hold timer uses the longer *extended hold
+  timeout*. In a bedroom with a bed sensor (marked on the area's Capabilities
+  tab), the timer uses the *sleep hold timeout* while the bed sensor is on and
+  never runs out. The extended time is read from the occupied sensor's last
+  change, so there is nothing more to create; a Home Assistant restart starts
+  the count again.
+- **Motion lights: light roles, sleep and manual override.** By day the main
+  lights go on, and the accent lights once the area is extended. Inside the
+  night window the night lights go on, or the main lights at the night brightness
+  when there are none. While someone is in bed only the night lights go on,
+  never the main ones. Task lights are not switched on by the recipe, and turning
+  off still uses the whole light group. When someone changes the lights by hand
+  (the app, a dashboard, a wall switch), the recipe leaves the area alone until it
+  clears, becomes occupied again after being clear, or the *manual override*
+  time is up. The recipe makes a timer for it (`timer.<code>_override`). The
+  occupied sensor blinking when the hold timer restarts no longer dims the
+  lights: the area counts as clear after two seconds.
+- **Media off.** Turns off the area's speakers after *speakers off when clear
+  for* (15 min) and its TVs after *TVs off when clear for* (30 min). Needs
+  Occupancy and a counted speaker or TV. Uses the area's media group when it has
+  one kind of player, the players themselves otherwise.
+- The Occupancy and Motion lights blueprints are now version 3 (Media off
+  starts at 1). Areas that have them show **Out of date** until you add them to
+  the changes again, which rewrites the blueprint and the automation.
 - The demo house has recipes in every state: one installed, one out of date, one
   ready, some missing, and an automation that already controls the living room
   lights.

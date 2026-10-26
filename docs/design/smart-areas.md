@@ -1,6 +1,6 @@
 # Smart areas: capabilities, parameters, canonical helpers and recipes
 
-Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers) and a first slice of stage 4 (parameters with inheritance, and the Occupancy and Motion lights recipes) are implemented; the rest is not.
+Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers) and a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights and Media off recipes) are implemented; the rest is not.
 
 ## Goal
 
@@ -175,15 +175,20 @@ thresholds) belong to those recipes. **Built so far**: `timer.<code>_hold`,
 `binary_sensor.<code>_occupied` (simplified: it follows the hold timer and
 nothing else) and `input_boolean.<code>_paused` ("<Area> automations paused", created
 without an initial state so it is off and the recipes run), made by the Occupancy
-recipe. Their ends are fixed, not settings; `occupied` is reserved, so no
-stage 3 binary sensor helper may use it. The rest of the table is not built.
+recipe, and `timer.<code>_override` ("<Area> override", `restore: true`), made by
+the Motion lights recipe for its manual override. Their ends are fixed, not
+settings; `occupied` is reserved, so no stage 3 binary sensor helper may use it.
+The rest of the table is not built; `_extended` and `_sleep` are **not helpers**:
+the Occupancy and Motion lights blueprints work them out when they run (see
+[Extended and sleep](#extended-and-sleep-built-in-the-blueprints)).
 
 | Entity | Native helper | Created when |
 |---|---|---|
 | `timer.<code>_hold` | Timer, duration = area timeout parameter | motion or presence |
+| `timer.<code>_override` | Timer, duration = manual override parameter (1 h placeholder when it is 0); the automation sets the real length | Motion lights |
 | `binary_sensor.<code>_occupied` | Template: hold timer active or presence on (or door rule, below) | motion or presence |
-| `binary_sensor.<code>_extended` | Template: occupied for longer than the extended parameter | occupancy |
-| `binary_sensor.<code>_sleep` | Template: bed presence, or house sleep mode for bedroom areas | bedroom or bed sensor |
+| `binary_sensor.<code>_extended` | Template: occupied for longer than the extended parameter. Not built: computed in the blueprints from `_occupied`'s `last_changed` | occupancy |
+| `binary_sensor.<code>_sleep` | Template: bed presence, or house sleep mode for bedroom areas. Not built: computed in the blueprints from the bed sensors | bedroom or bed sensor |
 | `input_boolean.<code>_presence_hold` | Input boolean (forces occupied, auto-off parameter) | occupancy |
 | `input_boolean.<code>_auto_<recipe>` | Input boolean per recipe and area (pause a recipe from a dashboard) | recipe used |
 | `binary_sensor.<code>_problem` | Group, any on: smoke, gas, moisture, safety, problem | ≥ 1 source |
@@ -207,7 +212,7 @@ Notes:
 
 ## Stage 4: recipes
 
-### Built: parameters and the first two recipes
+### Built: parameters and the first three recipes
 
 **Parameters** (`shared/parameters.ts`). Typed definitions (key, tab, label, unit,
 kind number/time/enum, range and step, default) and `resolve(params, h, inventory,
@@ -215,46 +220,111 @@ areaId, key)`, which walks area → floor → interior/exterior → house → bu
 default and returns the value with where it came from. Stored in Taxis only
 (settings key `parameters`, validated on the server: known keys, values in range,
 ids by pattern, size limits), saved at once like the inventory. Defined so far:
-night start/end (House tab); hold timeout (Occupancy tab); dark threshold, day
-and night brightness and colour temperature, transition, dim before off and dim
-level (Lighting tab). The Parameters page has a table per tab: a row for the
+night start/end (House tab); hold timeout, extended after, extended hold timeout
+and sleep hold timeout (Occupancy tab); dark threshold, day and night brightness
+and colour temperature, transition, dim before off, dim level and manual
+override duration (Lighting tab); speakers off when clear for and TVs off when
+clear for (Media tab). The Parameters page has a table per tab: a row for the
 house default, interior, exterior, each floor and each area; a cell shows its own
 value or the inherited one in grey ("from <source>"); click to set, clear to
 inherit.
 
-**Recipes** (`shared/recipes.ts`, `shared/blueprints.ts`). Two recipes, one
-blueprint each, written by Taxis at `taxis/occupancy.yaml` and
-`taxis/motion_lights.yaml` through `blueprint/save`. The text is a constant in
+**Recipes** (`shared/recipes.ts`, `shared/blueprints.ts`). Three recipes, one
+blueprint each, written by Taxis at `taxis/occupancy.yaml` (version 3),
+`taxis/motion_lights.yaml` (version 3) and `taxis/media_off.yaml` (version 1)
+through `blueprint/save`. The text is a constant in
 code with "Taxis blueprint version N." in the description; Home Assistant lists
 the description back, and a blueprint is (re)written only when missing or of
 another version. `planRecipes` gives each area and recipe one of Missing
-(and what), Ready, Installed, Out of date (and how: parameters, sensors, helper,
-blueprint version, name) or In changes.
+(and what), Ready, Installed, Out of date (and how: parameters, sensors, lights,
+helper, blueprint version, name; an input an older version didn't have shows as
+"none → value") or In changes. Every blueprint keeps the pause switch input:
+the recipes run while `input_boolean.<code>_paused` is off.
 
 - *Occupancy* needs a counted motion or presence sensor whose role is "starts".
-  Inputs: the starting sensors, the holding sensors, the hold timer, the hold
-  timeout and the pause switch. Mode queued, up to 10. A starting sensor off → on
+  Inputs: the starting sensors, the holding sensors, the bed sensors, the occupied
+  sensor, the hold timer, the hold, extended-after, extended-hold and sleep-hold
+  times and the pause switch. Mode queued, up to 10. A starting sensor off → on
   starts the timer; while the timer runs a change of any sensor (a starting
   sensor on → off, a holding sensor either way) starts it again; when the timer
-  finishes and a starting or holding sensor is still on, it starts again.
+  finishes and a starting, holding or bed sensor is still on, it starts again.
   Unavailable and unknown never trigger anything. Does nothing while the pause
-  switch is on.
+  switch is on. The length of each start comes from [Extended and
+  sleep](#extended-and-sleep-built-in-the-blueprints).
 - *Motion lights* needs Occupancy (installed or in the change list) and the
   canonical light group (in place or in the list). Light level is optional (the
-  canonical min/max illuminance sensor, when in place). Mode restart. Occupied
-  off → on: lights that are off, and dark enough if there is a light sensor, go
-  on with the night profile inside the night window and the day profile
-  otherwise, with `brightness_pct` and `color_temp_kelvin`. Occupied on → off:
-  with dim-before-off above 0 and lights on, dim to the dim level (only if they
-  are brighter), wait that long for the area to be occupied again, then turn off
-  after checking it is still clear. Because the mode is restart, the occupied
-  trigger of the next run is what restores lights left at or below the dim
-  level; the wait in the run that was waiting is cancelled by it.
-- Installing adds, in this order of dependency: the blueprint, the three
-  Occupancy helpers, and the automation `taxis_<recipe>_<code>` ("<Area> –
+  canonical min/max illuminance sensor, when in place). Mode restart. Inputs add
+  the lights by role (main, accent, night; the counted lights of the area with that
+  role in the inventory; task lights are never switched on), the bed sensors, the
+  extended time, the override timer and the override duration. Which lights, and
+  how bright, comes from the **profile**, worked out when the automation is
+  triggered: *sleep* (a bed sensor on) → night lights only, at the night
+  brightness, never the main lights; *night* (inside the night window) → night
+  lights, or the main lights at the night brightness when there are none; *day* →
+  main lights, with the accent lights joining once the area has been occupied for
+  the extended time. Occupied off → on: lights that are off, and dark enough if
+  there is a light sensor, go on with the profile's lights, `brightness_pct` and
+  `color_temp_kelvin`. Occupied on → off (after 2 s, so the occupied sensor
+  blinking off and on when the hold timer restarts is not a clear): with
+  dim-before-off above 0 and lights on, the lights that are on dim to the dim level
+  (only if they are brighter), wait that long for the area to be occupied again,
+  then turn off the canonical light group after checking it is still clear.
+  Because the mode is restart, the occupied trigger of the next run is what
+  restores lights left at or below the dim level; the wait in the run that was
+  waiting is cancelled by it.
+- *Media off* needs Occupancy (installed or in the change list) and a counted
+  speaker or TV. Inputs: the occupied sensor, the speakers, the TVs, the two times
+  and the pause switch. The occupied sensor off for the speaker time turns off the
+  speakers that are on; off for the TV time, the TVs that are on
+  (`media_player.turn_off` with `continue_on_error`, so one player refusing does
+  not stop the others). An area with one kind of player, and the canonical media
+  group (in place or in the list), gives the group as that kind's only entity;
+  with both kinds the players are listed, because the group cannot have two times.
+  Mode queued, up to 4.
+- Installing adds, in this order of dependency: the blueprint, the helpers the
+  recipe needs (Occupancy: hold timer, pause switch, occupied sensor; Motion
+  lights: the override timer), and the automation `taxis_<recipe>_<code>` ("<Area> –
   Occupancy (Taxis)") with the blueprint's inputs from the inventory roles and the
   resolved parameters. If other automations already use the area's light group
   (the existing `search/related` read), the cell lists them as a warning.
+
+#### Extended and sleep (built in the blueprints)
+
+The design above called for `_extended` and `_sleep` template helpers. They are
+**not built**; the blueprints work both out when they run, from states Home
+Assistant already holds, so nothing more is created, there is no new template for
+the change list to allow and no state of Taxis's at runtime:
+
+- *Sleep*: a bed sensor is on. The area must be marked as a bedroom, and the bed
+  sensors are the counted presence sensors marked as bed (a bed sensor is also
+  one of the starting or holding sensors; the list is only read).
+- *Extended*: the occupied sensor is on and `now() - states[occupied].last_changed`
+  is at least *extended after*. The occupied sensor is the template that follows
+  the hold timer; a timer restarted while it runs doesn't change it, so its
+  `last_changed` is the moment the area became occupied. The Occupancy blueprint
+  reads it when it starts the timer (hold, extended hold or sleep hold) and the
+  Motion lights blueprint has a state trigger for "occupied for the extended
+  time". Limits: after a Home Assistant restart the count starts again, and an
+  area whose sensors stay on without changing for a whole hold period lets the
+  occupied sensor blink off and on when the timer restarts, which also starts the
+  count again; the longer *hold timeout* is the remedy for still-presence sensors.
+
+#### Manual override (built in Motion lights)
+
+The Motion lights blueprint triggers on any change of the canonical light group.
+A top-level condition lets it through (so it doesn't restart a run that is
+waiting) only when it is manual: the context of the new state has a `user_id`
+(the app or a dashboard), or the group switched between on and off with no
+`parent_id` (a wall switch, a remote, anything outside Home Assistant), and the
+context is not the one of this automation's last run (`this.context.id`).
+Attribute-only changes (brightness) count only with a user. A manual change
+starts `timer.<code>_override` with *override duration* minutes, or 24 hours
+when it is 0. While that timer runs the occupied, extended and clear branches do
+nothing. The override ends when: the area clears (the clear branch cancels the
+timer and then dims and turns off as usual), the area becomes occupied after
+having been clear for more than 5 s, or the timer finishes (the lights go off if
+the area is clear). Taxis itself calls no service; `timer.start` and
+`timer.cancel` are made by the automation inside Home Assistant.
 
 **Apply order**: registries → blueprints → helpers (stage 3 groups and min/max,
 and the recipes' timers, toggles and template sensors) → automations → each
@@ -263,14 +333,15 @@ present with the right platform, area and timer length, automation stored as
 sent and not unavailable). Writes added: WebSocket `blueprint/save` (automation
 blueprints at `taxis/<name>.yaml` only, enforced), `timer/create`,
 `timer/update`, `input_boolean/create`; config-flow handler `template`; one read,
-`blueprint/list`.
+`blueprint/list`. The override timer and Media off add no write of their own.
 
-**Deferred to later stages**: manual override, extended and sleep states, the
-presence hold switch, the door rule, light profiles and roles per state,
-proportional dimming, vacancy lights, night path light, media, climate, fans,
-exterior lights, per-recipe switches and everything in the other recipes of the
-table below; media, safety and climate parameters; house modes beyond the night
-window; AI.
+**Deferred to later stages**: climate (area climate, window open), the bathroom
+fan and shower-keeps-occupied, exterior lights, covers by sun, announcements,
+door and appliance notifications, the presence hold switch, the door rule,
+proportional dimming, vacancy lights, night path light, a light profile sensor,
+media holding occupancy, follow-me audio and volume by time of day, per-recipe
+switches and everything in the other recipes of the table below; safety and
+climate parameters; house modes beyond the night window; AI.
 
 ### Plan
 
@@ -358,9 +429,9 @@ runtime without Taxis (e.g. from a dashboard). The rest are blueprint inputs.
 | Parameter | Default | Notes |
 |---|---|---|
 | Hold timeout | WC/bath 2–5 min, kitchen 5, living 10, bedroom 15 | timer duration |
-| Extended after | 30 min occupied | |
-| Extended hold timeout | 2 × hold timeout | used while extended |
-| Sleep hold timeout | 30 min | used while the area sleeps |
+| Extended after | 30 min occupied | built |
+| Extended hold timeout | 15 min | used while extended; built |
+| Sleep hold timeout | 60 min | used while the area sleeps (bedroom with a bed sensor on); built |
 | Presence on delay / off delay | 0 s / 30 s | debounce flapping mmWave |
 | Source role | motion: starts; mmWave, BLE: holds | per source, on the area page |
 | Media holds occupancy | off (on for living rooms) | playing / TV on |
@@ -385,17 +456,17 @@ runtime without Taxis (e.g. from a dashboard). The rest are blueprint inputs.
 | Night brightness / colour temperature | 10 % / 2200 K |
 | Transition | 1 s on, 3 s off |
 | Dim before off (warning) | 15 s at 30 % |
-| Manual override lasts | until area clear (or a fixed time, e.g. 30 min) |
+| Manual override lasts | until area clear (or a fixed time, e.g. 30 min); built, parameter 0 = until clear |
 | Door opens turns lights on | off |
-| Roles on per state | occupied: main; extended: main + accent; night: night; sleep: none (night lights only on motion) |
+| Roles on per state | occupied: main; extended: main + accent; night: night; sleep: none (night lights only on motion); built as fixed, not a parameter |
 | Priority states | sleep, accented (switch other roles off) |
 
 ### Media (per area)
 
 | Parameter | Default |
 |---|---|
-| Turn off media when clear for | 15 min |
-| Turn off TV when clear for | 30 min |
+| Turn off media when clear for | 15 min; built |
+| Turn off TV when clear for | 30 min; built |
 | Follow-me audio | off |
 | Volume by time of day | day 30 %, night 15 % |
 | Quiet hours | night window |
@@ -582,7 +653,7 @@ id (recipes are checked against real entity ids before writing).
 
 1. Where parameters live: Taxis database as the source, helpers only where
    runtime-tunable (proposed), or everything as helpers.
-2. Extended occupancy: template helper with delay, or a trigger-based template.
+2. Extended occupancy: answered in stage 4: computed in the blueprints from the occupied sensor's `last_changed`, no helper (see "Extended and sleep").
 3. Areas with several thermostats of different kinds (valve + AC).
 4. When purpose-specific area triggers (`motion.detected` with an area target)
    leave Labs, recipes could use them directly; canonical groups stay because

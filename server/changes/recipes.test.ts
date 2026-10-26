@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 import { buildMockRegistry, withRecipeDemo } from "../../scripts/mock-ha-core.ts";
-import { BLUEPRINTS, blueprintForRecipe } from "../../shared/blueprints.ts";
+import { blueprintForRecipe } from "../../shared/blueprints.ts";
 import { validateInput } from "../../shared/changes.ts";
 import { helperChangeInputs, planHelpers } from "../../shared/helpers.ts";
 import { EMPTY_INVENTORY } from "../../shared/inventory.ts";
@@ -24,6 +24,7 @@ import { changeStore } from "./store.ts";
 
 const OCC = blueprintForRecipe("occupancy");
 const MOT = blueprintForRecipe("motion_lights");
+const MEDIA = blueprintForRecipe("media_off");
 
 function setup(home = buildMockRegistry()) {
   const db = new DatabaseSync(":memory:");
@@ -204,20 +205,29 @@ describe("installing motion lights", () => {
       "helper:binary_sensor.study_occupied",
       "automation:taxis_occupancy_study",
       "blueprint:taxis/motion_lights.yaml",
+      "helper:timer.study_override",
       "automation:taxis_motion_lights_study",
     ]);
 
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual(Array(8).fill(true));
+    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual(Array(9).fill(true));
     const flowAt = t.index("POST /config/config_entries/flow");
     expect(flowAt).toBeGreaterThan(-1);
     // Both blueprints before any helper; both automations after every helper; occupancy's first.
     expect(t.index("write blueprint/save")).toBeLessThan(flowAt);
     expect(t.fake.order.lastIndexOf("write blueprint/save")).toBeLessThan(t.index("write timer/create"));
+    // The override timer is made with the other helpers, before the automation whose input names it.
+    expect(t.fake.order.lastIndexOf("write timer/create")).toBeLessThan(t.index(AUTOMATION_PATH("taxis_occupancy_study")));
     expect(t.fake.order.lastIndexOf("POST /config/config_entries/flow")).toBeLessThan(t.index(AUTOMATION_PATH("taxis_occupancy_study")));
     expect(t.index(AUTOMATION_PATH("taxis_occupancy_study"))).toBeLessThan(t.index(AUTOMATION_PATH("taxis_motion_lights_study")));
 
     expect(t.fake.home.blueprints[MOT.path]).toBe(MOT.yaml);
+    expect(t.fake.ws.filter((x) => x.type === "timer/create").map((x) => x.payload)).toEqual([
+      { name: "Study hold", duration: "00:05:00", restore: true },
+      { name: "Study override", duration: "01:00:00", restore: true },
+    ]);
+    expect(t.entity("timer.study_override")).toMatchObject({ platform: "timer", area_id: "study" });
+    expect(t.state("timer.study_override")!.attributes).toMatchObject({ duration: "1:00:00", restore: true });
     expect(t.fake.home.automations.taxis_motion_lights_study).toMatchObject({
       alias: "Study – Motion lights (Taxis)",
       use_blueprint: {
@@ -228,6 +238,13 @@ describe("installing motion lights", () => {
           pause_switch: "input_boolean.study_paused",
           night_start: "23:00:00",
           dim_before_off: 15,
+          main_lights: ["light.desk"],
+          accent_lights: [],
+          night_lights: [],
+          bed_entities: [],
+          extended_after: 30,
+          override_timer: "timer.study_override",
+          override_minutes: 0,
         },
       },
     });
@@ -237,6 +254,124 @@ describe("installing motion lights", () => {
     expect(cell(cells, "motion_lights", "study")?.status).toBe("installed");
     // The occupied sensor, which is a template helper, is not one of the area's presence sensors.
     expect(t.live().entities["binary_sensor.study_occupied"].platform).toBe("template");
+  });
+});
+
+describe("installing media off, and the override timer", () => {
+  const demo = () => setup(withRecipeDemo(buildMockRegistry()));
+
+  it("is ready where Occupancy is installed and a player counts, and installs: the blueprint, then the automation", async () => {
+    const t = demo();
+    const cells = await t.plan();
+    const status = (area: string) => cell(cells, "media_off", area)!.status;
+    // The living room's TV and the kitchen's speaker; Occupancy is installed in both (the kitchen's is out of date, which is enough).
+    expect([status("living_room"), status("kitchen")]).toEqual(["ready", "ready"]);
+    expect(cell(cells, "media_off", "study")!.missing).toEqual(["Occupancy (install it first)", "A speaker or a TV that counts (Capabilities)"]);
+    expect(cell(cells, "media_off", "garage")!.missing).toEqual(["Occupancy (install it first)", "A speaker or a TV that counts (Capabilities)"]);
+
+    t.add(recipeChangeInputs([cell(cells, "media_off", "living_room")!, cell(cells, "media_off", "kitchen")!]));
+    expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual([
+      "blueprint:create:taxis/media_off.yaml",
+      "automation:create:taxis_media_off_living",
+      "automation:create:taxis_media_off_kitchen",
+    ]);
+    const { results } = await t.apply();
+    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true, true]);
+    expect(t.fake.home.blueprints[MEDIA.path]).toBe(MEDIA.yaml);
+    expect(t.fake.home.automations.taxis_media_off_living).toMatchObject({
+      alias: "Living room – Media off (Taxis)",
+      use_blueprint: {
+        path: MEDIA.path,
+        input: {
+          occupied_entity: "binary_sensor.living_occupied",
+          speaker_entities: [],
+          tv_entities: ["media_player.living_tv"],
+          speaker_minutes: 15,
+          tv_minutes: 30,
+          pause_switch: "input_boolean.living_paused",
+        },
+      },
+    });
+    expect((t.fake.home.automations.taxis_media_off_kitchen.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({ speaker_entities: ["media_player.kitchen_speaker"], tv_entities: [] });
+    // No helper of its own: it uses Occupancy's. Only the allowed writes, and nothing deleted.
+    const writes = t.fake.ws.filter((x) => x.kind === "write");
+    expect(writes.map((x) => x.type)).toEqual(["blueprint/save"]);
+    expect(writes.every((x) => WRITE_COMMANDS.has(x.type))).toBe(true);
+    expect(t.fake.rest.every((x) => x.method === "GET" || x.method === "POST")).toBe(true);
+
+    t.store.list().forEach((x) => t.store.done(x.id));
+    const again = await t.plan();
+    expect(cell(again, "media_off", "living_room")).toMatchObject({ status: "installed", inputs: [] });
+    expect(cell(again, "media_off", "kitchen")).toMatchObject({ status: "installed", inputs: [] });
+  });
+
+  it("changes only the automation when a media time changes", async () => {
+    const t = demo();
+    t.add(recipeChangeInputs([cell(await t.plan(), "media_off", "living_room")!]));
+    await t.apply();
+    t.store.list().forEach((x) => t.store.done(x.id));
+    const params = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "tv_off_after", 45);
+    const c = cell(await t.plan(params), "media_off", "living_room")!;
+    expect(c.reasons).toEqual(["TVs off when clear for (min): 30 → 45"]);
+    t.add(recipeChangeInputs([c]));
+    const mark = t.fake.ws.length;
+    const { results } = await t.apply();
+    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(t.fake.ws.slice(mark).filter((x) => x.kind === "write")).toEqual([]);
+    expect((t.fake.home.automations.taxis_media_off_living.use_blueprint as { input: { tv_minutes: number } }).input.tv_minutes).toBe(45);
+  });
+
+  it("makes the override timer with the motion lights, and follows the override setting with a timer update", async () => {
+    const t = demo();
+    t.add(recipeChangeInputs([cell(await t.plan(), "motion_lights", "living_room")!]));
+    expect((await t.apply()).results.every((r) => r.ok)).toBe(true);
+    expect(t.fake.ws.filter((x) => x.type === "timer/create").map((x) => x.payload)).toEqual([{ name: "Living room override", duration: "01:00:00", restore: true }]);
+    expect(t.entity("timer.living_override")).toMatchObject({ platform: "timer", area_id: "living_room" });
+    t.store.list().forEach((x) => t.store.done(x.id));
+    expect(cell(await t.plan(), "motion_lights", "living_room")).toMatchObject({ status: "installed", inputs: [] });
+
+    const params = setParameter(EMPTY_PARAMETERS, { level: "house" }, "override_duration", 30);
+    const c = cell(await t.plan(params), "motion_lights", "living_room")!;
+    expect(c.reasons).toEqual(["Manual override lasts (min): 0 → 30", "The override timer is 60 min, the override setting says 30"]);
+    t.add(recipeChangeInputs([c]));
+    const mark = t.fake.ws.length;
+    const { results } = await t.apply();
+    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(t.fake.ws.slice(mark).filter((x) => x.kind === "write").map((x) => [x.type, x.payload])).toEqual([["timer/update", { timer_id: "living_room_override", duration: "00:30:00" }]]);
+    expect((t.fake.home.automations.taxis_motion_lights_living.use_blueprint as { input: { override_minutes: number } }).input.override_minutes).toBe(30);
+    t.store.list().forEach((x) => t.store.done(x.id));
+    expect(cell(await t.plan(params), "motion_lights", "living_room")!.status).toBe("installed");
+  });
+
+  it("brings an area installed with the older blueprints up to date: new blueprint text, new inputs", async () => {
+    const t = demo();
+    // The living room as version 2 left it: the older blueprint and an automation without the newer inputs.
+    t.fake.home.blueprints[OCC.path] = OCC.yaml.replace(`Taxis blueprint version ${OCC.version}.`, "Taxis blueprint version 2.");
+    const input = (t.fake.home.automations.taxis_occupancy_living.use_blueprint as { input: Record<string, unknown> }).input;
+    for (const key of ["bed_entities", "occupied_entity", "extended_after", "extended_hold", "sleep_hold"]) delete input[key];
+    const c = cell(await t.plan(), "occupancy", "living_room")!;
+    expect(c.status).toBe("out-of-date");
+    expect(c.reasons).toEqual([
+      "Extended after (min): none → 30",
+      "Extended hold timeout (min): none → 15",
+      "Sleep hold timeout (min): none → 60",
+      "Occupied sensor: none → binary_sensor.living_occupied",
+      "The blueprint is version 2, Taxis has 3",
+    ]);
+    t.add(recipeChangeInputs([c]));
+    expect(t.store.list().map((x) => `${x.kind}:${x.op}`)).toEqual(["blueprint:update", "automation:update"]);
+    const { results } = await t.apply();
+    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(t.fake.home.blueprints[OCC.path]).toBe(OCC.yaml);
+    expect((t.fake.home.automations.taxis_occupancy_living.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({
+      occupied_entity: "binary_sensor.living_occupied",
+      extended_after: 30,
+      extended_hold: 15,
+      sleep_hold: 60,
+      bed_entities: [],
+    });
+    t.store.list().forEach((x) => t.store.done(x.id));
+    expect(cell(await t.plan(), "occupancy", "living_room")!.status).toBe("installed");
   });
 });
 
@@ -364,7 +499,7 @@ describe("what Taxis reads to plan the recipes", () => {
   it("reads only: blueprint versions, Taxis's own automations, timer durations and who else controls each light group", async () => {
     const t = demo();
     const installed = await t.installed();
-    expect(installed.blueprints).toEqual({ [OCC.path]: OCC.version, [MOT.path]: null });
+    expect(installed.blueprints).toEqual({ [OCC.path]: OCC.version, [MOT.path]: null, [MEDIA.path]: null });
     expect(Object.keys(installed.automations).sort()).toEqual(["taxis_occupancy_kitchen", "taxis_occupancy_living"]);
     expect(installed.automations.taxis_occupancy_kitchen).toMatchObject({ alias: "Kitchen – Occupancy (Taxis)", path: OCC.path });
     expect(installed.timers["timer.living_hold"]).toBe(300);
@@ -403,10 +538,15 @@ describe("what Taxis reads to plan the recipes", () => {
   it("installs the demo's motion lights: the blueprint is written, the automation made, and the warning stays true", async () => {
     const t = demo();
     t.add(recipeChangeInputs([cell(await t.plan(), "motion_lights", "living_room")!]));
-    expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual(["blueprint:create:taxis/motion_lights.yaml", "automation:create:taxis_motion_lights_living"]);
+    expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual([
+      "blueprint:create:taxis/motion_lights.yaml",
+      "helper:create:timer.living_override",
+      "automation:create:taxis_motion_lights_living",
+    ]);
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true]);
-    expect(Object.keys(t.fake.home.blueprints).sort()).toEqual(BLUEPRINTS.map((b) => b.path).sort());
+    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true, true]);
+    expect(Object.keys(t.fake.home.blueprints).sort()).toEqual([MOT.path, OCC.path].sort());
+    expect(t.fake.home.automations.taxis_motion_lights_living.use_blueprint).toMatchObject({ input: { override_timer: "timer.living_override", main_lights: ["light.living_lamp", "light.living_spots"] } });
   });
 });
 

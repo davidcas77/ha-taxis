@@ -152,6 +152,31 @@ describe("the blueprint texts", () => {
     }
   });
 
+  it("have templates whose delimiters, brackets and quotes balance", () => {
+    const strings = (n: Node, out: string[] = []): string[] => {
+      if (typeof n === "string") out.push(n);
+      else if (Array.isArray(n)) n.forEach((x) => strings(x, out));
+      else if (n && typeof n === "object") Object.values(n).forEach((x) => strings(x as Node, out));
+      return out;
+    };
+    let seen = 0;
+    for (const b of BLUEPRINTS) {
+      const { blueprint: _blueprint, ...body } = parsed(b.path);
+      for (const t of strings(body).filter((x) => x.includes("{{") || x.includes("{%"))) {
+        seen += 1;
+        const count = (s: string) => t.split(s).length - 1;
+        expect(count("{{"), t).toBe(count("}}"));
+        expect(count("{%"), t).toBe(count("%}"));
+        expect(count("("), t).toBe(count(")"));
+        expect(count("["), t).toBe(count("]"));
+        expect(count("'") % 2, t).toBe(0);
+        // Every block opened is closed.
+        expect(count("{% if "), t).toBe(count("{% endif %}"));
+      }
+    }
+    expect(seen).toBeGreaterThan(30);
+  });
+
   it("use the current automation syntax: triggers, conditions, actions, no service or platform", () => {
     for (const b of BLUEPRINTS) {
       const tree = parsed(b.path);
@@ -164,6 +189,25 @@ describe("the blueprint texts", () => {
     }
   });
 });
+
+// Every action a blueprint calls, by service. Taxis itself never calls a service;
+// these run inside Home Assistant when the automation does.
+const servicesOf = (tree: Obj) => [...new Set(everyObject(tree).flatMap((o) => (typeof o.action === "string" ? [o.action] : [])))].sort();
+
+// The ids of the triggers, and every `condition: trigger` that names one of them.
+function checkTriggerIds(tree: Obj) {
+  const ids = new Set(list(tree.triggers).map((t) => obj(t).id as string));
+  const used = everyObject(tree).filter((x) => x.condition === "trigger");
+  expect(used.length).toBeGreaterThan(0);
+  for (const o of used) expect(ids.has(o.id as string), String(o.id)).toBe(true);
+}
+
+// A variable's template.
+const variable = (tree: Obj, name: string) => {
+  const v = obj(tree.variables)[name];
+  expect(v, `variable ${name}`).toBeDefined();
+  return v;
+};
 
 describe("occupancy", () => {
   const tree = parsed("taxis/occupancy.yaml");
@@ -199,14 +243,28 @@ describe("occupancy", () => {
     expect(list(tree.conditions).map(obj)).toEqual([{ condition: "state", entity_id: { input: "pause_switch" }, state: "off" }]);
   });
 
-  it("starts the timer with the hold timeout, and only that", () => {
+  it("starts the timer, with a length worked out from the state of the area, and only that", () => {
     const actions = list(tree.actions).map(obj);
     expect(actions).toHaveLength(1);
     const then = list(actions[0].then).map(obj);
     expect(then).toHaveLength(1);
     expect(then[0].action).toBe("timer.start");
     expect(obj(then[0].target).entity_id).toEqual({ input: "hold_timer" });
-    expect(String(obj(then[0].data).duration)).toContain("hold_minutes");
+    expect(String(obj(then[0].data).duration)).toMatch(/format\(minutes \/\/ 60, minutes % 60\)/);
+    expect(servicesOf(tree)).toEqual(["timer.start"]);
+  });
+
+  it("takes the length from the sleep hold while a bed sensor is on, else the extended hold once extended, else the hold timeout", () => {
+    expect(String(variable(tree, "minutes"))).toMatch(/sleep_hold if asleep else \(extended_hold if extended else hold_minutes\)/);
+    expect(String(variable(tree, "asleep"))).toMatch(/bed_entities \| select\('is_state', 'on'\)/);
+    // Extended: occupied now, and since longer than the extended time. Read from the occupied sensor, no helper of its own.
+    const extended = String(variable(tree, "extended"));
+    expect(extended).toMatch(/is_state\(occupied_entity, 'on'\)/);
+    expect(extended).toMatch(/states\[occupied_entity\]\.last_changed/);
+    expect(extended).toMatch(/extended_after \| float\) \* 60/);
+    for (const name of ["hold_minutes", "extended_after", "extended_hold", "sleep_hold", "starts_entities", "holds_entities", "bed_entities", "occupied_entity"]) {
+      expect(variable(tree, name)).toEqual({ input: name });
+    }
   });
 
   it("starts on a start sensor, restarts only while the timer runs, and starts again on finish only if a sensor is still on", () => {
@@ -221,75 +279,109 @@ describe("occupancy", () => {
     const [trig, still] = list(finished.conditions).map(obj);
     expect(trig).toEqual({ condition: "trigger", id: "timer_finished" });
     expect(still.condition).toBe("template");
-    expect(String(still.value_template)).toMatch(/starts_entities \+ holds_entities.*is_state.*'on'/);
+    // The bed sensors count too: the timer never runs out on someone in bed.
+    expect(String(still.value_template)).toMatch(/starts_entities \+ holds_entities \+ bed_entities.*is_state.*'on'/);
   });
 
-  it("refers only to trigger ids it has", () => {
-    const ids = new Set(triggers.map((t) => t.id));
-    for (const o of everyObject(tree).filter((x) => x.condition === "trigger")) expect(ids.has(o.id as string), String(o.id)).toBe(true);
-  });
+  it("refers only to trigger ids it has", () => checkTriggerIds(tree));
 });
 
 describe("motion lights", () => {
   const tree = parsed("taxis/motion_lights.yaml");
+  const triggers = list(tree.triggers).map(obj);
+  const branches = list(obj(list(tree.actions)[0]).choose).map(obj);
+  const branch = (id: string) => branches.find((b) => JSON.stringify(b.conditions) === JSON.stringify([{ condition: "trigger", id }]))!;
+  const sequence = (id: string) => list(branch(id).sequence).map(obj);
 
   it("restarts when it is triggered again", () => {
     expect(tree.mode).toBe("restart");
   });
 
-  it("triggers on the occupied sensor going on and off, and not on unavailable", () => {
-    const t = list(tree.triggers).map(obj);
-    expect(t).toEqual([
-      { trigger: "state", id: "occupied", entity_id: { input: "occupied_entity" }, from: "off", to: "on" },
-      { trigger: "state", id: "clear", entity_id: { input: "occupied_entity" }, from: "on", to: "off" },
-    ]);
+  it("triggers on the occupied sensor, on the light group changing, and on the override timer finishing", () => {
+    expect(triggers.map((t) => t.id)).toEqual(["occupied", "clear", "extended", "manual", "override_end"]);
+    expect(triggers[0]).toEqual({ trigger: "state", id: "occupied", entity_id: { input: "occupied_entity" }, from: "off", to: "on" });
+    // Clear waits a moment, so the occupied sensor blinking when the hold timer restarts isn't a clear.
+    expect(triggers[1]).toEqual({ trigger: "state", id: "clear", entity_id: { input: "occupied_entity" }, from: "on", to: "off", for: { seconds: 2 } });
+    expect(triggers[2]).toEqual({ trigger: "state", id: "extended", entity_id: { input: "occupied_entity" }, to: "on", for: { minutes: { input: "extended_after" } } });
+    // Any change of the group, state or attribute: the conditions pick the manual ones.
+    expect(triggers[3]).toEqual({ trigger: "state", id: "manual", entity_id: { input: "light_target" } });
+    expect(triggers[4]).toEqual({ trigger: "event", id: "override_end", event_type: "timer.finished", event_data: { entity_id: { input: "override_timer" } } });
+    // Never on unavailable or unknown for the occupied sensor.
+    for (const t of triggers.slice(0, 3)) expect(t.to).not.toMatch(/unavailable|unknown/);
   });
 
-  it("does nothing while the pause switch is on", () => {
-    expect(list(tree.conditions).map(obj)).toEqual([{ condition: "state", entity_id: { input: "pause_switch" }, state: "off" }]);
+  it("does nothing while the pause switch is on, and for a light change only when it was manual", () => {
+    const [pause, manual] = list(tree.conditions).map(obj);
+    expect(pause).toEqual({ condition: "state", entity_id: { input: "pause_switch" }, state: "off" });
+    expect(manual.condition).toBe("or");
+    const [notManual, check] = list(manual.conditions).map(obj);
+    expect(notManual).toEqual({ condition: "not", conditions: [{ condition: "trigger", id: "manual" }] });
+    // A user (the app, a dashboard), or a switch with no parent context at all (a wall switch, a remote);
+    // never this automation's own last context. Attribute-only changes need a user.
+    const template = String(check.value_template);
+    expect(template).toMatch(/c\.user_id is not none/);
+    expect(template).toMatch(/flipped and c\.parent_id is none/);
+    expect(template).toMatch(/c\.id != own/);
+    expect(template).toMatch(/this\.context\.id/);
+    expect(template).toMatch(/\['on', 'off'\]/);
   });
 
-  it("turns lights on with brightness_pct and color_temp_kelvin, never mireds, in the night window or by day", () => {
-    const turnOns = everyObject(tree).filter((o) => o.action === "light.turn_on");
-    expect(turnOns).toHaveLength(3);
-    for (const o of turnOns) {
-      const data = obj(o.data);
-      expect(Object.hasOwn(data, "brightness_pct")).toBe(true);
-      expect(data.transition).toEqual({ input: "transition" });
-      expect(obj(o.target).entity_id).toEqual({ input: "light_target" });
+  it("on a manual change, starts the override timer for the override time, or a day when it is 0", () => {
+    const [start] = sequence("manual");
+    expect(sequence("manual")).toHaveLength(1);
+    expect(start.action).toBe("timer.start");
+    expect(obj(start.target).entity_id).toEqual({ input: "override_timer" });
+    const duration = String(obj(start.data).duration);
+    expect(duration).toMatch(/override_minutes/);
+    expect(duration).toMatch(/else 1440/);
+    expect(variable(tree, "override_minutes")).toEqual({ input: "override_minutes" });
+  });
+
+  it("works out the profile: sleep, then night, then day; sleep never uses the main lights", () => {
+    expect(String(variable(tree, "profile"))).toBe("{{ 'sleep' if asleep else ('night' if in_night else 'day') }}");
+    expect(String(variable(tree, "asleep"))).toMatch(/bed_entities \| select\('is_state', 'on'\)/);
+    // The night window, across midnight or not.
+    expect(String(variable(tree, "in_night"))).toMatch(/\(t >= night_start or t < night_end\) if night_start > night_end else \(night_start <= t < night_end\)/);
+    // The lights: night lights while asleep, or at night when there are some; the main lights otherwise.
+    expect(String(variable(tree, "profile_lights"))).toBe(
+      "{{ night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else main_lights }}",
+    );
+    expect(String(variable(tree, "brightness"))).toMatch(/day_brightness if profile == 'day' else night_brightness/);
+    expect(String(variable(tree, "kelvin"))).toMatch(/day_kelvin if profile == 'day' else night_kelvin/);
+    for (const name of ["main_lights", "accent_lights", "night_lights", "bed_entities", "night_start", "night_end", "day_brightness", "day_kelvin", "night_brightness", "night_kelvin"]) {
+      expect(variable(tree, name)).toEqual({ input: name });
     }
-    const profiles = turnOns.filter((o) => Object.hasOwn(obj(o.data), "color_temp_kelvin"));
-    expect(profiles.map((o) => [obj(o.data).brightness_pct, obj(o.data).color_temp_kelvin])).toEqual([
-      [{ input: "night_brightness" }, { input: "night_kelvin" }],
-      [{ input: "day_brightness" }, { input: "day_kelvin" }],
-    ]);
-    // The night profile is the one inside the window.
-    const choose = everyObject(tree).find((o) => Array.isArray(o.choose) && JSON.stringify(obj(list(o.choose)[0]).conditions).includes('"condition":"time"'))!;
-    const night = obj(list(choose.choose)[0]);
-    expect(list(night.conditions).map(obj)).toEqual([{ condition: "time", after: { input: "night_start" }, before: { input: "night_end" } }]);
   });
 
-  it("uses native conditions where it can: state, time and trigger; templates only for the light level and brightness", () => {
-    const conditions = everyObject(tree).filter((o) => typeof o.condition === "string");
-    expect(new Set(conditions.map((c) => c.condition))).toEqual(new Set(["state", "time", "trigger", "template", "or", "and"]));
-    const templates = conditions.filter((c) => c.condition === "template").map((c) => String(c.value_template));
-    expect(templates).toHaveLength(4);
-    expect(templates.every((t) => /lux_entity|brightness|dim_before_off/.test(t))).toBe(true);
+  it("on occupied: ends an override after a real clear, stops while one is on, then turns on the profile's lights", () => {
+    const [end, stop, any, light] = sequence("occupied");
+    // A blink of the occupied sensor (under 5 s off) doesn't end it.
+    expect(list(end.if).map(obj)[0]).toEqual({ condition: "state", entity_id: { input: "override_timer" }, state: "active" });
+    expect(String(obj(list(end.if)[1]).value_template)).toMatch(/trigger\.from_state\.last_changed\)\.total_seconds\(\) > 5/);
+    expect(obj(list(end.then)[0]).action).toBe("timer.cancel");
+    expect(stop).toEqual({ condition: "not", conditions: [{ condition: "state", entity_id: { input: "override_timer" }, state: "active" }] });
+    expect(any.condition).toBe("template");
+    expect(String(any.value_template)).toMatch(/profile_lights \| count\) > 0/);
+    expect(light.if).toBeDefined();
+    const turnOn = everyObject(light).find((o) => o.action === "light.turn_on")!;
+    expect(obj(turnOn.target).entity_id).toBe("{{ profile_lights }}");
+    expect(obj(turnOn.data)).toEqual({ brightness_pct: "{{ brightness }}", color_temp_kelvin: "{{ kelvin }}", transition: { input: "transition" } });
   });
 
   it("lights up only when the lights are off and it is dark, or when they were left dimmed", () => {
-    const occupied = obj(list(obj(list(tree.actions)[0]).choose)[0]);
-    const ifBlock = obj(list(occupied.sequence)[0]);
+    const ifBlock = sequence("occupied")[3];
     const any = obj(list(ifBlock.if)[0]);
     const [dark, dimmed] = list(any.conditions).map(obj);
     expect(list(dark.conditions).map(obj)[0]).toEqual({ condition: "state", entity_id: { input: "light_target" }, state: "off" });
     expect(String(obj(list(dark.conditions)[1]).value_template)).toMatch(/lux_entity == ''/);
     expect(list(dimmed.conditions).map(obj)[0]).toEqual({ condition: "state", entity_id: { input: "light_target" }, state: "on" });
+    expect(String(obj(list(dimmed.conditions)[1]).value_template)).toMatch(/dim_before_off/);
   });
 
-  it("on clear: dims only when dim_before_off is above 0, waits for the area to be occupied again, then checks before turning off", () => {
-    const clear = obj(list(obj(list(tree.actions)[0]).choose)[1]);
-    const [dimming, turnOff] = list(clear.sequence).map(obj);
+  it("on clear: ends an override, dims only the lights that are on, waits for the area to be occupied again, then checks before turning off", () => {
+    const [end, dimming, turnOff] = sequence("clear");
+    expect(list(end.if).map(obj)).toEqual([{ condition: "state", entity_id: { input: "override_timer" }, state: "active" }]);
+    expect(obj(list(end.then)[0]).action).toBe("timer.cancel");
     expect(JSON.stringify(dimming.if)).toContain("dim_before_off");
     const inner = list(dimming.then).map(obj);
     const wait = inner.find((s) => s.wait_template)!;
@@ -298,6 +390,7 @@ describe("motion lights", () => {
     expect(obj(wait.timeout).seconds).toContain("dim_before_off");
     const dim = everyObject(dimming).find((o) => o.action === "light.turn_on")!;
     expect(obj(dim.data).brightness_pct).toEqual({ input: "dim_level" });
+    expect(obj(dim.target).entity_id).toMatch(/expand\(light_target\) \| selectattr\('state', 'eq', 'on'\)/);
     // The turn-off re-checks that the area is clear and the lights are on.
     expect(list(turnOff.if).map(obj)).toEqual([
       { condition: "state", entity_id: { input: "occupied_entity" }, state: "off" },
@@ -305,6 +398,75 @@ describe("motion lights", () => {
     ]);
     expect(obj(list(turnOff.then).map(obj)[0]).action).toBe("light.turn_off");
   });
+
+  it("when extended: accent lights by day, only with the lights on and no override", () => {
+    const [override, profile, on, turnOn] = sequence("extended");
+    expect(override).toEqual({ condition: "not", conditions: [{ condition: "state", entity_id: { input: "override_timer" }, state: "active" }] });
+    expect(String(profile.value_template)).toBe("{{ profile == 'day' and (accent_lights | count) > 0 }}");
+    expect(on).toEqual({ condition: "state", entity_id: { input: "light_target" }, state: "on" });
+    expect(turnOn.action).toBe("light.turn_on");
+    expect(obj(turnOn.target).entity_id).toEqual({ input: "accent_lights" });
+    expect(obj(turnOn.data)).toEqual({ brightness_pct: { input: "day_brightness" }, color_temp_kelvin: { input: "day_kelvin" }, transition: { input: "transition" } });
+  });
+
+  it("when the override timer runs out: turns the group off if the area is clear", () => {
+    const [block] = sequence("override_end");
+    expect(list(block.if).map(obj)).toEqual([
+      { condition: "state", entity_id: { input: "occupied_entity" }, state: "off" },
+      { condition: "state", entity_id: { input: "light_target" }, state: "on" },
+    ]);
+    expect(obj(list(block.then)[0]).action).toBe("light.turn_off");
+  });
+
+  it("turns lights on with brightness_pct and color_temp_kelvin, never mireds, and off only through the canonical light group", () => {
+    const turnOns = everyObject(tree).filter((o) => o.action === "light.turn_on");
+    expect(turnOns).toHaveLength(3);
+    for (const o of turnOns) {
+      expect(Object.hasOwn(obj(o.data), "brightness_pct")).toBe(true);
+      expect(obj(o.data).transition).toEqual({ input: "transition" });
+    }
+    const turnOffs = everyObject(tree).filter((o) => o.action === "light.turn_off");
+    expect(turnOffs).toHaveLength(2);
+    for (const o of turnOffs) expect(obj(o.target).entity_id).toEqual({ input: "light_target" });
+    expect(servicesOf(tree)).toEqual(["light.turn_off", "light.turn_on", "timer.cancel", "timer.start"]);
+  });
+
+  it("refers only to trigger ids it has", () => checkTriggerIds(tree));
+});
+
+describe("media off", () => {
+  const tree = parsed("taxis/media_off.yaml");
+  const branches = list(obj(list(tree.actions)[0]).choose).map(obj);
+
+  it("runs queued, so two triggers at the same moment both run", () => {
+    expect(tree.mode).toBe("queued");
+    expect(tree.max).toBe(4);
+  });
+
+  it("triggers when the occupied sensor has been off for the speaker time, and for the TV time", () => {
+    expect(list(tree.triggers).map(obj)).toEqual([
+      { trigger: "state", id: "speakers", entity_id: { input: "occupied_entity" }, to: "off", for: { minutes: { input: "speaker_minutes" } } },
+      { trigger: "state", id: "tvs", entity_id: { input: "occupied_entity" }, to: "off", for: { minutes: { input: "tv_minutes" } } },
+    ]);
+  });
+
+  it("does nothing while the pause switch is on", () => {
+    expect(list(tree.conditions).map(obj)).toEqual([{ condition: "state", entity_id: { input: "pause_switch" }, state: "off" }]);
+  });
+
+  it("turns off the speakers for one trigger and the TVs for the other, only those that are on, and only that", () => {
+    expect(branches.map((b) => b.conditions)).toEqual([[{ condition: "trigger", id: "speakers" }], [{ condition: "trigger", id: "tvs" }]]);
+    for (const [i, name] of [[0, "speaker_entities"], [1, "tv_entities"]] as const) {
+      const [vars, any, off] = list(branches[i].sequence).map(obj);
+      const targets = String(obj(vars.variables).targets);
+      expect(targets).toMatch(new RegExp(`^\\{\\{ ${name} \\| reject\\('is_state', 'off'\\) \\| reject\\('is_state', 'unavailable'\\) \\| reject\\('is_state', 'unknown'\\) \\| list \\}\\}$`));
+      expect(String(any.value_template)).toBe("{{ (targets | count) > 0 }}");
+      expect(off).toMatchObject({ action: "media_player.turn_off", continue_on_error: true, target: { entity_id: "{{ targets }}" } });
+    }
+    expect(servicesOf(tree)).toEqual(["media_player.turn_off"]);
+  });
+
+  it("refers only to trigger ids it has", () => checkTriggerIds(tree));
 });
 
 describe("blueprintVersion", () => {
@@ -319,23 +481,33 @@ describe("blueprintVersion", () => {
 
 describe("checkBlueprintInput", () => {
   const isId = (v: unknown) => typeof v === "string" && ENTITY_ID_RE.test(v);
-  const occupancy = { starts_entities: ["binary_sensor.kitchen_pir"], hold_timer: "timer.kitchen_hold", pause_switch: "input_boolean.kitchen_paused" };
+  const occupancy = {
+    starts_entities: ["binary_sensor.kitchen_pir"],
+    occupied_entity: "binary_sensor.kitchen_occupied",
+    hold_timer: "timer.kitchen_hold",
+    pause_switch: "input_boolean.kitchen_paused",
+  };
+  const motionRequired = {
+    occupied_entity: "binary_sensor.k_occupied",
+    light_target: "light.k_all",
+    override_timer: "timer.k_override",
+    pause_switch: "input_boolean.k_paused",
+  };
 
   it("accepts an input with every required key, optional ones left out", () => {
     expect(checkBlueprintInput("taxis/occupancy.yaml", occupancy, isId)).toBeNull();
-    expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, holds_entities: [], hold_minutes: 5 }, isId)).toBeNull();
+    expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, holds_entities: [], bed_entities: [], hold_minutes: 5, extended_after: 30, extended_hold: 15, sleep_hold: 60 }, isId)).toBeNull();
+    expect(checkBlueprintInput("taxis/motion_lights.yaml", { ...motionRequired, night_start: "23:00:00", dim_level: 30, main_lights: ["light.k_a"], night_lights: [], override_minutes: 0 }, isId)).toBeNull();
     expect(
-      checkBlueprintInput(
-        "taxis/motion_lights.yaml",
-        { occupied_entity: "binary_sensor.k_occupied", light_target: "light.k_all", pause_switch: "input_boolean.k_paused", night_start: "23:00:00", dim_level: 30 },
-        isId,
-      ),
+      checkBlueprintInput("taxis/media_off.yaml", { occupied_entity: "binary_sensor.k_occupied", pause_switch: "input_boolean.k_paused", speaker_entities: ["media_player.k_speaker"], tv_minutes: 30 }, isId),
     ).toBeNull();
   });
 
   it("refuses a missing required input, an unknown input and a value of the wrong kind", () => {
     const { pause_switch: _a, ...short } = occupancy;
     expect(checkBlueprintInput("taxis/occupancy.yaml", short, isId)).toMatch(/“pause_switch” is missing/);
+    const { occupied_entity: _b, ...noSensor } = occupancy;
+    expect(checkBlueprintInput("taxis/occupancy.yaml", noSensor, isId)).toMatch(/“occupied_entity” is missing/);
     expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, extra: 1 }, isId)).toMatch(/isn't an input/);
     expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, __proto__x: 1 }, isId)).toMatch(/isn't an input/);
     expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, hold_timer: "not an id" }, isId)).toMatch(/hold_timer/);
@@ -347,9 +519,18 @@ describe("checkBlueprintInput", () => {
     expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, pause_switch: "switch.kitchen" }, isId)).toMatch(/pause_switch/);
     expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, hold_minutes: "5" }, isId)).toMatch(/hold_minutes/);
     expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, hold_minutes: Number.NaN }, isId)).toMatch(/hold_minutes/);
-    const motion = { occupied_entity: "binary_sensor.k_occupied", light_target: "light.k_all", pause_switch: "input_boolean.k_paused" };
+    const motion = motionRequired;
     expect(checkBlueprintInput("taxis/motion_lights.yaml", { ...motion, night_start: "23:00" }, isId)).toMatch(/night_start/);
     expect(checkBlueprintInput("taxis/motion_lights.yaml", { ...motion, night_start: "24:00:00" }, isId)).toMatch(/night_start/);
+    // The light roles are lists of lights, the override timer is a timer, the media inputs are media players.
+    expect(checkBlueprintInput("taxis/motion_lights.yaml", { ...motion, main_lights: "light.a" }, isId)).toMatch(/main_lights/);
+    expect(checkBlueprintInput("taxis/motion_lights.yaml", { ...motion, night_lights: ["switch.a"] }, isId)).toMatch(/night_lights/);
+    expect(checkBlueprintInput("taxis/motion_lights.yaml", { ...motion, override_timer: "input_boolean.k" }, isId)).toMatch(/override_timer/);
+    expect(checkBlueprintInput("taxis/motion_lights.yaml", { ...motion, bed_entities: ["light.a"] }, isId)).toMatch(/bed_entities/);
+    const media = { occupied_entity: "binary_sensor.k_occupied", pause_switch: "input_boolean.k_paused" };
+    expect(checkBlueprintInput("taxis/media_off.yaml", { ...media, tv_entities: ["light.a"] }, isId)).toMatch(/tv_entities/);
+    expect(checkBlueprintInput("taxis/media_off.yaml", { ...media, speaker_minutes: "15" }, isId)).toMatch(/speaker_minutes/);
+    expect(checkBlueprintInput("taxis/media_off.yaml", { ...media, hold_timer: "timer.x" }, isId)).toMatch(/isn't an input/);
   });
 
   it("refuses inputs that are not an object, and a path with no blueprint", () => {
@@ -361,7 +542,7 @@ describe("checkBlueprintInput", () => {
 
 describe("blueprint paths", () => {
   it("allow taxis/<lower-case name>.yaml and nothing else", () => {
-    for (const ok of ["taxis/occupancy.yaml", "taxis/motion_lights.yaml", "taxis/a1.yaml"]) expect(ok).toMatch(BLUEPRINT_PATH_RE);
+    for (const ok of ["taxis/occupancy.yaml", "taxis/motion_lights.yaml", "taxis/media_off.yaml", "taxis/a1.yaml"]) expect(ok).toMatch(BLUEPRINT_PATH_RE);
     for (const bad of ["taxis/Occupancy.yaml", "taxis/sub/x.yaml", "taxis/../x.yaml", "taxis/x.yml", "taxis/.yaml", "other/x.yaml", "/taxis/x.yaml", "taxis/x.yaml\n", "taxis/x y.yaml", "taxis/x.yaml/", "taxis/x-y.yaml"]) {
       expect(bad, bad).not.toMatch(BLUEPRINT_PATH_RE);
     }

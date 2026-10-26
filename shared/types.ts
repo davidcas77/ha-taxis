@@ -179,7 +179,7 @@ export type ChangeFields = {
   // deleted.
   automation: {
     automation_id?: string;
-    recipe?: "occupancy" | "motion_lights";
+    recipe?: "occupancy" | "motion_lights" | "media_off";
     area_id?: string;
     alias?: string;
     use_blueprint?: { path: string; input: Record<string, unknown> };

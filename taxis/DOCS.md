@@ -92,7 +92,7 @@ in the list of changes.
 
 What Taxis knows about each area, and the choices later features build on. The
 page has a bar of tabs: **Capabilities**, **Helpers**, **House**, **Occupancy**,
-**Lighting** and **Recipes**.
+**Lighting**, **Media** and **Recipes**.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, thermostats, speakers, TVs,
@@ -152,7 +152,7 @@ sensor setting is pointed at the canonical sensor in the same step. If the
 sensor is already in place but the area points elsewhere, that is a row of its
 own. Each area's Capabilities tab ends with its own Helpers table.
 
-### House, Occupancy and Lighting
+### House, Occupancy, Lighting and Media
 
 The numbers and times the recipes are filled in with. Each tab is a table with a
 row for the **House default**, one for **Interior** and one for **Exterior**
@@ -171,17 +171,23 @@ areas by it.
 |---|---|---|---|
 | House | Night starts, Night ends | 23:00, 07:00 | a time |
 | Occupancy | Hold timeout | 5 min | 1 to 240 |
+| Occupancy | Extended after | 30 min | 1 to 720 |
+| Occupancy | Extended hold timeout | 15 min | 1 to 240 |
+| Occupancy | Sleep hold timeout | 60 min | 1 to 480 |
 | Lighting | Dark below | 50 lx | 0 to 5000 |
 | Lighting | Day brightness, Night brightness | 100 %, 10 % | 1 to 100 |
 | Lighting | Day colour, Night colour | 3000 K, 2200 K | 1500 to 6500, in steps of 50 |
 | Lighting | Transition | 1 s | 0 to 60 |
 | Lighting | Dim before off | 15 s | 0 to 300 (0: no dimming, the lights go off at once) |
 | Lighting | Dim level | 30 % | 1 to 100 |
+| Lighting | Manual override lasts | 0 min | 0 to 240 (0: until the area next clears) |
+| Media | Speakers off when clear for | 15 min | 1 to 720 |
+| Media | TVs off when clear for | 30 min | 1 to 720 |
 
 ### Recipes
 
 A recipe is an automation Taxis makes for an area from a blueprint of its own,
-filled in with the area's sensors and parameters. There are two:
+filled in with the area's sensors, lights and parameters. There are three:
 
 - **Occupancy** keeps an area occupied with a hold timer. A sensor that starts
   occupancy (a motion sensor, or a presence sensor when the area has no motion
@@ -190,16 +196,55 @@ filled in with the area's sensors and parameters. There are two:
   next to a motion sensor) turning on keeps it running without starting it. When
   the timer runs out and a sensor is still on, it starts again. Sensors going
   unavailable or unknown are ignored. You choose which sensors start and which
-  hold on the area's Capabilities tab.
+  hold on the area's Capabilities tab. How long the timer runs depends on the
+  state of the area:
+  - **Sleep**: in an area marked as a bedroom, while a presence sensor marked as
+    a bed sensor is on, the timer is as long as *Sleep hold timeout*, and it
+    never runs out while the bed sensor is on.
+  - **Extended**: once the area has been occupied without a break for *Extended
+    after*, the timer is as long as *Extended hold timeout*. Taxis reads how long
+    the area has been occupied from when its occupied sensor last changed, so
+    there is nothing more to create. After a Home Assistant restart the count
+    starts again.
+  - Otherwise it is *Hold timeout*.
 - **Motion lights** turns the area's lights on when it becomes occupied and off
   when it clears. The lights go on only when they are off and, if the area has a
   light level helper, only when it reads below *Dark below* (read while the
-  lights are off, so the lights don't feed back). Inside the night window they
-  use the night brightness and colour, otherwise the day ones. When the area
-  clears the lights dim to *Dim level*, wait *Dim before off* seconds for the
-  area to be occupied again, and go off; with *Dim before off* at 0 they go off
-  at once. When the area is occupied again, lights left at or below the dim level
-  come back to the profile.
+  lights are off, so the lights don't feed back). Which lights go on depends on
+  their role (set on the area's Capabilities tab: main, accent, task or night)
+  and on the time:
+  - **By day**: the main lights, and the accent lights once the area has been
+    occupied for *Extended after*.
+  - **Inside the night window**: the night lights, or, when the area has none,
+    the main lights at the night brightness and colour.
+  - **While someone is in bed** (bedroom with a bed sensor on): only the night
+    lights, at the night brightness, never the main ones.
+  - Task lights are never switched on by the recipe. Turning off uses the
+    area's whole light group, so every light goes off, whatever its role.
+
+  When the area clears the lights that are on dim to *Dim level*, wait *Dim
+  before off* seconds for the area to be occupied again, and go off; with *Dim
+  before off* at 0 they go off at once. The area counts as clear after two
+  seconds, so the occupied sensor blinking when the hold timer restarts doesn't
+  dim the lights. When the area is occupied again, lights left at or below the
+  dim level come back to the profile.
+
+  **Manual override.** When someone changes the area's lights (in the Home
+  Assistant app or a dashboard, or with a wall switch or remote that turns the
+  group on or off), the automation leaves the area alone: it doesn't turn the
+  lights back on after you turned them off, or off after you turned them on. The
+  override ends when the area clears, when it becomes occupied again after being
+  clear, or after *Manual override lasts* minutes, whichever comes first (0: no
+  time limit, which in practice is a day). A change that a Home Assistant
+  automation made, this one included, is not manual. When the time runs out and
+  the area is clear, the lights go off. Taxis makes a timer for it,
+  `timer.<code>_override`.
+- **Media off** turns off the area's speakers when it has been clear for *Speakers
+  off when clear for*, and its TVs when it has been clear for *TVs off when clear
+  for*. Only players that are on are sent the command, and one that refuses it
+  does not stop the others. An area with one kind of player and the media group
+  (`media_player.<code>_media`) uses the group; with both kinds it uses the
+  players, since each kind has its own time.
 
 The Recipes tab is a table of areas by recipes. A cell says:
 
@@ -209,33 +254,40 @@ The Recipes tab is a table of areas by recipes. A cell says:
   the list of changes for that area) and the area's light group
   (`light.<code>_all`, in place or in the list; make it on the Helpers tab). A
   light level helper is optional: without one the lights go on at any light level.
-- **Installed**: the area's automation matches its sensors, parameters and
-  helpers, and the blueprint is the current version.
+  Media off needs Occupancy too, and a speaker or a TV that counts.
+- **Installed**: the area's automation matches its sensors, lights, parameters
+  and helpers, and the blueprint is the current version.
 - **Out of date**: it is installed but differs; the cell says how (a parameter
-  changed, a sensor was added, the hold timer has another length, the blueprint
-  is older). Adding it updates the automation and, if needed, the timer.
+  changed, a sensor or a light's role changed, a timer has another length, the
+  blueprint is older). Adding it updates the automation and, if needed, the timer.
 - **In changes**: already in the list of changes.
 
 Tick cells and use **Add to changes**. If other automations already use the
 area's light group, the Motion lights cell lists them: installing would make two
-automations control the same lights. It is a warning, not a stop.
+automations control the same lights. It is a warning, not a stop. A note says
+when the area has no main lights (nothing goes on by day) or no night lights
+(nothing goes on while someone is in bed).
 
 Installing a recipe adds these changes (the Changes page shows each):
 
-- the blueprint (`taxis/occupancy.yaml` or `taxis/motion_lights.yaml` in Home
-  Assistant's blueprints), once, when Home Assistant has none or another version;
+- the blueprint (`taxis/occupancy.yaml`, `taxis/motion_lights.yaml` or
+  `taxis/media_off.yaml` in Home Assistant's blueprints), once, when Home
+  Assistant has none or another version;
 - for Occupancy, three helpers per area: `timer.<code>_hold` (the length is the
   hold timeout; it keeps its state through a restart), `binary_sensor.<code>_occupied`
   (on while the timer runs; it is not counted as one of the area's sensors) and
   `input_boolean.<code>_paused` (the area's pause switch, named "Kitchen automations
   paused"; off to begin with, so the recipes run: turn it on to pause the area's
   recipes, and it keeps its state through a restart);
+- for Motion lights, the override timer `timer.<code>_override` ("Kitchen
+  override", as long as *Manual override lasts*, or an hour when that is 0: the
+  automation sets the real length itself);
 - the automation `taxis_<recipe>_<code>`, named "Kitchen – Occupancy (Taxis)",
   that uses the blueprint with its inputs.
 
 Everything is an ordinary Home Assistant object. The automations keep working if
-Taxis is stopped or uninstalled. Not in this version: manual override, extended
-and sleep states, light profiles, climate, media and the other recipes.
+Taxis is stopped or uninstalled. Not in this version: climate, the bathroom
+fan, exterior lights, covers, announcements and the other recipes.
 
 ## Naming
 
@@ -257,8 +309,8 @@ Under **Settings → Naming**:
   `motions`, `presences`, `doors`, `windows`, `temperature`, `humidity`,
   `illuminance`, `media`). Lower-case letters, digits and `_`, up to 30
   characters, and each used once. Settings shows an example id as you type.
-  The recipes' own helpers end in `hold`, `occupied` and `paused`; these are
-  fixed, and no binary sensor helper may use `occupied`.
+  The recipes' own helpers end in `hold`, `occupied`, `paused` and `override`;
+  these are fixed, and no binary sensor helper may use `occupied`.
 
 Each area's **Naming** tab checks its entities against these: which ids start
 with the area's code, which use an older code, which name another area, and

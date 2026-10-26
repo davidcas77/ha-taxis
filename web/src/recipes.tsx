@@ -14,7 +14,7 @@ import { Button } from "./ui.tsx";
 // changes in the list; nothing reaches Home Assistant until the list is applied.
 
 const NOTE =
-  "Recipes Taxis can install per area, from the sensors that count in the Capabilities tab and the parameters. Installing writes a blueprint (once), the helpers the recipe needs and one automation per area. Nothing is written until you apply the change list.";
+  "Recipes Taxis can install per area, from the sensors and lights that count in the Capabilities tab and the parameters. Installing writes a blueprint (once), the helpers the recipe needs and one automation per area. Nothing is written until you apply the change list.";
 
 // Most useful first.
 const ORDER: RecipeStatus[] = ["ready", "out-of-date", "in-changes", "missing", "installed"];

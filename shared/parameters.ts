@@ -8,10 +8,10 @@ import type { Hierarchy } from "./types.ts";
 // only; nothing is written to Home Assistant until a recipe is installed. Pure
 // functions, no side effects.
 
-export const PARAM_TABS = ["house", "occupancy", "lighting"] as const;
+export const PARAM_TABS = ["house", "occupancy", "lighting", "media"] as const;
 export type ParamTab = (typeof PARAM_TABS)[number];
 
-export const PARAM_TAB_LABEL: Record<ParamTab, string> = { house: "House", occupancy: "Occupancy", lighting: "Lighting" };
+export const PARAM_TAB_LABEL: Record<ParamTab, string> = { house: "House", occupancy: "Occupancy", lighting: "Lighting", media: "Media" };
 
 export type ParamKind = "number" | "time" | "enum";
 export type ParamValue = number | string;
@@ -35,6 +35,9 @@ export const PARAM_KEYS = [
   "night_start",
   "night_end",
   "hold_timeout",
+  "extended_after",
+  "extended_hold",
+  "sleep_hold",
   "lux_threshold",
   "day_brightness",
   "day_kelvin",
@@ -43,6 +46,9 @@ export const PARAM_KEYS = [
   "transition",
   "dim_before_off",
   "dim_level",
+  "override_duration",
+  "media_off_after",
+  "tv_off_after",
 ] as const;
 export type ParamKey = (typeof PARAM_KEYS)[number];
 
@@ -50,6 +56,9 @@ export const PARAMS: readonly ParamDef[] = [
   { key: "night_start", tab: "house", label: "Night starts", unit: null, kind: "time", default: "23:00" },
   { key: "night_end", tab: "house", label: "Night ends", unit: null, kind: "time", default: "07:00" },
   { key: "hold_timeout", tab: "occupancy", label: "Hold timeout", unit: "min", kind: "number", min: 1, max: 240, step: 1, default: 5 },
+  { key: "extended_after", tab: "occupancy", label: "Extended after", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 30 },
+  { key: "extended_hold", tab: "occupancy", label: "Extended hold timeout", unit: "min", kind: "number", min: 1, max: 240, step: 1, default: 15 },
+  { key: "sleep_hold", tab: "occupancy", label: "Sleep hold timeout", unit: "min", kind: "number", min: 1, max: 480, step: 1, default: 60 },
   { key: "lux_threshold", tab: "lighting", label: "Dark below", unit: "lx", kind: "number", min: 0, max: 5000, step: 1, default: 50 },
   { key: "day_brightness", tab: "lighting", label: "Day brightness", unit: "%", kind: "number", min: 1, max: 100, step: 1, default: 100 },
   { key: "day_kelvin", tab: "lighting", label: "Day colour", unit: "K", kind: "number", min: 1500, max: 6500, step: 50, default: 3000 },
@@ -58,6 +67,10 @@ export const PARAMS: readonly ParamDef[] = [
   { key: "transition", tab: "lighting", label: "Transition", unit: "s", kind: "number", min: 0, max: 60, step: 1, default: 1 },
   { key: "dim_before_off", tab: "lighting", label: "Dim before off", unit: "s", kind: "number", min: 0, max: 300, step: 1, default: 15 },
   { key: "dim_level", tab: "lighting", label: "Dim level", unit: "%", kind: "number", min: 1, max: 100, step: 1, default: 30 },
+  // 0: until the area next clears (or, for a change made while it is clear, is occupied again).
+  { key: "override_duration", tab: "lighting", label: "Manual override lasts", unit: "min", kind: "number", min: 0, max: 240, step: 1, default: 0 },
+  { key: "media_off_after", tab: "media", label: "Speakers off when clear for", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 15 },
+  { key: "tv_off_after", tab: "media", label: "TVs off when clear for", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 30 },
 ];
 
 export const PARAM_DEF = Object.fromEntries(PARAMS.map((p) => [p.key, p])) as Record<ParamKey, ParamDef>;

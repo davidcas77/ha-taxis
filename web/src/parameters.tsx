@@ -16,6 +16,7 @@ const TABS: { key: ParameterTab; label: string }[] = [
   { key: "house", label: "House" },
   { key: "occupancy", label: "Occupancy" },
   { key: "lighting", label: "Lighting" },
+  { key: "media", label: "Media" },
   { key: "recipes", label: "Recipes" },
 ];
 
@@ -23,7 +24,7 @@ export function ParametersPage({ h, tab, go }: { h: Hierarchy; tab: ParameterTab
   let body: ReactNode = null;
   if (tab === "capabilities") body = <CapabilitiesMatrix h={h} go={go} />;
   if (tab === "helpers") body = <HelpersTab h={h} go={go} />;
-  if (tab === "house" || tab === "occupancy" || tab === "lighting") body = <ParameterTable h={h} tab={tab} />;
+  if (tab === "house" || tab === "occupancy" || tab === "lighting" || tab === "media") body = <ParameterTable h={h} tab={tab} />;
   if (tab === "recipes") body = <RecipesTab h={h} />;
   return (
     <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">

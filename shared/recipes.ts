@@ -1,7 +1,7 @@
 import { blueprintForRecipe, type RecipeKey } from "./blueprints.ts";
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
 import { RECIPE_HELPER_SUFFIX, canonicalId, effectiveSuffixes, helperExclusions } from "./helpers.ts";
-import { areaInventory, type InventorySettings } from "./inventory.ts";
+import { areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import { resolveAll, withSeconds, type ParameterSettings } from "./parameters.ts";
 import type { Change, ChangeInput, Hierarchy } from "./types.ts";
@@ -15,6 +15,7 @@ import type { Change, ChangeInput, Hierarchy } from "./types.ts";
 export const RECIPES: readonly { key: RecipeKey; label: string }[] = [
   { key: "occupancy", label: "Occupancy" },
   { key: "motion_lights", label: "Motion lights" },
+  { key: "media_off", label: "Media off" },
 ];
 
 export const RECIPE_LABEL = Object.fromEntries(RECIPES.map((r) => [r.key, r.label])) as Record<RecipeKey, string>;
@@ -23,14 +24,21 @@ export const automationIdFor = (recipe: RecipeKey, code: string) => `taxis_${rec
 
 export const automationAlias = (areaName: string, recipe: RecipeKey) => `${areaName} – ${RECIPE_LABEL[recipe]} (Taxis)`;
 
-// The helpers an area's occupancy needs, by entity id.
+// The helpers the recipes of an area need, by entity id: the hold timer, the
+// occupied sensor and the pause switch (Occupancy makes them, the others use
+// them) and the manual override timer (Motion lights).
 export function runtimeIds(code: string) {
   return {
     timer: `timer.${code}_${RECIPE_HELPER_SUFFIX.hold}`,
     occupied: `binary_sensor.${code}_${RECIPE_HELPER_SUFFIX.occupied}`,
     switch: `input_boolean.${code}_${RECIPE_HELPER_SUFFIX.switch}`,
+    override: `timer.${code}_${RECIPE_HELPER_SUFFIX.override}`,
   };
 }
+
+// The length the override timer is made with when the override has no fixed
+// time: the automation sets the real length each time it starts the timer.
+export const OVERRIDE_PLACEHOLDER_SECONDS = 3600;
 
 // ---------------------------------------------------------------------------
 // What Home Assistant holds that the registries don't show. The server reads
@@ -84,11 +92,18 @@ export type RecipeCell = {
 const INPUT_LABEL: Record<string, string> = {
   starts_entities: "Sensors that start",
   holds_entities: "Sensors that hold",
+  bed_entities: "Bed presence sensors",
   hold_timer: "Hold timer",
   hold_minutes: "Hold timeout (min)",
+  extended_after: "Extended after (min)",
+  extended_hold: "Extended hold timeout (min)",
+  sleep_hold: "Sleep hold timeout (min)",
   pause_switch: "Pause switch",
   occupied_entity: "Occupied sensor",
   light_target: "Lights",
+  main_lights: "Main lights",
+  accent_lights: "Accent lights",
+  night_lights: "Night lights",
   lux_entity: "Light level sensor",
   lux_threshold: "Dark below (lx)",
   night_start: "Night starts",
@@ -100,9 +115,19 @@ const INPUT_LABEL: Record<string, string> = {
   transition: "Transition (s)",
   dim_before_off: "Dim before off (s)",
   dim_level: "Dim level (%)",
+  override_timer: "Override timer",
+  override_minutes: "Manual override lasts (min)",
+  speaker_entities: "Speakers",
+  tv_entities: "TVs",
+  speaker_minutes: "Speakers off when clear for (min)",
+  tv_minutes: "TVs off when clear for (min)",
 };
 
 const show = (v: unknown): string => (v === undefined || v === null || v === "" ? "none" : Array.isArray(v) ? (v.length ? v.join(", ") : "none") : String(v));
+
+// Nothing, an empty list and an empty string are all "none": a blueprint takes
+// the same default for each.
+const none = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 
 // What differs between the inputs an automation has and the ones Taxis would
 // send, in words.
@@ -111,7 +136,7 @@ function inputDifferences(was: Record<string, unknown>, now: Record<string, unkn
   for (const key of Object.keys(INPUT_LABEL)) {
     const a = was[key];
     const b = now[key];
-    if (a === undefined && b === undefined) continue;
+    if (none(a) && none(b)) continue;
     if (!sameValue(a ?? null, b ?? null)) out.push(`${INPUT_LABEL[key]}: ${show(a)} → ${show(b)}`);
   }
   // An input this version of Taxis doesn't know.
@@ -166,13 +191,15 @@ export function planRecipes(
     const ids = runtimeIds(code);
     const values = resolveAll(params, h, inventory, area.id);
     const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
-    const usable = ENTITY_ID_RE.test(ids.timer) && ENTITY_ID_RE.test(ids.occupied) && ENTITY_ID_RE.test(ids.switch);
+    const usable = [ids.timer, ids.occupied, ids.switch, ids.override].every((id) => ENTITY_ID_RE.test(id));
 
     const occupancyId = automationIdFor("occupancy", code);
     const motionId = automationIdFor("motion_lights", code);
+    const mediaOffId = automationIdFor("media_off", code);
     const timer = heldBy(h, ids.timer, "timer");
     const occupied = heldBy(h, ids.occupied, "binary_sensor", "template");
     const toggle = heldBy(h, ids.switch, "input_boolean");
+    const overrideTimer = heldBy(h, ids.override, "timer");
 
     // The blueprint is written when Home Assistant has none, or one of another version.
     const blueprintInput = (recipe: RecipeKey): ChangeInput[] => {
@@ -212,13 +239,40 @@ export function planRecipes(
       return "ready";
     };
 
+    // A timer that exists but is not as long as it should be.
+    const timerNow = (id: string) => installed.timers[id] ?? null;
+    const durationDiffers = (id: string, held: Held, seconds: number) => held.state === "ok" && timerNow(id) !== null && timerNow(id) !== seconds && !pendingDuration(changes, id);
+
+    const timerCreate = (name: string, id: string, seconds: number): ChangeInput => ({
+      kind: "helper",
+      op: "create",
+      fields: { helper: "timer", name, entity_id: id, area_id: area.id, duration: seconds },
+    });
+    const timerUpdate = (id: string, seconds: number): ChangeInput => ({ kind: "helper", op: "update", targetId: id, fields: { duration: seconds } });
+
+    // The sensors of the area that sleep is read from: bed sensors, in a bedroom.
+    const bedSensors = areaChoice(inventory, area.id).bedroom
+      ? inv.presence.filter((r) => r.counts && r.bed).map((r) => r.entityId).sort()
+      : [];
+
     // ---- Occupancy --------------------------------------------------------
     const sources = [...inv.motion, ...inv.presence].filter((r) => r.counts);
     const starts = sources.filter((r) => r.role === "starts").map((r) => r.entityId).sort();
     const holds = sources.filter((r) => r.role === "holds").map((r) => r.entityId).sort();
     const holdMinutes = values.hold_timeout as number;
     const holdSeconds = holdMinutes * 60;
-    const occupancyInput = { starts_entities: starts, holds_entities: holds, hold_timer: ids.timer, hold_minutes: holdMinutes, pause_switch: ids.switch };
+    const occupancyInput = {
+      starts_entities: starts,
+      holds_entities: holds,
+      bed_entities: bedSensors,
+      occupied_entity: ids.occupied,
+      hold_timer: ids.timer,
+      hold_minutes: holdMinutes,
+      extended_after: values.extended_after,
+      extended_hold: values.extended_hold,
+      sleep_hold: values.sleep_hold,
+      pause_switch: ids.switch,
+    };
 
     const occMissing: string[] = [];
     if (starts.length === 0) occMissing.push(sources.length === 0 ? "A motion or presence sensor" : "A sensor that starts occupancy (the counted ones are all set to hold)");
@@ -234,18 +288,17 @@ export function planRecipes(
       if (toggle.state === "absent" && !pendingHelper(changes, ids.switch)) occReasons.push(`${ids.switch} is missing`);
     }
     // The timer's duration, when Home Assistant says it and it isn't the hold timeout.
-    const timerNow = installed.timers[ids.timer] ?? null;
-    const timerDiffers = timer.state === "ok" && timerNow !== null && timerNow !== holdSeconds && !pendingDuration(changes, ids.timer);
-    if (occInstalled && timerDiffers) occReasons.push(`The hold timer is ${timerNow! / 60} min, the hold timeout says ${holdMinutes}`);
+    const timerDiffers = durationDiffers(ids.timer, timer, holdSeconds);
+    if (occInstalled && timerDiffers) occReasons.push(`The hold timer is ${timerNow(ids.timer)! / 60} min, the hold timeout says ${holdMinutes}`);
     const occStatus = statusOf(occupancyId, occMissing, occReasons);
 
     const occInputs: ChangeInput[] = [];
     if (occStatus === "ready" || occStatus === "out-of-date") {
       occInputs.push(...blueprintInput("occupancy"));
       if (timer.state === "absent" && !pendingHelper(changes, ids.timer)) {
-        occInputs.push({ kind: "helper", op: "create", fields: { helper: "timer", name: `${area.name} hold`, entity_id: ids.timer, area_id: area.id, duration: holdSeconds } });
+        occInputs.push(timerCreate(`${area.name} hold`, ids.timer, holdSeconds));
       } else if (timerDiffers) {
-        occInputs.push({ kind: "helper", op: "update", targetId: ids.timer, fields: { duration: holdSeconds } });
+        occInputs.push(timerUpdate(ids.timer, holdSeconds));
       }
       if (toggle.state === "absent" && !pendingHelper(changes, ids.switch)) {
         occInputs.push({ kind: "helper", op: "create", fields: { helper: "input_boolean", name: `${area.name} automations paused`, entity_id: ids.switch, area_id: area.id, icon: "mdi:pause-circle-outline" } });
@@ -272,15 +325,39 @@ export function planRecipes(
       actionable: occInputs.length > 0,
     });
 
+    // What the recipes that follow Occupancy need of it: the automation, installed
+    // or in the list, and the occupied sensor and pause switch it makes.
+    const needsOccupancy = (): string[] => {
+      if (!(occInstalled || pendingAutomation(changes, occupancyId))) return ["Occupancy (install it first)"];
+      if (!usable) return ["An area code that makes valid entity ids (Settings)"];
+      return ([[ids.occupied, occupied], [ids.switch, toggle]] as const)
+        .filter(([id, held]) => held.state === "absent" && !pendingHelper(changes, id))
+        .map(([id]) => `${id} is missing (the Occupancy recipe makes it)`);
+    };
+
     // ---- Motion lights ----------------------------------------------------
     const lightsId = canonicalId("light", code, suffix.lights);
     const lights = h.entities[lightsId];
     const lightsPending = pendingHelper(changes, lightsId) || pendingRename(changes, lightsId);
     const luxId = canonicalId("sensor", code, suffix.illuminance);
     const lux = h.entities[luxId]?.platform === "min_max" ? luxId : null;
+    // The counted lights by role. Task lights are never switched on by the
+    // recipe; the light group still turns them off.
+    const lightsOf = (role: LightRole) => inv.lights.filter((r) => r.counts && r.light === role).map((r) => r.entityId).sort();
+    const mainLights = lightsOf("main");
+    const accentLights = lightsOf("accent");
+    const nightLights = lightsOf("night");
+    const overrideMinutes = values.override_duration as number;
+    // The automation sets the length itself each time it starts the timer; this
+    // is the one the helper shows. Without a fixed override time it is a placeholder.
+    const overrideSeconds = overrideMinutes > 0 ? overrideMinutes * 60 : OVERRIDE_PLACEHOLDER_SECONDS;
     const motionInput: Record<string, unknown> = {
       occupied_entity: ids.occupied,
       light_target: lightsId,
+      main_lights: mainLights,
+      accent_lights: accentLights,
+      night_lights: nightLights,
+      bed_entities: bedSensors,
       ...(lux ? { lux_entity: lux } : {}),
       lux_threshold: values.lux_threshold,
       night_start: withSeconds(values.night_start as string),
@@ -292,33 +369,46 @@ export function planRecipes(
       transition: values.transition,
       dim_before_off: values.dim_before_off,
       dim_level: values.dim_level,
+      extended_after: values.extended_after,
+      override_timer: ids.override,
+      override_minutes: overrideMinutes,
       pause_switch: ids.switch,
     };
 
-    const lightMissing: string[] = [];
-    // Occupancy comes first: installed, or in the list. Its sensor and switch
-    // have to be there too.
-    const occupancyThere = occInstalled || pendingAutomation(changes, occupancyId);
-    if (!occupancyThere) lightMissing.push("Occupancy (install it first)");
-    else if (usable) {
-      for (const [id, held] of [[ids.occupied, occupied], [ids.switch, toggle]] as const) {
-        if (held.state === "absent" && !pendingHelper(changes, id)) lightMissing.push(`${id} is missing (the Occupancy recipe makes it)`);
-      }
-    }
+    const lightMissing: string[] = needsOccupancy();
     if (!lights) {
       if (!lightsPending) lightMissing.push("A light group (make it on the Helpers tab)");
     } else if (lights.domain !== "light" || lights.platform !== "group") {
       lightMissing.push(`${lightsId} is already used by “${lights.name}”`);
     }
+    const overrideTaken = usable ? taken(ids.override, overrideTimer) : null;
+    if (overrideTaken) lightMissing.push(overrideTaken);
 
     const motionReasons = automationReasons("motion_lights", motionId, motionInput);
-    if (installed.automations[motionId]) motionReasons.push(...blueprintReason("motion_lights"));
+    const motionInstalled = Boolean(installed.automations[motionId]);
+    if (motionInstalled) {
+      motionReasons.push(...blueprintReason("motion_lights"));
+      if (overrideTimer.state === "absent" && !pendingHelper(changes, ids.override)) motionReasons.push(`${ids.override} is missing`);
+    }
+    const overrideDiffers = durationDiffers(ids.override, overrideTimer, overrideSeconds);
+    if (motionInstalled && overrideDiffers) motionReasons.push(`The override timer is ${timerNow(ids.override)! / 60} min, the override setting says ${overrideSeconds / 60}`);
     const motionStatus = statusOf(motionId, lightMissing, motionReasons);
     const motionInputs: ChangeInput[] = [];
     if (motionStatus === "ready" || motionStatus === "out-of-date") {
-      motionInputs.push(...blueprintInput("motion_lights"), automationInput("motion_lights", motionId, motionInput));
+      motionInputs.push(...blueprintInput("motion_lights"));
+      if (overrideTimer.state === "absent" && !pendingHelper(changes, ids.override)) {
+        motionInputs.push(timerCreate(`${area.name} override`, ids.override, overrideSeconds));
+      } else if (overrideDiffers) {
+        motionInputs.push(timerUpdate(ids.override, overrideSeconds));
+      }
+      motionInputs.push(automationInput("motion_lights", motionId, motionInput));
     }
-    const notes = lux ? [] : ["No light level helper yet, so the lights go on at any light level"];
+    const notes: string[] = [];
+    if (!lux) notes.push("No light level helper yet, so the lights go on at any light level");
+    if (mainLights.length === 0 && inv.lights.some((r) => r.counts)) {
+      notes.push(nightLights.length > 0 ? "No main lights, so only the night lights go on" : "No main lights, so no light goes on by day (set a light's role on the area's Capabilities tab)");
+    }
+    if (bedSensors.length > 0 && nightLights.length === 0) notes.push("No night lights, so no light goes on while someone is in bed");
     out.push({
       areaId: area.id,
       areaName: area.name,
@@ -330,6 +420,44 @@ export function planRecipes(
       controlledBy: motionStatus === "missing" ? [] : installed.controllers[lightsId] ?? [],
       inputs: motionInputs,
       actionable: motionInputs.length > 0,
+    });
+
+    // ---- Media off --------------------------------------------------------
+    const speakers = inv.speaker.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const tvs = inv.tv.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const mediaId = canonicalId("media_player", code, suffix.media);
+    const media = h.entities[mediaId];
+    const mediaThere = (media?.domain === "media_player" && media.platform === "group") || (!media && (pendingHelper(changes, mediaId) || pendingRename(changes, mediaId)));
+    // The media group takes the place of the players when the area has one kind
+    // only: with speakers and TVs the two need their own times.
+    const oneKind = speakers.length + tvs.length >= 2 && (speakers.length === 0 || tvs.length === 0);
+    const viaGroup = mediaThere && oneKind;
+    const mediaInput: Record<string, unknown> = {
+      occupied_entity: ids.occupied,
+      speaker_entities: viaGroup && speakers.length > 0 ? [mediaId] : speakers,
+      tv_entities: viaGroup && tvs.length > 0 ? [mediaId] : tvs,
+      speaker_minutes: values.media_off_after,
+      tv_minutes: values.tv_off_after,
+      pause_switch: ids.switch,
+    };
+    const mediaMissing: string[] = needsOccupancy();
+    if (speakers.length + tvs.length === 0) mediaMissing.push("A speaker or a TV that counts (Capabilities)");
+    const mediaReasons = automationReasons("media_off", mediaOffId, mediaInput);
+    if (installed.automations[mediaOffId]) mediaReasons.push(...blueprintReason("media_off"));
+    const mediaStatus = statusOf(mediaOffId, mediaMissing, mediaReasons);
+    const mediaInputs: ChangeInput[] = [];
+    if (mediaStatus === "ready" || mediaStatus === "out-of-date") mediaInputs.push(...blueprintInput("media_off"), automationInput("media_off", mediaOffId, mediaInput));
+    out.push({
+      areaId: area.id,
+      areaName: area.name,
+      recipe: "media_off",
+      status: mediaStatus,
+      missing: mediaStatus === "missing" ? mediaMissing : [],
+      reasons: mediaStatus === "out-of-date" ? mediaReasons : [],
+      notes: [],
+      controlledBy: [],
+      inputs: mediaInputs,
+      actionable: mediaInputs.length > 0,
     });
   }
   return out;

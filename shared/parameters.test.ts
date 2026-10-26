@@ -51,11 +51,22 @@ describe("the definitions", () => {
     expect(PARAMS.map((p) => p.key)).toEqual([...PARAM_KEYS]);
     for (const p of PARAMS) {
       expect(checkValue(p, p.default), p.key).toBeNull();
-      expect(["house", "occupancy", "lighting"]).toContain(p.tab);
+      expect(["house", "occupancy", "lighting", "media"]).toContain(p.tab);
     }
     expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end"]);
-    expect(PARAMS.filter((p) => p.tab === "occupancy").map((p) => p.key)).toEqual(["hold_timeout"]);
-    expect(PARAMS.filter((p) => p.tab === "lighting")).toHaveLength(8);
+    expect(PARAMS.filter((p) => p.tab === "occupancy").map((p) => p.key)).toEqual(["hold_timeout", "extended_after", "extended_hold", "sleep_hold"]);
+    expect(PARAMS.filter((p) => p.tab === "lighting").map((p) => p.key)).toEqual([
+      "lux_threshold",
+      "day_brightness",
+      "day_kelvin",
+      "night_brightness",
+      "night_kelvin",
+      "transition",
+      "dim_before_off",
+      "dim_level",
+      "override_duration",
+    ]);
+    expect(PARAMS.filter((p) => p.tab === "media").map((p) => p.key)).toEqual(["media_off_after", "tv_off_after"]);
   });
 
   it("has the documented defaults", () => {
@@ -63,6 +74,8 @@ describe("the definitions", () => {
     expect([d("night_start"), d("night_end"), d("hold_timeout"), d("lux_threshold")]).toEqual(["23:00", "07:00", 5, 50]);
     expect([d("day_brightness"), d("day_kelvin"), d("night_brightness"), d("night_kelvin")]).toEqual([100, 3000, 10, 2200]);
     expect([d("transition"), d("dim_before_off"), d("dim_level")]).toEqual([1, 15, 30]);
+    expect([d("extended_after"), d("extended_hold"), d("sleep_hold")]).toEqual([30, 15, 60]);
+    expect([d("override_duration"), d("media_off_after"), d("tv_off_after")]).toEqual([0, 15, 30]);
   });
 });
 
@@ -83,6 +96,15 @@ describe("checkValue", () => {
     // Zero is a value: "dim before off" 0 means off.
     expect(checkValue(PARAM_DEF.dim_before_off, 0)).toBeNull();
     expect(checkValue(PARAM_DEF.dim_level, 0)).not.toBeNull();
+    // 0 is a value for the manual override too: until the area clears. It stays under the timer's four hours.
+    expect(checkValue(PARAM_DEF.override_duration, 0)).toBeNull();
+    expect(checkValue(PARAM_DEF.override_duration, 240)).toBeNull();
+    expect(checkValue(PARAM_DEF.override_duration, 241)).not.toBeNull();
+    // The extended and sleep times and the media times start at one minute.
+    for (const key of ["extended_after", "extended_hold", "sleep_hold", "media_off_after", "tv_off_after"] as const) {
+      expect(checkValue(PARAM_DEF[key], 0), key).not.toBeNull();
+      expect(checkValue(PARAM_DEF[key], 1), key).toBeNull();
+    }
   });
 
   it("accepts times as HH:MM only", () => {
@@ -138,6 +160,16 @@ describe("inheritance", () => {
     expect(Object.keys(all)).toEqual([...PARAM_KEYS]);
     expect(all.dim_level).toBe(40);
     expect(all.dim_before_off).toBe(15);
+  });
+
+  it("the new occupancy, lighting and media values inherit like the others", () => {
+    const p = withP({ house: { extended_after: 45, tv_off_after: 60 }, types: { exterior: { media_off_after: 5 } }, floors: { first: { sleep_hold: 90 } }, areas: { kitchen: { override_duration: 20 } } });
+    expect(resolve(p, h, inv, "bedroom", "sleep_hold")).toEqual({ value: 90, source: { level: "floor", id: "first" } });
+    expect(resolve(p, h, inv, "kitchen", "override_duration")).toEqual({ value: 20, source: { level: "area", id: "kitchen" } });
+    expect(resolve(p, h, inv, "living_room", "override_duration")).toEqual({ value: 0, source: { level: "default", id: null } });
+    expect(resolve(p, h, inv, "shed", "extended_after")).toEqual({ value: 45, source: { level: "house", id: null } });
+    expect(resolve(p, h, inv, "garden", "media_off_after")).toEqual({ value: 5, source: { level: "type", id: "exterior" } });
+    expect(resolve(p, h, inv, "kitchen", "tv_off_after").value).toBe(60);
   });
 
   it("does not mistake an area called 'constructor' for something Object has", () => {

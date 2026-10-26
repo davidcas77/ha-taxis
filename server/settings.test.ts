@@ -269,6 +269,18 @@ describe("validateParameters", () => {
     expect(validateParameters({ house: { hold_timeout: 240 } })).toMatchObject({ ok: true });
   });
 
+  it("takes the extended, sleep, override and media values, held to their ranges", () => {
+    const good = { house: { extended_after: 45, extended_hold: 20, sleep_hold: 90, override_duration: 0, media_off_after: 10, tv_off_after: 60 } };
+    expect(validateParameters(good)).toEqual({ ok: true, value: { ...good, types: {}, floors: {}, areas: {} } });
+    // 0 is a value for the override (until the area clears) and for nothing else here.
+    expect(validateParameters({ house: { override_duration: 240 } })).toMatchObject({ ok: true });
+    expect(validateParameters({ house: { override_duration: 241 } })).toMatchObject({ ok: false });
+    for (const key of ["extended_after", "extended_hold", "sleep_hold", "media_off_after", "tv_off_after"]) {
+      expect(validateParameters({ areas: { kitchen: { [key]: 0 } } }), key).toMatchObject({ ok: false });
+      expect(validateParameters({ areas: { kitchen: { [key]: 1.5 } } }), key).toMatchObject({ ok: false });
+    }
+  });
+
   it("allows only interior and exterior as types, and ids as the editor writes them", () => {
     expect(validateParameters({ types: { basement: { hold_timeout: 3 } } })).toMatchObject({ ok: false });
     expect(validateParameters({ floors: { "Ground Floor": {} } })).toMatchObject({ ok: false });

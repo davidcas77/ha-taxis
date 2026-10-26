@@ -290,7 +290,7 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
       </p>
     );
   }
-  if (c.op === "update" && "duration" in c.after) return <p className="text-xs text-muted">The hold timeout is the length of this timer.</p>;
+  if (c.op === "update" && "duration" in c.after) return <p className="text-xs text-muted">The recipe's timeout setting is the length of this timer.</p>;
   if (c.op === "create") {
     const sensor = c.after.set_area_sensor;
     return (

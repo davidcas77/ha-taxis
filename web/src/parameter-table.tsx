@@ -19,7 +19,7 @@ import type { Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
 
-// The House, Occupancy and Lighting tabs of the Parameters page: one table per
+// The House, Occupancy, Lighting and Media tabs of the Parameters page: one table per
 // tab, a row for the house, for interior and exterior areas, for each floor and
 // for each area, and a column per parameter. A cell shows the value set at that
 // level, or the one it inherits in grey with where it comes from. Click a cell
@@ -27,8 +27,9 @@ import { SortHeader, useSort } from "./table.tsx";
 
 const NOTES: Record<ParamTab, string> = {
   house: "When night starts and ends. The lights use the night brightness and colour inside this window.",
-  occupancy: "How long an area stays occupied after its sensors last changed.",
-  lighting: "How the lights come on and go off. Brightness, colour, light level and timing.",
+  occupancy: "How long an area stays occupied after its sensors last changed: normally, once it has been occupied for a long time (extended), and while someone is in bed (bedrooms with a bed sensor).",
+  lighting: "How the lights come on and go off. Brightness, colour, light level and timing. Manual override: how long the automation leaves an area alone after a light is changed by hand; 0 is until the area next clears.",
+  media: "How long an area is clear before its speakers and its TVs are turned off.",
 };
 
 const SCOPE_NOTE =
