@@ -127,9 +127,10 @@ describe("REST allowlist for helper flows", () => {
   const FLOW = "0123456789abcdef0123456789abcdef";
   const ENTRY = "01JHELPERGARAGEALL";
 
-  it("allows starting a group or min/max flow, and posting to a step", () => {
+  it("allows starting a group, min/max or template flow, and posting to a step", () => {
     expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "group", show_advanced_options: false })).not.toThrow();
     expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "min_max" })).not.toThrow();
+    expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "template" })).not.toThrow();
     expect(() => assertRestRequest("POST", `/config/config_entries/flow/${FLOW}`, { next_step_id: "light" })).not.toThrow();
     expect(() => assertRestRequest("POST", `/config/config_entries/flow/${"A1".repeat(32)}`, {})).not.toThrow();
   });
@@ -140,7 +141,7 @@ describe("REST allowlist for helper flows", () => {
   });
 
   it("refuses a flow for any other integration, or with no handler", () => {
-    for (const handler of ["template", "threshold", "mqtt", "GROUP", "group ", "", null, undefined, 1, ["group"], { handler: "group" }]) {
+    for (const handler of ["threshold", "derivative", "mqtt", "homeassistant", "TEMPLATE", "template ", "GROUP", "group ", "", null, undefined, 1, ["group"], ["template"], { handler: "group" }]) {
       expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler })).toThrow(/Refusing to start a config flow/);
     }
     expect(() => assertRestRequest("POST", "/config/config_entries/flow")).toThrow(/Refusing to start a config flow/);
@@ -194,7 +195,7 @@ describe("REST allowlist for helper flows", () => {
 
   it("the client enforces it before anything is sent", async () => {
     const t = fakeHa();
-    await expect(t.api.request("POST", "/config/config_entries/flow", { handler: "template" })).rejects.toThrow(/Refusing to start a config flow/);
+    await expect(t.api.request("POST", "/config/config_entries/flow", { handler: "threshold" })).rejects.toThrow(/Refusing to start a config flow/);
     await expect(t.api.request("DELETE", `/config/config_entries/flow/${FLOW}`)).rejects.toThrow(/Refusing/);
     await expect(t.api.request("GET", `/config/config_entries/flow/${FLOW}`)).rejects.toThrow(/Refusing/);
     expect(t.rest).toEqual([]);

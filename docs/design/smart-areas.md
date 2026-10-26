@@ -1,6 +1,6 @@
 # Smart areas: capabilities, parameters, canonical helpers and recipes
 
-Status: **design draft**. Stage 2 (the capability inventory) and stage 3 (the aggregate helpers) are implemented; the rest is not.
+Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers) and a first slice of stage 4 (parameters with inheritance, and the Occupancy and Motion lights recipes) are implemented; the rest is not.
 
 ## Goal
 
@@ -170,8 +170,13 @@ then the helper changes:
 
 ### Helpers that come with the recipes (stage 4)
 
-Not built yet. These come with the recipes that use them, because their
-parameters (timeouts, thresholds) belong to those recipes.
+These come with the recipes that use them, because their parameters (timeouts,
+thresholds) belong to those recipes. **Built so far**: `timer.<code>_hold`,
+`binary_sensor.<code>_occupied` (simplified: it follows the hold timer and
+nothing else) and `input_boolean.<code>_paused` ("<Area> automations paused", created
+without an initial state so it is off and the recipes run), made by the Occupancy
+recipe. Their ends are fixed, not settings; `occupied` is reserved, so no
+stage 3 binary sensor helper may use it. The rest of the table is not built.
 
 | Entity | Native helper | Created when |
 |---|---|---|
@@ -182,7 +187,7 @@ parameters (timeouts, thresholds) belong to those recipes.
 | `input_boolean.<code>_presence_hold` | Input boolean (forces occupied, auto-off parameter) | occupancy |
 | `input_boolean.<code>_auto_<recipe>` | Input boolean per recipe and area (pause a recipe from a dashboard) | recipe used |
 | `binary_sensor.<code>_problem` | Group, any on: smoke, gas, moisture, safety, problem | ≥ 1 source |
-| `input_boolean.<code>_automation` | Input boolean: master switch, off = area in manual, every recipe skips it | any recipe |
+| `input_boolean.<code>_paused` | Input boolean: pause switch, on = area in manual, every recipe skips it | any recipe |
 | `sensor.<code>_light_profile` | Template: `accented` > `sleep` > `bright` > `standard` | lights |
 | `sensor.<code>_humidity_rate` | Derivative helper on `_humidity` (%/s) | humidity + fan |
 | `binary_sensor.<code>_dark` | Threshold on `_illuminance`, with hysteresis | lux source |
@@ -201,6 +206,73 @@ Notes:
   area by area or label.
 
 ## Stage 4: recipes
+
+### Built: parameters and the first two recipes
+
+**Parameters** (`shared/parameters.ts`). Typed definitions (key, tab, label, unit,
+kind number/time/enum, range and step, default) and `resolve(params, h, inventory,
+areaId, key)`, which walks area → floor → interior/exterior → house → built-in
+default and returns the value with where it came from. Stored in Taxis only
+(settings key `parameters`, validated on the server: known keys, values in range,
+ids by pattern, size limits), saved at once like the inventory. Defined so far:
+night start/end (House tab); hold timeout (Occupancy tab); dark threshold, day
+and night brightness and colour temperature, transition, dim before off and dim
+level (Lighting tab). The Parameters page has a table per tab: a row for the
+house default, interior, exterior, each floor and each area; a cell shows its own
+value or the inherited one in grey ("from <source>"); click to set, clear to
+inherit.
+
+**Recipes** (`shared/recipes.ts`, `shared/blueprints.ts`). Two recipes, one
+blueprint each, written by Taxis at `taxis/occupancy.yaml` and
+`taxis/motion_lights.yaml` through `blueprint/save`. The text is a constant in
+code with "Taxis blueprint version N." in the description; Home Assistant lists
+the description back, and a blueprint is (re)written only when missing or of
+another version. `planRecipes` gives each area and recipe one of Missing
+(and what), Ready, Installed, Out of date (and how: parameters, sensors, helper,
+blueprint version, name) or In changes.
+
+- *Occupancy* needs a counted motion or presence sensor whose role is "starts".
+  Inputs: the starting sensors, the holding sensors, the hold timer, the hold
+  timeout and the pause switch. Mode queued, up to 10. A starting sensor off → on
+  starts the timer; while the timer runs a change of any sensor (a starting
+  sensor on → off, a holding sensor either way) starts it again; when the timer
+  finishes and a starting or holding sensor is still on, it starts again.
+  Unavailable and unknown never trigger anything. Does nothing while the pause
+  switch is on.
+- *Motion lights* needs Occupancy (installed or in the change list) and the
+  canonical light group (in place or in the list). Light level is optional (the
+  canonical min/max illuminance sensor, when in place). Mode restart. Occupied
+  off → on: lights that are off, and dark enough if there is a light sensor, go
+  on with the night profile inside the night window and the day profile
+  otherwise, with `brightness_pct` and `color_temp_kelvin`. Occupied on → off:
+  with dim-before-off above 0 and lights on, dim to the dim level (only if they
+  are brighter), wait that long for the area to be occupied again, then turn off
+  after checking it is still clear. Because the mode is restart, the occupied
+  trigger of the next run is what restores lights left at or below the dim
+  level; the wait in the run that was waiting is cancelled by it.
+- Installing adds, in this order of dependency: the blueprint, the three
+  Occupancy helpers, and the automation `taxis_<recipe>_<code>` ("<Area> –
+  Occupancy (Taxis)") with the blueprint's inputs from the inventory roles and the
+  resolved parameters. If other automations already use the area's light group
+  (the existing `search/related` read), the cell lists them as a warning.
+
+**Apply order**: registries → blueprints → helpers (stage 3 groups and min/max,
+and the recipes' timers, toggles and template sensors) → automations → each
+step reads Home Assistant back (blueprint listed with its version, helper
+present with the right platform, area and timer length, automation stored as
+sent and not unavailable). Writes added: WebSocket `blueprint/save` (automation
+blueprints at `taxis/<name>.yaml` only, enforced), `timer/create`,
+`timer/update`, `input_boolean/create`; config-flow handler `template`; one read,
+`blueprint/list`.
+
+**Deferred to later stages**: manual override, extended and sleep states, the
+presence hold switch, the door rule, light profiles and roles per state,
+proportional dimming, vacancy lights, night path light, media, climate, fans,
+exterior lights, per-recipe switches and everything in the other recipes of the
+table below; media, safety and climate parameters; house modes beyond the night
+window; AI.
+
+### Plan
 
 A recipe = a Taxis blueprint + required capabilities + parameters. The user
 picks recipes and areas; Taxis checks prerequisites per area and shows what is
@@ -418,12 +490,13 @@ close match in the same area is adopted with a members update.
 
 New writes, all through the change list with backup and verify:
 
-- helper config flows: `group` and `min_max` (stage 3, built: REST `POST /config/config_entries/flow` for those two handlers and its steps, and the options flow of a group's config entry to change its members); `threshold` and `template` later, with the recipes that need them;
-- storage helpers: `timer`, `input_number`, `input_boolean`, `input_datetime`,
-  `schedule`;
-- blueprints (WebSocket `blueprint/save`);
-- automation configs (REST `config/automation/config/<id>`, already allowed
-  since 0.4 for reference rewrites);
+- helper config flows: `group` and `min_max` (stage 3, built: REST `POST /config/config_entries/flow` for those two handlers and its steps, and the options flow of a group's config entry to change its members); `template` (built, for the occupied sensor) and `threshold` later, with the recipes that need them;
+- storage helpers: `timer` and `input_boolean` (built: `timer/create`,
+  `timer/update`, `input_boolean/create`); `input_number`, `input_datetime`,
+  `schedule` later;
+- blueprints (WebSocket `blueprint/save`; built, `taxis/<name>.yaml` only);
+- automation configs (REST `config/automation/config/<id>`, allowed since 0.4 for
+  reference rewrites; built for the recipes' `taxis_<recipe>_<code>`);
 - area settings (temperature/humidity entity, built), labels, entity registry (a new helper's id and area, built).
 
 Still never: calling services, removing devices or entities.
@@ -487,7 +560,7 @@ more than the code does; the code was taken.
 |---|---|---|
 | Occupancy and lighting are separate | Occupancy: clear / occupied / extended / manual. Lighting profile: standard / sleep / bright / accented, never affects occupancy | `_occupied` / `_extended` stay occupancy only; `sensor.<code>_light_profile` (template) carries the lighting profile |
 | Two-stage vacating | After the last sensor goes off: occupied → (clear timeout) → extended → (extended timeout) → clear; any sensor change snaps back to occupied | "Dim before off" stage: lights dim at the end of the hold timer and go off after a second, shorter timer; motion in between restores them |
-| Manual mode per area | A switch puts the area in manual and every automation stands down | `input_boolean.<code>_automation` (master), on top of the per-recipe switches |
+| Manual mode per area | A switch puts the area in manual and every automation stands down | `input_boolean.<code>_paused` (master), on top of the per-recipe switches |
 | Manual override until occupancy flips | A light change the automation didn't make holds until the area goes clear→occupied or occupied→clear; a manual off is respected, never re-asserted | Same rule via trigger context; the lights automation never turns a light back on after a manual off |
 | Bright profile with floor and hysteresis | ≤ 10 lux is never bright; bright above the threshold, stays bright until threshold − 25 | Lighting parameters above; threshold helper with hysteresis |
 | Read lux only with lights off | Uses the last lux read while lights were off, to avoid feedback | `_dark` is evaluated only while `light.<code>_all` is off |

@@ -16,11 +16,23 @@ import {
   type EntityChoice,
   type InventorySettings,
 } from "../shared/inventory.ts";
+import {
+  EMPTY_PARAMETERS,
+  MAX_PARAMETER_AREAS,
+  MAX_PARAMETER_FLOORS,
+  PARAMETER_AREA_ID,
+  PARAMETER_FLOOR_ID,
+  PARAM_DEF,
+  checkValue,
+  isParamKey,
+  type ParamValues,
+  type ParameterSettings,
+} from "../shared/parameters.ts";
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, slug, type NamingSettings } from "../shared/naming.ts";
 import type { EntityRole, Hierarchy } from "../shared/types.ts";
 
-// App settings, one JSON value per key in SQLite: naming, groups and the
-// capability inventory.
+// App settings, one JSON value per key in SQLite: naming, groups, the
+// capability inventory and the recipe parameters.
 
 export function settingsStore(db: DatabaseSync) {
   const get = db.prepare("SELECT value FROM settings WHERE key = ?");
@@ -65,6 +77,20 @@ export function settingsStore(db: DatabaseSync) {
     },
     saveInventory(s: InventorySettings): void {
       put.run("inventory", JSON.stringify(s));
+    },
+    parameters(): ParameterSettings {
+      const row = get.get("parameters") as { value: string } | undefined;
+      if (!row) return structuredClone(EMPTY_PARAMETERS);
+      try {
+        // Same as the inventory: validate again in case the row was edited by hand.
+        const checked = validateParameters(JSON.parse(row.value));
+        return checked.ok ? checked.value : structuredClone(EMPTY_PARAMETERS);
+      } catch {
+        return structuredClone(EMPTY_PARAMETERS);
+      }
+    },
+    saveParameters(s: ParameterSettings): void {
+      put.run("parameters", JSON.stringify(s));
     },
   };
 }
@@ -234,4 +260,65 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
     if (Object.keys(choice).length > 0) areaEntries.push([id, choice]);
   }
   return { ok: true, value: { entities: Object.fromEntries(entityEntries), areas: Object.fromEntries(areaEntries) } };
+}
+
+// The recipe parameters: values per level (house, interior/exterior, floor,
+// area). Only known parameters, each inside its range. Anything the editor
+// couldn't have produced is refused with a message, never silently dropped.
+export function validateParameters(input: unknown): { ok: true; value: ParameterSettings } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "The parameter settings weren't readable." };
+  for (const key of Object.keys(input)) {
+    if (!["house", "types", "floors", "areas"].includes(key)) return { ok: false, error: `${key.slice(0, 40)} isn't part of the parameter settings.` };
+  }
+  const house = input.house ?? {};
+  const types = input.types ?? {};
+  const floors = input.floors ?? {};
+  const areas = input.areas ?? {};
+  if (!isRecord(house)) return { ok: false, error: "The house parameters weren't readable." };
+  if (!isRecord(types)) return { ok: false, error: "The interior and exterior parameters weren't readable." };
+  if (!isRecord(floors)) return { ok: false, error: "The floor parameters weren't readable." };
+  if (!isRecord(areas)) return { ok: false, error: "The area parameters weren't readable." };
+  if (Object.keys(floors).length > MAX_PARAMETER_FLOORS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_FLOORS} floors.` };
+  if (Object.keys(areas).length > MAX_PARAMETER_AREAS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_AREAS} areas.` };
+
+  const values = (raw: unknown, where: string): { ok: true; value: ParamValues } | { ok: false; error: string } => {
+    if (!isRecord(raw)) return { ok: false, error: `The parameters for ${where} weren't readable.` };
+    const out: [string, number | string][] = [];
+    for (const [key, v] of Object.entries(raw)) {
+      if (!isParamKey(key)) return { ok: false, error: `${key.slice(0, 40)} isn't a parameter (${where}).` };
+      const problem = checkValue(PARAM_DEF[key], v);
+      if (problem) return { ok: false, error: `${problem.replace(/\.$/, "")} (${where}).` };
+      out.push([key, v as number | string]);
+    }
+    return { ok: true, value: Object.fromEntries(out) as ParamValues };
+  };
+
+  // Built from entries, not by assignment: an id is a key, and "__proto__" must stay one.
+  const houseValues = values(house, "the house");
+  if (!houseValues.ok) return houseValues;
+  const typeEntries: [string, ParamValues][] = [];
+  for (const [id, raw] of Object.entries(types)) {
+    if (!(AREA_TYPES as readonly string[]).includes(id)) return { ok: false, error: `${id.slice(0, 40)} isn't interior or exterior.` };
+    const v = values(raw, `${id} areas`);
+    if (!v.ok) return v;
+    if (Object.keys(v.value).length > 0) typeEntries.push([id, v.value]);
+  }
+  const floorEntries: [string, ParamValues][] = [];
+  for (const [id, raw] of Object.entries(floors)) {
+    if (!PARAMETER_FLOOR_ID.test(id)) return { ok: false, error: `${id.slice(0, 60)} isn't a floor id.` };
+    const v = values(raw, `floor ${id}`);
+    if (!v.ok) return v;
+    if (Object.keys(v.value).length > 0) floorEntries.push([id, v.value]);
+  }
+  const areaEntries: [string, ParamValues][] = [];
+  for (const [id, raw] of Object.entries(areas)) {
+    if (!PARAMETER_AREA_ID.test(id)) return { ok: false, error: `${id.slice(0, 60)} isn't an area id.` };
+    const v = values(raw, `area ${id}`);
+    if (!v.ok) return v;
+    if (Object.keys(v.value).length > 0) areaEntries.push([id, v.value]);
+  }
+  return {
+    ok: true,
+    value: { house: houseValues.value, types: Object.fromEntries(typeEntries), floors: Object.fromEntries(floorEntries), areas: Object.fromEntries(areaEntries) },
+  };
 }

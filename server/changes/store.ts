@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-import { planMerge, refsOf, stripRef, tempId } from "../../shared/changes.ts";
+import { KEYED_KINDS, planMerge, refsOf, stripRef, tempId } from "../../shared/changes.ts";
 import type { CategoryScope, Change, ChangeInput, ChangeKind, ChangeOp, Hierarchy } from "../../shared/types.ts";
 
 // The change list, kept in SQLite so it survives restarts and updates of the
@@ -61,7 +61,7 @@ export function changeStore(db: DatabaseSync) {
     const current = list();
     const gone = new Set(ids);
     for (const c of current) if (gone.has(c.id)) remove.run(c.id);
-    const removedTemps = current.filter((c) => gone.has(c.id) && c.op === "create" && c.kind !== "helper").map((c) => c.targetId);
+    const removedTemps = current.filter((c) => gone.has(c.id) && c.op === "create" && !KEYED_KINDS.has(c.kind)).map((c) => c.targetId);
     for (const temp of removedTemps) {
       for (const other of list()) {
         if (!refsOf(other).some((r) => r.id === temp)) continue;
@@ -89,8 +89,9 @@ export function changeStore(db: DatabaseSync) {
         const r = insert.run(c.kind, c.op, c.targetId, c.scope, JSON.stringify(c.before), JSON.stringify(c.after), now);
         const id = Number(r.lastInsertRowid);
         // A creation gets a temporary id other changes can point at.
-        // A helper is keyed by the entity id it will have, so it keeps that.
-        if (c.op === "create" && c.kind !== "helper") setTarget.run(tempId(c.kind, id), id);
+        // A helper, blueprint or automation is keyed by what it will be (its
+        // entity id, path or id), so it keeps that.
+        if (c.op === "create" && !KEYED_KINDS.has(c.kind)) setTarget.run(tempId(c.kind, id), id);
       };
       switch (plan.action) {
         case "none":

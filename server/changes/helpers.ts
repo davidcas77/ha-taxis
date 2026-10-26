@@ -1,21 +1,31 @@
 import { isTempId, sameValue } from "../../shared/changes.ts";
+import { formatDuration, parseDuration } from "../../shared/recipes.ts";
 import type { Change } from "../../shared/types.ts";
 import type { RawEntity, RawRegistry } from "../model/hierarchy.ts";
 import type { Outcome } from "./apply.ts";
 
-// Applying helper changes: creating a group or a min/max helper, and changing a
-// group's members. Home Assistant offers both only as config flows over REST
-// (the same dialogs the UI shows), so each is a short conversation:
+// Applying helper changes: creating a group, a min/max helper or one of the
+// recipes' helpers (a timer, a toggle, a template sensor), and changing a
+// group's members or a timer's duration. Groups, min/max and template sensors
+// are offered by Home Assistant only as config flows over REST (the same
+// dialogs the UI shows), so each is a short conversation:
 //
 //   create a group    start the "group" flow, choose the group type, send the form
 //   create a min/max  start the "min_max" flow, send the form
+//   create a template start the "template" flow, choose "binary_sensor", send the
+//                     form (name, the template, device class)
 //   change a group    start the options flow of its config entry, send the form
 //                     with the members changed and every other value as it was
 //
+// A timer and a toggle are made the way Home Assistant's Helpers page makes
+// them, over the WebSocket (timer/create, input_boolean/create), and a timer's
+// duration is changed with timer/update.
+//
 // A created helper gets the name Home Assistant derives from its title, so a
-// last step finds its entity in the entity registry (by its config entry) and
-// gives it the canonical entity id and the area. For a temperature or humidity
-// sensor the area is then pointed at it.
+// last step finds its entity in the entity registry (by its config entry, or for
+// a timer and a toggle by the id the create call answered with) and gives it the
+// canonical entity id and the area. For a temperature or humidity sensor the
+// area is then pointed at it.
 //
 // Run by the Apply route once the registry changes are done, so renames and new
 // areas they depend on exist. One read before (to skip what is already there and
@@ -50,8 +60,12 @@ export type HelperIO = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-const PLATFORM = { group: "group", min_max: "min_max" } as const;
-const TITLES = { group: "group", min_max: "min/max sensor" } as const;
+type Kind = "group" | "min_max" | "timer" | "input_boolean" | "template";
+const PLATFORM: Record<Kind, string> = { group: "group", min_max: "min_max", timer: "timer", input_boolean: "input_boolean", template: "template" };
+const TITLES: Record<Kind, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor" };
+// Made by a config flow, so their entity has a config entry. A timer and a
+// toggle are storage helpers: no config entry, found by the id they were given.
+const FLOW_MADE: ReadonlySet<Kind> = new Set<Kind>(["group", "min_max", "template"]);
 
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
 const membersOf = (reg: RawRegistry, entityId: string): string[] | null => {
@@ -116,6 +130,15 @@ class Flows {
     return this.entry(await this.step(`/config/config_entries/flow/${this.id(start)}`, { name, entity_ids: entities, type: "mean", round_digits: 1 }, "create_entry"));
   }
 
+  /** Creates the template binary sensor of a recipe and returns its config entry id. */
+  async createTemplateSensor(name: string, state: string, deviceClass: string): Promise<string> {
+    const menu = await this.step("/config/config_entries/flow", { handler: "template", show_advanced_options: false }, "menu");
+    const flowId = this.id(menu);
+    if (Array.isArray(menu.menu_options) && !menu.menu_options.includes("binary_sensor")) throw new Error("Home Assistant doesn't offer a template binary sensor.");
+    await this.step(`/config/config_entries/flow/${flowId}`, { next_step_id: "binary_sensor" }, "form");
+    return this.entry(await this.step(`/config/config_entries/flow/${flowId}`, { name, state, device_class: deviceClass }, "create_entry"));
+  }
+
   /** Sets a group's members, keeping its other options as they are. */
   async setMembers(entryId: string, entities: string[]): Promise<void> {
     const start = await this.step("/config/config_entries/options/flow", { handler: entryId }, "form");
@@ -152,24 +175,40 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
   const area = (id: string) => io.realIds.get(id) ?? id;
   const entryOf = (id: string): RawEntity | undefined => before.entities.find((e) => e.entity_id === id);
 
-  // Waits for the entity a config entry made to show up in the registry.
-  const entityOfEntry = async (entryId: string): Promise<RawEntity | null> => {
+  // Waits for the entity a config entry (or a storage helper's id) made to show
+  // up in the registry.
+  const waitForEntity = async (match: (e: RawEntity) => boolean): Promise<RawEntity | null> => {
     for (let i = 0; i < 8; i++) {
       const list = await io.ha.command<RawEntity[]>("config/entity_registry/list");
-      const found = list.find((e) => e.config_entry_id === entryId);
+      const found = list.find(match);
       if (found) return found;
       await sleep(300);
     }
     return null;
   };
+  const entityOfEntry = (entryId: string) => waitForEntity((e) => e.config_entry_id === entryId);
+  const entityOfStorage = (platform: string, uniqueId: string) => waitForEntity((e) => e.platform === platform && e.unique_id === uniqueId);
 
   const createOne = async (c: Change): Promise<Done> => {
-    const a = c.after as { helper: "group" | "min_max"; group_type?: string; name: string; entity_id: string; entities: string[]; area_id?: string | null; set_area_sensor?: "temperature" | "humidity" };
+    const a = c.after as {
+      helper: Kind;
+      group_type?: string;
+      name: string;
+      entity_id: string;
+      entities?: string[];
+      area_id?: string | null;
+      set_area_sensor?: "temperature" | "humidity";
+      duration?: number;
+      icon?: string | null;
+      state_template?: string;
+      device_class?: string;
+    };
     const canonical = a.entity_id;
     const kind = TITLES[a.helper];
     const domain = canonical.split(".")[0];
-    const members = a.entities.map(current);
+    const members = (a.entities ?? []).map(current);
     const details: string[] = [];
+    let uniqueId: string | null = null;
 
     // The area: a new one made in this list has its real id by now.
     let areaId: string | null = null;
@@ -186,24 +225,49 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
     if (held) {
       // Already there as the helper it should be: an earlier Apply made it and
       // stopped before placing it. Don't make another.
-      if (held.platform !== PLATFORM[a.helper] || held.config_entry_id == null) {
+      if (held.platform !== PLATFORM[a.helper] || (FLOW_MADE.has(a.helper) && held.config_entry_id == null)) {
         return { ok: false, message: `${canonical} is already taken by something else (${held.platform || "no integration"}). Change the helper name in Settings, remove this change and plan again.` };
       }
       details.push("It was already in Home Assistant; Taxis only checked where it is.");
+      uniqueId = held.unique_id ?? null;
     } else {
       // The same helper under another id: made by an earlier Apply that stopped
       // before renaming it, or by hand. A second one would be a duplicate.
       const twin = before.entities.find((e) => e.platform === PLATFORM[a.helper] && e.entity_id.startsWith(`${domain}.`) && (e.name ?? e.original_name) === a.name);
       if (twin) {
-        return { ok: false, message: `A ${kind} named “${a.name}” already exists as ${twin.entity_id}, so Taxis didn't make another. Remove this change and plan again: it can be adopted.` };
+        return {
+          ok: false,
+          message:
+            a.helper === "group" || a.helper === "min_max"
+              ? `A ${kind} named “${a.name}” already exists as ${twin.entity_id}, so Taxis didn't make another. Remove this change and plan again: it can be adopted.`
+              : `A ${kind} named “${a.name}” already exists as ${twin.entity_id}, so Taxis didn't make another. Rename it to ${canonical} in Home Assistant, or give the area another code in Settings, then plan again.`,
+        };
       }
-      let entryId: string;
+      let made: RawEntity | null = null;
       try {
-        entryId = a.helper === "group" ? await flows.createGroup(a.group_type ?? domain, a.name, members) : await flows.createMinMax(a.name, members);
+        if (a.helper === "timer") {
+          const item = await io.ha.write<{ id?: unknown }>("timer/create", { name: a.name, duration: formatDuration(a.duration!), restore: true });
+          if (typeof item?.id !== "string") throw new Error("Home Assistant didn't say which timer it made.");
+          uniqueId = item.id;
+          made = await entityOfStorage("timer", item.id).catch(() => null);
+        } else if (a.helper === "input_boolean") {
+          // No initial state: a new toggle is off, so the area's recipes run until it is turned on.
+          const item = await io.ha.write<{ id?: unknown }>("input_boolean/create", { name: a.name, ...(a.icon ? { icon: a.icon } : {}) });
+          if (typeof item?.id !== "string") throw new Error("Home Assistant didn't say which toggle it made.");
+          uniqueId = item.id;
+          made = await entityOfStorage("input_boolean", item.id).catch(() => null);
+        } else {
+          const entryId =
+            a.helper === "group"
+              ? await flows.createGroup(a.group_type ?? domain, a.name, members)
+              : a.helper === "min_max"
+                ? await flows.createMinMax(a.name, members)
+                : await flows.createTemplateSensor(a.name, a.state_template!, a.device_class!);
+          made = await entityOfEntry(entryId).catch(() => null);
+        }
       } catch (e) {
         return { ok: false, message: (e as Error).message };
       }
-      const made = await entityOfEntry(entryId).catch(() => null);
       if (!made) return { ok: false, message: `Home Assistant made the ${kind}, but Taxis couldn't find its entity to rename it. Check the Helpers page in Home Assistant, then plan again.` };
       entityId = made.entity_id;
       details.push(`Created ${entityId}.`);
@@ -223,6 +287,16 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
       if (placing.area_id) details.push(`Put in ${before.areas.find((x) => x.area_id === areaId)?.name ?? areaId}.`);
     }
 
+    // A timer that was already there with another duration gets the one asked for.
+    if (a.helper === "timer" && held && uniqueId && durationOf(before, canonical) !== a.duration) {
+      try {
+        await io.ha.write("timer/update", { timer_id: uniqueId, duration: formatDuration(a.duration!) });
+        details.push(`Duration set to ${a.duration! / 60} min.`);
+      } catch (e) {
+        return { ok: false, message: `The timer is ready as ${canonical}, but Home Assistant refused to set its duration (${(e as Error).message}). Apply again to finish.` };
+      }
+    }
+
     if (areaId && a.set_area_sensor) {
       const field = a.set_area_sensor === "temperature" ? "temperature_entity_id" : "humidity_entity_id";
       const area = before.areas.find((x) => x.area_id === areaId);
@@ -236,6 +310,22 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
       }
     }
     return { ok: true, message: held ? "Applied (it was already there)." : "Applied.", details };
+  };
+
+  // A timer's duration: one call, unless it already is that long.
+  const updateTimer = async (c: Change): Promise<Done> => {
+    const seconds = c.after.duration as number;
+    const target = current(c.targetId);
+    const item = entryOf(target);
+    if (!item) return { ok: false, message: "It's no longer in Home Assistant." };
+    if (item.platform !== "timer" || !item.unique_id) return { ok: false, message: "It isn't a timer set up in the Home Assistant UI, so its duration can't be changed here." };
+    if (durationOf(before, target) === seconds) return { ok: true, message: "Applied (the duration was already this)." };
+    try {
+      await io.ha.write("timer/update", { timer_id: item.unique_id, duration: formatDuration(seconds) });
+    } catch (e) {
+      return { ok: false, message: (e as Error).message };
+    }
+    return { ok: true, message: "Applied." };
   };
 
   const updateOne = async (c: Change): Promise<Done> => {
@@ -262,7 +352,7 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
   // Creations first, so a group's update never races the helper it was planned
   // beside; each one on its own, because the next needs the registry as it is.
   for (const c of [...changes.filter((x) => x.op === "create"), ...changes.filter((x) => x.op === "update")]) {
-    const done = await (c.op === "create" ? createOne(c) : updateOne(c));
+    const done = await (c.op === "create" ? createOne(c) : "duration" in c.after ? updateTimer(c) : updateOne(c));
     outcome.set(c.id, { changeId: c.id, ok: done.ok, message: done.message, ...(done.ok && done.details?.length ? { details: done.details } : {}) });
   }
 
@@ -293,8 +383,17 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
   return changes.map((c) => outcome.get(c.id) ?? { changeId: c.id, ok: false, message: "Not sent." });
 }
 
+// A timer's duration as its state says it, in seconds.
+function durationOf(reg: RawRegistry, entityId: string): number | null {
+  return parseDuration((reg.states.find((s) => s.entity_id === entityId)?.attributes as { duration?: unknown } | undefined)?.duration);
+}
+
 // Null when Home Assistant now shows what the change set out to do.
 export function verify(c: Change, fresh: RawRegistry, current: (id: string) => string = (id) => id, area: (id: string) => string = (id) => id): string | null {
+  if (c.op === "update" && "duration" in c.after) {
+    const seconds = durationOf(fresh, current(c.targetId));
+    return seconds === c.after.duration ? null : `Its duration reads ${seconds === null ? "nothing" : `${seconds / 60} min`} in Home Assistant, not ${(c.after.duration as number) / 60} min.`;
+  }
   if (c.op === "update") {
     const target = current(c.targetId);
     const wanted = ((c.after.entities as string[]) ?? []).map(current);
@@ -302,12 +401,16 @@ export function verify(c: Change, fresh: RawRegistry, current: (id: string) => s
     if (!members) return "Home Assistant doesn't show its members.";
     return sameSet(members, wanted) ? null : `Its members read ${JSON.stringify(members)} in Home Assistant, not ${JSON.stringify(wanted)}.`;
   }
-  const a = c.after as { helper: "group" | "min_max"; entity_id: string; entities: string[]; area_id?: string | null; set_area_sensor?: "temperature" | "humidity" };
+  const a = c.after as { helper: Kind; entity_id: string; entities?: string[]; area_id?: string | null; set_area_sensor?: "temperature" | "humidity"; duration?: number };
   const item = fresh.entities.find((e) => e.entity_id === a.entity_id);
   if (!item) return `Home Assistant doesn't show ${a.entity_id} after creating it.`;
   if (item.platform !== PLATFORM[a.helper]) return `${a.entity_id} reads as ${item.platform || "no integration"} in Home Assistant, not a ${TITLES[a.helper]}.`;
+  if (a.helper === "timer" && durationOf(fresh, a.entity_id) !== a.duration) {
+    const seconds = durationOf(fresh, a.entity_id);
+    return `Its duration reads ${seconds === null ? "nothing" : `${seconds / 60} min`} in Home Assistant, not ${a.duration! / 60} min.`;
+  }
   if (a.helper === "group") {
-    const wanted = a.entities.map(current);
+    const wanted = (a.entities ?? []).map(current);
     const members = membersOf(fresh, a.entity_id);
     if (!members) return `Home Assistant doesn't show the members of ${a.entity_id}.`;
     if (!sameSet(members, wanted)) return `Its members read ${JSON.stringify(members)} in Home Assistant, not ${JSON.stringify(wanted)}.`;

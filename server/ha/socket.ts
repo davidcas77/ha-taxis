@@ -1,3 +1,5 @@
+import { BLUEPRINT_PATH_RE } from "../../shared/blueprints.ts";
+
 // Minimal Home Assistant WebSocket client.
 // https://developers.home-assistant.io/docs/api/websocket
 //
@@ -11,11 +13,18 @@
 // and entities are only updated. Registry edits are most of the writes. Besides
 // those, Apply edits the contents of dashboards (lovelace/config/save) and, via
 // the REST client in rest.ts (which has its own fixed allowlist), of
-// automations, scripts and scenes, and only to replace a renamed entity id in
-// them. The same REST client also creates the canonical helpers (a group or a
+// automations, scripts and scenes, to replace a renamed entity id in them and
+// to make a recipe's automation. The same REST client also creates the canonical helpers (a group or a
 // min/max, through Home Assistant's config flows) and updates a group's members;
 // the new helper is then placed with the registry edits below (its entity id,
 // its area, and an area's temperature or humidity sensor).
+//
+// Recipes add four writes, and they are all that is added: blueprint/save, which
+// is checked here (automation blueprints only, at taxis/<name>.yaml, never
+// anywhere else), and timer/create, timer/update and input_boolean/create, the
+// calls Home Assistant's own Helpers page makes for a timer and a toggle. The
+// recipe's automations go through the REST client. One read is added with them,
+// blueprint/list, to see which Taxis blueprints are there and at what version.
 
 export const READ_COMMANDS = new Set([
   "get_config",
@@ -28,6 +37,9 @@ export const READ_COMMANDS = new Set([
   "config/category_registry/list",
   // Where an entity is used, for renames: {item_type: "entity", item_id}.
   "search/related",
+  // The blueprints of a domain, to see which Taxis blueprints exist and their
+  // version: {domain: "automation"}.
+  "blueprint/list",
   // Dashboards other than the default one, and a dashboard's stored config.
   "lovelace/dashboards/list",
   "lovelace/config",
@@ -61,12 +73,33 @@ export const WRITE_COMMANDS = new Set([
   "config/entity_registry/update",
   // Dashboard contents, only ever to replace a renamed entity id in them.
   "lovelace/config/save",
+  // Recipes: a Taxis blueprint (path and domain are checked below), and the
+  // helpers a recipe needs that Home Assistant offers only as these calls.
+  "blueprint/save",
+  "timer/create",
+  "timer/update",
+  "input_boolean/create",
 ]);
 
-export function assertWriteCommand(type: string): void {
+const BLUEPRINT_SAVE_KEYS = new Set(["domain", "path", "yaml", "source_url", "allow_override"]);
+
+// blueprint/save writes a file into Home Assistant's blueprints folder, so what
+// it may write is fixed here: an automation blueprint at taxis/<name>.yaml.
+function assertBlueprintSave(payload: Record<string, unknown>): void {
+  const stray = Object.keys(payload).find((k) => !BLUEPRINT_SAVE_KEYS.has(k));
+  if (stray) throw new Error(`Refusing to save a blueprint with "${stray.slice(0, 40)}": it isn't something Taxis sends.`);
+  if (payload.domain !== "automation") throw new Error(`Refusing to save a blueprint for "${String(payload.domain).slice(0, 40)}": Taxis writes automation blueprints only.`);
+  if (typeof payload.path !== "string" || !BLUEPRINT_PATH_RE.test(payload.path)) {
+    throw new Error(`Refusing to save a blueprint at "${String(payload.path).slice(0, 80)}": Taxis writes only to taxis/<name>.yaml.`);
+  }
+  if (typeof payload.yaml !== "string" || payload.yaml.length === 0 || payload.yaml.length > 64 * 1024) throw new Error("Refusing to save a blueprint with no text or too much of it.");
+}
+
+export function assertWriteCommand(type: string, payload: Record<string, unknown> = {}): void {
   if (!WRITE_COMMANDS.has(type)) {
     throw new Error(`Refusing to send "${type}" to Home Assistant: Taxis doesn't make that change.`);
   }
+  if (type === "blueprint/save") assertBlueprintSave(payload);
 }
 
 // The subset of the WebSocket API this client uses, so tests can pass a fake.
@@ -226,7 +259,7 @@ export class HaSocket {
 
   /** Sends one registry edit. Only the Apply step calls this. */
   async write<T>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
-    assertWriteCommand(type);
+    assertWriteCommand(type, payload);
     return this.send<T>(type, payload);
   }
 

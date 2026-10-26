@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_NAMING } from "../shared/naming.ts";
 import { buildMockRegistry } from "../scripts/mock-ha-core.ts";
 import { buildHierarchy } from "./model/hierarchy.ts";
-import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming } from "./settings.ts";
+import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateParameters } from "./settings.ts";
 
 const base = { idPattern: DEFAULT_NAMING.idPattern, namePattern: DEFAULT_NAMING.namePattern };
 
@@ -239,5 +239,89 @@ describe("validateNaming: helper names", () => {
     expect(store.naming().helperNames).toEqual({});
     store.saveNaming({ ...DEFAULT_NAMING, helperNames: { lights: "lamps" } });
     expect(store.naming().helperNames).toEqual({ lights: "lamps" });
+  });
+});
+
+describe("validateParameters", () => {
+  const ok = { house: { night_start: "22:00", hold_timeout: 8 }, types: { exterior: { hold_timeout: 2 } }, floors: { ground: { dim_level: 40 } }, areas: { kitchen: { day_kelvin: 3500, transition: 0 } } };
+
+  it("accepts what the editor produces, and empty settings", () => {
+    expect(validateParameters(ok)).toEqual({ ok: true, value: ok });
+    expect(validateParameters({})).toEqual({ ok: true, value: { house: {}, types: {}, floors: {}, areas: {} } });
+  });
+
+  it("refuses anything that is not a known parameter, with a message", () => {
+    expect(validateParameters({ house: { bogus: 1 } })).toMatchObject({ ok: false, error: expect.stringContaining("bogus isn't a parameter") });
+    expect(validateParameters({ house: { constructor: 1 } })).toMatchObject({ ok: false });
+    expect(validateParameters({ areas: { kitchen: { toString: 1 } } })).toMatchObject({ ok: false });
+    expect(validateParameters({ other: {} })).toMatchObject({ ok: false, error: expect.stringContaining("other") });
+  });
+
+  it("holds values to their range, step and type, naming where", () => {
+    expect(validateParameters({ areas: { kitchen: { hold_timeout: 241 } } })).toMatchObject({ ok: false, error: expect.stringMatching(/between 1 and 240.*area kitchen/) });
+    expect(validateParameters({ house: { hold_timeout: 0 } })).toMatchObject({ ok: false });
+    expect(validateParameters({ house: { hold_timeout: "5" } })).toMatchObject({ ok: false });
+    expect(validateParameters({ house: { hold_timeout: null } })).toMatchObject({ ok: false });
+    expect(validateParameters({ floors: { ground: { day_kelvin: 2710 } } })).toMatchObject({ ok: false, error: expect.stringContaining("floor ground") });
+    expect(validateParameters({ house: { night_start: "25:00" } })).toMatchObject({ ok: false });
+    expect(validateParameters({ house: { night_start: 2300 } })).toMatchObject({ ok: false });
+    expect(validateParameters({ house: { hold_timeout: 1 } })).toMatchObject({ ok: true });
+    expect(validateParameters({ house: { hold_timeout: 240 } })).toMatchObject({ ok: true });
+  });
+
+  it("allows only interior and exterior as types, and ids as the editor writes them", () => {
+    expect(validateParameters({ types: { basement: { hold_timeout: 3 } } })).toMatchObject({ ok: false });
+    expect(validateParameters({ floors: { "Ground Floor": {} } })).toMatchObject({ ok: false });
+    expect(validateParameters({ areas: { "../x": {} } })).toMatchObject({ ok: false });
+    expect(validateParameters({ areas: { ["a".repeat(81)]: {} } })).toMatchObject({ ok: false });
+    expect(validateParameters({ areas: { ["a".repeat(80)]: { hold_timeout: 3 } } })).toMatchObject({ ok: true });
+  });
+
+  it("refuses shapes it cannot read", () => {
+    for (const bad of [null, "x", 5, [], { house: [] }, { house: "x" }, { types: [] }, { floors: "x" }, { areas: [1] }, { areas: { kitchen: 5 } }, { areas: { kitchen: [] } }]) {
+      expect(validateParameters(bad), JSON.stringify(bad)).toMatchObject({ ok: false });
+    }
+  });
+
+  it("drops empty levels and keeps an id like __proto__ as a key", () => {
+    const r = validateParameters(JSON.parse('{"areas": {"kitchen": {}, "__proto__": {"hold_timeout": 3}}, "floors": {"ground": {}}, "types": {"interior": {}}}'));
+    expect(r).toMatchObject({ ok: true });
+    if (r.ok) {
+      expect(Object.keys(r.value.areas)).toEqual(["__proto__"]);
+      expect(Object.getPrototypeOf(r.value.areas)).toBe(Object.prototype);
+      expect(Object.hasOwn(r.value.areas, "__proto__")).toBe(true);
+      expect(r.value.floors).toEqual({});
+      expect(r.value.types).toEqual({});
+    }
+  });
+
+  it("limits floors and areas", () => {
+    const many = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`a${i}`, { hold_timeout: 3 }]));
+    expect(validateParameters({ areas: many(500) })).toMatchObject({ ok: true });
+    expect(validateParameters({ areas: many(501) })).toMatchObject({ ok: false });
+    expect(validateParameters({ floors: many(200) })).toMatchObject({ ok: true });
+    expect(validateParameters({ floors: many(201) })).toMatchObject({ ok: false });
+  });
+});
+
+describe("settingsStore parameters", () => {
+  it("starts empty, saves and reads back", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const s = settingsStore(db);
+    expect(s.parameters()).toEqual({ house: {}, types: {}, floors: {}, areas: {} });
+    const value = { house: { night_start: "22:00" }, types: {}, floors: {}, areas: { kitchen: { hold_timeout: 8 } } };
+    s.saveParameters(value);
+    expect(s.parameters()).toEqual(value);
+  });
+
+  it("falls back to empty when the stored value was edited into nonsense", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const s = settingsStore(db);
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("parameters", '{"house": {"hold_timeout": 9999}}');
+    expect(s.parameters()).toEqual({ house: {}, types: {}, floors: {}, areas: {} });
+    db.prepare("UPDATE settings SET value = ? WHERE key = ?").run("{not json", "parameters");
+    expect(s.parameters()).toEqual({ house: {}, types: {}, floors: {}, areas: {} });
   });
 });

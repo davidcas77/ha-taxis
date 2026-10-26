@@ -125,7 +125,7 @@ describe("REST config API", () => {
   it("answers 400 for a malformed body, 404 for unknown ids and paths, 405 for other methods", () => {
     const home = buildMockRegistry();
     expect(handleMockRest(home, "POST", "/api/config/automation/config/1700000000001", "nope")).toEqual({ status: 400, body: { message: "Message malformed" } });
-    expect(handleMockRest(home, "POST", "/api/config/automation/config/unknown", {}).status).toBe(404);
+    expect(handleMockRest(home, "POST", "/api/config/script/config/unknown", {}).status).toBe(404);
     expect(handleMockRest(home, "POST", "/api/config/automation/config/hall_night", {}).status).toBe(404);
     expect(get(home, "/api/states").status).toBe(404);
     expect(handleMockRest(home, "DELETE", "/api/config/automation/config/1700000000001", undefined).status).toBe(405);
@@ -275,5 +275,76 @@ describe("pointing an area at a sensor, and placing a new entity", () => {
     const home = buildMockRegistry();
     ok(home, "config/entity_registry/update", { entity_id: "light.hall_lights", new_entity_id: "light.hall_all", area_id: "study" });
     expect(home.entities.find((e) => e.entity_id === "light.hall_all")).toMatchObject({ area_id: "study", platform: "group" });
+  });
+});
+
+describe("what recipes need from Home Assistant", () => {
+  const post = (home: Home, path: string, body: unknown) => handleMockRest(home, "POST", path, body);
+  const header = 'blueprint:\n  name: Test\n  domain: automation\n  description: "A test. Taxis blueprint version 3."\n  input: {}\n';
+
+  it("saves a blueprint, lists it with its metadata, and refuses to overwrite without allow_override", () => {
+    const home = buildMockRegistry();
+    expect(ok(home, "blueprint/list", { domain: "automation" })).toEqual({});
+    ok(home, "blueprint/save", { domain: "automation", path: "taxis/x.yaml", yaml: header, allow_override: true });
+    expect(ok(home, "blueprint/list", { domain: "automation" })).toEqual({ "taxis/x.yaml": { metadata: { name: "Test", domain: "automation", description: "A test. Taxis blueprint version 3." } } });
+    expect(fails(home, "blueprint/save", { domain: "automation", path: "taxis/x.yaml", yaml: header })).toBe("File already exists");
+    expect(ok(home, "blueprint/save", { domain: "automation", path: "taxis/x.yaml", yaml: header.replace("3", "4"), allow_override: true })).toEqual({});
+    expect(home.blueprints["taxis/x.yaml"]).toContain("version 4");
+    expect(fails(home, "blueprint/save", { domain: "script", path: "taxis/x.yaml", yaml: header })).not.toBeNull();
+    expect(fails(home, "blueprint/save", { domain: "automation", path: "../x.yaml", yaml: header })).toBe("Invalid path");
+    expect(fails(home, "blueprint/save", { domain: "automation", path: "taxis/y.yaml", yaml: "nope" })).toMatch(/Invalid blueprint/);
+    expect(fails(home, "blueprint/list", { domain: "script" })).not.toBeNull();
+  });
+
+  it("creates a timer and a toggle the way storage helpers appear, and updates a timer's duration", () => {
+    const home = buildMockRegistry();
+    const timer = ok<{ id: string; duration: string }>(home, "timer/create", { name: "Study hold", duration: "00:05:00", restore: true });
+    expect(timer).toMatchObject({ id: "study_hold", duration: "00:05:00" });
+    expect(home.entities.find((e) => e.entity_id === "timer.study_hold")).toMatchObject({ platform: "timer", unique_id: "study_hold" });
+    expect(home.states.find((s) => s.entity_id === "timer.study_hold")).toMatchObject({ state: "idle", attributes: { duration: "0:05:00", restore: true } });
+    ok(home, "timer/update", { timer_id: "study_hold", duration: "00:08:00" });
+    expect(home.states.find((s) => s.entity_id === "timer.study_hold")!.attributes).toMatchObject({ duration: "0:08:00" });
+    expect(fails(home, "timer/update", { timer_id: "nope", duration: "00:08:00" })).toBe("Unable to find timer");
+    expect(fails(home, "timer/create", { name: "x", duration: "five" })).toBe("Invalid duration");
+    // A second timer of the same name gets another id.
+    expect(ok<{ id: string }>(home, "timer/create", { name: "Study hold", duration: "00:05:00" }).id).toBe("study_hold_2");
+
+    ok(home, "input_boolean/create", { name: "Study automations paused", icon: "mdi:pause-circle-outline", initial: true });
+    expect(home.states.find((s) => s.entity_id === "input_boolean.study_automations_paused")).toMatchObject({ state: "on", attributes: { icon: "mdi:pause-circle-outline" } });
+    ok(home, "input_boolean/create", { name: "Other", icon: "mdi:robot" });
+    expect(home.states.find((s) => s.entity_id === "input_boolean.other")!.state).toBe("off");
+    expect(fails(home, "input_boolean/create", { name: " " })).toBe("name is required");
+  });
+
+  it("walks the template flow to a binary sensor whose state follows its timer", () => {
+    const home = buildMockRegistry();
+    ok(home, "timer/create", { name: "Study hold", duration: "00:05:00" });
+    const FLOW = "/api/config/config_entries/flow";
+    const menu = post(home, FLOW, { handler: "template" }).body as { flow_id: string; menu_options: string[] };
+    expect(menu.menu_options).toContain("binary_sensor");
+    expect(post(home, `${FLOW}/${menu.flow_id}`, { next_step_id: "sensor" }).status).toBe(400);
+    expect(post(home, `${FLOW}/${menu.flow_id}`, { next_step_id: "binary_sensor" }).body).toMatchObject({ type: "form", step_id: "binary_sensor" });
+    const done = post(home, `${FLOW}/${menu.flow_id}`, { name: "Study occupied", state: "{{ is_state('timer.study_hold','active') }}", device_class: "occupancy" }).body as { type: string; result: { entry_id: string } };
+    expect(done.type).toBe("create_entry");
+    expect(home.entities.find((e) => e.entity_id === "binary_sensor.study_occupied")).toMatchObject({ platform: "template", config_entry_id: done.result.entry_id });
+    expect(home.states.find((s) => s.entity_id === "binary_sensor.study_occupied")).toMatchObject({ state: "off", attributes: { device_class: "occupancy" } });
+  });
+
+  it("creates an automation on POST to a new id, and one made from a missing blueprint is unavailable until it exists", () => {
+    const home = buildMockRegistry();
+    const config = { id: "taxis_occupancy_study", alias: "Study – Occupancy (Taxis)", use_blueprint: { path: "taxis/occupancy.yaml", input: {} } };
+    expect(handleMockRest(home, "POST", "/api/config/automation/config/taxis_occupancy_study", config).status).toBe(200);
+    expect(handleMockRest(home, "GET", "/api/config/automation/config/taxis_occupancy_study", undefined).body).toEqual(config);
+    const state = () => home.states.find((s) => (s.attributes as { id?: string }).id === "taxis_occupancy_study")!;
+    expect(state()).toMatchObject({ entity_id: "automation.study_occupancy_taxis", state: "unavailable" });
+    ok(home, "blueprint/save", { domain: "automation", path: "taxis/occupancy.yaml", yaml: header, allow_override: true });
+    expect(state().state).toBe("on");
+    // Posting again replaces it and doesn't make a second entity.
+    handleMockRest(home, "POST", "/api/config/automation/config/taxis_occupancy_study", { ...config, alias: "Study again" });
+    expect(home.states.filter((s) => (s.attributes as { id?: string }).id === "taxis_occupancy_study")).toHaveLength(1);
+    expect(state().attributes).toMatchObject({ friendly_name: "Study again" });
+    // A YAML automation, and a malformed body, are still refused.
+    expect(handleMockRest(home, "POST", "/api/config/automation/config/hall_night", config).status).toBe(404);
+    expect(handleMockRest(home, "POST", "/api/config/automation/config/another", "x").status).toBe(400);
   });
 });

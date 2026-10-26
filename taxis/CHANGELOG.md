@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Parameters: House, Occupancy and Lighting.** Three new tabs, each a sortable
+  table with a row for the house default, interior and exterior areas, each floor
+  and each area. Set night start and end, the hold timeout, and the lighting
+  values (dark threshold, day and night brightness and colour, transition, dim
+  before off, dim level). The most specific level wins: area, floor, interior or
+  exterior, house, built-in default. A cell you haven't set shows the value it
+  takes in grey, with where it comes from. Saved at once, in Taxis only.
+- **Recipes.** A new **Recipes** tab: a table of areas by two recipes,
+  **Occupancy** (a hold timer that follows the area's sensors) and **Motion
+  lights** (lights on when the area is occupied, dim and off when it clears).
+  Each cell says Ready, Missing (and what), Installed, Out of date (and how) or
+  In changes. Tick cells and **Add to changes**. A warning lists other
+  automations that already control the area's light group.
+- **Apply installs recipes.** Apply saves the recipe's blueprint under `taxis/`
+  (once, and again only when its version changes), makes the area's hold timer,
+  occupied sensor and pause switch, then saves the automation
+  `taxis_<recipe>_<area>` and checks that Home Assistant stored and loaded it.
+  Nothing is ever deleted. The occupied sensor isn't counted as one of the
+  area's sensors.
+- The demo house has recipes in every state: one installed, one out of date, one
+  ready, some missing, and an automation that already controls the living room
+  lights.
+
 - **Helpers.** A new **Helpers** tab on Parameters, and a Helpers table at the
   end of each area's Capabilities tab. For each area Taxis works out the
   canonical helpers from what counts: a group for lights, motion, presence,

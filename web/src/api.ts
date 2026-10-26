@@ -1,7 +1,9 @@
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
-import type { ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, InventoryResponse, NamingResponse, ReferencesResponse } from "../../shared/types.ts";
+import type { ParameterSettings } from "../../shared/parameters.ts";
+import type { RecipesResponse } from "../../shared/recipes.ts";
+import type { ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, InventoryResponse, NamingResponse, ParametersResponse, ReferencesResponse } from "../../shared/types.ts";
 
 // Relative URLs on purpose: under Ingress the app lives at
 // /api/hassio_ingress/<token>/, so "/api/…" would miss it.
@@ -31,6 +33,10 @@ export const api = {
   saveGroups: (groups: GroupSettings) => call<GroupsResponse>("api/settings/groups", { method: "PUT", body: JSON.stringify(groups) }),
   inventory: () => call<InventoryResponse>("api/settings/inventory"),
   saveInventory: (inventory: InventorySettings) => call<InventoryResponse>("api/settings/inventory", { method: "PUT", body: JSON.stringify(inventory) }),
+  parameters: () => call<ParametersResponse>("api/settings/parameters"),
+  saveParameters: (parameters: ParameterSettings) => call<ParametersResponse>("api/settings/parameters", { method: "PUT", body: JSON.stringify(parameters) }),
+  // What Home Assistant holds that recipes need: blueprints, their automations, timers.
+  recipesState: (refresh = false) => call<RecipesResponse>(`api/recipes/state${refresh ? "?refresh=1" : ""}`),
   hierarchy: (refresh = false) => call<HierarchyResponse>(`api/hierarchy${refresh ? "?refresh=1" : ""}`),
   changes: () => call<ChangesResponse>("api/changes"),
   // Where each pending rename's old id is used: what Apply updates, what it can't.

@@ -73,6 +73,8 @@ export function helperNameErrors(names: HelperNames | undefined): Partial<Record
   const eff = effectiveSuffixes(names);
   for (const s of HELPERS) {
     if (!HELPER_SUFFIX_RE.test(eff[s.key])) out[s.key] = "Use a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled.";
+    // The occupied sensor of the recipes sits on this id.
+    else if (s.domain === "binary_sensor" && eff[s.key] === RECIPE_HELPER_SUFFIX.occupied) out[s.key] = "Taxis uses this name for the occupied sensor of the recipes.";
   }
   for (const s of HELPERS) {
     if (out[s.key]) continue;
@@ -84,6 +86,11 @@ export function helperNameErrors(names: HelperNames | undefined): Partial<Record
 
 export const canonicalId = (domain: HelperDomain, code: string, suffix: string) => `${domain}.${code}_${suffix}`;
 
+// The helpers the recipes add to an area (shared/recipes.ts): the hold timer,
+// the occupied sensor and the pause switch. Their ids end like this and,
+// unlike the helpers above, the ends are not settings.
+export const RECIPE_HELPER_SUFFIX = { hold: "hold", occupied: "occupied", switch: "paused" } as const;
+
 export const helperName = (areaName: string, spec: HelperSpec) => `${areaName} ${spec.nameWord}`;
 
 // ---------------------------------------------------------------------------
@@ -91,9 +98,11 @@ export const helperName = (areaName: string, spec: HelperSpec) => `${areaName} $
 // ---------------------------------------------------------------------------
 
 // The canonical ids that Home Assistant already holds as a group or a min/max
-// helper, per area. Those appear in the Helpers views and must not count as the
-// area's own sensors. A real sensor that happens to sit on a canonical id stays
-// in the inventory: it is a conflict to show, not a helper.
+// helper, per area, and the area's occupied sensor when it is a template. Those
+// appear in the Helpers views and must not count as the area's own sensors (the
+// occupied sensor would feed the occupancy that makes it). A real sensor that
+// happens to sit on a canonical id stays in the inventory: it is a conflict to
+// show, not a helper.
 export function helperExclusions(h: Hierarchy, naming: NamingSettings): (areaId: string) => ReadonlySet<string> {
   const codes = areaCodes(h, naming);
   const suffix = effectiveSuffixes(naming.helperNames);
@@ -109,6 +118,8 @@ export function helperExclusions(h: Hierarchy, naming: NamingSettings): (areaId:
           const e = h.entities[id];
           if (e && e.domain === s.domain && e.platform === s.helper) set.add(id);
         }
+        const occupied = h.entities[`binary_sensor.${code}_${RECIPE_HELPER_SUFFIX.occupied}`];
+        if (occupied?.platform === "template") set.add(occupied.entityId);
       }
       out = set;
       cache.set(areaId, out);

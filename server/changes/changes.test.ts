@@ -193,7 +193,7 @@ describe("helper changes", () => {
     expect(validateInput(group({ entities: [] }))).toMatch(/wouldn't accept/);
     expect(validateInput(group({ entities: ["light.a", "light.a"] }))).toMatch(/wouldn't accept/);
     expect(validateInput(group({ group_type: undefined }))).toMatch(/wouldn't accept|needs a group type/);
-    expect(validateInput(group({ helper: "template" }))).toMatch(/wouldn't accept/);
+    expect(validateInput(group({ helper: "counter" }))).toMatch(/wouldn't accept/);
     expect(validateInput(group({ set_area_sensor: "temperature" }))).toMatch(/Only a min\/max/);
     expect(validateInput(group({ platform: "group" }))).toMatch(/can't be changed/);
     expect(validateInput({ kind: "helper", op: "create", fields: { helper: "min_max", name: "x", entity_id: "light.x", entities: ["sensor.a"], area_id: "study" } })).toMatch(/start with “sensor/);

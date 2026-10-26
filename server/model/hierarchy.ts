@@ -49,6 +49,9 @@ export type RawEntity = {
   entity_category?: string | null;
   // Set for entities made by a config entry (helpers set up in the UI).
   config_entry_id?: string | null;
+  // The id the integration gave it: for a timer or a toggle made in the UI, the
+  // id Home Assistant's own storage knows it by.
+  unique_id?: string | null;
   labels?: string[];
   icon?: string | null;
   categories?: Record<string, string>;
@@ -58,7 +61,8 @@ export type RawCategory = { category_id: string; name: string; icon?: string | n
 export type RawState = {
   entity_id: string;
   state: string;
-  attributes?: { friendly_name?: string; device_class?: string; unit_of_measurement?: string; entity_id?: unknown };
+  // id: an automation's id. duration: a timer's, written "0:05:00".
+  attributes?: { friendly_name?: string; device_class?: string; unit_of_measurement?: string; entity_id?: unknown; id?: unknown; duration?: unknown };
 };
 export type RawConfig = { location_name?: string; version?: string };
 

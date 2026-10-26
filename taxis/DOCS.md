@@ -91,7 +91,8 @@ in the list of changes.
 ## Parameters
 
 What Taxis knows about each area, and the choices later features build on. The
-page has a bar of tabs: **Capabilities** and **Helpers**.
+page has a bar of tabs: **Capabilities**, **Helpers**, **House**, **Occupancy**,
+**Lighting** and **Recipes**.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, thermostats, speakers, TVs,
@@ -151,6 +152,91 @@ sensor setting is pointed at the canonical sensor in the same step. If the
 sensor is already in place but the area points elsewhere, that is a row of its
 own. Each area's Capabilities tab ends with its own Helpers table.
 
+### House, Occupancy and Lighting
+
+The numbers and times the recipes are filled in with. Each tab is a table with a
+row for the **House default**, one for **Interior** and one for **Exterior**
+areas, one for each floor and one for each area, and a column per parameter.
+
+A value can be set at any of those levels. The most specific one wins: the
+area, then its floor, then interior or exterior (chosen per area on its
+Capabilities tab), then the house default, then the built-in default. A cell
+shows the value set at that level, or the one it takes from above in grey; hover
+to see where from. Click a cell to set it, press Enter to save or Escape to
+cancel. Empty the box, or click the cross next to a value, to inherit again.
+Values are saved at once, in Taxis only. Click a header to sort the floors and
+areas by it.
+
+| Tab | Parameter | Built-in default | Allowed |
+|---|---|---|---|
+| House | Night starts, Night ends | 23:00, 07:00 | a time |
+| Occupancy | Hold timeout | 5 min | 1 to 240 |
+| Lighting | Dark below | 50 lx | 0 to 5000 |
+| Lighting | Day brightness, Night brightness | 100 %, 10 % | 1 to 100 |
+| Lighting | Day colour, Night colour | 3000 K, 2200 K | 1500 to 6500, in steps of 50 |
+| Lighting | Transition | 1 s | 0 to 60 |
+| Lighting | Dim before off | 15 s | 0 to 300 (0: no dimming, the lights go off at once) |
+| Lighting | Dim level | 30 % | 1 to 100 |
+
+### Recipes
+
+A recipe is an automation Taxis makes for an area from a blueprint of its own,
+filled in with the area's sensors and parameters. There are two:
+
+- **Occupancy** keeps an area occupied with a hold timer. A sensor that starts
+  occupancy (a motion sensor, or a presence sensor when the area has no motion
+  sensor) turning on starts the timer. While it runs, every change of a sensor
+  starts it again, and a sensor that only holds occupancy (a presence sensor
+  next to a motion sensor) turning on keeps it running without starting it. When
+  the timer runs out and a sensor is still on, it starts again. Sensors going
+  unavailable or unknown are ignored. You choose which sensors start and which
+  hold on the area's Capabilities tab.
+- **Motion lights** turns the area's lights on when it becomes occupied and off
+  when it clears. The lights go on only when they are off and, if the area has a
+  light level helper, only when it reads below *Dark below* (read while the
+  lights are off, so the lights don't feed back). Inside the night window they
+  use the night brightness and colour, otherwise the day ones. When the area
+  clears the lights dim to *Dim level*, wait *Dim before off* seconds for the
+  area to be occupied again, and go off; with *Dim before off* at 0 they go off
+  at once. When the area is occupied again, lights left at or below the dim level
+  come back to the profile.
+
+The Recipes tab is a table of areas by recipes. A cell says:
+
+- **Ready**: it can be installed.
+- **Missing: …**: what is needed. Occupancy needs a counted motion or presence
+  sensor that starts occupancy. Motion lights needs Occupancy (installed, or in
+  the list of changes for that area) and the area's light group
+  (`light.<code>_all`, in place or in the list; make it on the Helpers tab). A
+  light level helper is optional: without one the lights go on at any light level.
+- **Installed**: the area's automation matches its sensors, parameters and
+  helpers, and the blueprint is the current version.
+- **Out of date**: it is installed but differs; the cell says how (a parameter
+  changed, a sensor was added, the hold timer has another length, the blueprint
+  is older). Adding it updates the automation and, if needed, the timer.
+- **In changes**: already in the list of changes.
+
+Tick cells and use **Add to changes**. If other automations already use the
+area's light group, the Motion lights cell lists them: installing would make two
+automations control the same lights. It is a warning, not a stop.
+
+Installing a recipe adds these changes (the Changes page shows each):
+
+- the blueprint (`taxis/occupancy.yaml` or `taxis/motion_lights.yaml` in Home
+  Assistant's blueprints), once, when Home Assistant has none or another version;
+- for Occupancy, three helpers per area: `timer.<code>_hold` (the length is the
+  hold timeout; it keeps its state through a restart), `binary_sensor.<code>_occupied`
+  (on while the timer runs; it is not counted as one of the area's sensors) and
+  `input_boolean.<code>_paused` (the area's pause switch, named "Kitchen automations
+  paused"; off to begin with, so the recipes run: turn it on to pause the area's
+  recipes, and it keeps its state through a restart);
+- the automation `taxis_<recipe>_<code>`, named "Kitchen – Occupancy (Taxis)",
+  that uses the blueprint with its inputs.
+
+Everything is an ordinary Home Assistant object. The automations keep working if
+Taxis is stopped or uninstalled. Not in this version: manual override, extended
+and sleep states, light profiles, climate, media and the other recipes.
+
 ## Naming
 
 Under **Settings → Naming**:
@@ -171,6 +257,8 @@ Under **Settings → Naming**:
   `motions`, `presences`, `doors`, `windows`, `temperature`, `humidity`,
   `illuminance`, `media`). Lower-case letters, digits and `_`, up to 30
   characters, and each used once. Settings shows an example id as you type.
+  The recipes' own helpers end in `hold`, `occupied` and `paused`; these are
+  fixed, and no binary sensor helper may use `occupied`.
 
 Each area's **Naming** tab checks its entities against these: which ids start
 with the area's code, which use an older code, which name another area, and
@@ -201,16 +289,18 @@ the **Changes** page. Apply:
 
 1. makes a backup of Home Assistant (if the backup fails, nothing is changed);
 2. applies the changes: first the registries (names, ids, areas, floors,
-   labels, categories), then the helpers;
+   labels, categories), then the blueprints of recipes, then the helpers, then
+   the automations of recipes;
 3. reads Home Assistant back and checks each one. A change that didn't take
    stays in the list with the reason.
 
 Taxis only edits what Home Assistant's own settings pages edit: names, ids,
 areas, floors, labels, categories, icons, hidden and disabled, an area's
-temperature and humidity sensor, and the helpers described above. When it
-renames an entity it replaces the old id in automations, scripts, scenes and
-dashboards, and changes nothing else in them. It never removes a device, an
-entity or a helper, and never calls a service.
+temperature and humidity sensor, the helpers described above, and the
+blueprints and automations of the recipes. When it renames an entity it replaces
+the old id in automations, scripts, scenes and dashboards, and changes nothing
+else in them. It never removes a device, an entity, a helper, a blueprint or an
+automation, and never calls a service.
 
 A **helper** is made the way Home Assistant's Helpers page makes it: Taxis
 starts the same setup dialog (a group, or a min/max sensor with the mean), fills
@@ -218,6 +308,18 @@ it in, then gives the new entity its canonical id and area. A group's members
 are changed through the group's own options. If a helper with that id is already
 there, nothing is made twice; if one with that name sits under another id,
 Taxis stops and says so instead of making a copy.
+
+The helpers of the recipes are made the same way: a timer and a toggle the way
+the Helpers page makes them, the occupied sensor through the template helper
+dialog, then each gets its id and area. A timer's length is changed in place.
+
+A **blueprint** is saved under `taxis/` in Home Assistant's blueprints, with the
+text Taxis holds, and only when Home Assistant has none or another version
+(Taxis states its version in the blueprint's description). A recipe's
+**automation** is saved like the Automations page saves one, then Taxis checks
+the stored automation is what it sent and that Home Assistant loaded it. If a
+helper or the blueprint it needs didn't go through, the automation says so and
+stays in the list.
 
 ## Data and privacy
 

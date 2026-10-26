@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { GroupSettings } from "../../shared/groups.ts";
 import { EMPTY_INVENTORY, type InventorySettings } from "../../shared/inventory.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "../../shared/naming.ts";
+import { EMPTY_PARAMETERS, type ParameterSettings } from "../../shared/parameters.ts";
 import type { Change, ChangeInput, Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 
@@ -46,6 +47,14 @@ type TaxisState = {
   // True while an inventory save is in flight; further edits wait for it.
   inventorySaving: boolean;
   saveInventory: (edit: (s: InventorySettings) => InventorySettings) => Promise<string | null>;
+  // The recipe parameters (house, interior/exterior, floor, area): Taxis only,
+  // saved right away like the inventory.
+  parameters: ParameterSettings;
+  // False until the saved parameters have arrived; edits wait for it.
+  parametersLoaded: boolean;
+  // True while a parameters save is in flight; further edits wait for it.
+  parametersSaving: boolean;
+  saveParameters: (edit: (p: ParameterSettings) => ParameterSettings) => Promise<string | null>;
   saveNaming: (n: NamingSettings) => Promise<string | null>;
   reload: (refresh?: boolean) => Promise<void>;
   propose: (input: ChangeInput | ChangeInput[]) => Promise<boolean>;
@@ -73,10 +82,15 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
   const [inventory, setInventory] = useState<InventorySettings>(EMPTY_INVENTORY);
   const [inventoryLoaded, setInventoryLoaded] = useState(false);
   const [inventorySaving, setInventorySaving] = useState(false);
+  const [parameters, setParameters] = useState<ParameterSettings>(EMPTY_PARAMETERS);
+  const [parametersLoaded, setParametersLoaded] = useState(false);
+  const [parametersSaving, setParametersSaving] = useState(false);
   const groupsRef = useRef<GroupSettings>({});
   const groupsBusy = useRef(false);
   const inventoryRef = useRef<InventorySettings>(EMPTY_INVENTORY);
   const inventoryBusy = useRef(false);
+  const parametersRef = useRef<ParameterSettings>(EMPTY_PARAMETERS);
+  const parametersBusy = useRef(false);
   const proposing = useRef(false);
 
   useEffect(() => {
@@ -155,6 +169,40 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
     setInventory(r.inventory);
     return null;
   }, [inventoryLoaded]);
+
+  useEffect(() => {
+    void api.parameters().then((r) => {
+      if (r.ok) {
+        parametersRef.current = r.parameters;
+        setParameters(r.parameters);
+        setParametersLoaded(true);
+      } else setError(r.error);
+    });
+  }, []);
+
+  const saveParameters = useCallback(async (edit: (p: ParameterSettings) => ParameterSettings) => {
+    // Never save before the real parameters have arrived: defaults would overwrite them.
+    if (!parametersLoaded) return "The parameters haven't loaded yet.";
+    if (parametersBusy.current) return "Still saving the last change. Try again in a moment.";
+    const before = parametersRef.current;
+    const next = edit(before);
+    if (next === before) return null;
+    parametersBusy.current = true;
+    setParametersSaving(true);
+    parametersRef.current = next;
+    setParameters(next);
+    const r = await api.saveParameters(next);
+    parametersBusy.current = false;
+    setParametersSaving(false);
+    if (!r.ok) {
+      parametersRef.current = before;
+      setParameters(before);
+      return r.error;
+    }
+    parametersRef.current = r.parameters;
+    setParameters(r.parameters);
+    return null;
+  }, [parametersLoaded]);
 
   const saveNaming = useCallback(async (n: NamingSettings) => {
     const r = await api.saveNaming(n);
@@ -254,8 +302,8 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
   }, [changes]);
 
   const value = useMemo(
-    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, saveNaming, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
-    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, saveNaming, reload, propose, removeChange, clearChanges],
+    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, parameters, parametersLoaded, parametersSaving, saveParameters, saveNaming, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
+    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, parameters, parametersLoaded, parametersSaving, saveParameters, saveNaming, reload, propose, removeChange, clearChanges],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -278,7 +326,7 @@ export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
 const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
 
 // The sub-tabs of the Parameters page. Later stages add more.
-export const PARAMETER_TABS = ["capabilities", "helpers"] as const;
+export const PARAMETER_TABS = ["capabilities", "helpers", "house", "occupancy", "lighting", "recipes"] as const;
 export type ParameterTab = (typeof PARAMETER_TABS)[number];
 
 export type Route =

@@ -18,14 +18,17 @@ import type {
   HierarchyResponse,
   InventoryResponse,
   NamingResponse,
+  ParametersResponse,
   ReferencesResponse,
   RenameRefs,
 } from "../shared/types.ts";
-import { applyChanges, isRename } from "./changes/apply.ts";
-import { applyHelperChanges } from "./changes/helpers.ts";
+import { canonicalLightGroups, type RecipesResponse } from "../shared/recipes.ts";
+import { isRename } from "./changes/apply.ts";
+import { applyAll } from "./changes/all.ts";
 import { overlayChanges } from "./changes/overlay.ts";
+import { readInstalled } from "./changes/recipes.ts";
 import { changeStore } from "./changes/store.ts";
-import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming } from "./settings.ts";
+import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
@@ -255,6 +258,18 @@ app.put("/api/settings/inventory", bodyLimit({ maxSize: 1024 * 1024, onError: (c
   return c.json<InventoryResponse>({ ok: true, inventory: checked.value });
 });
 
+// The recipe parameters: house, interior/exterior, floor and area values. Taxis
+// only; they reach Home Assistant when a recipe is installed.
+app.get("/api/settings/parameters", (c) => c.json<ParametersResponse>({ ok: true, parameters: settings.parameters() }));
+
+app.put("/api/settings/parameters", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json<ParametersResponse>({ ok: false, error: "The parameters are too large." }, 413) }), async (c) => {
+  const checked = validateParameters(await c.req.json().catch(() => null));
+  if (!checked.ok) return c.json<ParametersResponse>({ ok: false, error: checked.error }, 400);
+  settings.saveParameters(checked.value);
+  log.info("Saved parameters");
+  return c.json<ParametersResponse>({ ok: true, parameters: checked.value });
+});
+
 app.post("/api/changes", async (c) => {
   if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
   const input = (await c.req.json().catch(() => null)) as ChangeInput | null;
@@ -296,6 +311,22 @@ app.get("/api/references", async (c) => {
   }
 });
 
+// What recipes need to know that the registries don't say: which Taxis
+// blueprints Home Assistant has, the recipes' automations and timers it holds,
+// and what else controls each area's light group. Read-only.
+app.get("/api/recipes/state", async (c) => {
+  if (!ha || !rest) return c.json<RecipesResponse>({ ok: false, error: target.ok ? "Home Assistant is not configured." : target.reason }, 503);
+  try {
+    const { read } = await loadRead(c.req.query("refresh") === "1");
+    const installed = await readInstalled({ ha, rest }, read.raw, canonicalLightGroups(read.live, settings.naming()));
+    return c.json<RecipesResponse>({ ok: true, installed });
+  } catch (e) {
+    const message = errorText(e);
+    log.error("Reading what the recipes installed failed", message);
+    return c.json<RecipesResponse>({ ok: false, error: message }, 502);
+  }
+});
+
 app.delete("/api/changes/:id", (c) => {
   if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
   changes.remove(Number(c.req.param("id")));
@@ -311,7 +342,7 @@ app.delete("/api/changes", (c) => {
 
 
 app.post("/api/apply", async (c) => {
-  if (!ha || !target.ok) {
+  if (!ha || !rest || !target.ok) {
     return c.json<ApplyResponse>({ ok: false, error: target.ok ? "Home Assistant is not configured." : target.reason }, 503);
   }
   if (applying) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
@@ -352,13 +383,9 @@ app.post("/api/apply", async (c) => {
 
     log.info(`Applying ${pending.length} change(s) to Home Assistant`);
     const readFresh = async () => (await loadRead(true)).read.raw;
-    // Registry changes first (and, with renames, what uses the old ids), then the
-    // helpers, which may need a new area or a renamed entity to be there.
-    const registry = await applyChanges(pending, ha, readFresh, rest ? { ha, rest } : undefined);
-    const renamed = new Map(pending.filter(isRename).map((c) => [c.targetId, String(c.after.new_entity_id)]));
-    const helpers = rest ? await applyHelperChanges(pending, { ha, rest, readFresh, realIds: registry.realIds, renamed }) : [];
-    const { realIds, retargets } = registry;
-    const results = pending.map((c) => registry.results.find((r) => r.changeId === c.id) ?? helpers.find((r) => r.changeId === c.id) ?? { changeId: c.id, ok: false, message: "Not sent." });
+    // Registry changes first (and, with renames, what uses the old ids), then
+    // blueprints, helpers and the recipes' automations (changes/all.ts).
+    const { results, realIds, retargets } = await applyAll(pending, { ha, rest, readFresh });
     const appliedIds = results.filter((r) => r.ok).map((r) => r.changeId);
     for (const r of results) {
       const ch = pending.find((x) => x.id === r.changeId)!;

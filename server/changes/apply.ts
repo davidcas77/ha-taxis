@@ -1,4 +1,4 @@
-import { applyLabelDiff, currentValues, isTempId, labelDiff, sameValue } from "../../shared/changes.ts";
+import { applyLabelDiff, currentValues, isRegistryKind, isTempId, labelDiff, sameValue } from "../../shared/changes.ts";
 import type { Change, ChangeKind, Hierarchy } from "../../shared/types.ts";
 import type { RestApi } from "../ha/rest.ts";
 import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
@@ -54,9 +54,12 @@ import { updateReferences, type RenamePair } from "../references/update.ts";
 //
 // A list without renames reads and writes exactly what it did before.
 //
-// Helper changes (a group or min/max created, a group's members updated) are not
-// handled here: the caller passes them to applyHelperChanges (helpers.ts) once
-// this has run, so a rename or a new area they depend on is already done.
+// Helper changes (a group, min/max, timer, input boolean or template sensor
+// created, a group's members or a timer's duration updated) are not handled
+// here: the caller passes them to applyHelperChanges (helpers.ts) once this has
+// run, so a rename or a new area they depend on is already done. Likewise
+// blueprints and recipe automations (recipes.ts), which come before and after
+// the helpers.
 
 export type Writer = { write<T>(type: string, payload: Record<string, unknown>): Promise<T> };
 
@@ -80,9 +83,9 @@ function withoutRename(c: Change, newId: string): Change {
 
 const LEFT_ALONE = "Not updated: automations, scripts, scenes and dashboards were left alone, because the rename wasn't confirmed. Check what uses the old id.";
 
-// Helpers are not registry items: their creation and member updates go through
-// config flows, in helpers.ts, after this step.
-type RegistryKind = Exclude<ChangeKind, "helper">;
+// Helpers, blueprints and automations are not registry items: they have steps
+// of their own (helpers.ts, recipes.ts), after this one.
+type RegistryKind = Exclude<ChangeKind, "helper" | "blueprint" | "automation">;
 
 const ORDER: RegistryKind[] = ["floor", "label", "category", "area", "device", "entity"];
 const DELETE_ORDER: RegistryKind[] = ["area", "floor", "label", "category"];
@@ -151,7 +154,8 @@ function namesOf(h: Hierarchy, kind: ChangeKind, scope: Change["scope"]): { id: 
 }
 
 export async function applyChanges(
-  // Helper changes in the list are left to applyHelperChanges and get no result here.
+  // Helper, blueprint and automation changes in the list are left to their own
+  // steps and get no result here.
   all: Change[],
   ha: Writer,
   readFresh: () => Promise<RawRegistry>,
@@ -159,7 +163,7 @@ export async function applyChanges(
   // changes the registry.
   rename?: RenameIO,
 ): Promise<{ results: Outcome[]; appliedIds: number[]; realIds: Map<string, string>; retargets: Retarget[] }> {
-  const changes = all.filter((c) => c.kind !== "helper");
+  const changes = all.filter((c) => isRegistryKind(c.kind));
   const realIds = new Map<string, string>();
   const outcome = new Map<number, Outcome>();
   const sent = new Map<number, Record<string, unknown>>();
@@ -540,6 +544,8 @@ function findRaw(fresh: RawRegistry, c: Change, id: string): Record<string, unkn
     case "entity":
       return find(fresh.entities, "entity_id");
     case "helper":
+    case "blueprint":
+    case "automation":
       return undefined;
   }
 }

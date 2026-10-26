@@ -142,7 +142,7 @@ export type Hierarchy = {
 // Changes: edits collected in Taxis, applied to Home Assistant together.
 // ---------------------------------------------------------------------------
 
-export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category" | "helper";
+export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category" | "helper" | "blueprint" | "automation";
 export type ChangeOp = "create" | "update" | "delete";
 
 // The fields each kind of change may set, named as Home Assistant names them.
@@ -156,16 +156,33 @@ export type ChangeFields = {
   category: { name?: string; icon?: string | null };
   // A native helper. Created: a group or min/max, named and filled in one go,
   // with its canonical entity id and area; for a temperature or humidity sensor
-  // the area can be pointed at it in the same step. Updated: its members.
-  // Never deleted.
+  // the area can be pointed at it in the same step. A recipe's own helpers are a
+  // timer (with its duration), an input boolean and a template binary sensor.
+  // Updated: a group's members, or a timer's duration. Never deleted.
   helper: {
-    helper?: "group" | "min_max";
+    helper?: "group" | "min_max" | "timer" | "input_boolean" | "template";
     group_type?: "light" | "binary_sensor" | "media_player";
     name?: string;
     entity_id?: string;
     entities?: string[];
     area_id?: string | null;
     set_area_sensor?: "temperature" | "humidity";
+    duration?: number;
+    icon?: string | null;
+    state_template?: string;
+    device_class?: "occupancy";
+  };
+  // A Taxis blueprint written into Home Assistant: its path and the version of
+  // the text Taxis holds. Never deleted.
+  blueprint: { path?: string; version?: number };
+  // One recipe's automation for one area, made from a Taxis blueprint. Never
+  // deleted.
+  automation: {
+    automation_id?: string;
+    recipe?: "occupancy" | "motion_lights";
+    area_id?: string;
+    alias?: string;
+    use_blueprint?: { path: string; input: Record<string, unknown> };
   };
 };
 
@@ -238,5 +255,7 @@ export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSet
 export type GroupsResponse = { ok: true; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
 
 export type InventoryResponse = { ok: true; inventory: import("./inventory.ts").InventorySettings } | { ok: false; error: string };
+
+export type ParametersResponse = { ok: true; parameters: import("./parameters.ts").ParameterSettings } | { ok: false; error: string };
 
 export type ApplyResponse = ({ ok: true } & ApplyResult) | { ok: false; error: string };
