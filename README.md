@@ -57,7 +57,10 @@ entity id. The commands it may send are fixed in `server/ha/socket.ts` and
 - It only answers requests that come through Home Assistant (Ingress), so only
   signed-in Home Assistant users can open it.
 - It keeps its change list and snapshots of what it read in `/data/taxis.db`
-  inside the app. Nothing leaves your Home Assistant.
+  inside the app. Nothing leaves your Home Assistant, unless you turn on the
+  optional AI in Settings: then Taxis talks to the AI service you chose, with an
+  API key that stays in the app, and to no other address. AI can't change Home
+  Assistant; its proposals would go through the change list.
 
 ## Development
 

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **AI (optional): connection, settings and spending cap.** A new **AI (optional)**
+  section in Settings, off by default. Choose *Anthropic (Claude)* or any
+  *OpenAI-compatible* service (OpenAI, OpenRouter, Ollama, LM Studio), enter an
+  API key, press **Load models**, and pick a model for the **Quick** and **Ask**
+  jobs. The key is kept inside the app: it is never sent back to the browser
+  (Settings shows only that it is set and its last four characters), never
+  logged, and every error message has it removed. Anthropic starts with
+  `claude-haiku-5-5` and `claude-sonnet-5-5`. The **effort** (Quick, Balanced,
+  Thorough) becomes Anthropic's effort setting, or `reasoning_effort` for
+  OpenAI-compatible services that accept it. Only the chosen service's address is
+  contacted, `http://` only for this machine and private networks, and
+  redirects are not followed.
+- **AI usage and a monthly cap.** Each call is recorded (time, job, model, tokens,
+  estimated cost; never the text). Settings shows this month's use against a cap
+  (default $5), and calls are refused once it is reached. Anthropic's prices are
+  built in; for other models you can enter a price per million tokens, and calls
+  to a model with no known price are counted in tokens but can't count toward
+  the cap.
+- **Test connection.** Sends one short, fixed sentence to the Quick or Ask model
+  and shows the answer, the tokens and the cost. AI cannot change anything in
+  Home Assistant; the features that come next will propose changes through the
+  change list.
+
 - **Parameters: House, Occupancy, Lighting and Media.** Four new tabs, each a sortable
   table with a row for the house default, interior and exterior areas, each floor
   and each area. Set night start and end, the hold timeout, and the lighting

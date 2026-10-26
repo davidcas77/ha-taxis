@@ -5,6 +5,7 @@ import { HELPERS, canonicalId, effectiveSuffixes, helperNameErrors } from "../..
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, duplicateCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
 import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
+import { AiSection } from "./ai.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
@@ -259,6 +260,8 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
         <p className="text-xs text-muted">
           Renaming an id also updates the automations, scripts, scenes and dashboards that use it, when you apply.
         </p>
+
+        <AiSection />
       </div>
     </main>
   );

@@ -373,10 +373,68 @@ the stored automation is what it sent and that Home Assistant loaded it. If a
 helper or the blueprint it needs didn't go through, the automation says so and
 stays in the list.
 
+## AI (optional)
+
+AI is **off** until you turn it on in **Settings → AI (optional)**. Nothing in
+Taxis needs it. This first step is the groundwork only: the connection, the
+spending limit and a **Test connection** button. Asking Taxis questions and the
+health checks come later.
+
+What it is:
+
+- **Your key stays in the app.** You enter an API key once. Taxis stores it in
+  its own data inside the app, never sends it back to your browser (Settings
+  shows only that a key is set and its last four characters, with **Replace**
+  and **Remove**), and never writes it to the log. Home Assistant backups of the
+  app include its data, so they include the key.
+- **AI never writes to Home Assistant.** It has no way to change anything. When
+  later features let it propose a change, the proposal goes into the **change
+  list** like any other edit, for you to review and apply.
+- **Taxis calls only the service you picked.** Anthropic at
+  `api.anthropic.com`, or the base URL you give for an OpenAI-compatible
+  service. Nothing else is contacted, and redirects are not followed.
+
+Settings:
+
+- **Provider.** *Anthropic (Claude)*, or *OpenAI-compatible*: OpenAI itself
+  (`https://api.openai.com/v1`), OpenRouter, or a service on your own network,
+  such as Ollama (`http://<host>:11434/v1`) or LM Studio. The address must be
+  `https://`, except `http://` for this machine and private-network addresses.
+  For a service that needs no key, leave the key empty.
+- **Load models** asks the service which models it offers (with the saved key,
+  or one you have just typed). Then pick a model for each job: **Quick**, for
+  short answers, and **Ask**, for open questions. For Anthropic they start as
+  `claude-haiku-5-5` and `claude-sonnet-5-5`. For an OpenAI-compatible service
+  Taxis starts from the first two it lists, and you choose.
+- **Effort**: *Quick*, *Balanced* (the default) or *Thorough*. For Anthropic
+  this is the model's effort setting (low, medium, high); for an
+  OpenAI-compatible service it is sent as `reasoning_effort` to models that
+  accept it, and left out for those that don't.
+- **Monthly spending cap**, in US dollars (default $5), and the **most output
+  tokens per request** (default 4,096, which includes the model's thinking).
+- **Prices (optional).** Anthropic's prices are built in. For any other model
+  you can enter what it costs per million tokens, so its calls count toward the
+  cap; enter 0 for a model on your own machine.
+
+**Usage and the cap.** Every call is recorded (when, which job, provider and
+model, tokens in and out, estimated cost, never the text). Settings shows this
+month's total (calendar month, UTC) against the cap. Before each call Taxis
+checks the total: once it has reached the cap, calls are refused with a clear
+message until next month or until you raise the cap. A call to a model with no
+known price is counted in tokens but its cost is unknown, so **the cap cannot
+see it**; Settings says when that has happened. The cap is checked before a
+call, so the call that crosses it is the last one.
+
+**Test connection** sends one short, fixed sentence (nothing about your home) to
+the Quick or the Ask model and shows the answer, the tokens used and the
+estimated cost. It is a real call and counts toward the cap.
+
 ## Data and privacy
 
 - Taxis talks only to your own Home Assistant, through the Supervisor. It needs
-  no token and no account, and sends nothing to the internet.
+  no token and no account, and sends nothing to the internet. The one exception
+  is [AI](#ai-optional), which is off until you turn it on: then Taxis talks to
+  the AI service you chose, and to no other address.
 - Only Home Assistant users can open it (through Home Assistant's sidebar).
 - It keeps its change list and snapshots of what it read in `/data/taxis.db`
   inside the app. Removing the app removes them.

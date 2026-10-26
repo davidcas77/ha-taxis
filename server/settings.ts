@@ -1,5 +1,24 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import {
+  AI_EFFORTS,
+  AI_JOBS,
+  AI_PROVIDERS,
+  CAP_MAX,
+  CAP_MIN,
+  DEFAULT_AI,
+  MAX_MODEL_ID,
+  MAX_PRICE,
+  MAX_PRICES,
+  TOKENS_MAX,
+  TOKENS_MIN,
+  type AiKeyStatus,
+  type AiProviderId,
+  type AiSettings,
+  type AiSettingsView,
+  type Price,
+} from "../shared/ai.ts";
+import { checkBaseUrl } from "../shared/ai-url.ts";
 import { GROUP_ID, GROUP_LISTS, MAX_GROUPS, MAX_ITEMS, MAX_NAME, type GroupSettings } from "../shared/groups.ts";
 import { HELPERS, effectiveSuffixes, helperNameErrors, isHelperKey, type HelperNames } from "../shared/helpers.ts";
 import {
@@ -32,11 +51,12 @@ import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicat
 import type { EntityRole, Hierarchy } from "../shared/types.ts";
 
 // App settings, one JSON value per key in SQLite: naming, groups, the
-// capability inventory and the recipe parameters.
+// capability inventory, the recipe parameters and the optional AI.
 
 export function settingsStore(db: DatabaseSync) {
   const get = db.prepare("SELECT value FROM settings WHERE key = ?");
   const put = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+  const del = db.prepare("DELETE FROM settings WHERE key = ?");
   return {
     naming(): NamingSettings {
       const row = get.get("naming") as { value: string } | undefined;
@@ -91,6 +111,47 @@ export function settingsStore(db: DatabaseSync) {
     },
     saveParameters(s: ParameterSettings): void {
       put.run("parameters", JSON.stringify(s));
+    },
+    ai(): AiSettings {
+      const row = get.get("ai") as { value: string } | undefined;
+      if (!row) return structuredClone(DEFAULT_AI);
+      try {
+        // Same as the others: validate again in case the row was edited by hand.
+        const checked = validateAi(JSON.parse(row.value));
+        return checked.ok ? checked.value : structuredClone(DEFAULT_AI);
+      } catch {
+        return structuredClone(DEFAULT_AI);
+      }
+    },
+    saveAi(s: AiSettings): void {
+      put.run("ai", JSON.stringify(s));
+    },
+    // The API key, one per provider, in a row of its own so that the settings
+    // above can be handed to the browser as they are. No endpoint returns it:
+    // aiView() says only whether one is set and how it ends.
+    aiKey(provider: AiProviderId): string | null {
+      const row = get.get(`ai_key:${provider}`) as { value: string } | undefined;
+      if (!row) return null;
+      try {
+        const v: unknown = JSON.parse(row.value);
+        return isAiKey(v) ? v : null;
+      } catch {
+        return null;
+      }
+    },
+    saveAiKey(provider: AiProviderId, key: string | null): void {
+      if (key === null) del.run(`ai_key:${provider}`);
+      else put.run(`ai_key:${provider}`, JSON.stringify(key));
+    },
+    aiView(): AiSettingsView {
+      const ai = this.ai();
+      // Four characters give nothing away only when the key is long.
+      const status = (p: AiProviderId): AiKeyStatus => {
+        const key = this.aiKey(p);
+        return { set: key !== null, end: key !== null && key.length >= 16 ? key.slice(-4) : null };
+      };
+      const keys = { anthropic: status("anthropic"), "openai-compatible": status("openai-compatible") };
+      return { ...ai, keySet: keys[ai.provider].set, keyEnd: keys[ai.provider].end, keys };
     },
   };
 }
@@ -321,4 +382,89 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
     ok: true,
     value: { house: houseValues.value, types: Object.fromEntries(typeEntries), floors: Object.fromEntries(floorEntries), areas: Object.fromEntries(areaEntries) },
   };
+}
+
+// ---------------------------------------------------------------------------
+// AI
+// ---------------------------------------------------------------------------
+
+// Visible ASCII, no spaces: a key goes into a request header.
+const AI_KEY_RE = /^[\x21-\x7e]{1,400}$/;
+// Model ids as the services spell them: "claude-haiku-5-5", "gpt-5", "qwen2.5:7b",
+// "anthropic/claude-sonnet-5.5".
+const MODEL_ID_RE = /^[A-Za-z0-9._:/@+-]*$/;
+
+export function isAiKey(v: unknown): v is string {
+  return typeof v === "string" && AI_KEY_RE.test(v);
+}
+
+// The AI settings, and what to do with the key: `key` is absent to keep the
+// stored one, a string to replace it, null to remove it. The key is checked here
+// and returned apart from the settings, which never carry it.
+export function validateAi(input: unknown): { ok: true; value: AiSettings; key?: string | null } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "The AI settings weren't readable." };
+  const allowed = ["enabled", "provider", "baseUrl", "models", "effort", "monthlyCapUsd", "maxOutputTokens", "prices", "key"];
+  for (const k of Object.keys(input)) if (!allowed.includes(k)) return { ok: false, error: `${k.slice(0, 40)} isn't an AI setting.` };
+
+  if (typeof input.enabled !== "boolean") return { ok: false, error: "Choose whether AI is on or off." };
+  if (!(AI_PROVIDERS as readonly unknown[]).includes(input.provider)) return { ok: false, error: "Choose a provider." };
+  const provider = input.provider as AiProviderId;
+
+  const url = checkBaseUrl(typeof input.baseUrl === "string" ? input.baseUrl : DEFAULT_AI.baseUrl);
+  if (!url.ok) return { ok: false, error: url.error };
+
+  if (!isRecord(input.models)) return { ok: false, error: "The models weren't readable." };
+  const models = { quick: "", ask: "" };
+  for (const job of AI_JOBS) {
+    const v = input.models[job];
+    if (v === undefined || v === "") continue;
+    if (typeof v !== "string" || v.trim().length > MAX_MODEL_ID) return { ok: false, error: `The ${job} model name is too long.` };
+    const id = v.trim();
+    if (!MODEL_ID_RE.test(id)) return { ok: false, error: `The ${job} model name has characters a model id doesn't use.` };
+    models[job] = id;
+  }
+
+  if (!(AI_EFFORTS as readonly unknown[]).includes(input.effort)) return { ok: false, error: "Choose Quick, Balanced or Thorough." };
+
+  const cap = input.monthlyCapUsd;
+  if (typeof cap !== "number" || !Number.isFinite(cap) || cap < CAP_MIN || cap > CAP_MAX) {
+    return { ok: false, error: `The monthly cap must be between $${CAP_MIN} and $${CAP_MAX.toLocaleString("en-US")}.` };
+  }
+  const tokens = input.maxOutputTokens;
+  if (typeof tokens !== "number" || !Number.isInteger(tokens) || tokens < TOKENS_MIN || tokens > TOKENS_MAX) {
+    return { ok: false, error: `The most output tokens per request must be a whole number between ${TOKENS_MIN} and ${TOKENS_MAX.toLocaleString("en-US")}.` };
+  }
+
+  const rawPrices = input.prices ?? {};
+  if (!isRecord(rawPrices)) return { ok: false, error: "The prices weren't readable." };
+  if (Object.keys(rawPrices).length > MAX_PRICES) return { ok: false, error: `There are prices for more than ${MAX_PRICES} models.` };
+  const priceEntries: [string, Price][] = [];
+  const good = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= MAX_PRICE;
+  for (const [id, p] of Object.entries(rawPrices)) {
+    if (!id || id.length > MAX_MODEL_ID || !MODEL_ID_RE.test(id)) return { ok: false, error: `${id.slice(0, 40) || "(empty)"} isn't a model name.` };
+    if (!isRecord(p)) return { ok: false, error: `The price for ${id} wasn't readable.` };
+    if (!good(p.inputPerMTok) || !good(p.outputPerMTok)) {
+      return { ok: false, error: `The prices for ${id} must be numbers from 0 to ${MAX_PRICE.toLocaleString("en-US")} dollars per million tokens.` };
+    }
+    priceEntries.push([id, { inputPerMTok: p.inputPerMTok, outputPerMTok: p.outputPerMTok }]);
+  }
+
+  let key: string | null | undefined;
+  if (input.key !== undefined) {
+    if (input.key !== null && !isAiKey(input.key)) return { ok: false, error: "The API key can't be empty, can't contain spaces and can't be longer than 400 characters." };
+    key = input.key;
+  }
+
+  const value: AiSettings = {
+    enabled: input.enabled,
+    provider,
+    baseUrl: url.url,
+    models,
+    effort: input.effort as AiSettings["effort"],
+    monthlyCapUsd: Math.round(cap * 100) / 100,
+    maxOutputTokens: tokens,
+    // Built from entries, not by assignment: an id is a key, and "__proto__" must stay one.
+    prices: Object.fromEntries(priceEntries),
+  };
+  return key === undefined ? { ok: true, value } : { ok: true, value, key };
 }

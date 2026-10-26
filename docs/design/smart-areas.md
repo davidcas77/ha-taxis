@@ -574,15 +574,91 @@ Still never: calling services, removing devices or entities.
 
 ## AI (optional)
 
-Off unless the user enters an API key in the add-on options. The key stays on
-the server: never sent to the browser, never logged, never in responses.
+Status: the layer is built (settings, providers, spending ledger, Test
+connection). The features that use it (Ask Taxis, health checks) are not.
 
-Uses:
+Off unless the user turns it on in Settings. The key stays on the server: stored
+in the add-on's SQLite settings, never sent to the browser, never logged, never
+in a response (Settings sees only "set" and the last four characters, for a key
+long enough that they give nothing away). Every error message passes through
+`redact()` and has the key and anything key-shaped removed.
+
+**AI has no write path.** It returns text and tool calls to the caller; it can
+neither call a Home Assistant service nor write to the registries. When a
+feature lets it propose something, the proposal becomes a change in the change
+list (principle 5): the same preview, backup, apply and verify as any edit.
+
+### Layers
+
+| Piece | Where | What it does |
+|---|---|---|
+| Settings | `shared/ai.ts`, `validateAi` in `server/settings.ts` | `enabled`, `provider`, `baseUrl`, model per job (`quick`, `ask`), `effort`, `monthlyCapUsd`, `maxOutputTokens`, optional `prices` per model. Stored under the key `ai`; the API key is a row of its own per provider (`ai_key:<provider>`), so the settings can be returned as they are. |
+| Providers | `server/ai/anthropic.ts`, `openai.ts` | `AiProvider { listModels(); complete(req) }`. A request has a system prompt, messages, `tools` (name, description, JSON Schema) and returns text, `toolCalls`, a stop reason and token usage. Plain `fetch`, no SDK. |
+| HTTP | `server/ai/http.ts` | Time and size limits, no redirects, errors scrubbed of the key. |
+| Ledger | `server/ai/ledger.ts` | One row per call in `ai_usage`: time, job, provider, model, tokens, estimated cost. No prompt or answer text. |
+| Service | `server/ai/service.ts` | The only way anything calls a model: refuses when AI is off, no key or model, or the month's spending has reached the cap; then calls, prices and records. |
+| Routes | `server/ai/routes.ts` | `GET/PUT /api/settings/ai`, `POST /api/ai/models`, `POST /api/ai/test`, `GET /api/ai/usage`, behind the same `X-Taxis-Request` guard and body limits as the others. |
+
+### Providers
+
+- **Anthropic.** Messages API and Models API (`GET /v1/models`) at
+  `https://api.anthropic.com`, fixed. `anthropic-version: 2026-10-21`. No
+  `temperature`, `top_p` or `top_k` (that version refuses them), no `thinking`
+  field (adaptive thinking is the default on the 5.x models) and no forced
+  `tool_choice` (the newest models refuse it). Defaults, from Anthropic's model
+  list of 2026-10: Quick = `claude-haiku-5-5`, Ask = `claude-sonnet-5-5`.
+- **OpenAI-compatible.** `GET {base}/models`, `POST {base}/chat/completions`
+  with tools as function calling. Base URL defaults to
+  `https://api.openai.com/v1`; works with OpenRouter, Ollama
+  (`http://<host>:11434/v1`) and LM Studio. No default models: the user loads
+  the list and picks (the first two listed are offered).
+- **Address safety.** Only the configured base URL is contacted. `https://`
+  anywhere; `http://` only for localhost, private ranges (10/8, 172.16/12,
+  192.168/16, 100.64/10, fc00::/7), single-label names and `.local`, `.lan`,
+  `.internal`, `.home.arpa`. Never user:password in the URL, a query string, or a
+  link-local address (cloud metadata). Redirects are never followed. The saved
+  key is sent only to the saved address; asking about another address needs a
+  key in the request.
+
+### Effort
+
+Quick, Balanced (default) and Thorough map to each provider's own control:
+
+| Taxis | Anthropic `output_config.effort` | OpenAI-compatible `reasoning_effort` |
+|---|---|---|
+| Quick | `low` | `low` |
+| Balanced | `medium` | `medium` |
+| Thorough | `high` | `high` |
+
+Anthropic: sent only to models that take it (the 5.x models, Opus and Sonnet 4.5/4.6
+and later); on a 400 that names it, the call is retried once without it.
+`xhigh` and `max` are not offered: they cost much more and are for work that
+needs them. OpenAI-compatible: sent to every model; one that answers 400 naming
+`reasoning_effort` is retried once without it and remembered for the session.
+
+### Cost and the cap
+
+`cost = (input × input price + output × output price) / 1,000,000`. Anthropic's
+prices are a table in `shared/ai.ts` (Haiku 5.5 is dearer above 100K prompt
+tokens); a price the user enters for a model wins and is the only source for
+other providers. A model with no known price is recorded with tokens and a null
+cost.
+
+Before each call the service reads the month's spend (calendar month, UTC) and
+refuses when it is at or over `monthlyCapUsd` (default $5). Consequences, stated
+in the UI: the call that crosses the cap is the last; calls without a known
+price are invisible to the cap; the cap is per Taxis install, not per account.
+
+### Uses (later)
 
 - suggest recipes and parameters from history (recurring manual actions);
 - explain why an area automation didn't fire (traces + history);
 - draft a custom automation for a case no recipe covers. The draft becomes a
   normal change in the change list; nothing is written without review.
+
+What leaves the add-on for each of these will be shown to the user when the
+feature arrives; today the only request is Test connection, a fixed sentence
+with no information about the home.
 
 ## Borrowed from Magic Areas
 

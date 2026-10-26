@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { readFileSync } from "node:fs";
 
+import { AI_PROVIDERS } from "../shared/ai.ts";
 import { validateInput } from "../shared/changes.ts";
 import { pruneGroups, type GroupListKey } from "../shared/groups.ts";
 import { CATEGORY_SCOPES } from "../shared/types.ts";
@@ -28,6 +29,8 @@ import { applyAll } from "./changes/all.ts";
 import { overlayChanges } from "./changes/overlay.ts";
 import { readInstalled } from "./changes/recipes.ts";
 import { changeStore } from "./changes/store.ts";
+import { aiLedger } from "./ai/ledger.ts";
+import { aiRoutes } from "./ai/routes.ts";
 import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
@@ -36,7 +39,8 @@ import { HaRest } from "./ha/rest.ts";
 import { HaSocket } from "./ha/socket.ts";
 import { backupHomeAssistant } from "./ha/supervisor.ts";
 import { isAllowedPeer, normalizePeer } from "./ingress.ts";
-import { log, setLogSecret } from "./log.ts";
+import { requireTaxisHeader } from "./guard.ts";
+import { addLogSecret, log, setLogSecret } from "./log.ts";
 import { buildHierarchy, type RawRegistry } from "./model/hierarchy.ts";
 import { findReferences, searchRelated, type Related } from "./references/find.ts";
 import { mapLimit, snapshot, type Snapshot } from "./references/snapshot.ts";
@@ -59,6 +63,8 @@ const token = target.ok ? target.target.token : undefined;
 setLogSecret(token);
 const changes = changeStore(store.db);
 const settings = settingsStore(store.db);
+// The AI keys are secrets too: never written to the log, whatever an error says.
+for (const p of AI_PROVIDERS) addLogSecret(settings.aiKey(p));
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -171,10 +177,7 @@ app.use("*", async (c, next) => {
 // Changes arrive through Ingress only (above). On top of that, every request
 // that changes something must carry this header, which a form on another
 // website can't add: a simple guard against cross-site requests.
-app.use("/api/*", async (c, next) => {
-  if (c.req.method !== "GET" && c.req.header("x-taxis-request") !== "1") return c.text("Missing request header.", 400);
-  await next();
-});
+app.use("/api/*", requireTaxisHeader);
 
 app.onError((e, c) => {
   log.error(`Request ${c.req.method} ${c.req.path} failed`, e);
@@ -269,6 +272,13 @@ app.put("/api/settings/parameters", bodyLimit({ maxSize: 256 * 1024, onError: (c
   log.info("Saved parameters");
   return c.json<ParametersResponse>({ ok: true, parameters: checked.value });
 });
+
+// Optional AI: its settings (never the key), the models a service offers, a test
+// call and this month's usage. Taxis only: nothing here touches Home Assistant.
+app.route(
+  "/api",
+  aiRoutes({ settings, ledger: aiLedger(store.db), protect: addLogSecret, redact: (m) => redact(m, token) }),
+);
 
 app.post("/api/changes", async (c) => {
   if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);

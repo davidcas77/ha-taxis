@@ -1,3 +1,4 @@
+import type { AiJob, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
@@ -35,6 +36,13 @@ export const api = {
   saveInventory: (inventory: InventorySettings) => call<InventoryResponse>("api/settings/inventory", { method: "PUT", body: JSON.stringify(inventory) }),
   parameters: () => call<ParametersResponse>("api/settings/parameters"),
   saveParameters: (parameters: ParameterSettings) => call<ParametersResponse>("api/settings/parameters", { method: "PUT", body: JSON.stringify(parameters) }),
+  // Optional AI. The key goes up with a save and never comes back: the browser
+  // learns only whether one is set and how it ends.
+  ai: () => call<AiSettingsResponse>("api/settings/ai"),
+  saveAi: (ai: AiSaveRequest) => call<AiSettingsResponse>("api/settings/ai", { method: "PUT", body: JSON.stringify(ai) }),
+  aiModels: (typed: AiModelsRequest) => call<AiModelsResponse>("api/ai/models", { method: "POST", body: JSON.stringify(typed) }),
+  aiTest: (job: AiJob) => call<AiTestResponse>("api/ai/test", { method: "POST", body: JSON.stringify({ job }) }),
+  aiUsage: () => call<AiUsageResponse>("api/ai/usage"),
   // What Home Assistant holds that recipes need: blueprints, their automations, timers.
   recipesState: (refresh = false) => call<RecipesResponse>(`api/recipes/state${refresh ? "?refresh=1" : ""}`),
   hierarchy: (refresh = false) => call<HierarchyResponse>(`api/hierarchy${refresh ? "?refresh=1" : ""}`),
