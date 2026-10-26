@@ -10,11 +10,11 @@
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 
-import { buildMockRegistry, handleMock, handleMockRest, withRecipeDemo } from "./mock-ha-core.ts";
+import { buildMockRegistry, handleMock, handleMockRest, withHealthDemo, withRecipeDemo } from "./mock-ha-core.ts";
 
 const PORT = Number(process.env.MOCK_HA_PORT ?? 8124);
 const TOKEN = "mock";
-const registry = withRecipeDemo(buildMockRegistry());
+const registry = withHealthDemo(withRecipeDemo(buildMockRegistry()));
 
 // REST and WebSocket share one port, like HA.
 const server = createServer((req, res) => {

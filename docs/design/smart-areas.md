@@ -1,6 +1,6 @@
 # Smart areas: capabilities, parameters, canonical helpers and recipes
 
-Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers) and a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights and Media off recipes) are implemented; the rest is not.
+Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers), a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights and Media off recipes) and the rule-based [Health](#health) checks are implemented; the rest is not.
 
 ## Goal
 
@@ -572,10 +572,118 @@ New writes, all through the change list with backup and verify:
 
 Still never: calling services, removing devices or entities.
 
+## Health
+
+Status: **built** (rule-based; no AI). A top-level page, **Health**, after
+Parameters, and the Health tab of every area.
+
+### Principles
+
+1. **Read-only.** Health never writes. A finding's fix is either a link to the
+   place in Taxis that deals with it or one or more changes **of kinds that already
+   exist** (an `area` update; the `blueprint`, `helper` and `automation` changes of
+   a recipe), which the user adds to the change list and applies like any other.
+   Nothing is applied by Health.
+2. **Nothing new to read.** The engine runs on what Taxis already reads: the
+   registries and states (`get_states` also feeds `last_changed` and an
+   automation's `last_triggered`, which it always returned), the configs of
+   automations, scripts, scenes and dashboards (the references snapshot,
+   `server/references/snapshot.ts`) and `blueprint/list` (the recipes' blueprint
+   versions). The recipes' installed automations and timers come from that
+   snapshot and the states, so `search/related` and the per-automation reads of
+   the Recipes tab are not repeated. No allowlist grew; a test asserts that the
+   only reads are `blueprint/list`, `lovelace/*` and the REST config reads, and
+   that nothing is written.
+3. **Pure engine.** `shared/health.ts` takes a snapshot and returns findings;
+   `shared/health-scan.ts` reads ids, service calls, conditions and device ids out
+   of a config. The server only assembles the snapshot (`server/health/assemble.ts`).
+4. **A finding says what it looked at.** YAML automations and scripts have no
+   stored config; the report counts them, and the switch and helper checks say so.
+
+### Shapes
+
+```ts
+HealthFinding = {
+  id: string;                      // stable, e.g. "references:automation:1700000000010"
+  check: "references" | "unavailable" | "activity" | "conditions" | "switches"
+       | "lights" | "setup" | "helpers" | "devices";
+  severity: "error" | "warning" | "info";
+  area?: string; entity?: string; entities?: string[];
+  item?: { kind: "automation" | "script" | "scene" | "dashboard"; id; name; entityId };
+  title: string; detail: string;
+  fix?: { kind: "changes"; label; inputs: ChangeInput[] }
+      | { kind: "link"; label; to: { page: "area" | "parameters" | "settings"; … } };
+}
+```
+
+`HealthReport` adds the counts by severity and by check, what was looked at, the
+options in force and notes (what could not be read). `GET /api/health/report`
+(`/api/health` stays the app's own status) returns it. The snapshot is kept for
+30 seconds like the other reads and `?refresh=1` reads again; the checks run on
+every request, so they always see the current change list and settings.
+`unavailableHours` (1 to 720, default 24) and `staleDays` (1 to 365, default 30)
+are query parameters.
+
+### How ids and references are found
+
+An entity id is recognised, not looked for, so the scanner is stricter than the
+rename scanner: the domain has to be one Home Assistant has (core domains plus
+those the home's entities use); a **plain** string counts only when every word in
+it is an id (`light.a`, `light.a, light.b`), so prose that mentions one doesn't;
+a **template** is searched, including `states.light.a.state`, and a name followed
+by `(` is a function. The values of `action`, `service`, `perform_action`,
+`alias`, `description` and `id` are never read as ids. Object keys are (scene
+entities). A reference built by a template is missed, and text shaped like an id
+inside a template can be taken for one. The recipes' automations (`taxis_*`, made
+from a `taxis/` blueprint) are left out of the reference check, because their
+inputs are checked as *Taxis setup*.
+
+### The checks
+
+| # | Check | Rule | Severity | Fix |
+|---|---|---|---|---|
+| 1 | `references` | Per automation, script, scene or dashboard: ids it uses that are in neither the entity registry nor the states (a disabled entity exists). Ids already reported by 4a are left out. | error: automation that is on, script. warning: automation that is off, scene, dashboard | none |
+| 2 | `unavailable` | State `unavailable` or `unknown` and `last_changed` at least `unavailableHours` ago. Grouped by device (one finding per device), or per entity when it has none. Skipped: a disabled entity or device, the domains button, input_button, event, scene, tts, stt, notify, wake_word, conversation and ai_task, and a state with no `last_changed`. | warning; info when all are `unknown`. One level up when an automation, script or scene uses an entity (a dashboard doesn't) | none |
+| 3 | `activity` | Automation state `off` → info. State `on` and no `last_triggered` → info ("may be new"). State `on` and `last_triggered` older than `staleDays` → warning. | info / warning | none |
+| 4a | `conditions` (never) | A `state` or `numeric_state` condition that gates the run (the top-level `conditions` of an automation, also inside `and`; condition steps at the top of a script's `sequence`) on an entity that doesn't exist, or a numeric one with `above` ≥ `below`. `or`, `not`, `if` and `choose` are not judged: a false condition there picks another branch. | error; warning when the automation is off | none |
+| 4b | `conditions` (by hand) | A `state` condition, anywhere, on an input boolean that no automation, script or scene turns on or off (see 5) and that isn't a Taxis helper. | info | none |
+| 5 | `switches` | An input boolean that is turned on and never off, or off and never on, by `input_boolean.turn_on/turn_off/toggle` and the same `homeassistant.*` services (target by id, area, floor, label or device; a toggle counts both ways), or by a scene's states. A target that is a template or `all`, or a non-Taxis blueprint given the switch, counts as anything and silences the finding. Taxis's pause switches and disabled switches are skipped. | warning | none |
+| 6 | `lights` | Automations that are **on**, with `light.turn_on/turn_off/toggle` or `homeassistant.*` reaching a light directly, by area/floor/label/device, through a group and its members, or through a script they call (to depth 4); plus the Taxis Motion lights automations from their inputs (`light_target`, `main_lights`, `accent_lights`, `night_lights`). A light with two or more controllers is contested; lights with the same controllers are one finding. | warning | none |
+| 7a | `setup` | A recipe cell (`planRecipes`) that is **out of date**. | warning | the cell's `inputs` |
+| 7b | `setup` | A canonical helper (`planHelpers`) whose status is **conflict**. | warning | link to Settings |
+| 7c | `setup` | An area with counted lights whose Occupancy cell is **ready** or **missing**. | info | the cell's `inputs` when ready; else a link to the area's Capabilities |
+| 7d | `setup` | A counted inventory row that has been unavailable or unknown for at least 1 hour and less than `unavailableHours` (longer is check 2). One finding per area. | warning | link to the area's Capabilities |
+| 7e | `setup` | An area's temperature or humidity entity that doesn't exist, and isn't already being changed in the list. | warning | an `area` update to the area's own min/max helper if there is one, else to `null` |
+| 8 | `helpers` | An `input_*`, counter, timer or schedule, or a UI helper (template, group, min/max, threshold, derivative, statistics, bayesian, trend, filter, utility_meter, integration, history_stats), used by no readable config, group member or area setting. Taxis's canonical and runtime helper ids and disabled helpers are skipped. | info | none |
+| 9 | `devices` | An automation or script with a `device_id` in its triggers, conditions or actions (device kinds, and `target.device_id`); blueprint inputs aren't read. | info; warning if a device isn't in Home Assistant | none |
+
+Check 6 does not count scripts as controllers (they don't run on their own) and
+follows calls to scripts only to find the lights; checks 5 and 4b read scripts,
+scenes and automations alike. A recipe already in the change list produces no
+finding for its cell (the planner reports *In changes*).
+
+### Interface
+
+The page shows the counts, filters (severity, check, area, text), the two
+thresholds, and a sortable table; a row opens to the detail, the entities with
+links to their place in Taxis (the area's Entities tab, or the Entities page for
+one in no area), and the fix. An area's Health tab keeps its three lists (not
+reporting now, groups with missing members, ids that name another area) and adds
+the findings with that `area`; the tab and the Overview counts include them. The
+report is read when a page that shows it opens, and again whenever the change
+list or the home changes; the navigation shows a count only once it has been read.
+
+### Deliberately not here
+
+No checks that need history or traces (an automation that fires but does
+nothing, a flapping sensor), no checks of YAML (Taxis cannot read it) and no write
+path of its own. AI could later *explain* a finding or propose a fix, as a change
+in the list, through the layer below.
+
 ## AI (optional)
 
 Status: the layer is built (settings, providers, spending ledger, Test
-connection). The features that use it (Ask Taxis, health checks) are not.
+connection). The features that use it (Ask Taxis, explaining health findings) are not.
 
 Off unless the user turns it on in Settings. The key stays on the server: stored
 in the add-on's SQLite settings, never sent to the browser, never logged, never

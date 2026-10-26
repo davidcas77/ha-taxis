@@ -1,5 +1,6 @@
 import type { AiJob, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
+import type { HealthOptions, HealthReportResponse } from "../../shared/health.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
 import type { ParameterSettings } from "../../shared/parameters.ts";
@@ -45,6 +46,15 @@ export const api = {
   aiUsage: () => call<AiUsageResponse>("api/ai/usage"),
   // What Home Assistant holds that recipes need: blueprints, their automations, timers.
   recipesState: (refresh = false) => call<RecipesResponse>(`api/recipes/state${refresh ? "?refresh=1" : ""}`),
+  // The health checks. Read-only; refresh reads Home Assistant again.
+  healthReport: (refresh = false, options?: Partial<HealthOptions>) => {
+    const q = new URLSearchParams();
+    if (refresh) q.set("refresh", "1");
+    if (options?.unavailableHours !== undefined) q.set("unavailableHours", String(options.unavailableHours));
+    if (options?.staleDays !== undefined) q.set("staleDays", String(options.staleDays));
+    const query = q.toString();
+    return call<HealthReportResponse>(`api/health/report${query ? `?${query}` : ""}`);
+  },
   hierarchy: (refresh = false) => call<HierarchyResponse>(`api/hierarchy${refresh ? "?refresh=1" : ""}`),
   changes: () => call<ChangesResponse>("api/changes"),
   // Where each pending rename's old id is used: what Apply updates, what it can't.

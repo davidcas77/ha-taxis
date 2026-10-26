@@ -6,7 +6,7 @@ organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
 The pages along the top: **Areas**, **Devices**, **Entities**, **Organize**,
-**Parameters**, **Changes** and **Settings**.
+**Parameters**, **Health**, **Changes** and **Settings**.
 
 ## Areas
 
@@ -23,7 +23,8 @@ The pages along the top: **Areas**, **Devices**, **Entities**, **Organize**,
   **Entities**, **Devices**, **Naming** (below), **Labels** (the labels on this
   area's entities, and a tool to add or take off a label for many of them at
   once) and **Health** (entities not reporting, groups with missing members,
-  ids that name another area).
+  ids that name another area, and what the [Health](#health) checks found about
+  this area).
 - Click an entity or a device to edit it: name, area, labels, category, icon,
   hidden, disabled. Tick several entities to move them, label them or hide them
   together. Areas and floors have an Edit button, and you can add new ones.
@@ -289,6 +290,95 @@ Everything is an ordinary Home Assistant object. The automations keep working if
 Taxis is stopped or uninstalled. Not in this version: climate, the bathroom
 fan, exterior lights, covers, announcements and the other recipes.
 
+## Health
+
+The **Health** page runs rule-based checks over your home to find what is
+broken or forgotten. There is no AI in it, and it never writes to Home
+Assistant. It uses what Taxis already reads (the registries, the states, the
+stored automations, scripts, scenes and dashboards, and the list of
+blueprints), so it asks for nothing new.
+
+At the top, three counts: **errors** (something cannot work), **warnings**
+(probably wrong) and **info** (worth knowing). Click one to filter by it. Filter
+too by check, by area, or by text, and click a column header to sort. Click a
+row to open it: the detail, the entities involved (with a link to each) and, if
+there is one, the fix. **Check again** reads Home Assistant again; the page
+otherwise reuses what was read in the last 30 seconds, and reads again when the
+list of changes changes (so a fix you add disappears from here).
+
+**Fixes.** A finding has a fix only when Taxis already knows how to make it. A
+fix is one of two things: a link to the place in Taxis that deals with it, or a
+button that **adds changes to the list** (an area's setting, a recipe update).
+Nothing is applied until you apply the list. Most findings are about
+automations, scripts and dashboards, which Taxis never edits except to rename
+an entity, so they only describe the problem.
+
+The checks, and the exact rules:
+
+- **Missing references.** An automation, script, scene or dashboard (YAML
+  dashboards included) that uses an entity id Home Assistant doesn't have.
+  Error for an automation that is on and for a script; warning for an
+  automation that is off, a scene or a dashboard. An id counts when it is the
+  whole value (`light.a`, or a comma-separated list), a key in a scene, or in a
+  template (`states('sensor.a')`, `states.sensor.a.state`). The names of
+  services (`light.turn_on`), aliases and descriptions are not read. An id built
+  by a template is not seen. The recipes' own automations are left to *Taxis
+  setup*.
+- **Not reporting.** Entities that are `unavailable` or `unknown` and whose
+  state has not changed for 24 hours (set it on the page, 1 to 720 hours),
+  grouped by device so a dead battery sensor is one row. Disabled entities,
+  buttons, events and scenes are skipped. Warning, or info when they are only
+  `unknown`; one level higher when an automation, script or scene uses the
+  entity (a dashboard doesn't count). The detail says what an area counts it as.
+- **Automation activity.** An automation that is off (info), an enabled one that
+  has never fired (info: it may be new) and an enabled one that last fired more
+  than 30 days ago (warning; set it on the page, 1 to 365 days).
+- **Conditions.** Error when a state or numeric condition that decides whether
+  the whole automation (or script) runs names an entity that doesn't exist, or a
+  numeric condition has no number that passes (`above` at or over `below`).
+  Conditions inside `or`, `not` and branches are not judged this way, because
+  there a false condition only picks another branch; their missing ids appear
+  under *Missing references*. Info when a state condition tests an input boolean
+  that no automation, script or scene turns on or off: it can only be changed by
+  hand.
+- **One-way switches.** An input boolean that something turns on and nothing
+  turns off, or the other way round (warning). Looks at `input_boolean.turn_on`,
+  `turn_off`, `toggle` and the same `homeassistant` services, in automations and
+  scripts, with targets given by area, floor, label or device as well as by id,
+  and at the states scenes set. A toggle counts both ways. A call whose target is
+  a template or `all`, and a blueprint that is given the switch, count as
+  anything, so nothing is said. The pause switches Taxis makes are skipped.
+- **Competing automations.** Two or more automations that are on and switch the
+  same light with `light.turn_on`, `turn_off` or `toggle` (or the same
+  `homeassistant` services), directly, by area, floor, label or device, through a
+  light group and its members, or by calling a script that does. The Taxis Motion
+  lights recipes count, marked as such. Warning.
+- **Taxis setup.** Warning: a recipe whose installed automation no longer matches
+  (the fix is the recipe's update); a canonical helper id that something else
+  holds (the Helpers tab's *conflict*; the link goes to Settings); a sensor or
+  light an area counts that has been unavailable more than 1 hour but less than
+  the *not reporting* limit; an area's temperature or humidity setting that names
+  an entity that doesn't exist (the fix points it at the area's own helper when
+  there is one, and clears it otherwise). Info: an area with lights that count
+  and no Occupancy installed (the fix adds it when it is ready; otherwise the
+  link goes to the area's Capabilities).
+- **Unused helpers.** Info. An `input_*`, counter, timer or schedule, or a helper
+  set up in the UI (a template, group, min/max, threshold…) that no automation,
+  script, scene or dashboard Taxis can read uses, that is not a member of a
+  group and that no area uses as its temperature or humidity sensor. Helpers
+  Taxis makes itself are skipped. A template or a YAML package may still use it,
+  and Taxis can't read those.
+- **Device-based.** Info for an automation or script with a trigger, condition or
+  action that names a device by id (a device trigger, or a service whose target
+  is a device). A device id changes when the device is removed and added again.
+  Warning when the device isn't in Home Assistant any more.
+
+What Taxis can't see limits the checks: automations and scripts written in YAML
+have no stored config to read (the page says how many), so what they use is not
+checked, and the switch and helper checks mention it. Dashboards in YAML are
+read. Findings can still be wrong when something is built by a template; they
+are meant to be looked at, not trusted blindly.
+
 ## Naming
 
 Under **Settings → Naming**:
@@ -377,8 +467,8 @@ stays in the list.
 
 AI is **off** until you turn it on in **Settings → AI (optional)**. Nothing in
 Taxis needs it. This first step is the groundwork only: the connection, the
-spending limit and a **Test connection** button. Asking Taxis questions and the
-health checks come later.
+spending limit and a **Test connection** button. Asking Taxis questions comes
+later. The [Health](#health) checks don't use AI.
 
 What it is:
 

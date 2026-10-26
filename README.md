@@ -41,6 +41,12 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 - **Naming:** a code per area, patterns for ids and display names, and a check
   of each area against them, with display-name suggestions.
 - **Devices and Entities:** everything in one list each, with filters.
+- **Health:** rule-based checks (no AI) for what is broken or forgotten:
+  references to entities that are gone, devices that stopped reporting,
+  automations that never fire, conditions that can never pass, switches only
+  turned one way, automations fighting over the same lights, unused helpers, and
+  the state of Taxis's own setup. Read-only; a fix is a link or a change for the
+  list.
 - **Changes:** every edit waits in a list, shown as before → after. Apply backs
   up Home Assistant, applies the list, and reads Home Assistant back to check
   each change.

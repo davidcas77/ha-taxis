@@ -23,6 +23,7 @@ import type {
   ReferencesResponse,
   RenameRefs,
 } from "../shared/types.ts";
+import { runHealth, type HealthReportResponse } from "../shared/health.ts";
 import { canonicalLightGroups, type RecipesResponse } from "../shared/recipes.ts";
 import { isRename } from "./changes/apply.ts";
 import { applyAll } from "./changes/all.ts";
@@ -31,6 +32,7 @@ import { readInstalled } from "./changes/recipes.ts";
 import { changeStore } from "./changes/store.ts";
 import { aiLedger } from "./ai/ledger.ts";
 import { aiRoutes } from "./ai/routes.ts";
+import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
 import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
@@ -130,8 +132,12 @@ let refsInFlight: Promise<Snapshot> | null = null;
 // Bumped when Apply drops the cache, so a read that started before it can't put
 // its (older) result back.
 let refsGeneration = 0;
+// The list of Taxis blueprints Home Assistant has, for the health checks, kept as
+// long as the read it came with.
+let blueprintCache: { at: number; read: Read; value: Record<string, number | null> | null } | null = null;
 const dropSnapshot = () => {
   refsCache = null;
+  blueprintCache = null;
   refsGeneration += 1;
 };
 
@@ -334,6 +340,39 @@ app.get("/api/recipes/state", async (c) => {
     const message = errorText(e);
     log.error("Reading what the recipes installed failed", message);
     return c.json<RecipesResponse>({ ok: false, error: message }, 502);
+  }
+});
+
+// Health: rule-based checks over the home as Home Assistant holds it (not the
+// preview): entities nothing answers for, references to what is gone, forgotten
+// automations, and the state of Taxis's own setup. Read-only: it reads what the
+// rest of Taxis reads, and a finding that has a fix only offers it as a change for
+// the user to add to the list. The snapshot is kept for a short while like the
+// other reads; Refresh (?refresh=1) reads again.
+app.get("/api/health/report", async (c) => {
+  if (!ha || !rest) return c.json<HealthReportResponse>({ ok: false, error: target.ok ? "Home Assistant is not configured." : target.reason }, 503);
+  const refresh = c.req.query("refresh") === "1";
+  const num = (name: string) => (c.req.query(name) ? Number(c.req.query(name)) : undefined);
+  try {
+    const { read, cached } = await loadRead(refresh);
+    const snap = await loadSnapshot(read, refresh);
+    if (refresh || !blueprintCache || blueprintCache.read !== read || Date.now() - blueprintCache.at >= CACHE_MS) {
+      blueprintCache = { at: Date.now(), read, value: await readBlueprints(ha) };
+    }
+    const report = runHealth({
+      snapshot: healthSnapshot(read.raw, read.live, snap, blueprintCache.value),
+      inventory: settings.inventory(),
+      naming: settings.naming(),
+      parameters: settings.parameters(),
+      changes: changes.list(),
+      now: Date.now(),
+      options: { unavailableHours: num("unavailableHours"), staleDays: num("staleDays") },
+    });
+    return c.json<HealthReportResponse>({ ok: true, report, cached: cached && !refresh });
+  } catch (e) {
+    const message = errorText(e);
+    log.error("Running the health checks failed", message);
+    return c.json<HealthReportResponse>({ ok: false, error: message }, 502);
   }
 });
 

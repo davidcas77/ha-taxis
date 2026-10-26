@@ -38,6 +38,7 @@ import { analyzeArea } from "../../shared/naming.ts";
 import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { AreaCapabilitiesTab } from "./capabilities.tsx";
+import { AreaFindings, useAreaFindings } from "./health.tsx";
 import { AreaNamingTab } from "./naming.tsx";
 import { useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
 import { AreaSelect, Button, ConfirmAction, EditedDot, LabelChip, inputClass } from "./ui.tsx";
@@ -527,7 +528,9 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
   const summary = summarizeRoom(area, h);
   const nameCheck = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
   const health = useMemo(() => areaHealth(area, h, nameCheck), [area, h, nameCheck]);
-  const named = Object.values(nameCheck.counts).reduce((a, b) => a + b, 0);
+  // What the health checks (shared/health.ts) found about this area, on top of the lists in the tab.
+  const checks = useAreaFindings(area.id).findings.length;
+  const named =Object.values(nameCheck.counts).reduce((a, b) => a + b, 0);
   const tabs: { key: AreaTab; label: string; count?: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "capabilities", label: "Capabilities" },
@@ -535,7 +538,7 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
     { key: "devices", label: "Devices", count: String(area.deviceIds.length) },
     { key: "naming", label: "Naming", count: named ? `${nameCheck.counts.ok}/${named}` : undefined },
     { key: "labels", label: "Labels" },
-    { key: "health", label: "Health", count: health.total ? String(health.total) : undefined },
+    { key: "health", label: "Health", count: health.total + checks ? String(health.total + checks) : undefined },
   ];
 
   return (
@@ -592,7 +595,7 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
               <Stat label="Devices" value={area.deviceIds.length} onClick={() => onTab("devices")} />
               <Stat label="Entities" value={countVisible(area.entityIds, h, filters)} onClick={() => onTab("entities")} />
               <Stat label="Ids that fit the naming" value={nameCheck.counts.ok} note={named ? `of ${named}` : undefined} onClick={() => onTab("naming")} />
-              <Stat label="Things to look at" value={health.total} onClick={() => onTab("health")} />
+              <Stat label="Things to look at" value={health.total + checks} onClick={() => onTab("health")} />
             </div>
           </div>
         )}
@@ -623,7 +626,7 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
           ))}
         {tab === "naming" && <AreaNamingTab h={h} area={area} go={go} />}
         {tab === "labels" && <AreaLabelsTab h={h} area={area} />}
-        {tab === "health" && <AreaHealthTab h={h} health={health} rows={rows} />}
+        {tab === "health" && <AreaHealthTab h={h} areaId={area.id} health={health} rows={rows} go={go} />}
       </div>
     </div>
   );
@@ -651,10 +654,10 @@ function areaHealth(area: AreaNode, h: Hierarchy, nameCheck: ReturnType<typeof a
   return { unavailable, brokenGroups, namedElsewhere, total: unavailable.length + brokenGroups.length + namedElsewhere.length };
 }
 
-function AreaHealthTab({ h, health, rows }: { h: Hierarchy; health: Health; rows: Rows }) {
-  if (health.total === 0) return <p className="text-[13px] text-muted">Nothing to look at: every entity reports, groups are complete, and no id names another area.</p>;
+function AreaHealthTab({ h, areaId, health, rows, go }: { h: Hierarchy; areaId: string; health: Health; rows: Rows; go: (r: Route) => void }) {
   return (
     <div className="flex flex-col gap-5">
+      {health.total === 0 && <p className="text-[13px] text-muted">Every entity reports, groups are complete, and no id names another area.</p>}
       {health.unavailable.length > 0 && (
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold">Not reporting · {health.unavailable.length}</h2>
@@ -690,6 +693,7 @@ function AreaHealthTab({ h, health, rows }: { h: Hierarchy; health: Health; rows
           </ul>
         </section>
       )}
+      <AreaFindings h={h} areaId={areaId} go={go} />
     </div>
   );
 }

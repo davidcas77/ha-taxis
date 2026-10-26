@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **Health.** A new **Health** page after Parameters: rule-based checks over your
+  home (no AI) that find what is broken or forgotten. A summary counts errors,
+  warnings and info; filter by severity, check, area or text; sort any column;
+  click a row to read the detail and see the entities involved. A finding that
+  can be fixed with something Taxis already does offers it as **a change for the
+  list** (never applied by itself); the others link to the place that deals with
+  them. Nothing here writes to Home Assistant, and it reads nothing Taxis didn't
+  already read. The checks:
+  - **Missing references**: an automation, script, scene or dashboard that uses
+    an entity that no longer exists.
+  - **Not reporting**: entities unavailable or unknown for 24 hours (you can
+    change it), grouped by device. One that an automation, script or scene uses
+    ranks a level higher.
+  - **Automation activity**: automations that are off, have never fired, or
+    haven't fired for 30 days (you can change it).
+  - **Conditions**: a condition that can never pass (an entity that isn't there,
+    or "above 30 and below 20"), and a condition on a switch that only a person
+    changes.
+  - **One-way switches**: an input boolean that something turns on and nothing
+    turns off, or the other way round.
+  - **Competing automations**: several automations that switch the same lights,
+    including the recipes Taxis installed.
+  - **Taxis setup**: recipes that are out of date, helper ids something else is
+    sitting on, areas with lights but no Occupancy, sensors an area counts on
+    that stopped reporting, and an area's temperature or humidity setting that
+    names an entity that isn't there.
+  - **Unused helpers**: helpers that nothing Taxis can read uses.
+  - **Device-based**: triggers, conditions and actions tied to a device id, which
+    stops working when the device is removed and added again.
+- **Area Health tab.** Shows the same checks for that area, under the lists it
+  already had, and its count includes them.
+- **Mock demo.** `npm run mock-ha` now has something for every check.
 - **AI (optional): connection, settings and spending cap.** A new **AI (optional)**
   section in Settings, off by default. Choose *Anthropic (Claude)* or any
   *OpenAI-compatible* service (OpenAI, OpenRouter, Ollama, LM Studio), enter an

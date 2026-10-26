@@ -851,3 +851,195 @@ export function withRecipeDemo(reg: MockHome): MockHome {
   });
   return reg;
 }
+
+// ---------------------------------------------------------------------------
+// The demo house with something for every health check, for `npm run mock-ha`.
+// Everything is invented. Built on withRecipeDemo, so it also has the recipe
+// cells (Kitchen Occupancy out of date, Study and Hallway ready…).
+//
+//   Missing references   "Porch light at dusk" (a light and a sensor that are
+//                        not there); the Kitchen dashboard shows a gone sensor.
+//   Not reporting        the Hall PIR (used by "Hall light on motion", so an
+//                        error) for 3 days; an attic sensor with two entities
+//                        for 5 days, grouped under its device.
+//   Activity             "Lights on at sunset" last ran 45 days ago; "Weekend
+//                        guest lights" has never run; "Old holiday lights" is off.
+//   Conditions           "Garden watering" tests a soil sensor that is gone and
+//                        a range no value is in; "Guest welcome" tests
+//                        input_boolean.guest_mode, which nothing changes.
+//   One-way switches     night_mode is only turned on, movie_mode only off.
+//   Competing lights     "Lights on at sunset" and "Living room evening lights"
+//                        both switch the living room lights.
+//   Taxis setup          Kitchen Occupancy is out of date; Kitchen's motion
+//                        helper id is taken by a real sensor; Bedroom and Garage
+//                        have lights and no way to be occupied (Hallway's
+//                        Occupancy is ready); the Study presence sensor has
+//                        been out for 6 hours; the Study temperature setting
+//                        names a sensor that is gone.
+//   Unused helpers       a spare number and a laundry timer.
+//   Device-based         "Bedroom button", and one tied to a device that is gone.
+// ---------------------------------------------------------------------------
+
+export function withHealthDemo(reg: MockHome, now = Date.now()): MockHome {
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const H = 3_600_000;
+  const D = 24 * H;
+
+  const stateOf = (entityId: string) => reg.states.find((s) => s.entity_id === entityId)!;
+  const touch = (entityId: string, patch: { state?: string; ago?: number; attributes?: Record<string, unknown> }) => {
+    const st = stateOf(entityId);
+    if (patch.state !== undefined) st.state = patch.state;
+    if (patch.ago !== undefined) st.last_changed = ago(patch.ago);
+    if (patch.attributes) st.attributes = { ...st.attributes, ...patch.attributes } as RawState["attributes"];
+  };
+
+  // An automation as the UI stores it, and its entity.
+  const automation = (id: string, alias: string, config: Config, opts: { state?: string; triggered?: number } = {}) => {
+    reg.automations[id] = { id, alias, description: "", mode: "single", ...config };
+    const entityId = freeEntityId(reg, "automation", alias);
+    reg.entities.push({ entity_id: entityId, platform: "automation", unique_id: id, original_name: alias });
+    reg.states.push({
+      entity_id: entityId,
+      state: opts.state ?? "on",
+      last_changed: ago(2 * D),
+      attributes: { id, friendly_name: alias, ...(opts.triggered === undefined ? {} : { last_triggered: ago(opts.triggered) }) },
+    } as RawState);
+  };
+
+  // When the automations of the other demos last ran.
+  touch("automation.lights_on_at_sunset", { attributes: { last_triggered: ago(45 * D) } });
+  touch("automation.kitchen_motion_light", { attributes: { last_triggered: ago(2 * H) } });
+  touch("automation.hall_night_light", { attributes: { last_triggered: ago(3 * D) } });
+  for (const s of reg.states) {
+    if (s.entity_id.startsWith("automation.") && String((s.attributes as Config | undefined)?.id ?? "").startsWith("taxis_")) touch(s.entity_id, { attributes: { last_triggered: ago(H) } });
+    if (s.entity_id === "automation.living_room_evening_lights") touch(s.entity_id, { attributes: { last_triggered: ago(D) } });
+  }
+
+  // Missing references.
+  automation(
+    "1700000000010",
+    "Porch light at dusk",
+    {
+      triggers: [{ trigger: "state", entity_id: "binary_sensor.driveway_motion", to: "on" }],
+      conditions: [],
+      actions: [{ action: "light.turn_on", target: { entity_id: "light.porch_lantern" } }],
+    },
+    { triggered: 6 * H },
+  );
+  const kitchen = reg.dashboards.find((d) => d.url_path === "dashboard-kitchen")!;
+  (kitchen.config!.views as { cards: unknown[] }[])[0].cards.push({ type: "sensor", entity: "sensor.kitchen_humidity_old" });
+
+  // Not reporting.
+  touch("binary_sensor.hall_motion", { ago: 3 * D });
+  automation(
+    "1700000000011",
+    "Hall light on motion",
+    { triggers: [{ trigger: "state", entity_id: "binary_sensor.hall_motion", to: "on" }], conditions: [], actions: [{ action: "light.turn_on", target: { entity_id: "light.hall_lights" } }] },
+    { triggered: 4 * D },
+  );
+  reg.devices.push({ id: "attic", name: "Attic sensor", manufacturer: "Demo", model: "AS008" });
+  for (const [entityId, name, dc, unit] of [
+    ["sensor.attic_temperature", "Attic temperature", "temperature", "°C"],
+    ["sensor.attic_humidity", "Attic humidity", "humidity", "%"],
+  ] as const) {
+    reg.entities.push({ entity_id: entityId, device_id: "attic", platform: "demo", original_name: name });
+    reg.states.push({ entity_id: entityId, state: "unavailable", last_changed: ago(5 * D), attributes: { friendly_name: name, device_class: dc, unit_of_measurement: unit } } as RawState);
+  }
+
+  // Activity.
+  automation("1700000000012", "Weekend guest lights", { triggers: [{ trigger: "time", at: "18:00:00" }], conditions: [], actions: [{ action: "light.turn_on", target: { entity_id: "light.kitchen_main" } }] });
+  automation("1700000000013", "Old holiday lights", { triggers: [{ trigger: "time", at: "17:00:00" }], conditions: [], actions: [{ action: "light.turn_on", target: { entity_id: "light.garage_bench" } }] }, { state: "off", triggered: 200 * D });
+
+  // Conditions.
+  automation(
+    "1700000000014",
+    "Garden watering",
+    {
+      triggers: [{ trigger: "time", at: "06:00:00" }],
+      conditions: [
+        { condition: "numeric_state", entity_id: "sensor.garden_soil_moisture", below: 30 },
+        { condition: "numeric_state", entity_id: "sensor.living_temperature", above: 30, below: 20 },
+      ],
+      actions: [{ action: "switch.turn_on", target: { entity_id: "switch.spare_plug" } }],
+    },
+    { triggered: 9 * D },
+  );
+  automation(
+    "1700000000015",
+    "Guest welcome",
+    {
+      triggers: [{ trigger: "state", entity_id: "binary_sensor.front_door", to: "on" }],
+      conditions: [{ condition: "state", entity_id: "input_boolean.guest_mode", state: "on" }],
+      actions: [{ action: "light.turn_on", target: { entity_id: "light.hall_ceiling" } }],
+    },
+    { triggered: 12 * D },
+  );
+
+  // One-way switches.
+  for (const [entityId, name] of [
+    ["input_boolean.night_mode", "Night mode"],
+    ["input_boolean.movie_mode", "Movie mode"],
+  ]) {
+    reg.entities.push({ entity_id: entityId, platform: "input_boolean", unique_id: entityId.split(".")[1], original_name: name });
+    reg.states.push({ entity_id: entityId, state: "off", last_changed: ago(8 * D), attributes: { friendly_name: name, editable: true } } as RawState);
+  }
+  automation(
+    "1700000000016",
+    "Night mode on at 23:00",
+    { triggers: [{ trigger: "time", at: "23:00:00" }], conditions: [], actions: [{ action: "input_boolean.turn_on", target: { entity_id: "input_boolean.night_mode" } }] },
+    { triggered: D },
+  );
+  reg.scripts["movie_over"] = { alias: "Movie over", sequence: [{ action: "input_boolean.turn_off", target: { entity_id: "input_boolean.movie_mode" } }], mode: "single" };
+  reg.entities.push({ entity_id: "script.movie_over", platform: "script", unique_id: "movie_over" });
+  reg.states.push({ entity_id: "script.movie_over", state: "off", last_changed: ago(D), attributes: { friendly_name: "Movie over" } } as RawState);
+  // A reader of both, so neither shows as unused.
+  automation(
+    "1700000000017",
+    "Quiet hours check",
+    {
+      triggers: [{ trigger: "time", at: "22:30:00" }],
+      conditions: [{ condition: "or", conditions: [{ condition: "state", entity_id: "input_boolean.night_mode", state: "on" }, { condition: "state", entity_id: "input_boolean.movie_mode", state: "on" }] }],
+      actions: [{ action: "media_player.turn_off", target: { entity_id: "media_player.living_tv" } }],
+    },
+    { triggered: D },
+  );
+
+  // Taxis setup.
+  reg.entities.push({ entity_id: "binary_sensor.kitchen_motions", platform: "mqtt", area_id: "kitchen", original_name: "Kitchen motions (old)" });
+  reg.states.push({ entity_id: "binary_sensor.kitchen_motions", state: "off", last_changed: ago(D), attributes: { friendly_name: "Kitchen motions (old)" } } as RawState);
+  touch("binary_sensor.study_presence", { state: "unavailable", ago: 6 * H });
+  reg.areas.find((a) => a.area_id === "study")!.temperature_entity_id = "sensor.study_temp_old";
+
+  // Unused helpers.
+  for (const [entityId, name, extra] of [
+    ["input_number.spare_threshold", "Spare threshold", { min: 0, max: 100, mode: "box" }],
+    ["timer.laundry_done", "Laundry done", { duration: "0:45:00", editable: true }],
+  ] as const) {
+    reg.entities.push({ entity_id: entityId, platform: entityId.split(".")[0], unique_id: entityId.split(".")[1], original_name: name });
+    reg.states.push({ entity_id: entityId, state: entityId.startsWith("timer.") ? "idle" : "50", last_changed: ago(30 * D), attributes: { friendly_name: name, ...extra } } as RawState);
+  }
+
+  // Device-based triggers.
+  reg.devices.push({ id: "bedroom_button", name: "Bedroom button", manufacturer: "Demo", model: "WXKG11LM", area_id: "bedroom" });
+  automation(
+    "1700000000018",
+    "Bedroom button",
+    {
+      triggers: [{ trigger: "device", domain: "mqtt", device_id: "bedroom_button", type: "action", subtype: "single" }],
+      conditions: [],
+      actions: [{ action: "light.toggle", target: { entity_id: "light.bedside_left" } }],
+    },
+    { triggered: 2 * D },
+  );
+  automation(
+    "1700000000019",
+    "Old garage remote",
+    {
+      triggers: [{ trigger: "device", domain: "mqtt", device_id: "garage_remote_gone", type: "action", subtype: "single" }],
+      conditions: [],
+      actions: [{ action: "cover.toggle", target: { entity_id: "cover.garage_door" } }],
+    },
+    { triggered: 60 * D },
+  );
+  return reg;
+}

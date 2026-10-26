@@ -335,6 +335,7 @@ export type Route =
   | { page: "entities" }
   | { page: "organize"; type: OrganizeType; id: string | null }
   | { page: "parameters"; tab: ParameterTab }
+  | { page: "health" }
   | { page: "changes" }
   | { page: "settings" };
 
@@ -360,6 +361,8 @@ export function parseHash(hash: string): Route {
   switch (head) {
     case "parameters":
       return { page: "parameters", tab: (PARAMETER_TABS as readonly string[]).includes(a ?? "") ? (a as ParameterTab) : PARAMETER_TABS[0] };
+    case "health":
+      return { page: "health" };
     case "changes":
       return { page: "changes" };
     case "settings":
@@ -395,6 +398,7 @@ export function parseHash(hash: string): Route {
 export function toHash(r: Route): string {
   const enc = encodeURIComponent;
   switch (r.page) {
+    case "health":
     case "changes":
     case "settings":
     case "devices":

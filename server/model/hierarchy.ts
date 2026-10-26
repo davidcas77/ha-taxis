@@ -61,8 +61,21 @@ export type RawCategory = { category_id: string; name: string; icon?: string | n
 export type RawState = {
   entity_id: string;
   state: string;
+  // When the state last changed (ISO), which the health checks read.
+  last_changed?: string;
   // id: an automation's id. duration: a timer's, written "0:05:00".
-  attributes?: { friendly_name?: string; device_class?: string; unit_of_measurement?: string; entity_id?: unknown; id?: unknown; duration?: unknown };
+  // last_triggered: an automation's last run. restored: the entity is no longer
+  // provided by its integration.
+  attributes?: {
+    friendly_name?: string;
+    device_class?: string;
+    unit_of_measurement?: string;
+    entity_id?: unknown;
+    id?: unknown;
+    duration?: unknown;
+    last_triggered?: unknown;
+    restored?: unknown;
+  };
 };
 export type RawConfig = { location_name?: string; version?: string };
 

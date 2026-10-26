@@ -1,7 +1,8 @@
-import { AlertTriangle, CheckCircle2, Cpu, FolderTree, Layers, List, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, FolderTree, HeartPulse, Layers, List, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
 import { useCallback, useState, type ReactNode } from "react";
 
 import { ChangesPage } from "./changes.tsx";
+import { HealthPage, HealthProvider, useHealthCounts } from "./health.tsx";
 import { DevicesPage, EntitiesPage } from "./lists.tsx";
 import { SettingsPage } from "./naming.tsx";
 import { OrganizePage } from "./organize.tsx";
@@ -12,7 +13,9 @@ import { TaxisProvider, useRoute, useTaxis, type Selection } from "./state.tsx";
 export function App() {
   return (
     <TaxisProvider>
-      <Shell />
+      <HealthProvider>
+        <Shell />
+      </HealthProvider>
     </TaxisProvider>
   );
 }
@@ -26,6 +29,7 @@ function timeAgo(iso: string): string {
 
 function Shell() {
   const { hierarchy, changes, loading, error, notice, reload } = useTaxis();
+  const health = useHealthCounts();
   const [route, go] = useRoute();
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Filters>({ maintenance: false, disabled: false });
@@ -61,6 +65,11 @@ function Shell() {
           </Tab>
           <Tab active={route.page === "parameters"} onClick={() => go(route.page === "parameters" ? route : { page: "parameters", tab: "capabilities" })} icon={<SlidersHorizontal className="size-4" aria-hidden />}>
             Parameters
+          </Tab>
+          <Tab active={route.page === "health"} onClick={() => go({ page: "health" })} icon={<HeartPulse className="size-4" aria-hidden />}>
+            Health
+            {health && health.error > 0 && <span className="rounded-full bg-danger px-1.5 text-[11px] font-semibold text-[var(--bg)] tabular-nums">{health.error}</span>}
+            {health && health.error === 0 && health.warning > 0 && <span className="rounded-full bg-warn px-1.5 text-[11px] font-semibold text-[var(--bg)] tabular-nums">{health.warning}</span>}
           </Tab>
           <Tab active={route.page === "changes"} onClick={() => go({ page: "changes" })} icon={<ListChecks className="size-4" aria-hidden />}>
             Changes
@@ -133,6 +142,8 @@ function Shell() {
         <OrganizePage h={hierarchy} type={route.type} id={route.id} go={go} />
       ) : route.page === "parameters" ? (
         <ParametersPage h={hierarchy} tab={route.tab} go={go} />
+      ) : route.page === "health" ? (
+        <HealthPage h={hierarchy} go={go} />
       ) : route.page === "devices" ? (
         <DevicesPage h={hierarchy} />
       ) : route.page === "entities" ? (
