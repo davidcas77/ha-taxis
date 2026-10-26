@@ -144,7 +144,7 @@ export type Hierarchy = {
 // Changes: edits collected in Taxis, applied to Home Assistant together.
 // ---------------------------------------------------------------------------
 
-export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category" | "helper" | "blueprint" | "automation";
+export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category" | "helper" | "blueprint" | "automation" | "script";
 export type ChangeOp = "create" | "update" | "delete";
 
 // The fields each kind of change may set, named as Home Assistant names them.
@@ -162,9 +162,11 @@ export type ChangeFields = {
   // timer (with its duration), an input boolean, a template binary sensor and a
   // schedule (with its comfort periods); the house's away and sleep switches are
   // input booleans with no area.
+  // A derivative sensor (a humidity's rate of change) has the one sensor it derives
+  // from as its only member, and goes in the area of that sensor.
   // Updated: a group's members, a timer's duration or a schedule's periods. Never deleted.
   helper: {
-    helper?: "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule";
+    helper?: "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule" | "derivative";
     group_type?: "light" | "binary_sensor" | "media_player";
     name?: string;
     entity_id?: string;
@@ -185,8 +187,14 @@ export type ChangeFields = {
   // deleted.
   automation: {
     automation_id?: string;
-    recipe?: "occupancy" | "motion_lights" | "media_off" | "area_climate";
+    recipe?: "occupancy" | "motion_lights" | "media_off" | "area_climate" | "bathroom_fan" | "exterior_lights" | "left_open" | "appliance_done";
     area_id?: string;
+    alias?: string;
+    use_blueprint?: { path: string; input: Record<string, unknown> };
+  };
+  // The one script Taxis makes, taxis_announce, from its blueprint. Never deleted.
+  script: {
+    script_id?: string;
     alias?: string;
     use_blueprint?: { path: string; input: Record<string, unknown> };
   };

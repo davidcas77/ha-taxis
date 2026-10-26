@@ -3,8 +3,9 @@ import { canonicalId, effectiveSuffixes, HELPERS, hasPendingChange, helperChange
 import { deviceUses, emptyRange, ENTITY_DOMAINS, entityIdsIn, gatingConditions, serviceCalls, stateConditions, type ServiceCall } from "./health-scan.ts";
 import { areaInventory, CAPABILITY_LABEL, type AreaInventory, type InventoryRow, type InventorySettings } from "./inventory.ts";
 import { areaCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
-import type { ParameterSettings } from "./parameters.ts";
-import { automationIdFor, planRecipes, RECIPE_LABEL, runtimeIds, type RecipeInstalled } from "./recipes.ts";
+import { ANNOUNCE_SCRIPT_ID } from "./blueprints.ts";
+import { resolveIn, type ParameterSettings } from "./parameters.ts";
+import { automationIdFor, planAnnounce, planRecipes, RECIPE_LABEL, runtimeIds, type RecipeInstalled } from "./recipes.ts";
 import type { Change, ChangeInput, EntityItem, Hierarchy, RefKind } from "./types.ts";
 
 // Health: rule-based checks over what Taxis already reads, to find what is broken
@@ -91,7 +92,7 @@ export type HealthInput = {
 // Where Taxis can take the user to deal with a finding.
 export type HealthTarget =
   | { page: "area"; areaId: string; tab: "overview" | "capabilities" | "entities" | "health" }
-  | { page: "parameters"; tab: "capabilities" | "helpers" | "recipes" }
+  | { page: "parameters"; tab: "capabilities" | "helpers" | "recipes" | "house" }
   | { page: "settings" };
 
 export type HealthFix = { kind: "changes"; label: string; inputs: ChangeInput[] } | { kind: "link"; label: string; to: HealthTarget };
@@ -206,7 +207,8 @@ type Ctx = {
 };
 
 const isTaxisItem = (i: HealthItem): boolean => {
-  if (i.kind !== "automation" || !i.id.startsWith("taxis_") || !isObject(i.config)) return false;
+  // The automations of the recipes, and the announce script.
+  if ((i.kind !== "automation" && !(i.kind === "script" && i.id === ANNOUNCE_SCRIPT_ID)) || !i.id.startsWith("taxis_") || !isObject(i.config)) return false;
   const ub = i.config.use_blueprint;
   return isObject(ub) && typeof ub.path === "string" && ub.path.startsWith("taxis/");
 };
@@ -779,11 +781,16 @@ function climateChecks(c: Ctx): HealthFinding[] {
 function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[] {
   const out: HealthFinding[] = [];
   const areaName = (id: string) => c.h.areas[id]?.name ?? id;
+  const planned = new Map<RecipeInstalled, ReturnType<typeof planRecipes>>();
+  const cells = (from: RecipeInstalled) => {
+    let list = planned.get(from);
+    if (!list) planned.set(from, (list = planRecipes(c.h, c.inventory, c.naming, c.parameters, from, c.changes)));
+    return list;
+  };
 
   // Recipes whose installed automation no longer matches what Taxis would write.
   if (installed) {
-    const cells = planRecipes(c.h, c.inventory, c.naming, c.parameters, installed, c.changes);
-    for (const cell of cells) {
+    for (const cell of cells(installed)) {
       if (cell.status === "out-of-date") {
         out.push({
           id: `setup:recipe:${cell.areaId}:${cell.recipe}`,
@@ -820,6 +827,44 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
           });
         }
       }
+    }
+  }
+
+  // The announce script, which is for the house; and the recipes that notify, which
+  // do it through Home Assistant's own list when no notify service is set.
+  if (installed) {
+    const announce = planAnnounce(c.h, c.inventory, c.naming, c.parameters, installed, c.changes);
+    const scriptThere = Boolean(installed.scripts[ANNOUNCE_SCRIPT_ID]);
+    if (announce.status === "out-of-date") {
+      out.push({
+        id: "setup:announce",
+        check: "setup",
+        severity: "warning",
+        title: "Announce is out of date",
+        detail: `${announce.reasons.join(". ")}.`,
+        fix: announce.actionable ? { kind: "changes", label: "Update the script", inputs: announce.inputs } : { kind: "link", label: "Open Recipes", to: { page: "parameters", tab: "recipes" } },
+      });
+    } else if (announce.status === "missing" && scriptThere) {
+      out.push({
+        id: "setup:announce",
+        check: "setup",
+        severity: "warning",
+        title: "Announce cannot work as it is set up",
+        detail: `The script script.${ANNOUNCE_SCRIPT_ID} is in Home Assistant, but Taxis would not write it now. Missing: ${announce.missing.join("; ")}.`,
+        fix: { kind: "link", label: "Open Recipes", to: { page: "parameters", tab: "recipes" } },
+      });
+    }
+    const targets = resolveIn(c.parameters, [{ level: "house" }], "notify_targets").value;
+    const asking = cells(installed).filter((cell) => (cell.recipe === "left_open" || cell.recipe === "appliance_done") && installed.automations[automationIdFor(cell.recipe, c.codes[cell.areaId].code)]);
+    if (asking.length > 0 && Array.isArray(targets) && targets.length === 0) {
+      out.push({
+        id: "setup:notify",
+        check: "setup",
+        severity: "info",
+        title: "No notify service is set for the recipes that notify",
+        detail: `${names([...new Set(asking.map((cell) => `${RECIPE_LABEL[cell.recipe]} in ${areaName(cell.areaId)}`))])} installed, and no notify service is set (Parameters, House), so their messages appear only in Home Assistant's own notifications. Taxis can't tell whether a service you add exists.`,
+        fix: { kind: "link", label: "Set the notify services", to: { page: "parameters", tab: "house" } },
+      });
     }
   }
 

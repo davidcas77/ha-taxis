@@ -34,7 +34,7 @@ The pages along the top: **Areas**, **Devices**, **Entities**, **Organize**,
 What this area has, and what counts. Taxis reads it from Home Assistant: each
 entity's area, domain and device class (never its name). It lists lights,
 motion, presence, door, window, temperature, humidity, light level, thermostat,
-speaker, TV, cover and power entities, and leaves out disabled entities and
+speaker, TV, cover, fan and power entities, and leaves out disabled entities and
 config or diagnostic ones.
 
 - **Counts.** Each entity has a "Counts" box. It is ticked unless the entity is
@@ -55,6 +55,15 @@ config or diagnostic ones.
   light, or else its main lights; pick one light to choose it yourself (the
   Lighting tab of Parameters takes several). Saved with the other choices,
   in Taxis only.
+- **Fans.** A fan (`fan.*`) counts. A switch is listed in the same section but
+  does not count: a switch can be a lamp, a plug or a fan, and Taxis can't tell.
+  Tick **Counts** on the switches that run a fan. A switch Home Assistant hides
+  (the one under a light made with "Change device type of a switch") is not
+  listed. The Bathroom fan recipe uses the fans that count.
+- **Appliances.** A power sensor has an **Appliance** box. Tick it on the sensors of
+  machines (a washer, a dryer, an oven): Appliance done reports when one has
+  finished. It is off to begin with, since a power sensor can as well be a
+  lamp's.
 - **Switching a kind.** An "opening" sensor is listed as a window; change it to
   a door if it is one. A media player is a TV when Home Assistant says so, a
   speaker otherwise; switch it if that's wrong.
@@ -98,11 +107,12 @@ in the list of changes.
 
 What Taxis knows about each area, and the choices later features build on. The
 page has a bar of tabs: **Capabilities**, **Helpers**, **House**, **Occupancy**,
-**Lighting**, **Media**, **Climate** and **Recipes**.
+**Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior**, **Safety** and
+**Recipes**.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, thermostats, speakers, TVs,
-covers and power. A cell shows how many entities count; when some are listed
+covers, fans and power. A cell shows how many entities count; when some are listed
 but left out, the rest show beside it in grey (`2 +1`). Hover a column header
 for its full name, and click a header to sort. Click an area or a cell to open
 that area's Capabilities tab. Areas with nothing in them are hidden until you
@@ -139,7 +149,9 @@ not the automation. Nothing is written until you apply the list of changes.
 | Media | `media_player.<code>_media` | group of the counted speakers and TVs | 2 or more |
 
 `<code>` is the area's entity id code from Settings. The name of a new helper
-is the area's name and a word: "Kitchen motions". Only entities that **count**
+is the area's name and a word: "Kitchen motions". The humidity rate sensor of
+the Bathroom fan recipe (`sensor.<code>_humidity_rate`) is not in this table:
+the recipe makes it. Only entities that **count**
 are used, so exclude a sensor on the area's Capabilities tab and the helper
 follows. The area's own canonical helpers are not listed as its sensors.
 
@@ -192,9 +204,10 @@ it gathers. An **Adopt** needs a group with exactly the members (there is no
 near match for a floor or the house). A floor group whose code is also an area's
 is a **Conflict**, and so is the second of two floors with one code.
 
-### House, Occupancy, Lighting, Media and Climate
+### The parameter tabs
 
-The numbers and times the recipes are filled in with. Each tab is a table with a
+The numbers and times the recipes are filled in with: House, Occupancy, Lighting,
+Media, Climate, Bathroom fan, Exterior and Safety. Each tab is a table with a
 row for the **House default**, one for **Interior** and one for **Exterior**
 areas, one for each floor and one for each area, and a column per parameter.
 
@@ -212,10 +225,13 @@ areas by it.
 |---|---|---|---|
 | House | Night starts, Night ends | 23:00, 07:00 | a time |
 | House | Away mode switch, Sleep mode switch | empty: Taxis makes `input_boolean.taxis_away` and `taxis_sleep` when it installs Area climate | an `input_boolean` you already have (the box suggests them) |
+| House | Notify services | empty: messages appear in Home Assistant's notifications | notify services like `notify.mobile_app_phone`, separated by commas, up to 20; **house only** |
+| House | Text-to-speech | empty | a `tts` entity (the box suggests them); **house only** |
 | Occupancy | Hold timeout | 5 min | 1 to 240 |
 | Occupancy | Extended after | 30 min | 1 to 720 |
 | Occupancy | Extended hold timeout | 15 min | 1 to 240 |
 | Occupancy | Sleep hold timeout | 60 min | 1 to 480 |
+| Occupancy | Shower holds occupied at | 0 %/s (off) | 0 to 1, in steps of 0.001 |
 | Lighting | Dark below | 50 lx | 0 to 5000 |
 | Lighting | Day brightness, Night brightness | 100 %, 10 % | 1 to 100 |
 | Lighting | Day colour, Night colour | 3000 K, 2200 K | 1500 to 6500, in steps of 50 |
@@ -226,6 +242,7 @@ areas by it.
 | Lighting | Entry lights | empty: the area's only light, else its main lights | up to 20 lights of the area; **area level only** |
 | Media | Speakers off when clear for | 15 min | 1 to 720 |
 | Media | TVs off when clear for | 30 min | 1 to 720 |
+| Media | Announcement volume | 40 % | 0 to 100 (0: leave the volume as it is); **house only** |
 | Climate | Comfort, Eco, Night, Sleep, Away | 21, 19, 18, 17.5, 16 | 5 to 35, in steps of 0.5 |
 | Climate | Frost protection | 7 | 0 to 15, in steps of 0.5 |
 | Climate | Lowest, Highest | 16, 24 | 5 to 35, in steps of 0.5; the target never leaves them |
@@ -238,6 +255,25 @@ areas by it.
 | Climate | Open doors count | no | yes or no |
 | Climate | Comfort periods | `Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00` | days, then times (below) |
 | Climate | Preset: comfort, eco, away, sleep and night | empty | a preset name the thermostat offers (the box suggests them) |
+| Bathroom fan | On: rise rate | 0.03 %/s | 0.001 to 1, in steps of 0.001 |
+| Bathroom fan | On: above the reference | 10 % | 1 to 50 |
+| Bathroom fan | On: humidity | 80 % | 30 to 100 |
+| Bathroom fan | Off: within the reference | 3 % | 0 to 30 |
+| Bathroom fan | Off: flat for | 20 min | 1 to 240 |
+| Bathroom fan | Off: after at most | 60 min | 1 to 480 |
+| Bathroom fan | Reference humidity sensor | empty: none | a humidity `sensor` of another area, or a house average (the box suggests them) |
+| Bathroom fan | Not while the house sleeps | no | yes or no |
+| Exterior | Lights on from sunset | 0 min | -120 to 120, in steps of 5 (negative: before sunset) |
+| Exterior | Stay on for | 120 min | 1 to 720 |
+| Safety | Door open for | 10 min | 1 to 1440 |
+| Safety | Window open for | 30 min | 1 to 1440 |
+| Safety | Repeat every | 0 min (once) | 0 to 1440 |
+| Safety | Running above, Running for | 10 W, 2 min | 1 to 10000, 1 to 120 |
+| Safety | Done below, Done for | 5 W, 3 min | 0 to 10000, 1 to 120 |
+
+**House only.** The notify services, the text-to-speech entity and the
+announcement volume have one value for the whole house: only the House default row
+takes them, and every other row shows a dash.
 
 **Entry lights** are the lights that come on by day when the area becomes occupied.
 They are set for one area and never inherited: the house, interior, exterior and
@@ -258,7 +294,8 @@ writes the line in one spelling, and hovering over it spells it out.
 ### Recipes
 
 A recipe is an automation Taxis makes for an area from a blueprint of its own,
-filled in with the area's sensors, lights and parameters. There are four:
+filled in with the area's sensors, lights and parameters. There are eight, and
+one script for the whole house (Announce):
 
 - **Occupancy** keeps an area occupied with a hold timer. A sensor that starts
   occupancy (a motion sensor, or a presence sensor when the area has no motion
@@ -319,8 +356,11 @@ filled in with the area's sensors, lights and parameters. There are four:
   (`media_player.<code>_media`) uses the group; with both kinds it uses the
   players, since each kind has its own time.
 - **Area climate** sets the area's thermostats by fixed rules (described below).
+- **Bathroom fan**, **Exterior lights**, **Left open**, **Appliance done** and
+  **Announce** are described below.
 
-The Recipes tab is a table of areas by recipes. A cell says:
+The Recipes tab is a table of areas by recipes, with a row for the house at the
+top that has the Announce cell. A cell says:
 
 - **Ready**: it can be installed.
 - **Missing: …**: what is needed. Occupancy needs a counted motion or presence
@@ -331,6 +371,9 @@ The Recipes tab is a table of areas by recipes. A cell says:
   Media off needs Occupancy too, and a speaker or a TV that counts.
   Area climate needs a thermostat that counts, and the away, sleep and pause
   switches and the schedule, which installing makes if they are missing.
+  Bathroom fan, Exterior lights, Left open and Appliance done are described
+  below; Announce needs a text-to-speech entity and a speaker in an area that
+  has Occupancy.
 - **Installed**: the area's automation matches its sensors, lights, parameters
   and helpers, and the blueprint is the current version.
 - **Out of date**: it is installed but differs; the cell says how (a parameter
@@ -348,8 +391,8 @@ now version 4: an installed automation shows as out of date until it is updated
 
 Installing a recipe adds these changes (the Changes page shows each):
 
-- the blueprint (`taxis/occupancy.yaml`, `taxis/motion_lights.yaml` or
-  `taxis/media_off.yaml` in Home Assistant's blueprints), once, when Home
+- the blueprint (`taxis/occupancy.yaml`, `taxis/motion_lights.yaml`,
+  `taxis/media_off.yaml`… in Home Assistant's blueprints), once, when Home
   Assistant has none or another version;
 - for Occupancy, three helpers per area: `timer.<code>_hold` (the length is the
   hold timeout; it keeps its state through a restart), `binary_sensor.<code>_occupied`
@@ -364,8 +407,12 @@ Installing a recipe adds these changes (the Changes page shows each):
   that uses the blueprint with its inputs.
 
 Everything is an ordinary Home Assistant object. The automations keep working if
-Taxis is stopped or uninstalled. Not in this version: boost, the bathroom fan,
-exterior lights, covers, announcements and the other recipes.
+Taxis is stopped or uninstalled. Not in this version: boost, covers by the sun
+(it needs to know which way each window faces) and the other recipes of the design.
+
+The Occupancy blueprint is now version 4: an installed Occupancy automation shows
+as out of date until it is updated (blueprint version, and *Shower holds occupied
+at: none → 0*).
 
 #### Area climate
 
@@ -436,6 +483,127 @@ switch is on.
 
 If other automations already set the area's thermostats, the cell lists them: two
 things setting the same thermostat undo each other.
+
+#### Bathroom fan
+
+Runs the fan of an area while the room is steamed up. **Needs** a humidity sensor
+that counts and its helper (`sensor.<code>_humidity`, on the Helpers tab; it can be
+in the list of changes), and a fan: a `fan` that counts, or a switch you ticked as
+a fan on the area's Capabilities tab. Installing adds the blueprint
+`taxis/bathroom_fan.yaml`, the area's pause switch (if it has none), the **humidity
+rate sensor** `sensor.<code>_humidity_rate` and the automation
+`taxis_bathroom_fan_<code>`.
+
+The rate sensor is a derivative helper on the humidity helper: how fast the humidity
+changes, in % per second, smoothed over two minutes. Taxis makes it the way the
+Helpers page does (the `derivative` setup dialog, with the unit of time a second and
+three decimals), gives it the id and puts it in the area. If it is removed, the
+Recipes cell says it is missing and the fix makes it again.
+
+*The fan goes on* when the humidity rises at least *On: rise rate* (0.03 %/s, 1.8 %
+a minute), or is at least *On: above the reference* (10 %) above the reference
+sensor, or is at least *On: humidity* (80 %). The reference is the humidity sensor
+you choose on the Bathroom fan tab: another area's, or an average of the house you
+made yourself. Without one, only the rise rate and the humidity level start the
+fan.
+
+*The fan goes off* at the first of: the humidity is back within *Off: within the
+reference* (3 %) of the reference and no longer rising fast; the rate has been flat
+(within 0.001 %/s of zero) for *Off: flat for* (20 min); or the fan has run for
+*Off: after at most* (60 min). Without a reference sensor "the reference" is the
+humidity at the moment the fan started: Home Assistant keeps it for as long as the
+fan runs, so no helper is needed for it. A fan that is already on is left alone, so
+a fan you switched on by hand is not switched off by Taxis. With *Not while the
+house sleeps* on, the fan does not start while the house sleep switch is on (the
+House tab's, or `input_boolean.taxis_sleep`, which Taxis makes if you have none).
+The cell says: with no reference, and when a shower does not hold the area occupied.
+
+Limits: if Home Assistant restarts while the fan runs, the cycle is lost and the fan
+stays on until you switch it off. A cycle that starts with the humidity already
+low and flat, or already near the reference, ends by the time limit.
+
+**A shower keeps the bathroom occupied.** Set *Shower holds occupied at* on the
+Occupancy tab (for the bathroom, or any level; 0 is off). The Occupancy automation
+is then given the area's humidity rate sensor, when it exists (or is in the list of
+changes): while the hold timer runs, a rate at or above that keeps it running. It
+never starts the timer, so it only extends an area that something else made
+occupied. The Occupancy cell is out of date when you set it, and installing updates it.
+
+#### Exterior lights
+
+For areas whose type is **Exterior** (chosen on the area's Capabilities tab).
+**Needs** the area's light group `light.<code>_all` (in place or in the list). It
+doesn't need Occupancy: it reads the sun, the area's motion and presence sensors
+that count (a camera's motion sensor included, if you let it count) and every
+person. Installing adds the blueprint `taxis/exterior_lights.yaml`, the area's pause
+switch and override timer if there are none, and `taxis_exterior_lights_<code>`.
+
+- At **sunset** (moved by *Lights on from sunset*, in minutes), the lights go on and
+  a clock of *Stay on for* starts (120 min).
+- **Motion** (or a counted camera or presence sensor turning on) and **a person
+  arriving home**, during the night, turn the lights on if they are off and start
+  the clock again. When the clock runs out the lights go off.
+- At **sunrise** the lights go off and any manual override ends. In **daytime**
+  nothing starts.
+- **Manual override**, as in Motion lights: a light changed by hand (app, dashboard,
+  wall switch) keeps the automation out of the area for *Manual override lasts*
+  (Lighting tab; 0 is until sunrise). The override timer is `timer.<code>_override`,
+  the same one Motion lights uses; the cell warns when Motion lights is installed
+  for the area too.
+
+If Home Assistant restarts while the clock runs and the lights are on, a new clock
+starts.
+
+#### Left open
+
+Reports a door or window that stays open. **Needs** a door or window sensor that
+counts. Taxis watches each sensor itself (not the area's door and window groups),
+so the message says which one and a second door opening later is not hidden by the
+first: a door open for *Door open for* (10 min) and a window for *Window open for*
+(30 min). With *Repeat every* above 0 the message is sent again at that interval
+until it closes (0: once). The message goes to every notify service in *Notify
+services* on the House tab; with none set, it appears in Home Assistant's
+notifications. Taxis does not check that a service you type exists: it cannot read
+the list of services without a read it does not make. Installing adds the blueprint
+`taxis/left_open.yaml`, the area's pause switch and `taxis_left_open_<code>`.
+
+#### Appliance done
+
+Tells you when a machine has finished. **Needs** a power sensor that counts and that
+you ticked as an **Appliance** on the area's Capabilities tab; one automation per
+area covers all its appliances, and the message names the one that finished (the
+sensor's name without a trailing "power"). A machine is *running* when its power has
+stayed above *Running above* (10 W) for *Running for* (2 min) and *done* when it has
+stayed below *Done below* (5 W) for *Done for* (3 min). Running above has to be
+higher than Done below. The levels are in watts: a sensor in kW is flagged in the
+cell. The message goes to the notify services, as for Left open. Two cycles that
+overlap on the same machine, or a pause that dips below the running level and back,
+may tell you twice. Installing adds `taxis/appliance_done.yaml`, the pause switch and
+`taxis_appliance_done_<code>`.
+
+#### Announce
+
+One script for the whole house, `script.taxis_announce`, in the House row of the
+Recipes tab. Called with a **message** (and, if you like, a **volume** in %), it
+speaks on the speakers of the areas that are occupied, not asleep and not paused:
+an area counts when it has a speaker that counts (a TV is not a speaker) and
+Occupancy (installed or in the list), is occupied when its occupied sensor is on,
+asleep when a bed sensor of a bedroom is on, and paused when its pause switch is on.
+Areas with speakers but no Occupancy are left out, and the cell says which. Nothing
+is said when no area qualifies.
+
+**Needs** a text-to-speech entity (House tab) and at least one such area. The
+script sets the volume on those speakers first (*Announcement volume*, 40 %, or the
+volume you pass; 0 leaves it) and does not put it back, then calls the
+`tts.speak` service on the text-to-speech entity. Call it from your own automations
+or scripts: `script.taxis_announce` with `message: "Dinner is ready"`.
+
+The list of areas is one input of the blueprint, a list of objects (each area's
+occupied sensor, pause switch, bed sensors and speakers), which keeps each area's
+things together however many speakers it has. It is a script blueprint saved at
+`taxis/announce.yaml`; the change list's Apply writes the blueprint and then the
+script (`config/script/config/taxis_announce`). When a speaker, an area's Occupancy
+or the setting changes, the cell says **Out of date** and what changed.
 
 ## Health
 
@@ -519,7 +687,14 @@ The checks, and the exact rules:
   link goes to the area's Capabilities).
   Also a warning: the light group of a floor or of the house that lacks the light
   group of one of its areas or floors (the Helpers tab's *Update members*; the fix
-  adds the change), and a floor or house group id something else holds.
+  adds the change), and a floor or house group id something else holds. A bathroom
+  fan whose humidity rate sensor is gone is a recipe out of date (the fix makes the
+  sensor again). Announce is checked the same way: out of date (the fix updates the
+  script), or in Home Assistant but no longer something Taxis would write (a
+  speaker's Occupancy removed, the text-to-speech entity gone). Info, once: Left
+  open or Appliance done installed while no notify service is set, so their messages
+  only appear in Home Assistant's notifications. Taxis does not check that a notify
+  service exists, since that would need a read of the list of services it does not make.
 - **Lights without an area.** Warning, one finding for all of them: a light (not a
   group, not disabled) that is in no area, its own or its device's. The link goes
   to Parameters → Capabilities, where each gets an area.
@@ -575,8 +750,9 @@ Under **Settings → Naming**:
   `motions`, `presences`, `doors`, `windows`, `temperature`, `humidity`,
   `illuminance`, `media`). Lower-case letters, digits and `_`, up to 30
   characters, and each used once. Settings shows an example id as you type.
-  The recipes' own helpers end in `hold`, `occupied`, `paused` and `override`;
-  these are fixed, and no binary sensor helper may use `occupied`.
+  The recipes' own helpers end in `hold`, `occupied`, `paused`, `override`, `climate`
+  and `humidity_rate`; these are fixed, and no binary sensor helper may use
+  `occupied` nor a sensor helper `humidity_rate`.
 
 Each area's **Naming** tab checks its entities against these: which ids start
 with the area's code, which use an older code, which name another area, and
@@ -608,14 +784,14 @@ the **Changes** page. Apply:
 1. makes a backup of Home Assistant (if the backup fails, nothing is changed);
 2. applies the changes: first the registries (names, ids, areas, floors,
    labels, categories), then the blueprints of recipes, then the helpers, then
-   the automations of recipes;
+   the automations of recipes, then the Announce script;
 3. reads Home Assistant back and checks each one. A change that didn't take
    stays in the list with the reason.
 
 Taxis only edits what Home Assistant's own settings pages edit: names, ids,
 areas, floors, labels, categories, icons, hidden and disabled, an area's
 temperature and humidity sensor, the helpers described above, and the
-blueprints and automations of the recipes. When it renames an entity it replaces
+blueprints and automations of the recipes, and the one script, Announce. When it renames an entity it replaces
 the old id in automations, scripts, scenes and dashboards, and changes nothing
 else in them. It never removes a device, an entity, a helper, a blueprint or an
 automation, and never calls a service.
@@ -629,7 +805,9 @@ Taxis stops and says so instead of making a copy.
 
 The helpers of the recipes are made the same way: a timer and a toggle the way
 the Helpers page makes them, the occupied sensor through the template helper
-dialog, then each gets its id and area. A timer's length is changed in place.
+dialog and the humidity rate sensor through the derivative helper dialog, then
+each gets its id and area. A timer's length is changed in place. A rate sensor is
+made after the humidity helper it derives from, when both are in the same Apply.
 
 The light groups of the floors and of the house are made with the same group
 dialog, with no area. A group that gathers other groups is made after them, even
@@ -640,11 +818,15 @@ Assistant and stays in the list.
 
 A **blueprint** is saved under `taxis/` in Home Assistant's blueprints, with the
 text Taxis holds, and only when Home Assistant has none or another version
-(Taxis states its version in the blueprint's description). A recipe's
+(Taxis states its version in the blueprint's description). The automation
+blueprints go to the automation blueprints; the one script blueprint,
+`taxis/announce.yaml`, to the script blueprints, and nowhere else. A recipe's
 **automation** is saved like the Automations page saves one, then Taxis checks
-the stored automation is what it sent and that Home Assistant loaded it. If a
-helper or the blueprint it needs didn't go through, the automation says so and
-stays in the list.
+the stored automation is what it sent and that Home Assistant loaded it. The
+Announce **script** is saved like the Scripts page saves one, and checked the same
+way. If a helper or the blueprint it needs didn't go through, the automation
+says so and stays in the list. Notify services in an automation's inputs are
+names, not entities, and are not looked for in Home Assistant.
 
 ## AI (optional)
 

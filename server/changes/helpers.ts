@@ -1,12 +1,13 @@
 import { isTempId, sameValue } from "../../shared/changes.ts";
 import { parsePeriods, sameSchedule, scheduleDays } from "../../shared/periods.ts";
-import { formatDuration, parseDuration } from "../../shared/recipes.ts";
+import { formatDuration, parseDuration, RATE_WINDOW } from "../../shared/recipes.ts";
 import type { Change } from "../../shared/types.ts";
 import type { RawEntity, RawRegistry } from "../model/hierarchy.ts";
 import type { Outcome } from "./apply.ts";
 
 // Applying helper changes: creating a group, a min/max helper or one of the
-// recipes' helpers (a timer, a toggle, a template sensor, a schedule), and
+// recipes' helpers (a timer, a toggle, a template sensor, a schedule, a derivative
+// sensor), and
 // changing a group's members, a timer's duration or a schedule's periods. Groups, min/max and template sensors
 // are offered by Home Assistant only as config flows over REST (the same
 // dialogs the UI shows), so each is a short conversation:
@@ -15,6 +16,8 @@ import type { Outcome } from "./apply.ts";
 //   create a min/max  start the "min_max" flow, send the form
 //   create a template start the "template" flow, choose "binary_sensor", send the
 //                     form (name, the template, device class)
+//   create a derivative start the "derivative" flow, send the form (name, the sensor
+//                     it derives from, the unit of time and the window it smooths over)
 //   change a group    start the options flow of its config entry, send the form
 //                     with the members changed and every other value as it was
 //
@@ -64,12 +67,12 @@ export type HelperIO = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-type Kind = "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule";
-const PLATFORM: Record<Kind, string> = { group: "group", min_max: "min_max", timer: "timer", input_boolean: "input_boolean", template: "template", schedule: "schedule" };
-const TITLES: Record<Kind, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule" };
+type Kind = "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule" | "derivative";
+const PLATFORM: Record<Kind, string> = { group: "group", min_max: "min_max", timer: "timer", input_boolean: "input_boolean", template: "template", schedule: "schedule", derivative: "derivative" };
+const TITLES: Record<Kind, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule", derivative: "derivative sensor" };
 // Made by a config flow, so their entity has a config entry. A timer and a
 // toggle are storage helpers: no config entry, found by the id they were given.
-const FLOW_MADE: ReadonlySet<Kind> = new Set<Kind>(["group", "min_max", "template"]);
+const FLOW_MADE: ReadonlySet<Kind> = new Set<Kind>(["group", "min_max", "template", "derivative"]);
 
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
 const membersOf = (reg: RawRegistry, entityId: string): string[] | null => {
@@ -132,6 +135,12 @@ class Flows {
   async createMinMax(name: string, entities: string[]): Promise<string> {
     const start = await this.step("/config/config_entries/flow", { handler: "min_max" }, "form");
     return this.entry(await this.step(`/config/config_entries/flow/${this.id(start)}`, { name, entity_ids: entities, type: "mean", round_digits: 1 }, "create_entry"));
+  }
+
+  /** Creates a derivative sensor (the rate of change of `source` per second) and returns its config entry id. */
+  async createDerivative(name: string, source: string): Promise<string> {
+    const start = await this.step("/config/config_entries/flow", { handler: "derivative" }, "form");
+    return this.entry(await this.step(`/config/config_entries/flow/${this.id(start)}`, { name, source, round: 3, unit_time: "s", time_window: { ...RATE_WINDOW } }, "create_entry"));
   }
 
   /** Creates the template binary sensor of a recipe and returns its config entry id. */
@@ -275,7 +284,9 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
               ? await flows.createGroup(a.group_type ?? domain, a.name, members)
               : a.helper === "min_max"
                 ? await flows.createMinMax(a.name, members)
-                : await flows.createTemplateSensor(a.name, a.state_template!, a.device_class!);
+                : a.helper === "derivative"
+                  ? await flows.createDerivative(a.name, members[0])
+                  : await flows.createTemplateSensor(a.name, a.state_template!, a.device_class!);
           made = await entityOfEntry(entryId).catch(() => null);
         }
       } catch (e) {

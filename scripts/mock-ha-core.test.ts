@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildMockRegistry, containsEntityId, handleMock, handleMockRest } from "./mock-ha-core.ts";
+import { buildMockRegistry, containsEntityId, handleMock, handleMockRest, withSmartDemo } from "./mock-ha-core.ts";
 
 type Home = ReturnType<typeof buildMockRegistry>;
 
@@ -290,10 +290,35 @@ describe("what recipes need from Home Assistant", () => {
     expect(fails(home, "blueprint/save", { domain: "automation", path: "taxis/x.yaml", yaml: header })).toBe("File already exists");
     expect(ok(home, "blueprint/save", { domain: "automation", path: "taxis/x.yaml", yaml: header.replace("3", "4"), allow_override: true })).toEqual({});
     expect(home.blueprints["taxis/x.yaml"]).toContain("version 4");
-    expect(fails(home, "blueprint/save", { domain: "script", path: "taxis/x.yaml", yaml: header })).not.toBeNull();
+    expect(fails(home, "blueprint/save", { domain: "scene", path: "taxis/x.yaml", yaml: header })).not.toBeNull();
     expect(fails(home, "blueprint/save", { domain: "automation", path: "../x.yaml", yaml: header })).toBe("Invalid path");
     expect(fails(home, "blueprint/save", { domain: "automation", path: "taxis/y.yaml", yaml: "nope" })).toMatch(/Invalid blueprint/);
-    expect(fails(home, "blueprint/list", { domain: "script" })).not.toBeNull();
+    expect(fails(home, "blueprint/list", { domain: "scene" })).not.toBeNull();
+  });
+
+  it("keeps script blueprints apart from automation blueprints", () => {
+    const home = buildMockRegistry();
+    const script = header.replace("domain: automation", "domain: script");
+    expect(ok(home, "blueprint/list", { domain: "script" })).toEqual({});
+    ok(home, "blueprint/save", { domain: "script", path: "taxis/announce.yaml", yaml: script });
+    expect(ok(home, "blueprint/list", { domain: "script" })).toEqual({ "taxis/announce.yaml": { metadata: { name: "Test", domain: "script", description: "A test. Taxis blueprint version 3." } } });
+    expect(ok(home, "blueprint/list", { domain: "automation" })).toEqual({});
+    expect(home.scriptBlueprints["taxis/announce.yaml"]).toBe(script);
+    expect(fails(home, "blueprint/save", { domain: "script", path: "taxis/announce.yaml", yaml: script })).toBe("File already exists");
+  });
+
+  it("makes a script from a blueprint when it is posted, and only then (a script with a body of its own still answers 404)", () => {
+    const home = buildMockRegistry();
+    const body = { alias: "Announce (Taxis)", description: "", use_blueprint: { path: "taxis/announce.yaml", input: {} } };
+    expect(post(home, "/api/config/script/config/taxis_announce", {}).status).toBe(404);
+    // The blueprint isn't there: the script can't load.
+    expect(post(home, "/api/config/script/config/taxis_announce", body).status).toBe(200);
+    expect(home.entities.find((e) => e.entity_id === "script.taxis_announce")).toMatchObject({ platform: "script", unique_id: "taxis_announce" });
+    expect(home.states.find((s) => s.entity_id === "script.taxis_announce")).toMatchObject({ state: "unavailable", attributes: { friendly_name: "Announce (Taxis)" } });
+    ok(home, "blueprint/save", { domain: "script", path: "taxis/announce.yaml", yaml: header.replace("domain: automation", "domain: script"), allow_override: true });
+    expect(post(home, "/api/config/script/config/taxis_announce", body).status).toBe(200);
+    expect(home.states.find((s) => s.entity_id === "script.taxis_announce")!.state).toBe("off");
+    expect(handleMockRest(home, "GET", "/api/config/script/config/taxis_announce", undefined)).toMatchObject({ status: 200, body });
   });
 
   it("creates a timer and a toggle the way storage helpers appear, and updates a timer's duration", () => {
@@ -370,5 +395,59 @@ describe("what recipes need from Home Assistant", () => {
     // A YAML automation, and a malformed body, are still refused.
     expect(handleMockRest(home, "POST", "/api/config/automation/config/hall_night", config).status).toBe(404);
     expect(handleMockRest(home, "POST", "/api/config/automation/config/another", "x").status).toBe(400);
+  });
+});
+
+describe("the derivative flow", () => {
+  const post = (home: Home, path: string, body: unknown) => handleMockRest(home, "POST", path, body);
+  const start = (home: Home) => (post(home, "/api/config/config_entries/flow", { handler: "derivative" }).body as { flow_id: string; type: string; data_schema: { name: string }[] });
+  const form = { name: "Study humidity rate", source: "sensor.living_humidity", round: 3, unit_time: "s", time_window: { hours: 0, minutes: 2, seconds: 0 } };
+
+  it("makes a sensor that derives from another, in its unit per second", () => {
+    const home = buildMockRegistry();
+    const first = start(home);
+    expect(first.type).toBe("form");
+    expect(first.data_schema.map((f) => f.name)).toEqual(["name", "source", "round", "unit_prefix", "unit_time", "time_window"]);
+    const done = post(home, `/api/config/config_entries/flow/${first.flow_id}`, form).body as { type: string; result: { entry_id: string; domain: string } };
+    expect(done).toMatchObject({ type: "create_entry", result: { domain: "derivative" } });
+    expect(home.entities.find((e) => e.config_entry_id === done.result.entry_id)).toMatchObject({ entity_id: "sensor.study_humidity_rate", platform: "derivative" });
+    expect(home.states.find((s) => s.entity_id === "sensor.study_humidity_rate")).toMatchObject({ attributes: { source: "sensor.living_humidity", unit_of_measurement: "%/s" } });
+    expect(home.configEntries.find((e) => e.entry_id === done.result.entry_id)).toMatchObject({ domain: "derivative", entities: ["sensor.living_humidity"] });
+  });
+
+  it("refuses a source that isn't there, a bad unit of time and a window that isn't a duration, like the dialog", () => {
+    for (const [change, error] of [
+      [{ source: "sensor.nope" }, "source"],
+      [{ source: undefined }, "source"],
+      [{ unit_time: "weeks" }, "unit_time"],
+      [{ time_window: "2 minutes" }, "time_window"],
+      [{ time_window: [] }, "time_window"],
+    ] as const) {
+      const home = buildMockRegistry();
+      const first = start(home);
+      const reply = post(home, `/api/config/config_entries/flow/${first.flow_id}`, { ...form, ...change }).body as { type: string; errors: Record<string, string> };
+      expect(reply.type, JSON.stringify(change)).toBe("form");
+      expect(Object.keys(reply.errors), JSON.stringify(change)).toEqual([error]);
+      expect(home.entities.some((e) => e.platform === "derivative")).toBe(false);
+    }
+    expect(post(buildMockRegistry(), "/api/config/config_entries/flow", { handler: "threshold" }).status).toBe(404);
+  });
+});
+
+describe("the smart demo house", () => {
+  it("adds a bathroom, a garden, a laundry and a text-to-speech entity to the others, without disturbing them", () => {
+    const base = buildMockRegistry();
+    const demo = withSmartDemo(buildMockRegistry());
+    for (const area of ["bathroom", "garden", "laundry"]) expect(demo.areas.some((a) => a.area_id === area), area).toBe(true);
+    // Everything of the plain house is still there, unchanged.
+    for (const a of base.areas) expect(demo.areas.find((x) => x.area_id === a.area_id)).toEqual(a);
+    for (const e of base.entities) expect(demo.entities.find((x) => x.entity_id === e.entity_id)).toEqual(e);
+    const has = (id: string) => demo.states.some((s) => s.entity_id === id);
+    for (const id of ["fan.bathroom_extractor", "sensor.bathroom_hygro_humidity", "light.garden_path", "person.alex", "person.sam", "sensor.washer_power", "sensor.dryer_power", "binary_sensor.laundry_door", "media_player.laundry_speaker", "tts.home_assistant_cloud"]) expect(has(id), id).toBe(true);
+    // The camera's motion sensor sits on the camera's device.
+    expect(demo.entities.find((e) => e.entity_id === "binary_sensor.garden_camera_motion")!.device_id).toBe(demo.entities.find((e) => e.entity_id === "camera.garden")!.device_id);
+    // No entity id twice.
+    const ids = demo.entities.map((e) => e.entity_id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

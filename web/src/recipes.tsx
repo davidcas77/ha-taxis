@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { RECIPES, planRecipes, recipeChangeInputs, type RecipeCell, type RecipeInstalled, type RecipeStatus } from "../../shared/recipes.ts";
+import { RECIPES, planAnnounce, planRecipes, recipeChangeInputs, type RecipeCell, type RecipeInstalled, type RecipeStatus } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { useTaxis } from "./state.tsx";
@@ -12,9 +12,10 @@ import { Button } from "./ui.tsx";
 // recipes. A cell says whether the recipe can be installed, what is missing when
 // it can't, and whether an installed one still matches. Adding cells puts
 // changes in the list; nothing reaches Home Assistant until the list is applied.
+// Announce is the exception: one script for the whole house, in a row of its own.
 
 const NOTE =
-  "Recipes Taxis can install per area, from the sensors and lights that count in the Capabilities tab and the parameters. Installing writes a blueprint (once), the helpers the recipe needs and one automation per area. Nothing is written until you apply the change list.";
+  "Recipes Taxis can install per area, from the sensors and lights that count in the Capabilities tab and the parameters. Installing writes a blueprint (once), the helpers the recipe needs and one automation per area. Announce is one script for the whole house. Nothing is written until you apply the change list.";
 
 // Most useful first.
 const ORDER: RecipeStatus[] = ["ready", "out-of-date", "in-changes", "missing", "installed"];
@@ -97,16 +98,44 @@ function StatusCell({ cell }: { cell: RecipeCell }) {
   );
 }
 
+// A cell: its checkbox (when it can be added) and what it says.
+function CellBox({ c, label, areaName, picked, setPicked }: { c: RecipeCell; label: string; areaName: string; picked: Set<string>; setPicked: (f: (p: Set<string>) => Set<string>) => void }) {
+  return (
+    <div className="flex items-start gap-2">
+      {c.actionable ? (
+        <input
+          type="checkbox"
+          aria-label={`Add ${label} for ${areaName}`}
+          checked={picked.has(keyOf(c))}
+          onChange={() =>
+            setPicked((p) => {
+              const n = new Set(p);
+              if (!n.delete(keyOf(c))) n.add(keyOf(c));
+              return n;
+            })
+          }
+          className="mt-0.5 accent-[var(--accent)]"
+        />
+      ) : (
+        <span className="w-[13px] shrink-0" aria-hidden />
+      )}
+      <StatusCell cell={c} />
+    </div>
+  );
+}
+
 // The table, once what Home Assistant holds is known.
 export function RecipesTable({ h, installed }: { h: Hierarchy; installed: RecipeInstalled }) {
   const { inventory, naming, parameters, changes, propose, busy } = useTaxis();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
-  const cells = useMemo(() => planRecipes(h, inventory, naming, parameters, installed, changes), [h, inventory, naming, parameters, installed, changes]);
+  const areaCells = useMemo(() => planRecipes(h, inventory, naming, parameters, installed, changes), [h, inventory, naming, parameters, installed, changes]);
+  const announce = useMemo(() => planAnnounce(h, inventory, naming, parameters, installed, changes), [h, inventory, naming, parameters, installed, changes]);
+  const cells = useMemo(() => [...areaCells, announce], [areaCells, announce]);
   const lines = useMemo(() => {
     const byArea = new Map<string, Line>();
-    for (const c of cells) {
+    for (const c of areaCells) {
       let line = byArea.get(c.areaId);
       if (!line) {
         const floor = h.floors.find((f) => f.id === h.areas[c.areaId]?.floorId);
@@ -116,7 +145,7 @@ export function RecipesTable({ h, installed }: { h: Hierarchy; installed: Recipe
       line.cells[c.recipe] = c;
     }
     return [...byArea.values()];
-  }, [cells, h]);
+  }, [areaCells, h]);
 
   const shown = useMemo(() => lines.filter((l) => Object.values(l.cells).some((c) => matches(c, filter))), [lines, filter]);
   const columns = useMemo(
@@ -131,7 +160,8 @@ export function RecipesTable({ h, installed }: { h: Hierarchy; installed: Recipe
 
   const count = (f: (typeof FILTERS)[number]["key"]) => cells.filter((c) => matches(c, f)).length;
   // Only cells that are on screen and can still be added count as picked.
-  const selectable = rows.flatMap((l) => Object.values(l.cells)).filter((c) => c.actionable);
+  const showHouse = matches(announce, filter);
+  const selectable = [...rows.flatMap((l) => Object.values(l.cells)), ...(showHouse ? [announce] : [])].filter((c) => c.actionable);
   const chosen = selectable.filter((c) => picked.has(keyOf(c)));
   const allChosen = selectable.length > 0 && chosen.length === selectable.length;
 
@@ -175,7 +205,7 @@ export function RecipesTable({ h, installed }: { h: Hierarchy; installed: Recipe
         )}
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && !showHouse ? (
         <p className="text-[13px] text-muted">Nothing here.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-line bg-surface">
@@ -186,42 +216,40 @@ export function RecipesTable({ h, installed }: { h: Hierarchy; installed: Recipe
                 {RECIPES.map((r) => (
                   <SortHeader key={r.key} label={r.label} k={r.key} sort={sort} onToggle={toggle} />
                 ))}
+                <th scope="col" className="px-3 py-2 font-medium">
+                  Announce
+                </th>
               </tr>
             </thead>
             <tbody>
+              {showHouse && (
+                <tr className="border-t border-line align-top">
+                  <th scope="row" className="px-3 py-1.5 text-left font-normal">
+                    House
+                    <div className="text-[11px] text-muted">one script</div>
+                  </th>
+                  {RECIPES.map((r) => (
+                    <td key={r.key} className="px-3 py-1.5 text-muted">
+                      –
+                    </td>
+                  ))}
+                  <td className="px-3 py-1.5">
+                    <CellBox c={announce} label="Announce" areaName="the house" picked={picked} setPicked={setPicked} />
+                  </td>
+                </tr>
+              )}
               {rows.map((l) => (
                 <tr key={l.areaId} className="border-t border-line align-top">
                   <th scope="row" className="px-3 py-1.5 text-left font-normal">
                     {l.areaName}
                     {l.floorName && <div className="text-[11px] text-muted">{l.floorName}</div>}
                   </th>
-                  {RECIPES.map((r) => {
-                    const c = l.cells[r.key];
-                    return (
-                      <td key={r.key} className="px-3 py-1.5">
-                        <div className="flex items-start gap-2">
-                          {c.actionable ? (
-                            <input
-                              type="checkbox"
-                              aria-label={`Add ${r.label} for ${l.areaName}`}
-                              checked={picked.has(keyOf(c))}
-                              onChange={() =>
-                                setPicked((p) => {
-                                  const n = new Set(p);
-                                  if (!n.delete(keyOf(c))) n.add(keyOf(c));
-                                  return n;
-                                })
-                              }
-                              className="mt-0.5 accent-[var(--accent)]"
-                            />
-                          ) : (
-                            <span className="w-[13px] shrink-0" aria-hidden />
-                          )}
-                          <StatusCell cell={c} />
-                        </div>
-                      </td>
-                    );
-                  })}
+                  {RECIPES.map((r) => (
+                    <td key={r.key} className="px-3 py-1.5">
+                      <CellBox c={l.cells[r.key]} label={r.label} areaName={l.areaName} picked={picked} setPicked={setPicked} />
+                    </td>
+                  ))}
+                  <td className="px-3 py-1.5 text-muted">–</td>
                 </tr>
               ))}
             </tbody>

@@ -52,12 +52,12 @@ describe("the definitions", () => {
     expect(PARAMS.map((p) => p.key)).toEqual([...PARAM_KEYS]);
     for (const p of PARAMS) {
       // A list has no value to start from: empty means not set.
-      if (p.kind === "entities") expect(p.default, p.key).toEqual([]);
+      if (p.kind === "entities" || p.kind === "services") expect(p.default, p.key).toEqual([]);
       else expect(checkValue(p, p.default), p.key).toBeNull();
-      expect(["house", "occupancy", "lighting", "media", "climate"]).toContain(p.tab);
+      expect(["house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety"]).toContain(p.tab);
     }
-    expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end", "away_mode_entity", "sleep_mode_entity"]);
-    expect(PARAMS.filter((p) => p.tab === "occupancy").map((p) => p.key)).toEqual(["hold_timeout", "extended_after", "extended_hold", "sleep_hold"]);
+    expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end", "away_mode_entity", "sleep_mode_entity", "notify_targets", "tts_entity"]);
+    expect(PARAMS.filter((p) => p.tab === "occupancy").map((p) => p.key)).toEqual(["hold_timeout", "extended_after", "extended_hold", "sleep_hold", "humidity_hold_rate"]);
     expect(PARAMS.filter((p) => p.tab === "lighting").map((p) => p.key)).toEqual([
       "lux_threshold",
       "day_brightness",
@@ -70,7 +70,7 @@ describe("the definitions", () => {
       "override_duration",
       "entry_lights",
     ]);
-    expect(PARAMS.filter((p) => p.tab === "media").map((p) => p.key)).toEqual(["media_off_after", "tv_off_after"]);
+    expect(PARAMS.filter((p) => p.tab === "media").map((p) => p.key)).toEqual(["media_off_after", "tv_off_after", "announce_volume"]);
     expect(PARAMS.filter((p) => p.tab === "climate").map((p) => p.key)).toEqual([
       "comfort_temp",
       "eco_temp",
@@ -93,6 +93,36 @@ describe("the definitions", () => {
       "preset_away",
       "preset_sleep",
     ]);
+    expect(PARAMS.filter((p) => p.tab === "fan").map((p) => p.key)).toEqual([
+      "fan_rate_on",
+      "fan_delta_on",
+      "fan_abs_on",
+      "fan_delta_off",
+      "fan_flat_minutes",
+      "fan_max_minutes",
+      "fan_reference",
+      "fan_suppress_in_sleep",
+    ]);
+    expect(PARAMS.filter((p) => p.tab === "exterior").map((p) => p.key)).toEqual(["exterior_sunset_offset", "exterior_clock"]);
+    expect(PARAMS.filter((p) => p.tab === "safety").map((p) => p.key)).toEqual([
+      "door_open_after",
+      "window_open_after",
+      "left_open_repeat",
+      "appliance_run_watts",
+      "appliance_run_minutes",
+      "appliance_idle_watts",
+      "appliance_idle_minutes",
+    ]);
+  });
+
+  it("has the defaults of the later recipes", () => {
+    const d = (k: (typeof PARAM_KEYS)[number]) => PARAM_DEF[k].default;
+    expect([d("fan_rate_on"), d("fan_delta_on"), d("fan_abs_on"), d("fan_delta_off"), d("fan_flat_minutes"), d("fan_max_minutes")]).toEqual([0.03, 10, 80, 3, 20, 60]);
+    expect([d("fan_reference"), d("fan_suppress_in_sleep"), d("humidity_hold_rate")]).toEqual(["", false, 0]);
+    expect([d("exterior_sunset_offset"), d("exterior_clock")]).toEqual([0, 120]);
+    expect([d("door_open_after"), d("window_open_after"), d("left_open_repeat")]).toEqual([10, 30, 0]);
+    expect([d("appliance_run_watts"), d("appliance_run_minutes"), d("appliance_idle_watts"), d("appliance_idle_minutes")]).toEqual([10, 2, 5, 3]);
+    expect([d("notify_targets"), d("tts_entity"), d("announce_volume")]).toEqual([[], "", 40]);
   });
 
   it("has the documented defaults", () => {
@@ -399,5 +429,73 @@ describe("entry lights", () => {
     it("reads the choice of the area asked for only", () => {
       expect(entryLights(set(["light.a"]), "living_room", [row("light.a"), row("light.b")]).source).toBe("main");
     });
+  });
+});
+
+describe("parameters of the house only", () => {
+  it("are the notify services, the text-to-speech entity and the announcement volume", () => {
+    expect(PARAMS.filter((p) => p.houseOnly).map((p) => p.key)).toEqual(["notify_targets", "tts_entity", "announce_volume"]);
+  });
+
+  it("are read from the house wherever they are asked, and ignore any other level", () => {
+    const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "announce_volume", 25);
+    for (const scope of [{ level: "area", id: "kitchen" }, { level: "floor", id: "ground" }, { level: "type", id: "exterior" }] as const) {
+      // An edit at another level changes nothing...
+      expect(setParameter(p, scope, "announce_volume", 90)).toBe(p);
+      expect(setParameter(p, scope, "notify_targets", ["notify.a"])).toBe(p);
+    }
+    // ...and a value stored there by hand is not read.
+    const stored: ParameterSettings = { ...p, areas: { kitchen: { announce_volume: 90, notify_targets: ["notify.other"] } } };
+    expect(resolve(stored, h, inv, "kitchen", "announce_volume")).toEqual({ value: 25, source: { level: "house", id: null } });
+    expect(resolve(stored, h, inv, "kitchen", "notify_targets").value).toEqual([]);
+    expect(resolveAll(stored, h, inv, "kitchen").announce_volume).toBe(25);
+    expect(resolveIn(stored, [{ level: "house" }], "announce_volume").value).toBe(25);
+  });
+});
+
+describe("checkValue: notify services", () => {
+  const def = PARAM_DEF.notify_targets;
+
+  it("takes a list of one to twenty notify services, each once", () => {
+    expect(def.kind).toBe("services");
+    expect(checkValue(def, ["notify.mobile_app_phone"])).toBeNull();
+    expect(checkValue(def, ["notify.mobile_app_phone", "notify.family", "notify.notify"])).toBeNull();
+    expect(checkValue(def, Array.from({ length: 20 }, (_, i) => `notify.n${i}`))).toBeNull();
+    for (const bad of [[], ["notify.a", "notify.a"], ["light.a"], ["notify."], ["notify.A"], ["notify.a b"], ["mobile_app_phone"], "notify.a", [1], null, Array.from({ length: 21 }, (_, i) => `notify.n${i}`), ["notify.a\n"], ["notify.a.b"]]) {
+      expect(checkValue(def, bad), JSON.stringify(bad)).toMatch(/must be a list of 1 to 20 notify services/);
+    }
+  });
+
+  it("is set like any list: an empty one is none", () => {
+    const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "notify_targets", ["notify.a"]);
+    expect(p.house.notify_targets).toEqual(["notify.a"]);
+    expect(setParameter(p, { level: "house" }, "notify_targets", [])).toEqual(EMPTY_PARAMETERS);
+    expect(setParameter(p, { level: "house" }, "notify_targets", null)).toEqual(EMPTY_PARAMETERS);
+  });
+});
+
+describe("checkValue: the later recipes", () => {
+  it("holds the fan, exterior and safety values to their ranges and steps", () => {
+    expect(checkValue(PARAM_DEF.fan_rate_on, 0.03)).toBeNull();
+    expect(checkValue(PARAM_DEF.fan_rate_on, 0.0305)).toMatch(/steps of 0.001/);
+    expect(checkValue(PARAM_DEF.fan_rate_on, 0)).toMatch(/between 0.001 and 1/);
+    expect(checkValue(PARAM_DEF.humidity_hold_rate, 0)).toBeNull();
+    expect(checkValue(PARAM_DEF.humidity_hold_rate, 1.001)).toMatch(/between 0 and 1/);
+    expect(checkValue(PARAM_DEF.fan_abs_on, 29)).not.toBeNull();
+    expect(checkValue(PARAM_DEF.fan_delta_off, 0)).toBeNull();
+    expect(checkValue(PARAM_DEF.fan_reference, "sensor.house_humidity")).toBeNull();
+    expect(checkValue(PARAM_DEF.fan_reference, "")).toBeNull();
+    expect(checkValue(PARAM_DEF.fan_reference, "binary_sensor.x")).toMatch(/must be an sensor entity id/);
+    expect(checkValue(PARAM_DEF.exterior_sunset_offset, -120)).toBeNull();
+    expect(checkValue(PARAM_DEF.exterior_sunset_offset, 7)).toMatch(/steps of 5/);
+    expect(checkValue(PARAM_DEF.exterior_sunset_offset, 125)).not.toBeNull();
+    expect(checkValue(PARAM_DEF.left_open_repeat, 0)).toBeNull();
+    expect(checkValue(PARAM_DEF.door_open_after, 0)).not.toBeNull();
+    expect(checkValue(PARAM_DEF.appliance_idle_watts, 0)).toBeNull();
+    expect(checkValue(PARAM_DEF.appliance_run_watts, 0)).not.toBeNull();
+    expect(checkValue(PARAM_DEF.tts_entity, "tts.cloud")).toBeNull();
+    expect(checkValue(PARAM_DEF.tts_entity, "media_player.x")).not.toBeNull();
+    expect(checkValue(PARAM_DEF.announce_volume, 0)).toBeNull();
+    expect(checkValue(PARAM_DEF.announce_volume, 101)).not.toBeNull();
   });
 });

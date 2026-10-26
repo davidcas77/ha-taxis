@@ -19,6 +19,7 @@ export const CAPABILITIES = [
   { key: "speaker", label: "Speakers", short: "Speak." },
   { key: "tv", label: "TVs", short: "TVs" },
   { key: "cover", label: "Covers", short: "Covers" },
+  { key: "fan", label: "Fans", short: "Fans" },
   { key: "power", label: "Power", short: "Power" },
 ] as const;
 
@@ -43,7 +44,9 @@ export const KIND_PAIRS: readonly (readonly [Capability, Capability])[] = [
   ["speaker", "tv"],
 ];
 
-export type EntityChoice = { counts?: boolean; kind?: Capability; role?: MotionRole; light?: LightRole; bed?: boolean };
+// bed: a presence sensor that senses a bed. appliance: a power sensor that is a
+// machine (a washer, an oven) whose end Appliance done reports.
+export type EntityChoice = { counts?: boolean; kind?: Capability; role?: MotionRole; light?: LightRole; bed?: boolean; appliance?: boolean };
 export type AreaChoice = { type?: AreaType; bedroom?: boolean };
 export type InventorySettings = { entities: Record<string, EntityChoice>; areas: Record<string, AreaChoice> };
 
@@ -77,10 +80,13 @@ const SENSOR: Record<string, Capability> = {
   power: "power",
 };
 
+// A switch is listed with the fans but doesn't count until the user says it runs one.
 const DOMAIN: Record<string, Capability> = {
   light: "lights",
   climate: "thermostat",
   cover: "cover",
+  fan: "fan",
+  switch: "fan",
 };
 
 const lookup = (map: Record<string, Capability>, key: string | null): Capability | null => (key !== null && Object.hasOwn(map, key) ? map[key] : null);
@@ -119,13 +125,15 @@ type Candidate = { entity: EntityItem; base: Capability; countsDefault: boolean;
 // not a capability, disabled, or config/diagnostic.
 function candidate(h: Hierarchy, e: EntityItem): Candidate | null {
   if (e.disabled || e.maintenance) return null;
+  // A switch an integration hides (switch_as_x makes a light of it) is not a fan.
+  if (e.domain === "switch" && e.hidden) return null;
   const base = defaultCapability(e);
   if (!base) return null;
   const flags: InventoryFlag[] = [];
   if (isHelper(e)) flags.push("helper");
   if (CAMERA_CAPABILITIES.has(base) && onCameraDevice(h, e)) flags.push("camera");
   if (e.state === "unavailable" || e.state === "unknown") flags.push("unavailable");
-  return { entity: e, base, countsDefault: !flags.includes("helper") && !flags.includes("camera"), flags };
+  return { entity: e, base, countsDefault: !flags.includes("helper") && !flags.includes("camera") && e.domain !== "switch", flags };
 }
 
 const ownChoice = (s: InventorySettings, entityId: string): EntityChoice | undefined => (Object.hasOwn(s.entities, entityId) ? s.entities[entityId] : undefined);
@@ -152,6 +160,8 @@ export type InventoryRow = {
   light?: LightRole;
   // Presence only: a bed sensor.
   bed?: boolean;
+  // Power only: an appliance.
+  appliance?: boolean;
   flags: InventoryFlag[];
   // True when any choice differs from its default.
   overridden: boolean;
@@ -213,6 +223,10 @@ export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string
     if (capability === "presence") {
       row.bed = choice.bed ?? false;
       overridden ||= row.bed;
+    }
+    if (capability === "power") {
+      row.appliance = choice.appliance ?? false;
+      overridden ||= row.appliance;
     }
     row.overridden = overridden;
     out[capability].push(row);
@@ -338,6 +352,8 @@ export function setRole(h: Hierarchy, s: InventorySettings, entityId: string, ro
 export const setLightRole = (s: InventorySettings, entityId: string, light: LightRole): InventorySettings => patchEntity(s, entityId, "light", light, "main");
 
 export const setBed = (s: InventorySettings, entityId: string, bed: boolean): InventorySettings => patchEntity(s, entityId, "bed", bed, false);
+
+export const setAppliance = (s: InventorySettings, entityId: string, appliance: boolean): InventorySettings => patchEntity(s, entityId, "appliance", appliance, false);
 
 // Back to detection, for one entity.
 export function resetEntity(s: InventorySettings, entityId: string): InventorySettings {

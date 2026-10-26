@@ -349,7 +349,7 @@ describe("installing media off, and the override timer", () => {
     // The living room as version 2 left it: the older blueprint and an automation without the newer inputs.
     t.fake.home.blueprints[OCC.path] = OCC.yaml.replace(`Taxis blueprint version ${OCC.version}.`, "Taxis blueprint version 2.");
     const input = (t.fake.home.automations.taxis_occupancy_living.use_blueprint as { input: Record<string, unknown> }).input;
-    for (const key of ["bed_entities", "occupied_entity", "extended_after", "extended_hold", "sleep_hold"]) delete input[key];
+    for (const key of ["bed_entities", "occupied_entity", "extended_after", "extended_hold", "sleep_hold", "rate_entities", "rate_hold"]) delete input[key];
     const c = cell(await t.plan(), "occupancy", "living_room")!;
     expect(c.status).toBe("out-of-date");
     expect(c.reasons).toEqual([
@@ -357,7 +357,8 @@ describe("installing media off, and the override timer", () => {
       "Extended hold timeout (min): none → 15",
       "Sleep hold timeout (min): none → 60",
       "Occupied sensor: none → binary_sensor.living_occupied",
-      "The blueprint is version 2, Taxis has 3",
+      "Shower holds occupied at (%/s): none → 0",
+      `The blueprint is version 2, Taxis has ${OCC.version}`,
     ]);
     t.add(recipeChangeInputs([c]));
     expect(t.store.list().map((x) => `${x.kind}:${x.op}`)).toEqual(["blueprint:update", "automation:update"]);
@@ -500,7 +501,19 @@ describe("what Taxis reads to plan the recipes", () => {
   it("reads only: blueprint versions, Taxis's own automations, timer durations and who else controls each light group and thermostat", async () => {
     const t = demo();
     const installed = await t.installed();
-    expect(installed.blueprints).toEqual({ [OCC.path]: OCC.version, [MOT.path]: null, [MEDIA.path]: null, [CLIMATE.path]: null });
+    // Every Taxis blueprint, null for the ones Home Assistant doesn't have (the script blueprint is read apart).
+    expect(installed.blueprints).toEqual({
+      [OCC.path]: OCC.version,
+      [MOT.path]: null,
+      [MEDIA.path]: null,
+      [CLIMATE.path]: null,
+      "taxis/bathroom_fan.yaml": null,
+      "taxis/exterior_lights.yaml": null,
+      "taxis/left_open.yaml": null,
+      "taxis/appliance_done.yaml": null,
+      "taxis/announce.yaml": null,
+    });
+    expect(installed.scripts).toEqual({});
     expect(Object.keys(installed.automations).sort()).toEqual(["taxis_occupancy_kitchen", "taxis_occupancy_living"]);
     expect(installed.automations.taxis_occupancy_kitchen).toMatchObject({ alias: "Kitchen – Occupancy (Taxis)", path: OCC.path });
     expect(installed.timers["timer.living_hold"]).toBe(300);

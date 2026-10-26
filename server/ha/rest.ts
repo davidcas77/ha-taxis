@@ -4,11 +4,13 @@
 //     the UI, so a renamed entity id can be replaced in them. (Dashboards go over
 //     the WebSocket API.)
 //   - the config flows that create a helper (a group, a min/max, a template
-//     sensor) and change the members of a group, which Home Assistant offers only
-//     over REST. The template flow is for one thing: a recipe's "occupied"
-//     sensor, whose template the change list restricts.
-//   - making and replacing the automation of a recipe (taxis_<recipe>_<area>):
-//     the same config path as the first job, with an id Taxis chooses.
+//     sensor, a derivative sensor) and change the members of a group, which Home
+//     Assistant offers only over REST. The template flow is for one thing: a
+//     recipe's "occupied" sensor, whose template the change list restricts. The
+//     derivative flow is for one thing too: the humidity rate of an area.
+//   - making and replacing the automation of a recipe (taxis_<recipe>_<area>), and
+//     the announce script (taxis_announce): the same config path as the first
+//     job, with an id Taxis chooses.
 //
 // https://developers.home-assistant.io/docs/api/rest
 //
@@ -16,7 +18,7 @@
 // path (and, for starting a flow, by what it starts), nothing else:
 //
 //   GET, POST  /config/(automation|script|scene)/config/<id>
-//   POST       /config/config_entries/flow                  handler "group", "min_max" or "template" only
+//   POST       /config/config_entries/flow                  handler "group", "min_max", "template" or "derivative" only
 //   POST       /config/config_entries/flow/<flow_id>
 //   POST       /config/config_entries/options/flow         handler: a config entry id
 //   POST       /config/config_entries/options/flow/<flow_id>
@@ -48,7 +50,7 @@ const OPTIONS_STEP = new RegExp(`^/config/config_entries/options/flow/${FLOW_ID}
 const ENTRY_ID = new RegExp(`^${FLOW_ID}$`);
 
 // The helpers Taxis starts a config flow for.
-export const FLOW_HANDLERS = ["group", "min_max", "template"] as const;
+export const FLOW_HANDLERS = ["group", "min_max", "template", "derivative"] as const;
 
 const handlerOf = (body: unknown): unknown => (body && typeof body === "object" && !Array.isArray(body) ? (body as { handler?: unknown }).handler : undefined);
 
@@ -61,7 +63,7 @@ export function assertRestRequest(method: string, path: string, body?: unknown):
     if (path === FLOW_START) {
       const handler = handlerOf(body);
       if (!(FLOW_HANDLERS as readonly unknown[]).includes(handler)) {
-        throw new Error(`Refusing to start a config flow for "${String(handler).slice(0, 40)}": Taxis only creates groups, min/max helpers and template sensors.`);
+        throw new Error(`Refusing to start a config flow for "${String(handler).slice(0, 40)}": Taxis only creates groups, min/max helpers, template sensors and derivative sensors.`);
       }
       return;
     }

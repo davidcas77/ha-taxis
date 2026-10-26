@@ -1,4 +1,4 @@
-import { BLUEPRINT_PATH_RE } from "../../shared/blueprints.ts";
+import { ANNOUNCE_PATH, BLUEPRINT_PATH_RE } from "../../shared/blueprints.ts";
 import { DAY_KEYS, MAX_RANGES_PER_DAY } from "../../shared/periods.ts";
 
 // Minimal Home Assistant WebSocket client.
@@ -21,7 +21,8 @@ import { DAY_KEYS, MAX_RANGES_PER_DAY } from "../../shared/periods.ts";
 // its area, and an area's temperature or humidity sensor).
 //
 // Recipes add four writes: blueprint/save, which is checked here (automation
-// blueprints only, at taxis/<name>.yaml, never anywhere else), and timer/create,
+// blueprints at taxis/<name>.yaml, plus the one script blueprint at
+// taxis/announce.yaml, never anywhere else), and timer/create,
 // timer/update and input_boolean/create, the calls Home Assistant's own Helpers
 // page makes for a timer and a toggle. The recipe's automations go through the
 // REST client. One read is added with them, blueprint/list, to see which Taxis
@@ -92,13 +93,20 @@ export const WRITE_COMMANDS = new Set([
 const BLUEPRINT_SAVE_KEYS = new Set(["domain", "path", "yaml", "source_url", "allow_override"]);
 
 // blueprint/save writes a file into Home Assistant's blueprints folder, so what
-// it may write is fixed here: an automation blueprint at taxis/<name>.yaml.
+// it may write is fixed here: an automation blueprint at taxis/<name>.yaml, and
+// the script blueprint at taxis/announce.yaml (the only script Taxis makes).
 function assertBlueprintSave(payload: Record<string, unknown>): void {
   const stray = Object.keys(payload).find((k) => !BLUEPRINT_SAVE_KEYS.has(k));
   if (stray) throw new Error(`Refusing to save a blueprint with "${stray.slice(0, 40)}": it isn't something Taxis sends.`);
-  if (payload.domain !== "automation") throw new Error(`Refusing to save a blueprint for "${String(payload.domain).slice(0, 40)}": Taxis writes automation blueprints only.`);
+  if (payload.domain !== "automation" && payload.domain !== "script") {
+    throw new Error(`Refusing to save a blueprint for "${String(payload.domain).slice(0, 40)}": Taxis writes automation blueprints, and one script blueprint.`);
+  }
   if (typeof payload.path !== "string" || !BLUEPRINT_PATH_RE.test(payload.path)) {
     throw new Error(`Refusing to save a blueprint at "${String(payload.path).slice(0, 80)}": Taxis writes only to taxis/<name>.yaml.`);
+  }
+  // A script blueprint is the announce one and nothing else; announce is not an automation.
+  if ((payload.domain === "script") !== (payload.path === ANNOUNCE_PATH)) {
+    throw new Error(`Refusing to save a ${String(payload.domain)} blueprint at "${payload.path.slice(0, 80)}": the only script blueprint Taxis writes is ${ANNOUNCE_PATH}.`);
   }
   if (typeof payload.yaml !== "string" || payload.yaml.length === 0 || payload.yaml.length > 64 * 1024) throw new Error("Refusing to save a blueprint with no text or too much of it.");
 }

@@ -11,7 +11,7 @@ import { Button, ConfirmAction } from "./ui.tsx";
 
 // The list of changes, in words, and Apply.
 
-const KIND_NAMES: Record<Change["kind"], string> = { entity: "entity", device: "device", area: "area", floor: "floor", label: "label", category: "category", helper: "helper", blueprint: "blueprint", automation: "automation" };
+const KIND_NAMES: Record<Change["kind"], string> = { entity: "entity", device: "device", area: "area", floor: "floor", label: "label", category: "category", helper: "helper", blueprint: "blueprint", automation: "automation", script: "script" };
 
 function nameOf(h: Hierarchy, c: Change): string {
   if (c.op === "create") return String(c.after.name ?? "new");
@@ -34,6 +34,7 @@ function nameOf(h: Hierarchy, c: Change): string {
     case "blueprint":
       return c.targetId;
     case "automation":
+    case "script":
       return String(c.after.alias ?? c.targetId);
   }
 }
@@ -47,7 +48,7 @@ function memberChange(c: Change): { added: string[]; removed: string[] } {
   return { added: now.filter((m) => !was.includes(m)), removed: was.filter((m) => !now.includes(m)) };
 }
 
-const HELPER_KINDS: Record<string, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule" };
+const HELPER_KINDS: Record<string, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule", derivative: "rate sensor" };
 
 const minutes = (seconds: unknown) => `${Number(seconds) / 60} min`;
 
@@ -57,7 +58,7 @@ function helperTitle(h: Hierarchy, c: Change): string {
     const area = typeof c.after.area_id === "string" ? h.areas[c.after.area_id]?.name : undefined;
     const where = `${c.targetId}${area ? ` in ${area}` : ""}`;
     if (c.after.helper === "timer") return `Create timer ${where}: ${minutes(c.after.duration)}`;
-    if (c.after.helper === "input_boolean" || c.after.helper === "template") return `Create ${kind} ${where}`;
+    if (c.after.helper === "input_boolean" || c.after.helper === "template" || c.after.helper === "derivative") return `Create ${kind} ${where}`;
     if (c.after.helper === "schedule") return `Create schedule ${where}: ${describePeriods(String(c.after.periods))}`;
     return `Create ${kind} ${where}: ${plural(((c.after.entities as string[]) ?? []).length, "member")}`;
   }
@@ -69,6 +70,7 @@ function helperTitle(h: Hierarchy, c: Change): string {
 
 function recipeTitle(h: Hierarchy, c: Change): string {
   if (c.kind === "blueprint") return `${c.op === "create" ? "Write" : "Update"} blueprint ${c.targetId}`;
+  if (c.kind === "script") return `${c.op === "create" ? "Install" : "Update"} the Announce script (script.${c.targetId})`;
   const recipe = RECIPE_LABEL[c.after.recipe as keyof typeof RECIPE_LABEL] ?? "recipe";
   const area = h.areas[String(c.after.area_id)]?.name ?? String(c.after.area_id);
   return `${c.op === "create" ? "Install" : "Update"} ${recipe} for ${area}`;
@@ -76,7 +78,7 @@ function recipeTitle(h: Hierarchy, c: Change): string {
 
 function title(h: Hierarchy, c: Change): string {
   if (c.kind === "helper") return helperTitle(h, c);
-  if (c.kind === "blueprint" || c.kind === "automation") return recipeTitle(h, c);
+  if (c.kind === "blueprint" || c.kind === "automation" || c.kind === "script") return recipeTitle(h, c);
   const what = c.kind === "category" && c.scope ? `${SCOPE_NAMES[c.scope].toLowerCase().replace(/s$/, "")} category` : KIND_NAMES[c.kind];
   const verb = c.op === "create" ? "New" : c.op === "delete" ? "Delete" : "Change";
   return `${verb} ${what} “${nameOf(h, c)}”`;
@@ -134,7 +136,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
   const { changes, version, removeChange, clearChanges, reload } = useTaxis();
   const hasRename = changes.some((c) => c.kind === "entity" && c.after.new_entity_id !== undefined);
   const hasHelper = changes.some((c) => c.kind === "helper");
-  const hasRecipe = changes.some((c) => c.kind === "blueprint" || c.kind === "automation");
+  const hasRecipe = changes.some((c) => c.kind === "blueprint" || c.kind === "automation" || c.kind === "script");
   const refs = useReferences(hasRename, version);
   const [step, setStep] = useState<"list" | "confirm" | "confirmNoBackup" | "applying">("list");
   const [error, setError] = useState<string | null>(null);
@@ -184,7 +186,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
           <>
             <ul className="flex flex-col gap-2">
               {changes.map((c) => {
-                const keys = c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" ? [] : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
+                const keys = c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" || c.kind === "script" ? [] : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
                 return (
                   <li key={c.id} className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2.5">
                     <div className="flex items-center gap-2">
@@ -216,7 +218,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                       </dl>
                     )}
                     {c.kind === "helper" && <HelperBody h={h} c={c} />}
-                    {(c.kind === "blueprint" || c.kind === "automation") && <RecipeBody c={c} />}
+                    {(c.kind === "blueprint" || c.kind === "automation" || c.kind === "script") && <RecipeBody c={c} />}
                     {c.op === "delete" && <p className="text-xs text-muted">Home Assistant removes it from everything it's on.</p>}
                     {c.kind === "entity" && c.after.new_entity_id !== undefined && <RenameRefsView refs={refs} changeId={c.id} />}
                   </li>
@@ -249,7 +251,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                 )}
                 {hasRecipe && (
                   <span className="mt-2 block">
-                    Recipes: Taxis saves its blueprint in Home Assistant (under taxis/), makes the helpers the recipe needs, then saves the automation and checks that Home Assistant
+                    Recipes: Taxis saves its blueprint in Home Assistant (under taxis/), makes the helpers the recipe needs, then saves the automation (or the Announce script) and checks that Home Assistant
                     loaded it. Nothing is deleted, and an area's recipes can be paused with its pause switch.
                   </span>
                 )}
@@ -293,6 +295,9 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
     return <p className="text-xs text-muted">Named “{String(c.after.name)}”. On during the comfort periods: {describePeriods(String(c.after.periods))}. Edit the periods here (Parameters, Climate) or in Home Assistant.</p>;
   }
   if (c.op === "update" && "periods" in c.after) return <p className="text-xs text-muted">Replaces the periods of this schedule with the comfort periods setting.</p>;
+  if (c.op === "create" && c.after.helper === "derivative") {
+    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. How fast {((c.after.entities as string[]) ?? []).join(", ")} changes, in % per second, smoothed over two minutes. The Bathroom fan recipe starts on it.</p>;
+  }
   if (c.op === "create" && c.after.helper === "template") {
     return (
       <p className="text-xs text-muted">
@@ -335,7 +340,16 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
   );
 }
 
-// A blueprint, or one recipe's automation with the inputs it fills in.
+// An input's value in a line. A list of objects (the areas of Announce) is told by what each holds.
+function showInput(v: unknown): string {
+  if (Array.isArray(v)) {
+    if (v.length === 0) return "none";
+    return v.map((x) => (x && typeof x === "object" ? Object.values(x as Record<string, unknown>).map((y) => (Array.isArray(y) ? y.join("+") : String(y))).join(" / ") : String(x))).join(", ");
+  }
+  return String(v);
+}
+
+// A blueprint, or one recipe's automation (or the Announce script) with the inputs it fills in.
 function RecipeBody({ c }: { c: Change }) {
   if (c.kind === "blueprint") {
     return <p className="text-xs text-muted">Version {String(c.after.version)}. Taxis writes it once; every area that uses the recipe shares it.</p>;
@@ -350,7 +364,7 @@ function RecipeBody({ c }: { c: Change }) {
         {Object.entries(use.input).map(([k, v]) => (
           <div key={k} className="contents">
             <dt className="text-muted">{k}</dt>
-            <dd className="min-w-0 break-words font-mono">{Array.isArray(v) ? (v.length ? v.join(", ") : "none") : String(v)}</dd>
+            <dd className="min-w-0 break-words font-mono">{showInput(v)}</dd>
           </div>
         ))}
       </dl>

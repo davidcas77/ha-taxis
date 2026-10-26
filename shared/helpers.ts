@@ -75,6 +75,8 @@ export function helperNameErrors(names: HelperNames | undefined): Partial<Record
     if (!HELPER_SUFFIX_RE.test(eff[s.key])) out[s.key] = "Use a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled.";
     // The occupied sensor of the recipes sits on this id.
     else if (s.domain === "binary_sensor" && eff[s.key] === RECIPE_HELPER_SUFFIX.occupied) out[s.key] = "Taxis uses this name for the occupied sensor of the recipes.";
+    // The humidity rate sensor of the Bathroom fan recipe sits on this id.
+    else if (s.domain === "sensor" && eff[s.key] === RECIPE_HELPER_SUFFIX.humidityRate) out[s.key] = "Taxis uses this name for the humidity rate sensor of the recipes.";
   }
   for (const s of HELPERS) {
     if (out[s.key]) continue;
@@ -87,10 +89,10 @@ export function helperNameErrors(names: HelperNames | undefined): Partial<Record
 export const canonicalId = (domain: HelperDomain, code: string, suffix: string) => `${domain}.${code}_${suffix}`;
 
 // The helpers the recipes add to an area (shared/recipes.ts): the hold timer,
-// the occupied sensor, the pause switch, the manual override timer and the
-// climate schedule. Their ids end like this and, unlike the helpers above, the
-// ends are not settings.
-export const RECIPE_HELPER_SUFFIX = { hold: "hold", occupied: "occupied", switch: "paused", override: "override", climate: "climate" } as const;
+// the occupied sensor, the pause switch, the manual override timer, the climate
+// schedule and the humidity rate sensor. Their ids end like this and, unlike the
+// helpers above, the ends are not settings.
+export const RECIPE_HELPER_SUFFIX = { hold: "hold", occupied: "occupied", switch: "paused", override: "override", climate: "climate", humidityRate: "humidity_rate" } as const;
 
 export const helperName = (areaName: string, spec: HelperSpec) => `${areaName} ${spec.nameWord}`;
 

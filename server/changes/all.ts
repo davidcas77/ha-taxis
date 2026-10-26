@@ -3,7 +3,7 @@ import type { HaRest } from "../ha/rest.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
 import { applyChanges, isRename, type Outcome, type Retarget } from "./apply.ts";
 import { applyHelperChanges } from "./helpers.ts";
-import { applyAutomationChanges, applyBlueprintChanges, type RecipeWs } from "./recipes.ts";
+import { applyAutomationChanges, applyBlueprintChanges, applyScriptChanges, type RecipeWs } from "./recipes.ts";
 
 // The whole Apply, in the order that lets each step rely on the one before:
 //
@@ -12,7 +12,8 @@ import { applyAutomationChanges, applyBlueprintChanges, type RecipeWs } from "./
 //   2. blueprints, which an automation made from them needs;
 //   3. helpers: groups, min/max sensors and the recipes' timers, toggles and
 //      template sensors, which may need a new area or a renamed entity;
-//   4. the recipes' automations, whose inputs name the helpers and the blueprint.
+//   4. the recipes' automations, and the announce script, whose inputs name the
+//      helpers and the blueprint.
 //
 // Each step reads Home Assistant back to check what it did. A change that fails
 // doesn't stop the others; the ones that depend on it say so.
@@ -31,9 +32,10 @@ export async function applyAll(pending: Change[], io: ApplyAllIO): Promise<{ res
   const blueprints = await applyBlueprintChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, sleep: io.sleep });
   const helpers = await applyHelperChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, realIds: registry.realIds, renamed, sleep: io.sleep });
   const automations = await applyAutomationChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, renamed, sleep: io.sleep });
+  const scripts = await applyScriptChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, renamed, sleep: io.sleep });
   const results = pending.map(
     (c) =>
-      [registry.results, blueprints, helpers, automations].map((list) => list.find((r) => r.changeId === c.id)).find(Boolean) ?? { changeId: c.id, ok: false, message: "Not sent." },
+      [registry.results, blueprints, helpers, automations, scripts].map((list) => list.find((r) => r.changeId === c.id)).find(Boolean) ?? { changeId: c.id, ok: false, message: "Not sent." },
   );
   return { results, realIds: registry.realIds, retargets: registry.retargets };
 }

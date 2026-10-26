@@ -326,7 +326,7 @@ export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
 const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
 
 // The sub-tabs of the Parameters page. Later stages add more.
-export const PARAMETER_TABS = ["capabilities", "helpers", "house", "occupancy", "lighting", "media", "climate", "recipes"] as const;
+export const PARAMETER_TABS = ["capabilities", "helpers", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety", "recipes"] as const;
 export type ParameterTab = (typeof PARAMETER_TABS)[number];
 
 export type Route =

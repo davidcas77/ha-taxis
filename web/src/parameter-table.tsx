@@ -23,8 +23,9 @@ import type { Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
 
-// The House, Occupancy, Lighting, Media and Climate tabs of the Parameters page: one
-// table per tab, a row for the house, for interior and exterior areas, for each
+// The House, Occupancy, Lighting, Media, Climate, Bathroom fan, Exterior and Safety
+// tabs of the Parameters page: one table per tab, a row for the house, for interior
+// and exterior areas, for each
 // floor and for each area, and a column per parameter. A cell shows the value set
 // at that level, or the one it inherits in grey with where it comes from. Click a
 // cell to set it (a yes/no flips at once); empty it to inherit again. Saved at
@@ -32,13 +33,20 @@ import { SortHeader, useSort } from "./table.tsx";
 
 const NOTES: Record<ParamTab, string> = {
   house:
-    "When night starts and ends. The lights use the night brightness and colour inside this window, and Area climate its night temperature. The away and sleep mode switches are the toggles Area climate reads: leave them empty and Taxis makes its own (input_boolean.taxis_away and taxis_sleep) when it installs Area climate, or pick toggles you already have.",
-  occupancy: "How long an area stays occupied after its sensors last changed: normally, once it has been occupied for a long time (extended), and while someone is in bed (bedrooms with a bed sensor).",
+    "When night starts and ends. The lights use the night brightness and colour inside this window, and Area climate its night temperature. The away and sleep mode switches are the toggles Area climate reads: leave them empty and Taxis makes its own (input_boolean.taxis_away and taxis_sleep) when it installs Area climate, or pick toggles you already have. Notify services (separate them with commas, like notify.mobile_app_phone) are where Left open and Appliance done send their messages; left empty, the messages appear in Home Assistant's own notifications. The text-to-speech entity is what Announce speaks with. Both are set for the house only.",
+  occupancy:
+    "How long an area stays occupied after its sensors last changed: normally, once it has been occupied for a long time (extended), and while someone is in bed (bedrooms with a bed sensor). A shower holds the area occupied when the humidity rises at least this fast (in % per second; 0 is off): it needs the area's humidity rate sensor, which the Bathroom fan recipe makes.",
   lighting:
     "How the lights come on and go off. Brightness, colour, light level and timing. Manual override: how long the automation leaves an area alone after a light is changed by hand; 0 is until the area next clears. Entry lights: the lights that come on by day when the area becomes occupied. They are set for one area only and never inherited; left empty, the area's only light, or else its main lights, is used (shown in grey as suggested).",
-  media: "How long an area is clear before its speakers and its TVs are turned off.",
+  media: "How long an area is clear before its speakers and its TVs are turned off. The announcement volume is what Announce speaks at when it is not given one (0 leaves the volume as it is); it is set for the house only.",
   climate:
     "Area climate sets an area's thermostats by fixed rules, first match wins: a window open for a while (frost protection, or off), away mode, sleep, the night window, comfort while the comfort periods are on and the area is occupied, eco otherwise. Temperatures are in the unit Home Assistant uses and stay between lowest and highest. Comfort periods are days, then times, like Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00 (the end can be 23:59 at the latest). Presets are the thermostat's own names, offered from what each thermostat reports; a thermostat that has one gets the preset, the others a temperature. Switch on and off itself lets Area climate switch a thermostat on, and a window switch it off; otherwise a thermostat that is off is left alone. A bedroom needs no one in the room for comfort unless you set it. Cooling uses the same temperatures.",
+  fan:
+    "The Bathroom fan starts when the humidity rises at least this fast, is this far above the reference sensor, or reaches this level, and stops when it is back within this of the reference (without a reference sensor, of where it started), when the rate has been flat for this long, or after at most this long. The reference is another area's humidity sensor or a house average, picked here; left empty, only the rise rate and the humidity level start the fan. Rates are in % of humidity per second.",
+  exterior:
+    "Exterior lights, for areas whose type is exterior: the lights go on at sunset (moved by this many minutes; negative is earlier), stay on for the time shown, and the time starts again at every motion or person arriving home. At sunrise they go off.",
+  safety:
+    "Left open reports a door or a window that stays open: after the time shown, and again every so often if you set a repeat (0 is once). Appliance done reports a machine that has finished: a power sensor marked as an appliance on the Capabilities tab that stays above the running level for the running time is running, and it is done once it stays below the done level for the done time. Levels are in watts.",
 };
 
 const SCOPE_NOTE =
@@ -49,11 +57,11 @@ const header = (d: ParamDef) => (d.unit ? `${d.label} (${d.unit})` : d.label);
 const rowKey = (r: ParamRow) => `${r.scope.level}:${"id" in r.scope ? r.scope.id : ""}`;
 
 // What the box takes: a time, a number in the parameter's range, a word, an entity
-// id or comfort periods (kept in one spelling).
+// id, a list of notify services or comfort periods (kept in one spelling).
 function parseInput(def: ParamDef, text: string): { value: ParamValue | null } | { error: string } {
   const t = text.trim();
   if (t === "") return { value: null };
-  const value = def.kind === "number" ? Number(t) : t;
+  const value = def.kind === "number" ? Number(t) : def.kind === "services" ? t.split(/[\s,;]+/).filter(Boolean) : t;
   const problem = checkValue(def, value);
   if (problem) return { error: problem };
   return { value: def.kind === "periods" ? canonicalPeriods(t)! : value };
@@ -151,7 +159,7 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
   }
 
   if (editing) {
-    const wide = def.kind === "periods" || def.kind === "entity";
+    const wide = def.kind === "periods" || def.kind === "entity" || def.kind === "services";
     return (
       <>
         <input
@@ -313,7 +321,9 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       </th>
       {defs.map((d) => (
         <td key={d.key} className="px-3 py-1.5">
-          {d.kind === "entities" ? (
+          {d.houseOnly && r.scope.level !== "house" ? (
+            <span className="px-1.5 text-muted" title="Set for the house only: it is not set for a floor, an area or the interior or exterior areas">—</span>
+          ) : d.kind === "entities" ? (
             <EntryLightsCell h={h} row={r} def={d} editing={editing === `${rowKey(r)}|${d.key}`} onEdit={(on) => setEditing(on ? `${rowKey(r)}|${d.key}` : null)} />
           ) : (
             <Cell h={h} row={r} def={d} editing={editing === `${rowKey(r)}|${d.key}`} onEdit={(on) => setEditing(on ? `${rowKey(r)}|${d.key}` : null)} />

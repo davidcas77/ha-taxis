@@ -9,6 +9,7 @@ import {
   inventoryMatrix,
   matrixTotals,
   resetEntity,
+  setAppliance,
   setAreaType,
   setBed,
   setBedroom,
@@ -266,6 +267,9 @@ const FLAGS: Record<InventoryFlag, { label: string; hint: string; tone: string }
 // What each motion and presence role means, shown once above the rows.
 const ROLE_HINT = "Starts: turns the room occupied. Holds: keeps an occupied room occupied, but doesn't start it.";
 
+const FAN_HINT = "A fan counts by default. A switch is listed too but doesn't count: tick Counts on the ones that run a fan, so the Bathroom fan recipe can switch them.";
+const APPLIANCE_HINT = "Tick Appliance on the power sensors of machines (a washer, an oven): Appliance done tells you when one has finished. The levels are in watts.";
+
 const SWITCHABLE: Partial<Record<Capability, [Capability, Capability]>> = {
   door: ["door", "window"],
   window: ["door", "window"],
@@ -332,6 +336,8 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
               {c.label} · {counted} of {rows.length} count{rows.length === 1 ? "s" : ""}
             </h2>
             {(c.key === "motion" || c.key === "presence") && <p className="text-xs text-muted">{ROLE_HINT}</p>}
+            {c.key === "fan" && <p className="text-xs text-muted">{FAN_HINT}</p>}
+            {c.key === "power" && <p className="text-xs text-muted">{APPLIANCE_HINT}</p>}
             {c.key === "lights" && <EntryLightPicker area={area} rows={rows} />}
             <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
               {rows.map((r) => (
@@ -439,6 +445,19 @@ function CapabilityRow({ h, row, locked, run }: { h: Hierarchy; row: InventoryRo
               className="accent-[var(--accent)]"
             />
             Bed
+          </label>
+        )}
+        {row.capability === "power" && (
+          <label className="flex cursor-pointer items-center gap-1.5">
+            <input
+              type="checkbox"
+              aria-label={`Appliance: ${row.name}`}
+              checked={row.appliance ?? false}
+              disabled={locked}
+              onChange={(ev) => void run((s) => setAppliance(s, row.entityId, ev.target.checked))}
+              className="accent-[var(--accent)]"
+            />
+            Appliance
           </label>
         )}
         {pair && (

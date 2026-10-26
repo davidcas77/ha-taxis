@@ -12,20 +12,43 @@
 // Nothing here is read from the user: the change list names a path and a
 // version, and Apply writes the text of that path from this file.
 
-export const RECIPE_KEYS = ["occupancy", "motion_lights", "media_off", "area_climate"] as const;
+export const RECIPE_KEYS = ["occupancy", "motion_lights", "media_off", "area_climate", "bathroom_fan", "exterior_lights", "left_open", "appliance_done", "announce"] as const;
 export type RecipeKey = (typeof RECIPE_KEYS)[number];
+
+// The recipes that are an automation for one area. Announce is the exception: one
+// script for the whole house.
+export type AreaRecipeKey = Exclude<RecipeKey, "announce">;
 
 // Where blueprints may be written: taxis/<name>.yaml, nowhere else.
 export const BLUEPRINT_PATH_RE = /^taxis\/[a-z0-9_]+\.yaml$/;
 
-// domain: for an entity input, the domain its entity ids are in. options: for a
-// select, the words it takes. A text is a short line (a preset name, the
-// comfort periods).
-export type BlueprintInput = { kind: "entity" | "entities" | "number" | "time" | "boolean" | "text" | "select"; required: boolean; domain?: string; options?: readonly string[] };
+// The one script blueprint, and the id of the script made from it
+// (script.taxis_announce).
+export const ANNOUNCE_PATH = "taxis/announce.yaml";
+export const ANNOUNCE_SCRIPT_ID = "taxis_announce";
+
+// domain: for an entity input, the domain (or domains) its entity ids are in.
+// options: for a select, the words it takes. A text is a short line (a preset
+// name, the comfort periods). services: a list of notify services
+// ("notify.mobile_app_x"), which are service names, not entities. objects: a list
+// of plain objects whose fields (`item`) are entity ids or lists of them.
+export type ObjectField = { kind: "entity" | "entities"; domain: string };
+export type BlueprintInput = {
+  kind: "entity" | "entities" | "number" | "time" | "boolean" | "text" | "select" | "services" | "objects";
+  required: boolean;
+  domain?: string | readonly string[];
+  options?: readonly string[];
+  item?: Readonly<Record<string, ObjectField>>;
+};
+
+// The domains an input's entities may be in.
+export const domainsOf = (spec: Pick<BlueprintInput, "domain">): readonly string[] => (spec.domain === undefined ? [] : typeof spec.domain === "string" ? [spec.domain] : spec.domain);
 
 export type BlueprintInfo = {
   path: string;
   recipe: RecipeKey;
+  // The kind of Home Assistant object it is the blueprint of.
+  domain: "automation" | "script";
   version: number;
   yaml: string;
   // The inputs the blueprint declares. A test keeps this list and the text the same.
@@ -60,7 +83,7 @@ const OCCUPANCY_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Keeps an area occupied with a hold timer. A sensor that starts occupancy turning on starts the timer. While the timer runs, every change of a sensor starts it again, and a sensor that only holds occupancy turning on keeps it running but never starts it. When the timer runs out and a sensor is still on, it starts again. The timer is as long as the sleep hold timeout while a bed sensor is on, as the extended hold timeout once the area has been occupied for the extended time (read from when the occupied sensor last changed), and as the hold timeout otherwise. Sensors going unavailable or unknown are ignored. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 3."
+  description: "Keeps an area occupied with a hold timer. A sensor that starts occupancy turning on starts the timer. While the timer runs, every change of a sensor starts it again, and a sensor that only holds occupancy turning on keeps it running but never starts it. When the timer runs out and a sensor is still on, it starts again. The timer is as long as the sleep hold timeout while a bed sensor is on, as the extended hold timeout once the area has been occupied for the extended time (read from when the occupied sensor last changed), and as the hold timeout otherwise. A humidity rate sensor can hold the area too: while the timer runs, a rate at or above the humidity rise that holds (for instance a shower) starts the timer again, but never starts it. Sensors going unavailable or unknown are ignored. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 4."
   input:
     starts_entities:
       name: Sensors that start occupancy
@@ -88,6 +111,26 @@ const OCCUPANCY_YAML = `blueprint:
           filter:
             - domain: binary_sensor
           multiple: true
+    rate_entities:
+      name: Humidity rate sensor
+      description: Optional. A sensor of how fast the humidity changes (in % per second). While the hold timer runs, a rate at or above the humidity rise that holds keeps the area occupied, but never starts it.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+          multiple: true
+    rate_hold:
+      name: Humidity rise that holds
+      description: A humidity rate at or above this, in % per second, counts as someone being there (a shower). 0 turns it off.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.001
+          unit_of_measurement: "%/s"
+          mode: box
     occupied_entity:
       name: Occupied sensor
       description: The sensor that is on while the hold timer runs. When it last changed tells how long the area has been occupied.
@@ -159,8 +202,11 @@ variables:
   starts_entities: !input starts_entities
   holds_entities: !input holds_entities
   bed_entities: !input bed_entities
+  rate_entities: !input rate_entities
+  rate_hold: !input rate_hold
   occupied_entity: !input occupied_entity
   asleep: "{{ (bed_entities | select('is_state', 'on') | list | count) > 0 }}"
+  rate_high: "{% set ns = namespace(hit=false) %}{% for e in rate_entities %}{% if (states(e) | float(0)) >= (rate_hold | float(0)) %}{% set ns.hit = true %}{% endif %}{% endfor %}{{ ns.hit and (rate_hold | float(0)) > 0 }}"
   extended: "{{ is_state(occupied_entity, 'on') and (now() - states[occupied_entity].last_changed).total_seconds() >= (extended_after | float) * 60 }}"
   minutes: "{{ (sleep_hold if asleep else (extended_hold if extended else hold_minutes)) | int }}"
 triggers:
@@ -184,6 +230,11 @@ triggers:
     entity_id: !input holds_entities
     from: "on"
     to: "off"
+  # Any change of the humidity rate: the conditions below let it through only
+  # while the timer runs and the rate is high enough.
+  - trigger: state
+    id: rate_changed
+    entity_id: !input rate_entities
   - trigger: event
     id: timer_finished
     event_type: timer.finished
@@ -209,9 +260,18 @@ actions:
           - condition: and
             conditions:
               - condition: trigger
+                id: rate_changed
+              - condition: state
+                entity_id: !input hold_timer
+                state: active
+              - condition: template
+                value_template: "{{ rate_high }}"
+          - condition: and
+            conditions:
+              - condition: trigger
                 id: timer_finished
               - condition: template
-                value_template: "{{ (starts_entities + holds_entities + bed_entities) | select('is_state', 'on') | list | count > 0 }}"
+                value_template: "{{ rate_high or ((starts_entities + holds_entities + bed_entities) | select('is_state', 'on') | list | count) > 0 }}"
     then:
       - action: timer.start
         target:
@@ -1268,16 +1328,809 @@ actions:
                                     temperature: "{{ goal }}"
 `;
 
+// ---------------------------------------------------------------------------
+// Bathroom fan: the fan runs while the room is steamed up.
+//
+// One run per cycle (mode single), which is what lets it remember the humidity it
+// started from without any helper:
+//   on   the humidity rises at least as fast as the rise rate, or is at least the
+//        delta above the reference sensor, or is at least the absolute level. The
+//        reference is a sensor of another area or of the house; without one, only
+//        the rise rate and the absolute level start the fan.
+//   off  the humidity is back within the off delta of the reference (without a
+//        reference: of the humidity the fan started at) and no longer rising fast,
+//        or the rate has been flat for the flat time, or the fan has run for the
+//        maximum time.
+// The rate is a derivative helper (sensor.<code>_humidity_rate, in % per second).
+// A fan that is already on is left alone, and with the sleep option nothing starts
+// while the house sleeps. After a Home Assistant restart in the middle of a cycle
+// the run is gone and the fan stays on until it is turned off by hand.
+// ---------------------------------------------------------------------------
+
+const BATHROOM_FAN_YAML = `blueprint:
+  name: Taxis bathroom fan
+  domain: automation
+  author: Taxis
+  homeassistant:
+    min_version: 2024.10.0
+  description: "Runs the fan of an area while it is steamed up. The fan goes on when the humidity rises at least as fast as the rise rate, when it is at least the delta above the reference sensor, or when it is at least the absolute level. It goes off when the humidity is back within the off delta of the reference (or, with no reference sensor, of the humidity when the fan started) and no longer rising fast, when the rate has been flat for the flat time, or after the maximum time. A fan that is already on is left alone, and with the sleep option nothing starts while the sleep switch is on. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  input:
+    humidity_entity:
+      name: Humidity sensor
+      description: The area's humidity sensor.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: humidity
+    rate_entity:
+      name: Humidity rate sensor
+      description: How fast the humidity changes, in % per second (a derivative helper).
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+    reference_entity:
+      name: Reference humidity sensor
+      description: Optional. The humidity of another area, or the house average, to compare with. Leave empty to start on the rise rate and the absolute level only.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: humidity
+    fan_entities:
+      name: Fan
+      description: The fan, or the switch that runs it.
+      selector:
+        entity:
+          filter:
+            - domain: fan
+            - domain: switch
+          multiple: true
+    rate_on:
+      name: Rise rate that starts the fan
+      description: The fan goes on when the humidity rises at least this fast.
+      default: 0.03
+      selector:
+        number:
+          min: 0.001
+          max: 1
+          step: 0.001
+          unit_of_measurement: "%/s"
+          mode: box
+    delta_on:
+      name: Above the reference that starts the fan
+      description: The fan goes on when the humidity is at least this far above the reference sensor.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 50
+          unit_of_measurement: "%"
+          mode: box
+    abs_on:
+      name: Humidity that starts the fan
+      description: The fan goes on when the humidity is at least this.
+      default: 80
+      selector:
+        number:
+          min: 30
+          max: 100
+          unit_of_measurement: "%"
+          mode: box
+    delta_off:
+      name: Within the reference that stops the fan
+      description: The fan goes off when the humidity is back within this of the reference.
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 30
+          unit_of_measurement: "%"
+          mode: box
+    flat_rate:
+      name: Flat rate
+      description: A rate within this of zero, in % per second, counts as flat.
+      default: 0.001
+      selector:
+        number:
+          min: 0
+          max: 0.1
+          step: 0.001
+          unit_of_measurement: "%/s"
+          mode: box
+    flat_minutes:
+      name: Flat for
+      description: The fan goes off when the rate has been flat this long.
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 240
+          unit_of_measurement: min
+          mode: box
+    max_minutes:
+      name: Runs for at most
+      description: The fan goes off after this long, whatever the humidity does.
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 480
+          unit_of_measurement: min
+          mode: box
+    suppress_in_sleep:
+      name: Not while the house sleeps
+      description: When on, the fan does not start while the sleep switch is on.
+      default: false
+      selector:
+        boolean: {}
+    sleep_entity:
+      name: Sleep switch
+      description: Optional. On while the house sleeps. Used only with the option above.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    pause_switch:
+      name: Pause switch
+      description: Turn it on to pause this automation for the area.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+mode: single
+max_exceeded: silent
+trigger_variables:
+  humidity_entity: !input humidity_entity
+  rate_entity: !input rate_entity
+  reference_entity: !input reference_entity
+  rate_on: !input rate_on
+  delta_on: !input delta_on
+  abs_on: !input abs_on
+variables:
+  humidity_entity: !input humidity_entity
+  rate_entity: !input rate_entity
+  reference_entity: !input reference_entity
+  fan_entities: !input fan_entities
+  rate_on: !input rate_on
+  delta_off: !input delta_off
+  flat_rate: !input flat_rate
+  suppress_in_sleep: !input suppress_in_sleep
+  sleep_entity: !input sleep_entity
+triggers:
+  # The template turning true starts a cycle; it does not start another until it
+  # has been false in between.
+  - trigger: template
+    id: steamy
+    value_template: "{% set h = states(humidity_entity) | float(none) %}{% set r = states(rate_entity) | float(none) %}{% set ref = states(reference_entity) | float(none) if reference_entity != '' else none %}{{ h is not none and (h >= abs_on | float(100) or (r is not none and r >= rate_on | float(1)) or (ref is not none and h >= ref + delta_on | float(100))) }}"
+conditions:
+  - condition: state
+    entity_id: !input pause_switch
+    state: "off"
+  - condition: template
+    value_template: "{{ not (suppress_in_sleep and sleep_entity != '' and is_state(sleep_entity, 'on')) }}"
+  - condition: template
+    value_template: "{{ (fan_entities | select('is_state', 'on') | list | count) == 0 }}"
+actions:
+  - variables:
+      baseline: "{{ states(humidity_entity) | float(0) }}"
+  - action: homeassistant.turn_on
+    continue_on_error: true
+    target:
+      entity_id: !input fan_entities
+  # Whichever comes first: back near the reference, a flat rate for long enough, or the time limit.
+  - wait_for_trigger:
+      - trigger: template
+        id: dry
+        value_template: "{% set ref = states(reference_entity) | float(none) if reference_entity != '' else none %}{% set base = ref if ref is not none else baseline %}{% set h = states(humidity_entity) | float(none) %}{% set r = states(rate_entity) | float(none) %}{{ h is not none and h <= base + (delta_off | float(3)) and (r is none or r < (rate_on | float(0.03))) }}"
+      - trigger: template
+        id: flat
+        value_template: "{% set r = states(rate_entity) | float(none) %}{{ r is not none and (r | abs) <= (flat_rate | float(0.001)) }}"
+        for:
+          minutes: !input flat_minutes
+    timeout:
+      minutes: !input max_minutes
+    continue_on_timeout: true
+  - action: homeassistant.turn_off
+    continue_on_error: true
+    target:
+      entity_id: !input fan_entities
+`;
+
+// ---------------------------------------------------------------------------
+// Exterior lights: the lights of an outdoor area follow the sun and the activity.
+//
+//   sunset (plus the offset)    the lights go on and a clock of clock_minutes starts
+//   motion, a person arriving   the lights go on if they are off, and the clock
+//                               starts again (mode restart)
+//   the clock runs out          the lights go off
+//   sunrise                     the lights go off, an override ends
+//   daytime                     nothing starts
+// A light changed by hand starts the override timer, as in Motion lights: while it
+// runs the automation leaves the area alone. A restart of Home Assistant while the
+// clock runs starts a new clock if the lights are still on.
+// ---------------------------------------------------------------------------
+
+const EXTERIOR_LIGHTS_YAML = `blueprint:
+  name: Taxis exterior lights
+  domain: automation
+  author: Taxis
+  homeassistant:
+    min_version: 2024.10.0
+  description: "Switches the lights of an outdoor area on at sunset (moved by the offset) and off again after the clock time. Motion, a camera seeing motion or a person arriving home turns the lights on during the night and starts the clock again. At sunrise they go off, and in daytime nothing starts. A light changed by hand stops this automation for the area until the override timer runs out or the sun rises. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  input:
+    light_target:
+      name: Light group
+      description: All the lights of the area.
+      selector:
+        entity:
+          filter:
+            - domain: light
+    motion_entities:
+      name: Motion sensors
+      description: Optional. Motion or presence sensors, camera sensors included. Any of them turning on during the night turns the lights on and starts the clock again.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+          multiple: true
+    person_entities:
+      name: People
+      description: Optional. Any of them arriving home during the night turns the lights on and starts the clock again.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: person
+          multiple: true
+    sunset_offset:
+      name: Sunset offset
+      description: Seconds from sunset when the lights go on. Negative is before sunset.
+      default: 0
+      selector:
+        number:
+          min: -7200
+          max: 7200
+          step: 60
+          unit_of_measurement: s
+          mode: box
+    clock_minutes:
+      name: Stay on for
+      description: How long the lights stay on after sunset, or after the last motion or arrival.
+      default: 120
+      selector:
+        number:
+          min: 1
+          max: 720
+          unit_of_measurement: min
+          mode: box
+    override_timer:
+      name: Override timer
+      description: Runs while a light changed by hand keeps this automation out of the area.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+    override_minutes:
+      name: Manual override lasts
+      description: How long a light changed by hand keeps this automation out of the area. 0 lasts until sunrise.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 240
+          unit_of_measurement: min
+          mode: box
+    pause_switch:
+      name: Pause switch
+      description: Turn it on to pause this automation for the area.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+mode: restart
+variables:
+  light_target: !input light_target
+  override_minutes: !input override_minutes
+triggers:
+  - trigger: homeassistant
+    id: start
+    event: start
+  - trigger: sun
+    id: sunset
+    event: sunset
+    offset: !input sunset_offset
+  - trigger: sun
+    id: sunrise
+    event: sunrise
+  - trigger: state
+    id: activity
+    entity_id: !input motion_entities
+    to: "on"
+  - trigger: state
+    id: activity
+    entity_id: !input person_entities
+    to: home
+  # Any change of the light group; the conditions below let only a manual one through.
+  - trigger: state
+    id: manual
+    entity_id: !input light_target
+  - trigger: event
+    id: override_end
+    event_type: timer.finished
+    event_data:
+      entity_id: !input override_timer
+conditions:
+  - condition: state
+    entity_id: !input pause_switch
+    state: "off"
+  - condition: or
+    conditions:
+      - condition: not
+        conditions:
+          - condition: trigger
+            id: manual
+      - condition: template
+        value_template: "{% set c = trigger.to_state.context if trigger.to_state else none %}{% set own = this.context.id if (this is defined and this and this.context is defined and this.context) else none %}{% set flipped = trigger.from_state is not none and trigger.to_state is not none and trigger.from_state.state in ['on', 'off'] and trigger.to_state.state in ['on', 'off'] and trigger.from_state.state != trigger.to_state.state %}{{ c is not none and c.id != own and (c.user_id is not none or (flipped and c.parent_id is none)) }}"
+actions:
+  - choose:
+      # A light was changed by hand: leave the area alone.
+      - conditions:
+          - condition: trigger
+            id: manual
+        sequence:
+          - action: timer.start
+            target:
+              entity_id: !input override_timer
+            data:
+              duration: "{% set m = (override_minutes | int(0)) if (override_minutes | int(0)) > 0 else 1440 %}{{ '%02d:%02d:00' | format(m // 60, m % 60) }}"
+      # Sunrise: the override ends and the lights go off.
+      - conditions:
+          - condition: trigger
+            id: sunrise
+        sequence:
+          - if:
+              - condition: state
+                entity_id: !input override_timer
+                state: active
+            then:
+              - action: timer.cancel
+                target:
+                  entity_id: !input override_timer
+          - if:
+              - condition: state
+                entity_id: !input light_target
+                state: "on"
+            then:
+              - action: light.turn_off
+                target:
+                  entity_id: !input light_target
+    # Sunset, motion, a person arriving, a restart, the end of an override: during
+    # the night, lights on (unless this is only a restart or an override ending,
+    # which wait for lights that are already on), then the clock, then off.
+    default:
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: !input override_timer
+            state: active
+      - condition: or
+        conditions:
+          - condition: sun
+            after: sunset
+            after_offset: !input sunset_offset
+          - condition: sun
+            before: sunrise
+      - condition: template
+        value_template: "{{ trigger.id in ['sunset', 'activity'] or is_state(light_target, 'on') }}"
+      - if:
+          - condition: state
+            entity_id: !input light_target
+            state: "off"
+        then:
+          - action: light.turn_on
+            target:
+              entity_id: !input light_target
+      - delay:
+          minutes: !input clock_minutes
+      - if:
+          - condition: state
+            entity_id: !input light_target
+            state: "on"
+        then:
+          - action: light.turn_off
+            target:
+              entity_id: !input light_target
+`;
+
+// ---------------------------------------------------------------------------
+// Left open: a door or a window that has stayed open is reported.
+//
+// One run per opening (mode parallel). Each opening is its own trigger, so the
+// message can name it and a second door opening later is not hidden by the first.
+// With a repeat time the message is sent again until the opening closes.
+// ---------------------------------------------------------------------------
+
+const LEFT_OPEN_YAML = `blueprint:
+  name: Taxis left open
+  domain: automation
+  author: Taxis
+  homeassistant:
+    min_version: 2024.10.0
+  description: "Reports a door that has been open for the door time, or a window that has been open for the window time. The message goes to every notify service in the list, or to Home Assistant's notifications when the list is empty. With a repeat time it is sent again until the opening closes. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  input:
+    door_entities:
+      name: Doors
+      description: Optional. The door sensors of the area.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+          multiple: true
+    window_entities:
+      name: Windows
+      description: Optional. The window sensors of the area.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+          multiple: true
+    door_minutes:
+      name: Door open for
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    window_minutes:
+      name: Window open for
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    repeat_minutes:
+      name: Repeat every
+      description: How often the message is sent again while the opening stays open. 0 sends it once.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    notify_targets:
+      name: Notify services
+      description: Optional. Notify services such as notify.mobile_app_phone. Empty sends a notification in Home Assistant.
+      default: []
+      selector:
+        text:
+          multiple: true
+    area_name:
+      name: Area name
+      description: Optional. Starts the title of the message.
+      default: ""
+      selector:
+        text: {}
+    pause_switch:
+      name: Pause switch
+      description: Turn it on to pause this automation for the area.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+mode: parallel
+max: 20
+max_exceeded: silent
+variables:
+  notify_targets: !input notify_targets
+  repeat_minutes: !input repeat_minutes
+  area_name: !input area_name
+triggers:
+  - trigger: state
+    id: door
+    entity_id: !input door_entities
+    to: "on"
+    for:
+      minutes: !input door_minutes
+  - trigger: state
+    id: window
+    entity_id: !input window_entities
+    to: "on"
+    for:
+      minutes: !input window_minutes
+conditions:
+  - condition: state
+    entity_id: !input pause_switch
+    state: "off"
+actions:
+  - variables:
+      opening: "{{ trigger.entity_id }}"
+      title: "{{ area_name if area_name != '' else 'Taxis' }}: {{ 'door' if trigger.id == 'door' else 'window' }} left open"
+  - repeat:
+      sequence:
+        - variables:
+            open_for: "{{ ((now() - states[opening].last_changed).total_seconds() // 60) | int }}"
+            text: "{{ state_attr(opening, 'friendly_name') or opening }} has been open for {{ open_for }} minutes."
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ (notify_targets | count) > 0 }}"
+              sequence:
+                - repeat:
+                    for_each: "{{ notify_targets }}"
+                    sequence:
+                      - action: "{{ repeat.item }}"
+                        continue_on_error: true
+                        data:
+                          title: "{{ title }}"
+                          message: "{{ text }}"
+          default:
+            - action: persistent_notification.create
+              data:
+                title: "{{ title }}"
+                message: "{{ text }}"
+                notification_id: "taxis_left_open_{{ opening | replace('.', '_') }}"
+        - if:
+            - condition: template
+              value_template: "{{ (repeat_minutes | int(0)) > 0 }}"
+          then:
+            - wait_template: "{{ not is_state(opening, 'on') }}"
+              timeout:
+                minutes: "{{ repeat_minutes | int(0) }}"
+              continue_on_timeout: true
+      until: "{{ (repeat_minutes | int(0)) == 0 or not is_state(opening, 'on') }}"
+`;
+
+// ---------------------------------------------------------------------------
+// Appliance done: a power sensor tells when a machine has finished.
+//
+// One run per cycle (mode parallel): the power staying above the run level for the
+// run time starts it, and it ends when the power has stayed below the idle level
+// for the idle time. A cycle that is interrupted for longer than the idle time
+// counts as finished; two cycles that overlap on the same machine are told twice.
+// The levels are in the unit of the sensor, which should be watts.
+// ---------------------------------------------------------------------------
+
+const APPLIANCE_DONE_YAML = `blueprint:
+  name: Taxis appliance done
+  domain: automation
+  author: Taxis
+  homeassistant:
+    min_version: 2024.10.0
+  description: "Reports when an appliance has finished. It is running once its power sensor has stayed above the run level for the run time, and finished once the power has stayed below the idle level for the idle time. The message names the appliance and goes to every notify service in the list, or to Home Assistant's notifications when the list is empty. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  input:
+    power_entities:
+      name: Power sensors
+      description: The power sensors of the appliances, in watts.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: power
+          multiple: true
+    run_watts:
+      name: Running above
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 10000
+          unit_of_measurement: W
+          mode: box
+    run_minutes:
+      name: Running for
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: min
+          mode: box
+    idle_watts:
+      name: Finished below
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 10000
+          unit_of_measurement: W
+          mode: box
+    idle_minutes:
+      name: Finished for
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: min
+          mode: box
+    notify_targets:
+      name: Notify services
+      description: Optional. Notify services such as notify.mobile_app_phone. Empty sends a notification in Home Assistant.
+      default: []
+      selector:
+        text:
+          multiple: true
+    area_name:
+      name: Area name
+      description: Optional. Starts the title of the message.
+      default: ""
+      selector:
+        text: {}
+    pause_switch:
+      name: Pause switch
+      description: Turn it on to pause this automation for the area.
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+mode: parallel
+max: 10
+max_exceeded: silent
+variables:
+  idle_watts: !input idle_watts
+  notify_targets: !input notify_targets
+  area_name: !input area_name
+triggers:
+  - trigger: numeric_state
+    id: running
+    entity_id: !input power_entities
+    above: !input run_watts
+    for:
+      minutes: !input run_minutes
+conditions:
+  - condition: state
+    entity_id: !input pause_switch
+    state: "off"
+actions:
+  - variables:
+      appliance: "{{ trigger.entity_id }}"
+      label: "{{ (state_attr(appliance, 'friendly_name') or appliance) | regex_replace(' [Pp]ower$', '') }}"
+      title: "{{ area_name if area_name != '' else 'Taxis' }}: {{ label }} is done"
+  # The power has to stay low for the idle time. A day is more than any machine runs.
+  - wait_for_trigger:
+      - trigger: template
+        id: idle
+        value_template: "{{ (states(appliance) | is_number) and (states(appliance) | float) < (idle_watts | float(0)) }}"
+        for:
+          minutes: !input idle_minutes
+    timeout:
+      hours: 24
+    continue_on_timeout: false
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ (notify_targets | count) > 0 }}"
+        sequence:
+          - repeat:
+              for_each: "{{ notify_targets }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  continue_on_error: true
+                  data:
+                    title: "{{ title }}"
+                    message: "{{ label }} has finished."
+    default:
+      - action: persistent_notification.create
+        data:
+          title: "{{ title }}"
+          message: "{{ label }} has finished."
+          notification_id: "taxis_appliance_done_{{ appliance | replace('.', '_') }}"
+`;
+
+// ---------------------------------------------------------------------------
+// Announce: one script for the house. Called with a message (and a volume), it
+// speaks it on the speakers of the areas that are occupied, awake and not paused.
+//
+// The areas come in as one list of objects (the object selector, which Home
+// Assistant keeps as a list of mappings): per area its occupied sensor, its pause
+// switch, its bed sensors and its speakers. Parallel lists would break as soon as
+// areas have different numbers of speakers; a list of objects keeps each area's
+// things together. The speaking is the text-to-speech service on the chosen
+// text-to-speech entity. The volume is set on those speakers first (0 leaves it
+// alone) and is not put back afterwards.
+// ---------------------------------------------------------------------------
+
+const ANNOUNCE_YAML = `blueprint:
+  name: Taxis announce
+  domain: script
+  author: Taxis
+  homeassistant:
+    min_version: 2024.10.0
+  description: "Speaks a message on the speakers of the areas that are occupied, are not asleep and are not paused. Called with a message, and optionally a volume (in %, 0 leaves the volume as it is; without one the default volume is used). The volume is set before speaking and not put back. Does nothing when no area qualifies. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  input:
+    areas:
+      name: Areas
+      description: The areas that can be spoken to, each with occupied, paused, bed and speakers.
+      selector:
+        object: {}
+    tts_entity:
+      name: Text-to-speech
+      description: The text-to-speech service that speaks.
+      selector:
+        entity:
+          filter:
+            - domain: tts
+    default_volume:
+      name: Default volume
+      description: The volume used when the call gives none. 0 leaves the volume as it is.
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+          mode: box
+mode: queued
+max: 5
+fields:
+  message:
+    name: Message
+    description: What to say.
+    required: true
+    example: Dinner is ready
+    selector:
+      text: {}
+  volume:
+    name: Volume
+    description: Optional. The volume in %, 0 to leave it as it is.
+    required: false
+    selector:
+      number:
+        min: 0
+        max: 100
+        unit_of_measurement: "%"
+variables:
+  areas: !input areas
+  default_volume: !input default_volume
+sequence:
+  - variables:
+      speakers: "{% set ns = namespace(l=[]) %}{% for a in areas %}{% if is_state(a['occupied'], 'on') and not is_state(a['paused'], 'on') and ((a['bed'] | select('is_state', 'on') | list | count) == 0) %}{% set ns.l = ns.l + (a['speakers'] | reject('is_state', 'unavailable') | list) %}{% endif %}{% endfor %}{{ ns.l | unique | list }}"
+      level: "{{ (volume if (volume is defined and volume is not none) else default_volume) | float(0) }}"
+  - condition: template
+    value_template: "{{ (speakers | count) > 0 }}"
+  - if:
+      - condition: template
+        value_template: "{{ level > 0 }}"
+    then:
+      - action: media_player.volume_set
+        continue_on_error: true
+        target:
+          entity_id: "{{ speakers }}"
+        data:
+          volume_level: "{{ level / 100 }}"
+  - action: tts.speak
+    target:
+      entity_id: !input tts_entity
+    data:
+      media_player_entity_id: "{{ speakers }}"
+      message: "{{ message }}"
+`;
+
 export const BLUEPRINTS: readonly BlueprintInfo[] = [
   {
     path: "taxis/occupancy.yaml",
     recipe: "occupancy",
-    version: 3,
+    domain: "automation",
+    version: 4,
     yaml: OCCUPANCY_YAML,
     inputs: {
       starts_entities: { kind: "entities", required: true, domain: "binary_sensor" },
       holds_entities: { kind: "entities", required: false, domain: "binary_sensor" },
       bed_entities: { kind: "entities", required: false, domain: "binary_sensor" },
+      rate_entities: { kind: "entities", required: false, domain: "sensor" },
+      rate_hold: { kind: "number", required: false },
       occupied_entity: { kind: "entity", required: true, domain: "binary_sensor" },
       hold_timer: { kind: "entity", required: true, domain: "timer" },
       hold_minutes: { kind: "number", required: false },
@@ -1290,6 +2143,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
   {
     path: "taxis/motion_lights.yaml",
     recipe: "motion_lights",
+    domain: "automation",
     version: 4,
     yaml: MOTION_LIGHTS_YAML,
     inputs: {
@@ -1320,6 +2174,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
   {
     path: "taxis/media_off.yaml",
     recipe: "media_off",
+    domain: "automation",
     version: 1,
     yaml: MEDIA_OFF_YAML,
     inputs: {
@@ -1334,6 +2189,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
   {
     path: "taxis/area_climate.yaml",
     recipe: "area_climate",
+    domain: "automation",
     version: 1,
     yaml: AREA_CLIMATE_YAML,
     inputs: {
@@ -1370,13 +2226,164 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
       pause_switch: { kind: "entity", required: true, domain: "input_boolean" },
     },
   },
+  {
+    path: "taxis/bathroom_fan.yaml",
+    recipe: "bathroom_fan",
+    domain: "automation",
+    version: 1,
+    yaml: BATHROOM_FAN_YAML,
+    inputs: {
+      humidity_entity: { kind: "entity", required: true, domain: "sensor" },
+      rate_entity: { kind: "entity", required: true, domain: "sensor" },
+      reference_entity: { kind: "entity", required: false, domain: "sensor" },
+      fan_entities: { kind: "entities", required: true, domain: ["fan", "switch"] },
+      rate_on: { kind: "number", required: false },
+      delta_on: { kind: "number", required: false },
+      abs_on: { kind: "number", required: false },
+      delta_off: { kind: "number", required: false },
+      flat_rate: { kind: "number", required: false },
+      flat_minutes: { kind: "number", required: false },
+      max_minutes: { kind: "number", required: false },
+      suppress_in_sleep: { kind: "boolean", required: false },
+      sleep_entity: { kind: "entity", required: false, domain: "input_boolean" },
+      pause_switch: { kind: "entity", required: true, domain: "input_boolean" },
+    },
+  },
+  {
+    path: "taxis/exterior_lights.yaml",
+    recipe: "exterior_lights",
+    domain: "automation",
+    version: 1,
+    yaml: EXTERIOR_LIGHTS_YAML,
+    inputs: {
+      light_target: { kind: "entity", required: true, domain: "light" },
+      motion_entities: { kind: "entities", required: false, domain: "binary_sensor" },
+      person_entities: { kind: "entities", required: false, domain: "person" },
+      sunset_offset: { kind: "number", required: false },
+      clock_minutes: { kind: "number", required: false },
+      override_timer: { kind: "entity", required: true, domain: "timer" },
+      override_minutes: { kind: "number", required: false },
+      pause_switch: { kind: "entity", required: true, domain: "input_boolean" },
+    },
+  },
+  {
+    path: "taxis/left_open.yaml",
+    recipe: "left_open",
+    domain: "automation",
+    version: 1,
+    yaml: LEFT_OPEN_YAML,
+    inputs: {
+      door_entities: { kind: "entities", required: false, domain: "binary_sensor" },
+      window_entities: { kind: "entities", required: false, domain: "binary_sensor" },
+      door_minutes: { kind: "number", required: false },
+      window_minutes: { kind: "number", required: false },
+      repeat_minutes: { kind: "number", required: false },
+      notify_targets: { kind: "services", required: false, domain: "notify" },
+      area_name: { kind: "text", required: false },
+      pause_switch: { kind: "entity", required: true, domain: "input_boolean" },
+    },
+  },
+  {
+    path: "taxis/appliance_done.yaml",
+    recipe: "appliance_done",
+    domain: "automation",
+    version: 1,
+    yaml: APPLIANCE_DONE_YAML,
+    inputs: {
+      power_entities: { kind: "entities", required: true, domain: "sensor" },
+      run_watts: { kind: "number", required: false },
+      run_minutes: { kind: "number", required: false },
+      idle_watts: { kind: "number", required: false },
+      idle_minutes: { kind: "number", required: false },
+      notify_targets: { kind: "services", required: false, domain: "notify" },
+      area_name: { kind: "text", required: false },
+      pause_switch: { kind: "entity", required: true, domain: "input_boolean" },
+    },
+  },
+  {
+    path: ANNOUNCE_PATH,
+    recipe: "announce",
+    domain: "script",
+    version: 1,
+    yaml: ANNOUNCE_YAML,
+    inputs: {
+      areas: {
+        kind: "objects",
+        required: true,
+        item: {
+          occupied: { kind: "entity", domain: "binary_sensor" },
+          paused: { kind: "entity", domain: "input_boolean" },
+          bed: { kind: "entities", domain: "binary_sensor" },
+          speakers: { kind: "entities", domain: "media_player" },
+        },
+      },
+      tts_entity: { kind: "entity", required: true, domain: "tts" },
+      default_volume: { kind: "number", required: false },
+    },
+  },
 ];
 
 export const blueprintByPath = (path: string): BlueprintInfo | undefined => BLUEPRINTS.find((b) => b.path === path);
 
+// An input with every entity id in it passed through `fn`: the ids of the entity,
+// entities and objects inputs. Notify services, texts and numbers are not
+// entities and are left as they are.
+export function mapInputEntities(path: string, input: Record<string, unknown>, fn: (id: string) => string): Record<string, unknown> {
+  const info = blueprintByPath(path);
+  // An empty string is an optional entity left out.
+  const id = (v: unknown) => (typeof v === "string" && v !== "" ? fn(v) : v);
+  return Object.fromEntries(
+    Object.entries(input).map(([key, value]) => {
+      const spec = info && Object.hasOwn(info.inputs, key) ? info.inputs[key] : undefined;
+      if (spec?.kind === "entity") return [key, id(value)];
+      if (spec?.kind === "entities") return [key, Array.isArray(value) ? value.map(id) : value];
+      if (spec?.kind === "objects" && Array.isArray(value)) {
+        const item = spec.item ?? {};
+        return [
+          key,
+          value.map((o) =>
+            o && typeof o === "object" && !Array.isArray(o)
+              ? Object.fromEntries(Object.entries(o as Record<string, unknown>).map(([k, v]) => [k, item[k]?.kind === "entity" ? id(v) : item[k]?.kind === "entities" && Array.isArray(v) ? v.map(id) : v]))
+              : o,
+          ),
+        ];
+      }
+      return [key, value];
+    }),
+  );
+}
+
+// Every entity id an input names.
+export function inputEntityIds(path: string, input: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  mapInputEntities(path, input, (id) => {
+    out.push(id);
+    return id;
+  });
+  return out;
+}
+
 export const blueprintForRecipe = (recipe: RecipeKey): BlueprintInfo => BLUEPRINTS.find((b) => b.recipe === recipe)!;
 
 export const isRecipeKey = (k: unknown): k is RecipeKey => (RECIPE_KEYS as readonly unknown[]).includes(k);
+
+// A notify service as the user writes it: notify.mobile_app_phone.
+export const SERVICE_RE = /^[a-z0-9_]+\.[a-z0-9_]{1,100}$/;
+export const MAX_SERVICES = 20;
+export const MAX_OBJECTS = 100;
+
+// One object of an objects input: exactly the fields the input names, each an
+// entity id or a list of them, in the domain the field takes.
+function objectOk(v: unknown, item: Readonly<Record<string, ObjectField>>, inDomain: (v: unknown, only: readonly string[]) => boolean): boolean {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(item);
+  if (Object.keys(o).length !== keys.length || !keys.every((k) => Object.hasOwn(o, k))) return false;
+  return keys.every((k) => {
+    const f = item[k];
+    return f.kind === "entity" ? inDomain(o[k], [f.domain]) : Array.isArray(o[k]) && (o[k] as unknown[]).length <= 500 && (o[k] as unknown[]).every((x) => inDomain(x, [f.domain]));
+  });
+}
 
 // Null when `input` is something the blueprint at `path` accepts: only its own
 // inputs, each of the right kind, and every required one. `isEntityId` is
@@ -1388,13 +2395,15 @@ export function checkBlueprintInput(path: string, input: unknown, isEntityId: (v
   const given = input as Record<string, unknown>;
   for (const [key, value] of Object.entries(given)) {
     if (!Object.hasOwn(info.inputs, key)) return `“${key.slice(0, 40)}” isn't an input of ${path}.`;
-    const { kind, domain } = info.inputs[key];
-    const inDomain = (v: unknown) => isEntityId(v) && (!domain || String(v).startsWith(`${domain}.`));
+    const spec = info.inputs[key];
+    const { kind } = spec;
+    const domains = domainsOf(spec);
+    const inDomain = (v: unknown, only: readonly string[] = domains) => isEntityId(v) && (only.length === 0 || only.some((d) => String(v).startsWith(`${d}.`)));
     const ok =
       kind === "entity"
         ? inDomain(value)
         : kind === "entities"
-          ? Array.isArray(value) && value.length <= 500 && value.every(inDomain)
+          ? Array.isArray(value) && value.length <= 500 && value.every((v) => inDomain(v))
           : kind === "number"
             ? typeof value === "number" && Number.isFinite(value)
             : kind === "boolean"
@@ -1402,8 +2411,12 @@ export function checkBlueprintInput(path: string, input: unknown, isEntityId: (v
               : kind === "text"
                 ? typeof value === "string" && value.length <= 300 && !/[\u0000-\u001f]/.test(value)
                 : kind === "select"
-                  ? typeof value === "string" && (info.inputs[key].options ?? []).includes(value)
-                  : typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d:00$/.test(value);
+                  ? typeof value === "string" && (spec.options ?? []).includes(value)
+                  : kind === "services"
+                    ? Array.isArray(value) && value.length <= MAX_SERVICES && new Set(value).size === value.length && value.every((v) => typeof v === "string" && SERVICE_RE.test(v) && domains.some((d) => v.startsWith(`${d}.`)))
+                    : kind === "objects"
+                      ? Array.isArray(value) && value.length <= MAX_OBJECTS && value.every((v) => objectOk(v, spec.item ?? {}, inDomain))
+                      : typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d:00$/.test(value);
     if (!ok) return `The input “${key}” has a value the blueprint wouldn't accept.`;
   }
   const missing = Object.entries(info.inputs).find(([key, spec]) => spec.required && !Object.hasOwn(given, key));

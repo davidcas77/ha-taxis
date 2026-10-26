@@ -303,7 +303,7 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
     if (!isRecord(raw)) return { ok: false, error: `The choices for ${id} weren't readable.` };
     const choice: EntityChoice = {};
     for (const [key, v] of Object.entries(raw)) {
-      if (key === "counts" || key === "bed") {
+      if (key === "counts" || key === "bed" || key === "appliance") {
         if (typeof v !== "boolean") return { ok: false, error: `${key} for ${id} must be true or false.` };
         choice[key] = v;
       } else if (key === "kind") {
@@ -362,12 +362,13 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   if (Object.keys(floors).length > MAX_PARAMETER_FLOORS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_FLOORS} floors.` };
   if (Object.keys(areas).length > MAX_PARAMETER_AREAS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_AREAS} areas.` };
 
-  const values = (raw: unknown, where: string, area = false): { ok: true; value: ParamValues } | { ok: false; error: string } => {
+  const values = (raw: unknown, where: string, area = false, house = false): { ok: true; value: ParamValues } | { ok: false; error: string } => {
     if (!isRecord(raw)) return { ok: false, error: `The parameters for ${where} weren't readable.` };
     const out: [string, ParamValue][] = [];
     for (const [key, v] of Object.entries(raw)) {
       if (!isParamKey(key)) return { ok: false, error: `${key.slice(0, 40)} isn't a parameter (${where}).` };
       if (PARAM_DEF[key].areaOnly && !area) return { ok: false, error: `${PARAM_DEF[key].label} can only be set for one area (${where}).` };
+      if (PARAM_DEF[key].houseOnly && !house) return { ok: false, error: `${PARAM_DEF[key].label} can only be set for the house (${where}).` };
       const problem = checkValue(PARAM_DEF[key], v);
       if (problem) return { ok: false, error: `${problem.replace(/\.$/, "")} (${where}).` };
       out.push([key, v as ParamValue]);
@@ -376,7 +377,7 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   };
 
   // Built from entries, not by assignment: an id is a key, and "__proto__" must stay one.
-  const houseValues = values(house, "the house");
+  const houseValues = values(house, "the house", false, true);
   if (!houseValues.ok) return houseValues;
   const typeEntries: [string, ParamValues][] = [];
   for (const [id, raw] of Object.entries(types)) {

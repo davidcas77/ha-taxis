@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { healthStates } from "../server/health/assemble.ts";
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
-import { blueprintForRecipe } from "./blueprints.ts";
+import { ANNOUNCE_PATH, BLUEPRINTS, blueprintForRecipe } from "./blueprints.ts";
 import { validateInput } from "./changes.ts";
 import {
   DEFAULT_HEALTH_OPTIONS,
@@ -17,7 +17,7 @@ import {
 } from "./health.ts";
 import { EMPTY_INVENTORY, setCounts, type InventorySettings } from "./inventory.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "./naming.ts";
-import { EMPTY_PARAMETERS } from "./parameters.ts";
+import { EMPTY_PARAMETERS, setParameter, type ParameterSettings } from "./parameters.ts";
 import { NOTHING_INSTALLED, type RecipeInstalled } from "./recipes.ts";
 import type { Change } from "./types.ts";
 
@@ -97,6 +97,7 @@ type Opts = {
   devices?: Dev[];
   installed?: RecipeInstalled | null;
   inventory?: InventorySettings;
+  parameters?: ParameterSettings;
   changes?: Change[];
   options?: Parameters<typeof runHealth>[0]["options"];
   areas?: RawRegistry["areas"];
@@ -115,7 +116,7 @@ function check(entities: E[], o: Opts = {}): HealthReport {
     },
     inventory: o.inventory ?? EMPTY_INVENTORY,
     naming,
-    parameters: EMPTY_PARAMETERS,
+    parameters: o.parameters ?? EMPTY_PARAMETERS,
     changes: o.changes ?? [],
     now: NOW,
     options: o.options,
@@ -697,6 +698,125 @@ describe("6b: Area climate and its thermostats", () => {
   });
 });
 
+describe("7: the recipes after Area climate", () => {
+  const ALL = Object.fromEntries(BLUEPRINTS.map((b) => [b.path, b.version]));
+  const hygro: E = { id: "sensor.living_hygro", dc: "humidity", state: "55" };
+  const humidity: E = { id: "sensor.living_humidity", platform: "min_max", dc: "humidity", state: "55", entry: "HUM1" };
+  const extractor: E = { id: "fan.living_extractor" };
+  const rate: E = { id: "sensor.living_humidity_rate", platform: "derivative", state: "0", entry: "RATE1" };
+  const paused: E = { id: "input_boolean.living_paused", platform: "input_boolean", state: "off" };
+  const fanEntity: E = { id: "automation.taxis_bathroom_fan_living", state: "on", area: null, triggered: H };
+  const fanInput = {
+    humidity_entity: "sensor.living_humidity",
+    rate_entity: "sensor.living_humidity_rate",
+    fan_entities: ["fan.living_extractor"],
+    rate_on: 0.03,
+    delta_on: 10,
+    abs_on: 80,
+    delta_off: 3,
+    flat_rate: 0.001,
+    flat_minutes: 20,
+    max_minutes: 60,
+    suppress_in_sleep: false,
+    pause_switch: "input_boolean.living_paused",
+  };
+  const fanInstalled = (input: Record<string, unknown>): RecipeInstalled => ({
+    ...NOTHING_INSTALLED,
+    blueprints: ALL,
+    automations: { taxis_bathroom_fan_living: { alias: "Living room – Bathroom fan (Taxis)", path: "taxis/bathroom_fan.yaml", input } },
+  });
+
+  it("reports a bathroom fan whose humidity rate sensor is gone, and offers to make it again", () => {
+    const r = check([hygro, humidity, extractor, paused, fanEntity], { installed: fanInstalled(fanInput) });
+    const f = one(r, "setup:recipe:living_room:bathroom_fan");
+    expect(f).toMatchObject({ severity: "warning", area: "living_room", title: "Living room: Bathroom fan is out of date" });
+    expect(f.detail).toBe("sensor.living_humidity_rate is missing.");
+    if (f.fix?.kind !== "changes") throw new Error("no fix");
+    expect(f.fix.inputs.map((i) => `${i.kind}:${i.fields?.helper ?? ""}`)).toEqual(["helper:derivative", "automation:"]);
+    for (const input of f.fix.inputs) expect(validateInput(input)).toBeNull();
+    // With the sensor there, or the list making it, nothing is reported.
+    expect(ids(check([hygro, humidity, extractor, paused, rate, fanEntity], { installed: fanInstalled(fanInput) }), "setup")).toEqual([]);
+    const pending = { id: 1, kind: "helper", op: "create", targetId: "sensor.living_humidity_rate", scope: null, before: {}, after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" }, createdAt: "" } as Change;
+    expect(ids(check([hygro, humidity, extractor, paused, fanEntity], { installed: fanInstalled(fanInput), changes: [pending] }), "setup")).toEqual([]);
+  });
+
+  describe("the notify services", () => {
+    const door: E = { id: "binary_sensor.living_door", dc: "door" };
+    const leftInput = { door_entities: ["binary_sensor.living_door"], window_entities: [], door_minutes: 10, window_minutes: 30, repeat_minutes: 0, notify_targets: [] as string[], area_name: "Living room", pause_switch: "input_boolean.living_paused" };
+    const installed = (input: Record<string, unknown>): RecipeInstalled => ({
+      ...NOTHING_INSTALLED,
+      blueprints: ALL,
+      automations: { taxis_left_open_living: { alias: "Living room – Left open (Taxis)", path: "taxis/left_open.yaml", input } },
+    });
+    const entity: E = { id: "automation.taxis_left_open_living", state: "on", area: null, triggered: H };
+
+    it("says once that the messages go to Home Assistant's own list when no service is set, pointing at the House parameters", () => {
+      const r = check([door, paused, entity], { installed: installed(leftInput) });
+      expect(one(r, "setup:notify")).toMatchObject({
+        severity: "info",
+        title: "No notify service is set for the recipes that notify",
+        fix: { kind: "link", label: "Set the notify services", to: { page: "parameters", tab: "house" } },
+      });
+      expect(one(r, "setup:notify").detail).toMatch(/Left open in Living room installed.*only in Home Assistant's own notifications.*can't tell whether a service you add exists/);
+    });
+
+    it("says nothing when a service is set, or when no recipe that notifies is installed", () => {
+      const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "notify_targets", ["notify.mobile_app_phone"]);
+      const set = check([door, paused, entity], { installed: installed({ ...leftInput, notify_targets: ["notify.mobile_app_phone"] }), parameters: p });
+      expect(ids(set, "setup")).toEqual([]);
+      expect(ids(check([door, paused], { installed: NOTHING_INSTALLED }), "setup")).toEqual([]);
+    });
+  });
+
+  describe("the announce script", () => {
+    const speaker: E = { id: "media_player.living_speaker", state: "idle" };
+    const tts: E = { id: "tts.cloud", state: "unknown", area: null };
+    const runtime: E[] = [
+      { id: "timer.living_hold", platform: "timer", state: "idle" },
+      paused,
+      { id: "binary_sensor.living_occupied", platform: "template", dc: "occupancy", entry: "OCC1" },
+    ];
+    const areas = [{ occupied: "binary_sensor.living_occupied", paused: "input_boolean.living_paused", bed: [], speakers: ["media_player.living_speaker"] }];
+    const stored = { alias: "Announce (Taxis)", path: ANNOUNCE_PATH, input: { areas, tts_entity: "tts.cloud", default_volume: 40 } };
+    const there = (script: typeof stored): RecipeInstalled => ({
+      ...NOTHING_INSTALLED,
+      blueprints: ALL,
+      automations: { taxis_occupancy_living: { alias: "x", path: "taxis/occupancy.yaml", input: {} } },
+      scripts: { taxis_announce: script },
+    });
+    const params = setParameter(EMPTY_PARAMETERS, { level: "house" }, "tts_entity", "tts.cloud");
+    const entities = [speaker, tts, ...runtime, scriptEntity("taxis_announce")];
+
+    it("is not reported when it matches", () => {
+      expect(ids(check(entities, { installed: there(stored), parameters: params }), "setup").filter((id) => id === "setup:announce")).toEqual([]);
+    });
+
+    it("is reported when it is out of date, with the change that updates it", () => {
+      const r = check(entities, { installed: there({ ...stored, input: { ...stored.input, default_volume: 25 } }), parameters: params });
+      const f = one(r, "setup:announce");
+      expect(f).toMatchObject({ severity: "warning", title: "Announce is out of date", detail: "Default volume (%): 25 → 40." });
+      if (f.fix?.kind !== "changes") throw new Error("no fix");
+      expect(f.fix.inputs.map((i) => `${i.kind}:${i.op}`)).toEqual(["script:update"]);
+      for (const input of f.fix.inputs) expect(validateInput(input)).toBeNull();
+    });
+
+    it("is reported when Taxis would no longer write it: the text-to-speech entity is gone", () => {
+      const r = check(entities.filter((e) => e !== tts), { installed: there(stored), parameters: params });
+      const f = one(r, "setup:announce");
+      expect(f).toMatchObject({ severity: "warning", title: "Announce cannot work as it is set up", fix: { kind: "link", to: { page: "parameters", tab: "recipes" } } });
+      expect(f.detail).toContain("The text-to-speech entity “tts.cloud” isn't in Home Assistant");
+      // With no script, a missing prerequisite is the Recipes page's to say, not Health's.
+      expect(ids(check(entities.filter((e) => e !== tts && e !== scriptEntity("taxis_announce")), { installed: { ...there(stored), scripts: {} }, parameters: params }), "setup").filter((id) => id === "setup:announce")).toEqual([]);
+    });
+
+    it("is one of Taxis's own: what it points at is not checked as a missing reference of someone else's script", () => {
+      const gone = { ...stored, input: { ...stored.input, areas: [{ ...areas[0], speakers: ["media_player.gone"] }] } };
+      const r = check(entities, { items: [item("script", "taxis_announce", { alias: "Announce (Taxis)", use_blueprint: { path: ANNOUNCE_PATH, input: gone.input } })], installed: there(gone), parameters: params });
+      expect(ids(r, "references")).toEqual([]);
+    });
+  });
+});
+
 describe("7: Taxis setup", () => {
   const OCC = blueprintForRecipe("occupancy");
   const pir = { id: "binary_sensor.living_pir", dc: "motion" };
@@ -709,6 +829,8 @@ describe("7: Taxis setup", () => {
     starts_entities: ["binary_sensor.living_pir"],
     holds_entities: [],
     bed_entities: [],
+    rate_entities: [],
+    rate_hold: 0,
     occupied_entity: "binary_sensor.living_occupied",
     hold_timer: "timer.living_hold",
     hold_minutes: 5,

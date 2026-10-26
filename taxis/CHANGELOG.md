@@ -1,5 +1,69 @@
 # Changelog
 
+## Unreleased
+
+- **Recipe: Bathroom fan.** The fan of an area runs while the room is steamed up.
+  It goes on when the humidity rises at least 0.03 %/s, is 10 % above a
+  reference humidity sensor, or reaches 80 %; it goes off when the humidity is back
+  within 3 % of the reference (or, with no reference, of where it started) and no
+  longer rising fast, when the rate has been flat for 20 minutes, or after 60.
+  A fan that is already on is left alone, and an option keeps it from starting
+  while the house sleeps. It needs a humidity sensor that counts, its helper, and a
+  fan: the Capabilities tab has a new **Fans** section, where a `fan` counts and a
+  switch counts when you tick it. Installing makes the **humidity rate sensor**
+  `sensor.<code>_humidity_rate` (a derivative helper, % per second, smoothed over
+  two minutes) with the pause switch and `taxis/bathroom_fan.yaml`. The thresholds,
+  the reference sensor and the sleep option are on a new **Bathroom fan** tab of
+  Parameters.
+- **A shower keeps the bathroom occupied.** A new Occupancy parameter, *Shower
+  holds occupied at* (%/s, 0 is off): when the area's humidity rate sensor exists,
+  a rate at or above it keeps the hold timer running (it never starts it). The
+  Occupancy blueprint is now **version 4**, so an installed Occupancy shows as out
+  of date until it is updated.
+- **Recipe: Exterior lights**, for areas of type exterior. Lights on at sunset
+  (moved by an offset), off after a clock of 120 minutes that motion, a counted
+  camera sensor or a person arriving home starts again, off at sunrise, nothing in
+  daytime. It uses the area's light group, its pause switch and the same manual
+  override timer as Motion lights. New **Exterior** tab of Parameters.
+- **Recipe: Left open.** A door open for 10 minutes or a window for 30 sends a
+  message, naming the sensor, and again every so often if you set a repeat.
+- **Recipe: Appliance done.** A power sensor you tick as an **Appliance** on the
+  Capabilities tab is running after 2 minutes above 10 W, and done after 3 minutes
+  below 5 W; one automation per area, the message names the machine. New **Safety**
+  tab of Parameters for both.
+- **Notify services.** Left open and Appliance done send to the notify services
+  listed in a new House parameter, *Notify services* (like
+  `notify.mobile_app_phone`), and to Home Assistant's own notifications when it is
+  empty. Health says once, as info, when a recipe that notifies is installed with no
+  service set. Taxis can't tell whether a service exists: that would need a read of
+  the list of services, which it does not make. The notify services, the
+  text-to-speech entity and the announcement volume are **house only** parameters:
+  every other row of their tab shows a dash.
+- **Recipe: Announce.** One script for the house, `script.taxis_announce`, from the
+  script blueprint `taxis/announce.yaml`. Called with a message and an optional
+  volume, it speaks on the speakers of the areas that are occupied, not asleep and
+  not paused. The areas go to the blueprint as a list of objects. It needs a
+  text-to-speech entity (House tab) and a speaker in an area that has Occupancy. It
+  is in a House row of the Recipes table.
+- **Health.** A bathroom fan without its rate sensor is reported as a recipe out of
+  date, with the fix that makes the sensor again; Announce is reported when it is
+  out of date or no longer something Taxis would write; and the notify info above.
+- **What Taxis may write.** Four additions, each exact and tested. `blueprint/save`
+  now takes the domain `script`, for the path `taxis/announce.yaml` only (and
+  `announce.yaml` is refused as an automation blueprint). The config flow handler
+  `derivative` is allowed beside group, min/max and template. A new kind of change,
+  a script, writes `taxis_announce` through the REST config API Taxis already uses
+  for scripts (`/config/script/config/<id>`), which needed no new path. No service
+  is called and nothing is deleted.
+- **Mock demo.** A Bathroom (humidity sensor, extractor fan), a Garden (lights, a
+  camera and its motion sensor, two people), a Laundry (two power sensors, a door,
+  a window, a speaker) and a text-to-speech entity. The mock Home Assistant answers
+  the script blueprint list, makes scripts from a blueprint and runs the derivative
+  flow.
+
+Not in this version: covers by the sun, which needs to know which way each window
+faces.
+
 ## 0.5.0
 
 - **Entry lights.** A new Lighting parameter, **Entry lights**: the lights that

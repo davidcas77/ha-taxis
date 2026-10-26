@@ -1,6 +1,6 @@
 # Smart areas: capabilities, parameters, canonical helpers and recipes
 
-Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers, and the [light groups of the floors and the house](#floor-and-house-light-groups)), a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights, Media off and [Area climate](#area-climate-built) recipes) and the rule-based [Health](#health) checks are implemented; the rest is not.
+Status: **design draft**. Stage 2 (the capability inventory), stage 3 (the aggregate helpers, and the [light groups of the floors and the house](#floor-and-house-light-groups)), a first slice of stage 4 (parameters with inheritance, and the Occupancy, Motion lights, Media off and [Area climate](#area-climate-built) recipes, then the [Bathroom fan, the shower, Exterior lights, Left open, Appliance done and Announce](#the-later-recipes-built) recipes) and the rule-based [Health](#health) checks are implemented; the rest is not.
 
 ## Goal
 
@@ -75,7 +75,8 @@ Capabilities (extends the roles in `shared/roles.ts`):
 | TVs | `media_player` device class `tv` or label |
 | Covers | `cover.*` |
 | Bed / sleep | presence sensors the user tags as bed |
-| Power | `sensor` device class `power` (appliance detection) |
+| Fan | `fan.*` (counts), and `switch.*`, listed with it but counting only when the user says it runs a fan. Built |
+| Power | `sensor` device class `power`; the user marks a sensor as an **appliance** (a per-sensor mark, off by default). Built |
 
 ### Area page: roles and exclusions
 
@@ -237,7 +238,7 @@ the Occupancy and Motion lights blueprints work them out when they run (see
 | `binary_sensor.<code>_problem` | Group, any on: smoke, gas, moisture, safety, problem | ≥ 1 source |
 | `input_boolean.<code>_paused` | Input boolean: pause switch, on = area in manual, every recipe skips it | any recipe |
 | `sensor.<code>_light_profile` | Template: `accented` > `sleep` > `bright` > `standard` | lights |
-| `sensor.<code>_humidity_rate` | Derivative helper on `_humidity` (%/s) | humidity + fan |
+| `sensor.<code>_humidity_rate` | Derivative helper on `_humidity` (%/s); built, made by Bathroom fan | humidity + fan |
 | `binary_sensor.<code>_dark` | Threshold on `_illuminance`, with hysteresis | lux source |
 
 Notes:
@@ -273,9 +274,10 @@ value or the inherited one in grey ("from <source>"); click to set, clear to
 inherit.
 
 **Recipes** (`shared/recipes.ts`, `shared/blueprints.ts`). Four recipes, one
-blueprint each, written by Taxis at `taxis/occupancy.yaml` (version 3),
+blueprint each, written by Taxis at `taxis/occupancy.yaml` (version 4),
 `taxis/motion_lights.yaml` (version 4), `taxis/media_off.yaml` (version 1) and
-`taxis/area_climate.yaml` (version 1) through `blueprint/save`. The text is a constant in
+`taxis/area_climate.yaml` (version 1) through `blueprint/save`; the
+[later recipes](#the-later-recipes-built) add five more blueprints. The text is a constant in
 code with "Taxis blueprint version N." in the description; Home Assistant lists
 the description back, and a blueprint is (re)written only when missing or of
 another version. `planRecipes` gives each area and recipe one of Missing
@@ -402,6 +404,119 @@ having been clear for more than 5 s, or the timer finishes (the lights go off if
 the area is clear). Taxis itself calls no service; `timer.start` and
 `timer.cancel` are made by the automation inside Home Assistant.
 
+#### The later recipes (built)
+
+Five more blueprints, version 1 each, and one change to Occupancy (version 4). They
+follow the same rules as the first four (pause switch input, `taxis_<recipe>_<code>`
+automations, "Taxis blueprint version N." in the description, the planner in
+`shared/recipes.ts`). The decisions the list above leaves open:
+
+- **Bathroom fan** (`taxis/bathroom_fan.yaml`). One run per cycle (`mode: single`,
+  `max_exceeded: silent`), because that is what lets it keep the humidity it
+  started from without a helper: `baseline` is a variable of the run. A template
+  trigger starts it (`h >= abs_on`, `rate >= rate_on`, or `h >= ref + delta_on`; it
+  turns true once, so it does not restart until it has been false), the actions turn
+  the fan on with `homeassistant.turn_on` (a `fan` or a `switch`), then
+  `wait_for_trigger` on two template triggers with a timeout of *max minutes*: the
+  humidity back within *delta off* of the reference (the chosen sensor, else the
+  baseline) while the rate is below *rate on*, and the rate within *flat rate* of
+  zero for *flat minutes*. Template triggers fire on a false → true change, so a
+  condition that is already true when the wait begins does not end it early. That
+  is accepted and documented (the time limit ends it): a start by the absolute
+  level with no reference, and a run that begins flat. A fan already on is left
+  alone, which is also what keeps Taxis from switching off a fan someone started.
+  *Not while the house sleeps* is a start condition only. The flat rate (0.001 %/s)
+  is a blueprint input, not a parameter. *Reference*: the user's choice of a humidity
+  sensor of another area, or of an average they made; Taxis does not make a house
+  average. A reference that is the area's own helper is allowed and does nothing
+  useful.
+- **The rate sensor.** `sensor.<code>_humidity_rate` is a derivative helper
+  (`helper: "derivative"`; one member, the area's `_humidity`; in the area), made by
+  the `derivative` config flow: `{name, source, round: 3, unit_time: "s",
+  time_window: {hours: 0, minutes: 2, seconds: 0}}`. The two-minute window is a
+  guess at what suits sensors that report every few seconds to a few minutes; it is
+  a constant (`RATE_WINDOW`) and is not a parameter. The end `humidity_rate` is fixed
+  like `hold`, and no sensor helper may use it as its suffix. The planner uses it
+  only when its platform is `derivative` with a config entry; anything else on the id
+  is a conflict. It is created by the Bathroom fan cell, after the humidity helper
+  when both are in the list (`inOrder` sorts the creations by what they gather).
+- **Shower holds occupied** (Occupancy v4). Two inputs, `rate_entities` (a list, empty
+  by default: `entity_id: !input` with an empty list is accepted in a state trigger)
+  and `rate_hold` (%/s, 0 off). A `rate_changed` trigger restarts the hold timer
+  while it runs and the rate is high; the timer finishing starts it again while the
+  rate is high. It never starts the timer ("holds", like the hold-only sensors).
+  The parameter `humidity_hold_rate` (Occupancy tab) is **off by default**: turning
+  something on for every bathroom the moment its rate sensor appears would be a
+  surprise. It is an ordinary parameter at every level. The planner sends the rate
+  sensor when it exists as a derivative helper or the list creates it.
+- **Exterior lights** (`taxis/exterior_lights.yaml`). Mode restart, with the clock a
+  `delay` of *clock minutes* in the run: every motion or arrival restarts the run
+  and so the clock. The sunset trigger takes `offset` in seconds (the parameter is
+  in minutes, times 60), and the "night" condition is `sun after sunset + offset` or
+  `sun before sunrise`. The light group is the only target; the override timer and
+  the manual-change condition are Motion lights' own (the same template, a test
+  compares them), so the two recipes share `timer.<code>_override`. A restart of Home
+  Assistant starts a new clock when the lights are on. Sunrise cancels an override
+  and turns the lights off, always. The persons are every `person` entity that is not
+  disabled (there is no "people that count" setting yet).
+- **Left open** (`taxis/left_open.yaml`). One trigger per sensor (door sensors with
+  the door time, window sensors with the window time), `mode: parallel`, and the
+  message names the sensor. The design said "the door/window group of the area";
+  the group is *any open*, so a second door opening while the first is still open
+  would never be reported, and the group's name would be the only thing to say. The
+  counted sensors are used one by one instead, which also removes the dependency on
+  the Helpers tab. The repeat is a `repeat: until` loop that waits the repeat time
+  for the sensor to close; 0 sends once. Per kind minutes only (no "raining" or
+  "away" rule).
+- **Notify services.** The house parameter `notify_targets` (kind `services`: a list of
+  `notify.<name>` names, up to 20, **house only**, see `houseOnly` below) goes to the
+  blueprints as a list of text. The blueprint calls each with
+  `action: "{{ repeat.item }}"` and `continue_on_error`, and falls back to
+  `persistent_notification.create` when the list is empty. A service name looks like an
+  entity id and is not one: the blueprint input kind `services` is checked on its own
+  (`^[a-z0-9_]+\.[a-z0-9_]{1,100}$` and the `notify.` domain), and Apply's "is that
+  entity there" check and the rename rewrite skip it (`mapInputEntities`, which knows
+  the kind of each input). Whether a service exists would need `get_services` (a read
+  that is not allowed); the Health page says so rather than checking.
+- **Appliance done** (`taxis/appliance_done.yaml`). A new inventory mark `appliance` on
+  counted power sensors (the "role" the design called for); `mode: parallel`; a
+  `numeric_state` trigger (above the run level for the run time) starts a run, which
+  waits for a template trigger (below the idle level for the idle time) with a
+  24 hour timeout. Nothing is kept between cycles beyond the run itself, which is
+  why overlapping cycles on one machine can be told twice (stated in DOCS). The
+  levels are in the unit of the sensor; a kW sensor is flagged. The run level must
+  be higher than the idle level, or the cell is missing.
+- **Fans in the inventory.** A new capability `fan`: `fan.*` counts, `switch.*` is
+  listed under it but does not count (`countsDefault` false, so ticking Counts is
+  "this switch is a fan"). Hidden switches (a light made from a switch) are not
+  listed. `switch` as a domain is the one place a capability is listed for an entity
+  that is, by default, not that capability.
+- **Announce** (`taxis/announce.yaml`, a *script* blueprint, `script.taxis_announce`).
+  The areas come in as one input of the `object` selector, a list of
+  `{occupied, paused, bed, speakers}`. Parallel lists would need every area to have
+  the same number of speakers; a list of objects keeps an area's things together,
+  and the object selector is long established. The script's `fields` are `message`
+  and an optional `volume`; the volume is set on the speakers before speaking and
+  not put back (0 leaves it alone). It speaks with `tts.speak` on the text-to-speech
+  entity (a house parameter), `media_player_entity_id` the chosen speakers. An area
+  is in the list when it has counted speakers and Occupancy (installed or pending),
+  with its occupied sensor and pause switch. The pause switch is how the script
+  keeps the "blueprints keep the pause switch" rule: an area that is paused is not
+  spoken to. It is planned by `planAnnounce`, not by `planRecipes`, and shown in a
+  House row of the Recipes table. Its change is a new kind, `script`
+  (`script_id: taxis_announce`, `alias`, `use_blueprint`), keyed by its id like an
+  automation and applied after the automations.
+- **`houseOnly` parameters** (like `areaOnly`): `resolveIn` reads only the house,
+  `setParameter` ignores the other levels, `validateParameters` refuses a stored
+  value anywhere else, and the table shows a dash. They are `notify_targets`,
+  `tts_entity` and `announce_volume`.
+- **Parameter tabs.** The fan, exterior and safety parameters have a tab each
+  (Bathroom fan, Exterior, Safety) instead of the Climate tab the table below
+  suggested: the Climate tab already has twenty columns.
+- **Comparing inputs.** `sameValue` compared lists of objects by reference, which
+  made every announce script look out of date; a list of plain values is still
+  compared as a set, a list of objects in order.
+
 **Apply order**: registries → blueprints → helpers (stage 3 groups and min/max,
 and the recipes' timers, toggles and template sensors) → automations → each
 step reads Home Assistant back (blueprint listed with its version, helper
@@ -411,11 +526,14 @@ blueprints at `taxis/<name>.yaml` only, enforced), `timer/create`,
 `timer/update`, `input_boolean/create`; config-flow handler `template`; one read,
 `blueprint/list`. The override timer and Media off add no write of their own. Area
 climate adds `schedule/create` and `schedule/update` (payload checked: a name, an
-icon, seven days of from/to times) and no read.
+icon, seven days of from/to times) and no read. The later recipes add exactly three
+things (below, "What Taxis must be allowed to write"): the config flow handler
+`derivative`, `blueprint/save` for the script domain at `taxis/announce.yaml` only, and
+the script config through the REST path scripts already had. The script step runs
+after the automations.
 
-**Deferred to later stages**: climate boost, the bathroom
-fan and shower-keeps-occupied, exterior lights, covers by sun, announcements,
-door and appliance notifications, the presence hold switch, the door rule,
+**Deferred to later stages**: climate boost, covers by sun (next: it needs each window's
+orientation), the presence hold switch, the door rule,
 proportional dimming, vacancy lights, night path light, a light profile sensor,
 media holding occupancy, follow-me audio and volume by time of day, per-recipe
 switches and everything in the other recipes of the table below; safety and
@@ -440,12 +558,13 @@ and parameters as inputs.
 | TV off when area clear | TV, occupancy | — |
 | Area climate | thermostat | temperature, window, occupancy, bed |
 | Window open, heating off | thermostat, window | — |
-| Bathroom humidity fan | humidity, fan/switch | — |
-| Door left open notify | door | — |
-| Appliance finished notify | power | — |
+| Bathroom humidity fan (built) | humidity, fan/switch | reference sensor, sleep |
+| Door left open notify, as Left open (built) | door or window | notify services |
+| Appliance finished notify, as Appliance done (built) | power marked as an appliance | notify services |
 | Covers by sun | covers | window orientation, temperature |
-| Exterior lights (sunset clock) | lights, area type exterior | motion, cameras, persons arriving |
-| Shower keeps bathroom occupied | humidity, occupancy | — |
+| Exterior lights (sunset clock) (built) | lights, area type exterior | motion, cameras, persons arriving |
+| Shower keeps bathroom occupied (built, a parameter of Occupancy) | humidity rate sensor, occupancy | — |
+| Announce (built, one script for the house) | speakers in areas with Occupancy, a text-to-speech entity | — |
 
 Blueprints are written once (`blueprints/automation/taxis/*.yaml`) and versioned
 with Taxis. Fixing a blueprint fixes every area that uses it.
@@ -633,6 +752,10 @@ runtime without Taxis (e.g. from a dashboard). The rest are blueprint inputs.
 
 ### Exterior (areas of type exterior)
 
+Built: the Exterior tab has *Lights on from sunset* (an offset in minutes) and *Stay on
+for* (the clock); the rest of the table is how the recipe behaves, not a parameter.
+Daytime suppression and the off at sunrise are fixed.
+
 | Parameter | Default |
 |---|---|
 | Lights on at sunset | on |
@@ -671,7 +794,7 @@ House defaults, each overridable per area:
 | Preheat when entering near-home zone | on |
 | Season | heating / cooling / off |
 | Hysteresis (switch-based heaters) | 0.5 °C |
-| Bathroom fan on: humidity rise rate | ≥ 0.03 %/s |
+| Bathroom fan on: humidity rise rate (built, Bathroom fan tab) | ≥ 0.03 %/s |
 | Bathroom fan on: above reference | ≥ 10 % (reference = interior average, another area, or the area's own idle baseline) |
 | Bathroom fan on: absolute | ≥ 80 % |
 | Bathroom fan off | within 3 % of reference, or flat (≤ 0.001 %/s) for 20 min, or after 60 min max |
@@ -703,6 +826,11 @@ entering the near-home zone and hysteresis for switch-based heaters are not buil
 
 ### Safety and notifications
 
+Built: the Safety tab has *Door open for*, *Window open for*, *Repeat every* and the
+appliance levels (*Running above/for*, *Done below/for*); the notify services are a
+House parameter (house only). Window-open-while-raining, leak and smoke, battery low
+and a notify target per person are not built.
+
 | Parameter | Default |
 |---|---|
 | Door left open notify after | 10 min |
@@ -733,6 +861,16 @@ New writes, all through the change list with backup and verify:
 
 - The light groups of the floors and the house add none: the same `group` config flow, the same options flow for their members and the same entity registry update, with no area.
 
+- The later recipes add: the `derivative` config flow handler (for the humidity rate
+  sensor: one form, `{name, source, round, unit_time, time_window}`); `blueprint/save`
+  with `domain: "script"`, accepted for the path `taxis/announce.yaml` and for no
+  other (and `taxis/announce.yaml` is refused with `domain: "automation"`); and
+  `config/script/config/taxis_announce` through the REST config API, which already
+  allowed `/config/(automation|script|scene)/config/<id>` for the rename rewrites.
+  Only `GET` and `POST`, as before. The read `blueprint/list` is now asked once for each
+  of the domains `automation` and `script`. No service is called: the blueprints call
+  `homeassistant.turn_on`, `light.turn_on`, `tts.speak`, the notify services and so on
+  from inside Home Assistant.
 - Area climate adds two more WebSocket writes, `schedule/create` and `schedule/update` (the calls Home Assistant's Helpers page makes; payload checked in `server/ha/socket.ts`: a name, an optional icon and the seven days of from/to times, nothing else). No schedule read was added.
 - helper config flows: `group` and `min_max` (stage 3, built: REST `POST /config/config_entries/flow` for those two handlers and its steps, and the options flow of a group's config entry to change its members); `template` (built, for the occupied sensor) and `threshold` later, with the recipes that need them;
 - storage helpers: `timer`, `input_boolean` and `schedule` (built: `timer/create`,
@@ -829,6 +967,8 @@ inputs are checked as *Taxis setup*.
 | 7f | `setup` | A floor's or the house's canonical light group (a `planHelpers` row of level floor or house) that is **update members** with members to add, and not already in the list: it lacks the light group of one of its areas or floors. A **conflict** on such a row is reported as 7b, with the Settings link naming the floor codes and the house group. | warning | an `update` of the group's members |
 | 7d | `setup` | A counted inventory row that has been unavailable or unknown for at least 1 hour and less than `unavailableHours` (longer is check 2). One finding per area. A thermostat that Area climate controls is left to check 6b. | warning | link to the area's Capabilities |
 | 7e | `setup` | An area's temperature or humidity entity that doesn't exist, and isn't already being changed in the list. | warning | an `area` update to the area's own min/max helper if there is one, else to `null` |
+| 7g | `setup` | The Announce script, when installed: its cell is **out of date** (the fix is the script change), or **missing** (a prerequisite is gone: the text-to-speech entity, an area's Occupancy) while the script is in Home Assistant (a link to Recipes). A bathroom fan with no rate sensor needs no row of its own: it is an out-of-date cell (7a, "sensor.x_humidity_rate is missing") whose fix makes the sensor | warning | the script change; link |
+| 7h | `setup` | Left open or Appliance done installed while the house `notify_targets` is empty. One finding. Whether a service exists is not checked: it needs `get_services`, a read Taxis does not make | info | link to Parameters → House |
 | 8 | `helpers` | An `input_*`, counter, timer or schedule, or a UI helper (template, group, min/max, threshold, derivative, statistics, bayesian, trend, filter, utility_meter, integration, history_stats), used by no readable config, group member or area setting. Taxis's canonical and runtime helper ids and disabled helpers are skipped. | info | none |
 | 9 | `devices` | An automation or script with a `device_id` in its triggers, conditions or actions (device kinds, and `target.device_id`); blueprint inputs aren't read. | info; warning if a device isn't in Home Assistant | none |
 | 10 | `light-areas` | One finding for every light (not disabled, not a group) with no area, its own or its device's, whose entity change is not already in the list. | warning | link to Parameters → Capabilities, where each gets an area (an `entity` update of its own area) |

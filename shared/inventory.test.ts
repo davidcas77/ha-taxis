@@ -11,6 +11,7 @@ import {
   inventoryMatrix,
   matrixTotals,
   resetEntity,
+  setAppliance,
   setAreaType,
   setBed,
   setBedroom,
@@ -88,7 +89,9 @@ describe("defaultCapability", () => {
     expect(cap("light")).toBe("lights");
     expect(cap("climate")).toBe("thermostat");
     expect(cap("cover")).toBe("cover");
-    expect(cap("switch")).toBeNull();
+    // Fans count; a switch is listed with them but only counts when the user says it runs a fan.
+    expect(cap("fan")).toBe("fan");
+    expect(cap("switch")).toBe("fan");
     expect(cap("lock")).toBeNull();
   });
 
@@ -466,5 +469,65 @@ describe("the demo house", () => {
 
   it("starts a room with presence only from its presence sensor", () => {
     expect(find("study", "presence", "binary_sensor.study_presence").role).toBe("starts");
+  });
+});
+
+describe("fans and appliances", () => {
+  const h = buildHierarchy(
+    {
+      config: { location_name: "Test house" },
+      floors: [],
+      areas: [{ area_id: "bathroom", name: "Bathroom" }],
+      devices: [],
+      entities: [
+        { entity_id: "fan.bath_extractor", platform: "demo", area_id: "bathroom" },
+        { entity_id: "switch.bath_fan_plug", platform: "demo", area_id: "bathroom" },
+        { entity_id: "switch.bath_hidden", platform: "demo", area_id: "bathroom", hidden_by: "integration" },
+        { entity_id: "switch.bath_group", platform: "group", area_id: "bathroom" },
+        { entity_id: "sensor.bath_washer_power", platform: "demo", area_id: "bathroom" },
+      ],
+      labels: [],
+      states: [
+        { entity_id: "fan.bath_extractor", state: "off", attributes: { friendly_name: "Extractor" } },
+        { entity_id: "switch.bath_fan_plug", state: "off", attributes: { friendly_name: "Fan plug" } },
+        { entity_id: "switch.bath_hidden", state: "off", attributes: { friendly_name: "Hidden" } },
+        { entity_id: "switch.bath_group", state: "off", attributes: { friendly_name: "Group", entity_id: ["switch.bath_fan_plug"] } },
+        { entity_id: "sensor.bath_washer_power", state: "0.3", attributes: { friendly_name: "Washer power", device_class: "power", unit_of_measurement: "W" } },
+      ],
+    } satisfies RawRegistry,
+    "now",
+  );
+  const rows = (s: InventorySettings = EMPTY_INVENTORY) => areaInventory(h, s, "bathroom");
+
+  it("counts a fan by default, and lists a switch without counting it", () => {
+    expect(CAPABILITIES.map((c) => c.key)).toContain("fan");
+    expect(rows().fan.map((r) => [r.entityId, r.counts, r.countsDefault])).toEqual([
+      ["fan.bath_extractor", true, true],
+      ["switch.bath_fan_plug", false, false],
+      // A group of switches is a helper: listed, not counted. A switch an integration hides is not listed.
+      ["switch.bath_group", false, false],
+    ]);
+    expect(rows().fan.find((r) => r.entityId === "switch.bath_group")!.flags).toContain("helper");
+  });
+
+  it("counts a switch the user says runs a fan, and puts it back with a reset", () => {
+    const on = setCounts(h, EMPTY_INVENTORY, "switch.bath_fan_plug", true);
+    expect(on.entities["switch.bath_fan_plug"]).toEqual({ counts: true });
+    expect(rows(on).fan.filter((r) => r.counts).map((r) => r.entityId)).toEqual(["fan.bath_extractor", "switch.bath_fan_plug"]);
+    expect(rows(on).fan.find((r) => r.entityId === "switch.bath_fan_plug")!.overridden).toBe(true);
+    expect(rows(resetEntity(on, "switch.bath_fan_plug")).fan.filter((r) => r.counts).map((r) => r.entityId)).toEqual(["fan.bath_extractor"]);
+    // The matrix has a column for fans.
+    const row = inventoryMatrix(h, on)[0];
+    expect(row.perCapability.fan).toEqual({ counted: 2, total: 3 });
+  });
+
+  it("marks a power sensor as an appliance, and nothing else", () => {
+    expect(rows().power.map((r) => [r.entityId, r.appliance])).toEqual([["sensor.bath_washer_power", false]]);
+    const marked = setAppliance(EMPTY_INVENTORY, "sensor.bath_washer_power", true);
+    expect(marked.entities["sensor.bath_washer_power"]).toEqual({ appliance: true });
+    expect(rows(marked).power[0]).toMatchObject({ appliance: true, overridden: true });
+    expect(setAppliance(marked, "sensor.bath_washer_power", false)).toEqual(EMPTY_INVENTORY);
+    // Only a power row has the mark.
+    expect(rows(marked).fan.every((r) => r.appliance === undefined)).toBe(true);
   });
 });

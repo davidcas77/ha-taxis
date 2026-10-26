@@ -433,3 +433,38 @@ describe("settingsStore parameters", () => {
     expect(s.parameters()).toEqual({ house: {}, types: {}, floors: {}, areas: {} });
   });
 });
+
+describe("validateInventory: appliances", () => {
+  it("takes the appliance mark as a yes or a no", () => {
+    const good = { entities: { "sensor.washer_power": { appliance: true } }, areas: {} };
+    expect(validateInventory(good)).toEqual({ ok: true, value: good });
+    expect(validateInventory({ entities: { "sensor.washer_power": { appliance: "yes" } } })).toMatchObject({ ok: false, error: expect.stringContaining("appliance for sensor.washer_power must be true or false") });
+  });
+});
+
+describe("validateParameters: the house-only values and the later recipes", () => {
+  it("takes the notify services, the text-to-speech entity and the volume for the house only", () => {
+    const house = { notify_targets: ["notify.mobile_app_phone"], tts_entity: "tts.cloud", announce_volume: 30 };
+    expect(validateParameters({ house })).toEqual({ ok: true, value: { house, types: {}, floors: {}, areas: {} } });
+    for (const key of Object.keys(house)) {
+      const value = house[key as keyof typeof house];
+      expect(validateParameters({ types: { exterior: { [key]: value } } }), key).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for the house (exterior areas)") });
+      expect(validateParameters({ floors: { ground: { [key]: value } } }), key).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for the house (floor ground)") });
+      expect(validateParameters({ areas: { kitchen: { [key]: value } } }), key).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for the house (area kitchen)") });
+    }
+  });
+
+  it("refuses services that are not notify services, naming where", () => {
+    for (const bad of [[], ["light.a"], ["notify.a", "notify.a"], "notify.a", ["notify.A"]]) {
+      expect(validateParameters({ house: { notify_targets: bad } }), JSON.stringify(bad)).toMatchObject({ ok: false, error: expect.stringMatching(/Notify services must be a list of 1 to 20 notify services.*the house/) });
+    }
+  });
+
+  it("takes the fan, exterior and safety values for every level", () => {
+    const values = { fan_rate_on: 0.05, fan_reference: "sensor.house_humidity", fan_suppress_in_sleep: true, exterior_sunset_offset: -30, exterior_clock: 90, door_open_after: 5, left_open_repeat: 10, appliance_run_watts: 20, humidity_hold_rate: 0.02 };
+    const ok = { house: {}, types: { exterior: { exterior_sunset_offset: -30 } }, floors: { ground: { door_open_after: 5 } }, areas: { bathroom: values } };
+    expect(validateParameters(ok)).toEqual({ ok: true, value: ok });
+    expect(validateParameters({ areas: { bathroom: { fan_rate_on: 0.0005 } } })).toMatchObject({ ok: false, error: expect.stringMatching(/between 0.001 and 1.*area bathroom/) });
+    expect(validateParameters({ house: { exterior_sunset_offset: 3 } })).toMatchObject({ ok: false });
+  });
+});

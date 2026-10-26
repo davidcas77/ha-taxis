@@ -29,6 +29,8 @@ export type MockHome = RawRegistry & {
   configEntries: { entry_id: string; domain: string; title: string; entities: string[]; hide_members?: boolean; all?: boolean; state?: string; device_class?: string }[];
   // Automation blueprints, by path, as the YAML text that was saved.
   blueprints: Record<string, string>;
+  // Script blueprints (Taxis writes one, announce), by path.
+  scriptBlueprints: Record<string, string>;
   // Schedule helpers made in the UI, by their storage id: the name and the seven
   // days' periods as Home Assistant keeps them ("06:30:00").
   schedules: Record<string, Config>;
@@ -169,6 +171,7 @@ export function buildMockRegistry(): MockHome {
     dashboards: [],
     configEntries: [],
     blueprints: {},
+    scriptBlueprints: {},
     schedules: {},
     flows: { next: 1, open: {} },
   };
@@ -505,30 +508,33 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
     case "blueprint/list": {
       // Like Home Assistant: the path of each blueprint and its metadata (the
       // blueprint's own header: name, domain, description…).
-      if (p.domain !== "automation") return fail("Unknown domain");
+      if (p.domain !== "automation" && p.domain !== "script") return fail("Unknown domain");
       const header = (yaml: string, key: string) => {
         const m = new RegExp(`^  ${key}: (.*)$`, "m").exec(yaml);
         return m ? (m[1].startsWith('"') ? (JSON.parse(m[1]) as string) : m[1]) : undefined;
       };
+      const domain = p.domain;
       return ok(
         Object.fromEntries(
-          Object.entries(home.blueprints ?? {}).map(([path, yaml]) => [path, { metadata: { name: header(yaml, "name"), domain: "automation", ...(header(yaml, "description") ? { description: header(yaml, "description") } : {}) } }]),
+          Object.entries((domain === "script" ? home.scriptBlueprints : home.blueprints) ?? {}).map(([path, yaml]) => [path, { metadata: { name: header(yaml, "name"), domain, ...(header(yaml, "description") ? { description: header(yaml, "description") } : {}) } }]),
         ),
       );
     }
     case "blueprint/save": {
-      if (p.domain !== "automation" || typeof p.path !== "string" || typeof p.yaml !== "string") return fail("Invalid blueprint request");
+      if ((p.domain !== "automation" && p.domain !== "script") || typeof p.path !== "string" || typeof p.yaml !== "string") return fail("Invalid blueprint request");
       if (!/^[a-z0-9_]+\/[a-z0-9_]+\.yaml$/.test(p.path)) return fail("Invalid path");
       if (!p.yaml.startsWith("blueprint:")) return fail("Invalid blueprint: no blueprint section");
-      const blueprints = (home.blueprints ??= {});
+      const blueprints = p.domain === "script" ? (home.scriptBlueprints ??= {}) : (home.blueprints ??= {});
       if (Object.hasOwn(blueprints, p.path) && p.allow_override !== true) return fail("File already exists");
       const overrides = Object.hasOwn(blueprints, p.path) ? {} : null;
       blueprints[p.path] = p.yaml;
       // Automations made from it load now.
-      for (const s of home.states ?? []) {
-        const id = (s.attributes as Config | undefined)?.id;
-        const path = typeof id === "string" ? (home.automations?.[id]?.use_blueprint as { path?: string } | undefined)?.path : undefined;
-        if (path === p.path && s.state === "unavailable") s.state = "on";
+      if (p.domain === "automation") {
+        for (const s of home.states ?? []) {
+          const id = (s.attributes as Config | undefined)?.id;
+          const path = typeof id === "string" ? (home.automations?.[id]?.use_blueprint as { path?: string } | undefined)?.path : undefined;
+          if (path === p.path && s.state === "unavailable") s.state = "on";
+        }
       }
       return ok(overrides);
     }
@@ -666,8 +672,9 @@ export type MockRestReply = { status: number; body: unknown };
 
 // HA's REST config API for automations, scripts and scenes. Posting an id that
 // has no automation yet makes one, like Home Assistant does; scripts and scenes
-// are simplified: only existing ids can be posted, and unknown ids answer 404.
-// YAML automations answer 404 to everything.
+// are simplified: only existing ids can be posted, and unknown ids answer 404,
+// except a script made from a blueprint (a body with use_blueprint), which is
+// created the way an automation is. YAML automations answer 404 to everything.
 export function handleMockRest(home: MockHome, method: string, path: string, body: unknown): MockRestReply {
   const flow = handleMockFlow(home, method, path, body);
   if (flow) return flow;
@@ -679,19 +686,32 @@ export function handleMockRest(home: MockHome, method: string, path: string, bod
   const store = { automation: home.automations, script: home.scripts, scene: home.scenes }[kind];
   // YAML automations are not in `automations`, so they answer 404 too.
   const has = Object.hasOwn(store, id);
-  const creating = !has && method === "POST" && kind === "automation" && !Object.hasOwn(home.yamlAutomations, id);
+  const madeFromBlueprint = (b: unknown) => Boolean(b && typeof b === "object" && (b as Config).use_blueprint && typeof (b as Config).use_blueprint === "object");
+  const creating = !has && method === "POST" && ((kind === "automation" && !Object.hasOwn(home.yamlAutomations, id)) || (kind === "script" && madeFromBlueprint(body)));
   if (!has && !creating) return { status: 404, body: { message: "Resource not found" } };
   if (method === "GET") return { status: 200, body: structuredClone(store[id]) };
 
   if (!body || typeof body !== "object" || Array.isArray(body)) return { status: 400, body: { message: "Message malformed" } };
   store[id] = structuredClone(body) as Config;
-  if (creating) {
+  if (creating && kind === "script") {
+    // The script entity is script.<id>; one made from a blueprint Home Assistant doesn't have can't load.
+    const alias = typeof (body as Config).alias === "string" ? String((body as Config).alias) : id;
+    const path = ((body as Config).use_blueprint as { path?: unknown }).path;
+    home.entities.push({ entity_id: `script.${id}`, platform: "script", unique_id: id, original_name: alias });
+    home.states.push({ entity_id: `script.${id}`, state: typeof path === "string" && Object.hasOwn(home.scriptBlueprints ?? {}, path) ? "off" : "unavailable", attributes: { friendly_name: alias } } as RawState);
+  } else if (creating) {
     // The automation entity, named after its alias. One made from a blueprint
     // Home Assistant doesn't have can't load: unavailable.
     const alias = typeof (body as Config).alias === "string" ? String((body as Config).alias) : id;
     const entityId = freeEntityId(home, "automation", alias);
     home.entities.push({ entity_id: entityId, platform: "automation", unique_id: id, original_name: alias });
     home.states.push({ entity_id: entityId, state: "on", attributes: { id, friendly_name: alias } } as RawState);
+  }
+  if (kind === "script") {
+    // A script whose blueprint arrives later loads then.
+    const path = ((body as Config).use_blueprint as { path?: unknown } | undefined)?.path;
+    const st = home.states.find((s) => s.entity_id === scriptEntityId(home, id));
+    if (st && typeof path === "string" && madeFromBlueprint(body)) st.state = Object.hasOwn(home.scriptBlueprints ?? {}, path) ? (st.state === "unavailable" ? "off" : st.state) : "unavailable";
   }
   if (kind === "automation") {
     const path = ((body as Config).use_blueprint as { path?: unknown } | undefined)?.path;
@@ -790,6 +810,17 @@ function handleMockFlow(home: MockHome, method: string, path: string, body: unkn
       home.flows.open[id] = { kind: "create", handler, step: "user" };
       return form(id, handler, "user", [{ name: "name", required: true }, { name: "entity_ids", required: true }, { name: "type", required: true }, { name: "round_digits", optional: true }]);
     }
+    if (handler === "derivative") {
+      home.flows.open[id] = { kind: "create", handler, step: "user" };
+      return form(id, handler, "user", [
+        { name: "name", required: true },
+        { name: "source", required: true },
+        { name: "round", optional: true },
+        { name: "unit_prefix", optional: true },
+        { name: "unit_time", required: true },
+        { name: "time_window", optional: true },
+      ]);
+    }
     return { status: 404, body: { message: "Invalid handler specified" } };
   }
 
@@ -852,6 +883,20 @@ function handleMockFlow(home: MockHome, method: string, path: string, body: unkn
     home.entities.push({ entity_id: entityId, platform: "group", config_entry_id: entryId, original_name: name });
     home.states.push({ entity_id: entityId, state: groupState(home, members), attributes: { friendly_name: name, entity_id: members } });
     return done(flowId, flow.handler, name, { entry_id: entryId, domain: "group", title: name });
+  }
+  if (flow.handler === "derivative") {
+    // The rate of change of one sensor, in its unit per unit of time.
+    const source = typeof data.source === "string" ? home.states.find((s) => s.entity_id === data.source) : undefined;
+    if (!source) return form(flowId, flow.handler, flow.step, [], { source: "entity_not_found" });
+    if (typeof data.unit_time !== "string" || !["s", "min", "h", "d"].includes(data.unit_time)) return form(flowId, flow.handler, flow.step, [], { unit_time: "required" });
+    const window = data.time_window;
+    if (window !== undefined && (!window || typeof window !== "object" || Array.isArray(window))) return form(flowId, flow.handler, flow.step, [], { time_window: "invalid" });
+    const entityId = freeEntityId(home, "sensor", name);
+    home.configEntries.push({ entry_id: entryId, domain: "derivative", title: name, entities: [String(data.source)] });
+    home.entities.push({ entity_id: entityId, platform: "derivative", config_entry_id: entryId, original_name: name });
+    const unit = source.attributes?.unit_of_measurement;
+    home.states.push({ entity_id: entityId, state: "0.0", attributes: { friendly_name: name, source: data.source, unit_of_measurement: `${unit ?? ""}/${data.unit_time}` } } as RawState);
+    return done(flowId, flow.handler, name, { entry_id: entryId, domain: "derivative", title: name });
   }
   // min_max
   if (!isStringList(data.entity_ids)) return form(flowId, flow.handler, flow.step, [], { entity_ids: "entities_required" });
@@ -920,6 +965,8 @@ export function withRecipeDemo(reg: MockHome): MockHome {
         starts_entities: starts,
         holds_entities: holds,
         bed_entities: [],
+        rate_entities: [],
+        rate_hold: 0,
         occupied_entity: `binary_sensor.${code}_occupied`,
         hold_timer: `timer.${code}_hold`,
         hold_minutes: minutes,
@@ -1203,5 +1250,58 @@ export function withHealthDemo(reg: MockHome, now = Date.now()): MockHome {
     { triggered: H },
   );
   touch("climate.living_valve", { state: "unavailable", ago: 3 * H });
+  return reg;
+}
+// ---------------------------------------------------------------------------
+// The demo house with the rooms the later recipes need, for `npm run mock-ha`
+// (the tests build their own). Everything is invented.
+//
+//   Bathroom  a humidity sensor and an extractor fan: the Bathroom fan recipe is
+//             waiting for the humidity helper (Helpers tab), then it is ready.
+//   Garden    two lights, a camera and its motion sensor: set its type to exterior
+//             (Capabilities), count the camera's motion sensor, and the Exterior
+//             lights recipe is waiting for the light group. Two people live here.
+//   Laundry   two power sensors (a washer and a dryer: mark them as appliances on
+//             the Capabilities tab), a door and a window sensor, and a speaker.
+//   House     a text-to-speech entity for Announce.
+// ---------------------------------------------------------------------------
+
+export function withSmartDemo(reg: MockHome): MockHome {
+  const area = (areaId: string, name: string, floor: string | null) => reg.areas.push({ area_id: areaId, name, floor_id: floor, labels: [] });
+  const device = (areaId: string, id: string, name: string, model: string, entities: [string, string, string?, string?][]) => {
+    reg.devices.push({ id, name, manufacturer: "Demo", model, area_id: areaId });
+    for (const [entityId, state, deviceClass, unit] of entities) {
+      reg.entities.push({ entity_id: entityId, device_id: id, platform: "demo", original_name: friendlyName(entityId) });
+      reg.states.push({ entity_id: entityId, state, attributes: { friendly_name: friendlyName(entityId), device_class: deviceClass, unit_of_measurement: unit } });
+    }
+  };
+
+  area("bathroom", "Bathroom", "first");
+  device("bathroom", "bathroom_0", "Bathroom hygrometer", "AS008", [["sensor.bathroom_hygro_humidity", "54", "humidity", "%"], ["sensor.bathroom_hygro_temperature", "22.1", "temperature", "°C"]]);
+  device("bathroom", "bathroom_1", "Extractor fan", "Shelly 1", [["fan.bathroom_extractor", "off"]]);
+  device("bathroom", "bathroom_2", "Bathroom PIR", "AS007", [["binary_sensor.bathroom_pir", "off", "motion"]]);
+  device("bathroom", "bathroom_3", "Bathroom lights", "Hue White", [["light.bathroom_ceiling", "off"]]);
+
+  area("garden", "Garden", null);
+  device("garden", "garden_0", "Garden lights", "Hue Outdoor", [["light.garden_path", "off"], ["light.garden_wall", "off"]]);
+  device("garden", "garden_1", "Garden camera", "Cam 2K", [["camera.garden", "idle"], ["binary_sensor.garden_camera_motion", "off", "motion"]]);
+  device("garden", "garden_2", "Garden PIR", "AS007", [["binary_sensor.garden_pir", "off", "motion"]]);
+  for (const [entityId, name] of [
+    ["person.alex", "Alex"],
+    ["person.sam", "Sam"],
+  ]) {
+    reg.entities.push({ entity_id: entityId, platform: "person", unique_id: entityId.split(".")[1], original_name: name });
+    reg.states.push({ entity_id: entityId, state: "home", attributes: { friendly_name: name } } as RawState);
+  }
+
+  area("laundry", "Laundry", "ground");
+  device("laundry", "laundry_0", "Washing machine plug", "S60", [["sensor.washer_power", "0.4", "power", "W"]]);
+  device("laundry", "laundry_1", "Dryer plug", "S60", [["sensor.dryer_power", "0.2", "power", "W"]]);
+  device("laundry", "laundry_2", "Laundry door", "AS006", [["binary_sensor.laundry_door", "off", "door"]]);
+  device("laundry", "laundry_3", "Laundry window", "AS006", [["binary_sensor.laundry_window", "off", "window"]]);
+  device("laundry", "laundry_4", "Laundry speaker", "HomePod mini", [["media_player.laundry_speaker", "idle"]]);
+
+  reg.entities.push({ entity_id: "tts.home_assistant_cloud", platform: "tts", unique_id: "cloud" });
+  reg.states.push({ entity_id: "tts.home_assistant_cloud", state: "unknown", attributes: { friendly_name: "Home Assistant Cloud" } } as RawState);
   return reg;
 }

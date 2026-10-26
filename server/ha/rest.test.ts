@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildMockRegistry } from "../../scripts/mock-ha-core.ts";
 import { fakeHa } from "../references/fake-ha.ts";
-import { HaRest, assertRestRequest } from "./rest.ts";
+import { FLOW_HANDLERS, HaRest, assertRestRequest } from "./rest.ts";
 
 describe("REST allowlist", () => {
   it("allows GET and POST of an automation, script or scene config, and nothing else", () => {
@@ -123,14 +123,36 @@ describe("HaRest", () => {
   });
 });
 
+describe("REST allowlist for the announce script", () => {
+  it("reads and replaces the config of the script, with the same GET and POST every script and automation config uses, and nothing else", () => {
+    expect(() => assertRestRequest("GET", "/config/script/config/taxis_announce")).not.toThrow();
+    expect(() => assertRestRequest("POST", "/config/script/config/taxis_announce", { alias: "Announce (Taxis)", use_blueprint: { path: "taxis/announce.yaml", input: {} } })).not.toThrow();
+    // It never deletes a script, and does not call one: no service goes through this client.
+    for (const method of ["DELETE", "PUT", "PATCH"]) expect(() => assertRestRequest(method, "/config/script/config/taxis_announce")).toThrow(/Refusing to send/);
+    for (const path of ["/services/script/taxis_announce", "/services/script/turn_on", "/states/script.taxis_announce", "/config/script/config/", "/config/script/config/a/b"]) {
+      expect(() => assertRestRequest("POST", path, {}), path).toThrow(/Refusing/);
+    }
+  });
+
+  it("writes a script made from a blueprint through the fake Home Assistant, and reads it back", async () => {
+    const t = fakeHa();
+    const config = { alias: "Announce (Taxis)", description: "", use_blueprint: { path: "taxis/announce.yaml", input: { areas: [] } } };
+    await t.api.post("script", "taxis_announce", config);
+    expect(await t.api.get("script", "taxis_announce")).toEqual(config);
+    expect(t.rest.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /api/config/script/config/taxis_announce", "GET /api/config/script/config/taxis_announce"]);
+  });
+});
+
 describe("REST allowlist for helper flows", () => {
   const FLOW = "0123456789abcdef0123456789abcdef";
   const ENTRY = "01JHELPERGARAGEALL";
 
-  it("allows starting a group, min/max or template flow, and posting to a step", () => {
+  it("allows starting a group, min/max, template or derivative flow, and posting to a step", () => {
     expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "group", show_advanced_options: false })).not.toThrow();
     expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "min_max" })).not.toThrow();
     expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "template" })).not.toThrow();
+    expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler: "derivative" })).not.toThrow();
+    expect(FLOW_HANDLERS).toEqual(["group", "min_max", "template", "derivative"]);
     expect(() => assertRestRequest("POST", `/config/config_entries/flow/${FLOW}`, { next_step_id: "light" })).not.toThrow();
     expect(() => assertRestRequest("POST", `/config/config_entries/flow/${"A1".repeat(32)}`, {})).not.toThrow();
   });
@@ -141,7 +163,7 @@ describe("REST allowlist for helper flows", () => {
   });
 
   it("refuses a flow for any other integration, or with no handler", () => {
-    for (const handler of ["threshold", "derivative", "mqtt", "homeassistant", "TEMPLATE", "template ", "GROUP", "group ", "", null, undefined, 1, ["group"], ["template"], { handler: "group" }]) {
+    for (const handler of ["threshold", "statistics", "integration", "mqtt", "homeassistant", "TEMPLATE", "template ", "Derivative", "derivative ", "GROUP", "group ", "", null, undefined, 1, ["group"], ["template"], ["derivative"], { handler: "group" }]) {
       expect(() => assertRestRequest("POST", "/config/config_entries/flow", { handler })).toThrow(/Refusing to start a config flow/);
     }
     expect(() => assertRestRequest("POST", "/config/config_entries/flow")).toThrow(/Refusing to start a config flow/);
