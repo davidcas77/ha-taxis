@@ -12,7 +12,10 @@
 // those, Apply edits the contents of dashboards (lovelace/config/save) and, via
 // the REST client in rest.ts (which has its own fixed allowlist), of
 // automations, scripts and scenes, and only to replace a renamed entity id in
-// them.
+// them. The same REST client also creates the canonical helpers (a group or a
+// min/max, through Home Assistant's config flows) and updates a group's members;
+// the new helper is then placed with the registry edits below (its entity id,
+// its area, and an area's temperature or humidity sensor).
 
 export const READ_COMMANDS = new Set([
   "get_config",

@@ -1,6 +1,6 @@
 # Smart areas: capabilities, parameters, canonical helpers and recipes
 
-Status: **design draft**. Nothing here is implemented yet.
+Status: **design draft**. Stage 2 (the capability inventory) and stage 3 (the aggregate helpers) are implemented; the rest is not.
 
 ## Goal
 
@@ -44,8 +44,8 @@ Home Assistant UI and keeps working if Taxis is stopped or uninstalled.
 |---|---|---|
 | 1. Areas | Floors, areas, area codes (exists today) | — |
 | 2. Inventory | Confirms the capability matrix, sets roles and exclusions per area | Nothing in HA yet |
-| 3. Canonical helpers | Reviews the proposed helpers per area | Groups, min/max, threshold, template and timer helpers; area temperature/humidity settings; light groups |
-| 4. Recipes | Picks recipes and areas | Blueprints (once) and one automation per recipe and area |
+| 3. Canonical helpers | Reviews the proposed helpers per area | Aggregate helpers: groups (lights, motion, presence, doors, windows, media) and min/max means (temperature, humidity, light level); area temperature/humidity settings |
+| 4. Recipes | Picks recipes and areas | The helpers the recipes need (hold timers, occupied, dark, light profile…), blueprints (once) and one automation per recipe and area |
 | 5. House level | Sets modes and house parameters | Mode helpers, house occupancy, label-based "all off" scripts |
 
 Each stage can be re-run. Re-running shows only the differences as changes.
@@ -95,13 +95,86 @@ The area page also shows the canonical entities (stage 3) once they exist.
 
 ## Stage 3: canonical helpers
 
+Implemented: the **aggregate** helpers below. The timers and the occupied, dark
+and profile helpers wait for stage 4, where the recipes that use them are
+(see [Helpers that come with the recipes](#helpers-that-come-with-the-recipes-stage-4)).
+
 `<code>` is the area code from Settings (unique, falls back to the area id).
+Sources are the entities that **count** in the area's inventory (stage 2), so
+excluding a sensor there changes the helper. The area's own canonical helpers
+are not listed as its sensors.
+
+| Key | Entity | Native helper | Sources | Created when |
+|---|---|---|---|---|
+| lights | `light.<code>_all` | Group, light | counted lights | ≥ 1 |
+| motion | `binary_sensor.<code>_motions` | Group, binary_sensor, any on | counted motion (starts and holds) | ≥ 1 |
+| presence | `binary_sensor.<code>_presences` | Group, binary_sensor, any on | counted presence | ≥ 1 |
+| door | `binary_sensor.<code>_doors` | Group, binary_sensor, any on | counted doors | ≥ 1 |
+| window | `binary_sensor.<code>_windows` | Group, binary_sensor, any on | counted windows | ≥ 1 |
+| temperature | `sensor.<code>_temperature` | Min/max, mean | counted temperature | ≥ 1 |
+| humidity | `sensor.<code>_humidity` | Min/max, mean | counted humidity | ≥ 1 |
+| illuminance | `sensor.<code>_illuminance` | Min/max, mean | counted light level | ≥ 1 |
+| media | `media_player.<code>_media` | Group, media_player | counted speakers and TVs | ≥ 2 |
+
+The end of each id (the suffix) is a setting, **Settings → Helper names**,
+stored with the naming settings: lower-case letters, digits and `_`, 1 to 30
+characters, no `_` at either end or doubled, and no two keys with the same
+suffix (defaults count). The defaults are chosen so they rarely collide with a
+single real sensor named after the room (`sensor.kitchen_motion` stays a
+sensor; the group is `binary_sensor.kitchen_motions`). A new helper is named
+"<Area name> <word>": "Kitchen motions".
+
+Also set on the area itself: its temperature and humidity entity, pointed at
+the canonical sensors. That is part of the same plan: carried by the helper's
+creation (so it runs after the sensor exists), or a small area update of its own
+when the sensor is already in place and the area points elsewhere.
+
+### The plan, per area and helper
+
+`planHelpers` (`shared/helpers.ts`, pure) compares what the inventory says the
+area should have with what Home Assistant holds at the canonical id:
+
+| Status | When | Proposed |
+|---|---|---|
+| In place | the id is a group of the right domain with the same members, or a min/max sensor | nothing. A min/max's members can't be read from states, so it is "members not checked" |
+| Update members | the id is a group set up in the UI, with other members | a helper update: members added and removed |
+| Adopt | the id is free and a group of the same domain has exactly the sources as members (one in the same area first, then by name; a group is adopted once) | rename it to the canonical id: the existing entity rename, which also rewrites automations, scripts, scenes and dashboards |
+| Adopt and update | no exact match, but a group of the same domain in the same area, set up in the UI, shares at least half its members with the sources | the rename and a members update |
+| Create | nothing to adopt | a helper creation: type, name, id, members, area, and for temperature and humidity the area setting |
+| Conflict | the id is held by something that isn't that helper (a real sensor, a template), or by a YAML group whose members differ | nothing. The row names who holds it and suggests another suffix in Settings |
+
+A min/max helper is never adopted: its members are not readable, so there is no
+way to tell that an existing one does the job. Rows whose helper is already in
+the change list show as "In changes".
+
+### Applying
+
+New change kind `helper`, operations `create` and `update`, never delete. A
+creation is keyed by the entity id it will have. The REST allowlist grows by
+exactly the config-flow endpoints (see "What Taxis must be allowed to write").
+Apply runs the registry changes first (including renames and their references),
+then the helper changes:
+
+- create a group: start the `group` flow, choose the type, send the form
+  (`all` only for light and binary_sensor groups); create a min/max: start the
+  `min_max` flow, send the form (mean, one decimal);
+- the new entity is found through its config entry and given the canonical id
+  and the area; for a sensor, the area's temperature or humidity setting follows;
+- change a group's members: open the options flow of its config entry and send
+  the new members with the other values as the form shows them;
+- before a creation, a canonical id that is already that helper is skipped
+  (applying twice never makes a second one), and a helper of the same name under
+  another id stops the change instead of making a copy;
+- afterwards a fresh read checks each change: platform, members, area, area
+  setting. A change that didn't take stays in the list with the reason.
+
+### Helpers that come with the recipes (stage 4)
+
+Not built yet. These come with the recipes that use them, because their
+parameters (timeouts, thresholds) belong to those recipes.
 
 | Entity | Native helper | Created when |
 |---|---|---|
-| `binary_sensor.<code>_motion` | Group, binary_sensor, any on | ≥ 1 motion source |
-| `binary_sensor.<code>_presence` | Group, binary_sensor, any on | ≥ 1 presence source |
-| `binary_sensor.<code>_door` / `_window` | Group, binary_sensor, any on | ≥ 1 source |
 | `timer.<code>_hold` | Timer, duration = area timeout parameter | motion or presence |
 | `binary_sensor.<code>_occupied` | Template: hold timer active or presence on (or door rule, below) | motion or presence |
 | `binary_sensor.<code>_extended` | Template: occupied for longer than the extended parameter | occupancy |
@@ -112,15 +185,7 @@ The area page also shows the canonical entities (stage 3) once they exist.
 | `input_boolean.<code>_automation` | Input boolean: master switch, off = area in manual, every recipe skips it | any recipe |
 | `sensor.<code>_light_profile` | Template: `accented` > `sleep` > `bright` > `standard` | lights |
 | `sensor.<code>_humidity_rate` | Derivative helper on `_humidity` (%/s) | humidity + fan |
-| `sensor.<code>_temperature` | Min/max, mean | ≥ 1 temperature source |
-| `sensor.<code>_humidity` | Min/max, mean | ≥ 1 humidity source |
-| `sensor.<code>_illuminance` | Min/max, mean | ≥ 1 lux source |
 | `binary_sensor.<code>_dark` | Threshold on `_illuminance`, with hysteresis | lux source |
-| `light.<code>_all` | Group, light | ≥ 1 light |
-| `media_player.<code>_all` | Group, media_player | ≥ 2 players |
-
-Also set on the area itself: temperature and humidity entity = the canonical
-sensors.
 
 Notes:
 
@@ -346,19 +411,20 @@ Before proposing a canonical helper, Taxis looks for one that does the same job:
 
 Matches are shown as "adopt" (rename to the canonical id, references rewritten
 by the 0.4 rename flow) instead of "create". Near-matches are shown side by side
-for the user to decide.
+for the user to decide. Built for groups (stage 3): exact matches are adopted, and a
+close match in the same area is adopted with a members update.
 
 ## What Taxis must be allowed to write
 
 New writes, all through the change list with backup and verify:
 
-- helper config flows: `group`, `min_max`, `threshold`, `template`;
+- helper config flows: `group` and `min_max` (stage 3, built: REST `POST /config/config_entries/flow` for those two handlers and its steps, and the options flow of a group's config entry to change its members); `threshold` and `template` later, with the recipes that need them;
 - storage helpers: `timer`, `input_number`, `input_boolean`, `input_datetime`,
   `schedule`;
 - blueprints (WebSocket `blueprint/save`);
 - automation configs (REST `config/automation/config/<id>`, already allowed
   since 0.4 for reference rewrites);
-- area settings (temperature/humidity entity), labels, entity registry.
+- area settings (temperature/humidity entity, built), labels, entity registry (a new helper's id and area, built).
 
 Still never: calling services, removing devices or entities.
 

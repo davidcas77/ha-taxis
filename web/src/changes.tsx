@@ -9,7 +9,7 @@ import { Button, ConfirmAction } from "./ui.tsx";
 
 // The list of changes, in words, and Apply.
 
-const KIND_NAMES: Record<Change["kind"], string> = { entity: "entity", device: "device", area: "area", floor: "floor", label: "label", category: "category" };
+const KIND_NAMES: Record<Change["kind"], string> = { entity: "entity", device: "device", area: "area", floor: "floor", label: "label", category: "category", helper: "helper" };
 
 function nameOf(h: Hierarchy, c: Change): string {
   if (c.op === "create") return String(c.after.name ?? "new");
@@ -28,10 +28,32 @@ function nameOf(h: Hierarchy, c: Change): string {
       return String(c.before.name ?? h.labels[c.targetId]?.name ?? c.targetId);
     case "category":
       return String(c.before.name ?? c.targetId);
+    case "helper":
+      return c.targetId;
   }
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// How a helper's members change: what is added and what is taken out.
+function memberChange(c: Change): { added: string[]; removed: string[] } {
+  const was = (c.before.entities as string[] | undefined) ?? [];
+  const now = (c.after.entities as string[] | undefined) ?? [];
+  return { added: now.filter((m) => !was.includes(m)), removed: was.filter((m) => !now.includes(m)) };
+}
+
+function helperTitle(h: Hierarchy, c: Change): string {
+  if (c.op === "create") {
+    const kind = c.after.helper === "min_max" ? "min/max sensor" : "group";
+    const area = typeof c.after.area_id === "string" ? h.areas[c.after.area_id]?.name : undefined;
+    return `Create ${kind} ${c.targetId}${area ? ` in ${area}` : ""}: ${plural(((c.after.entities as string[]) ?? []).length, "member")}`;
+  }
+  const { added, removed } = memberChange(c);
+  return `Update members of ${c.targetId}: +${added.length} −${removed.length}`;
+}
+
 function title(h: Hierarchy, c: Change): string {
+  if (c.kind === "helper") return helperTitle(h, c);
   const what = c.kind === "category" && c.scope ? `${SCOPE_NAMES[c.scope].toLowerCase().replace(/s$/, "")} category` : KIND_NAMES[c.kind];
   const verb = c.op === "create" ? "New" : c.op === "delete" ? "Delete" : "Change";
   return `${verb} ${what} “${nameOf(h, c)}”`;
@@ -73,6 +95,9 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
         from: b ? mono(b) : "",
         to: mono(a),
       };
+    case "temperature_entity_id":
+    case "humidity_entity_id":
+      return { label: key === "temperature_entity_id" ? "Temperature sensor" : "Humidity sensor", from: b ? mono(b) : "none", to: a ? mono(a) : "none" };
     case "hidden_by":
       return { label: "Hidden", from: b ? "yes" : "no", to: a ? "yes" : "no" };
     case "disabled_by":
@@ -85,6 +110,7 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
 export function ChangesPage({ h }: { h: Hierarchy }) {
   const { changes, version, removeChange, clearChanges, reload } = useTaxis();
   const hasRename = changes.some((c) => c.kind === "entity" && c.after.new_entity_id !== undefined);
+  const hasHelper = changes.some((c) => c.kind === "helper");
   const refs = useReferences(hasRename, version);
   const [step, setStep] = useState<"list" | "confirm" | "confirmNoBackup" | "applying">("list");
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +160,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
           <>
             <ul className="flex flex-col gap-2">
               {changes.map((c) => {
-                const keys = c.op === "delete" ? [] : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
+                const keys = c.op === "delete" || c.kind === "helper" ? [] : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
                 return (
                   <li key={c.id} className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2.5">
                     <div className="flex items-center gap-2">
@@ -165,6 +191,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                         })}
                       </dl>
                     )}
+                    {c.kind === "helper" && <HelperBody h={h} c={c} />}
                     {c.op === "delete" && <p className="text-xs text-muted">Home Assistant removes it from everything it's on.</p>}
                     {c.kind === "entity" && c.after.new_entity_id !== undefined && <RenameRefsView refs={refs} changeId={c.id} />}
                   </li>
@@ -190,6 +217,11 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
               <Confirm onYes={() => void apply(false)} onNo={() => setStep("list")} yes="Back up and apply">
                 Taxis first makes a backup of Home Assistant, then applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home Assistant back to check each one.
                 If the backup fails, nothing is changed.
+                {hasHelper && (
+                  <span className="mt-2 block">
+                    Helpers: Taxis makes them the way Home Assistant's own helper dialogs do, then gives each its entity id and area. A helper is never deleted.
+                  </span>
+                )}
                 {hasRename && (
                   <span className="mt-2 block">
                     Renamed entities: Taxis also rewrites the old id in the automations, scripts, scenes and dashboards listed, each only if it hasn't changed since Taxis read it.
@@ -207,6 +239,46 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
         )}
       </div>
     </main>
+  );
+}
+
+// A helper's members, or what changes in them. The id and area are in the title.
+function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
+  const name = (id: string) => (
+    <li key={id}>
+      {h.entities[id]?.name ?? id} <code className="font-mono text-muted">{id}</code>
+    </li>
+  );
+  if (c.op === "create") {
+    const sensor = c.after.set_area_sensor;
+    return (
+      <div className="flex flex-col gap-1 text-xs">
+        <details>
+          <summary className="cursor-pointer text-muted">
+            Named “{String(c.after.name)}”, {plural(((c.after.entities as string[]) ?? []).length, "member")}
+          </summary>
+          <ul className="mt-1 flex flex-col gap-0.5 pl-4">{((c.after.entities as string[]) ?? []).map(name)}</ul>
+        </details>
+        {typeof sensor === "string" && <p className="text-muted">Also becomes the area's {sensor} sensor.</p>}
+      </div>
+    );
+  }
+  const { added, removed } = memberChange(c);
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      {added.length > 0 && (
+        <div>
+          <span className="text-muted">Added</span>
+          <ul className="pl-4">{added.map(name)}</ul>
+        </div>
+      )}
+      {removed.length > 0 && (
+        <div>
+          <span className="text-muted">Taken out</span>
+          <ul className="pl-4">{removed.map(name)}</ul>
+        </div>
+      )}
+    </div>
   );
 }
 

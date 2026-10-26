@@ -3,7 +3,7 @@
 // read and, as important, what was NOT written. Not a test file itself, so
 // vitest doesn't collect it.
 
-import { buildMockRegistry, handleMock, handleMockRest, type MockHome } from "../../scripts/mock-ha-core.ts";
+import { buildMockRegistry, handleMock, handleMockRest, type MockHome, type MockRestReply } from "../../scripts/mock-ha-core.ts";
 import { HaRest } from "../ha/rest.ts";
 import { assertReadCommand, assertWriteCommand } from "../ha/socket.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
@@ -25,6 +25,8 @@ export function fakeHa(home: MockHome = buildMockRegistry()) {
     maxInFlight: 0,
     // A status to answer a REST request with instead of the fake's own.
     restStatus: null as null | ((method: string, path: string) => number | null),
+    // A whole answer to give instead of the fake's own (a flow that aborts, say).
+    restReply: null as null | ((method: string, path: string, body: unknown) => MockRestReply | null),
     // Fails WebSocket reads of these types.
     failRead: new Set<string>(),
   };
@@ -62,7 +64,8 @@ export function fakeHa(home: MockHome = buildMockRegistry()) {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     return track(() => {
       const forced = t.restStatus?.(method, url.pathname) ?? null;
-      const reply = forced === null ? handleMockRest(home, method, url.pathname, body) : { status: forced, body: { message: `forced ${forced}` } };
+      const override = t.restReply?.(method, url.pathname, body) ?? null;
+      const reply = override ?? (forced === null ? handleMockRest(home, method, url.pathname, body) : { status: forced, body: { message: `forced ${forced}` } });
       const call: RestCall = { method, path: url.pathname, body, status: reply.status };
       t.rest.push(call);
       t.after?.({ rest: call });

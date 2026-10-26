@@ -596,7 +596,7 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
             </div>
           </div>
         )}
-        {tab === "capabilities" && <AreaCapabilitiesTab h={h} area={area} />}
+        {tab === "capabilities" && <AreaCapabilitiesTab h={h} area={area} go={go} />}
         {tab === "entities" && <RoleSections h={h} ids={area.entityIds} filters={filters} rows={rows} />}
         {tab === "devices" &&
           (area.deviceIds.length === 0 ? (

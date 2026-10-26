@@ -18,7 +18,7 @@ describe("validateNaming", () => {
 
   it("keeps only real roles, and only areas Home Assistant has", () => {
     const r = validateNaming({ ...base, areaCodes: { kitchen: "Kit", gone: "x" }, typeWords: { light: "lamp", constructor: "x", toString: "y" } }, new Set(["kitchen"]));
-    expect(r).toEqual({ ok: true, value: { ...base, areaCodes: { kitchen: "kit" }, typeWords: { light: "lamp" } } });
+    expect(r).toEqual({ ok: true, value: { ...base, areaCodes: { kitchen: "kit" }, typeWords: { light: "lamp" }, helperNames: {} } });
   });
 
   it("says when a pattern is too long rather than empty", () => {
@@ -205,5 +205,39 @@ describe("checkAreaCodes", () => {
 
   it("refuses an area id Home Assistant lists twice", () => {
     expect(checkAreaCodes(DEFAULT_NAMING, hierarchy(), ["kitchen", "pantry", "kitchen"])).toContain("kitchen more than once");
+  });
+});
+
+describe("validateNaming: helper names", () => {
+  it("keeps only the names that differ from the default, for real helpers", () => {
+    const r = validateNaming({ ...base, helperNames: { lights: "lamps", motion: "motions", media: "", bogus: "x", constructor: "y" } });
+    expect(r).toMatchObject({ ok: true, value: { helperNames: { lights: "lamps" } } });
+  });
+
+  it("refuses a name that isn't a lower-case slug, naming the helper", () => {
+    for (const bad of ["Lamps", "two words", "x".repeat(31), "_a", "a__b", "café"]) {
+      expect(validateNaming({ ...base, helperNames: { lights: bad } }), bad).toMatchObject({ ok: false, error: expect.stringContaining("helper name for lights") });
+    }
+    expect(validateNaming({ ...base, helperNames: { lights: 5 } })).toMatchObject({ ok: false });
+    expect(validateNaming({ ...base, helperNames: "x" })).toMatchObject({ ok: false });
+    expect(validateNaming({ ...base, helperNames: ["x"] })).toMatchObject({ ok: false });
+  });
+
+  it("refuses two helpers with the same name, defaults included", () => {
+    expect(validateNaming({ ...base, helperNames: { lights: "x", motion: "x" } })).toMatchObject({ ok: false });
+    // "motions" is the default of motion.
+    expect(validateNaming({ ...base, helperNames: { lights: "motions" } })).toMatchObject({ ok: false, error: expect.stringContaining("Motion") });
+    // Freeing it first makes it available.
+    expect(validateNaming({ ...base, helperNames: { lights: "motions", motion: "pirs" } })).toMatchObject({ ok: true });
+  });
+
+  it("is stored and read back, and settings saved before helper names existed still load", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const store = settingsStore(db);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('naming', ?)").run(JSON.stringify({ idPattern: "{area}_{name}", namePattern: "{Name}", areaCodes: {}, typeWords: {} }));
+    expect(store.naming().helperNames).toEqual({});
+    store.saveNaming({ ...DEFAULT_NAMING, helperNames: { lights: "lamps" } });
+    expect(store.naming().helperNames).toEqual({ lights: "lamps" });
   });
 });

@@ -21,6 +21,9 @@ const level: Check = (v) => v === null || (Number.isInteger(v) && Math.abs(v as 
 // single underscores, none at either end of either part.
 export const ENTITY_ID_RE = /^(?!.*__)(?!_)[a-z0-9_]+(?<!_)\.(?!_)[a-z0-9_]+(?<!_)$/;
 const entityIdCheck: Check = (v) => typeof v === "string" && v.length <= 255 && ENTITY_ID_RE.test(v);
+const entityIdOrNull: Check = (v) => v === null || entityIdCheck(v);
+const entityIdList: Check = (v) => Array.isArray(v) && v.length >= 1 && v.length <= 500 && v.every(entityIdCheck) && new Set(v).size === v.length;
+const oneOf = (...values: string[]): Check => (v) => typeof v === "string" && values.includes(v);
 const categoryMap: Check = (v) =>
   typeof v === "object" && v !== null && !Array.isArray(v) &&
   Object.entries(v).every(([k, c]) => (CATEGORY_SCOPES as readonly string[]).includes(k) && idOrNull(c));
@@ -30,15 +33,25 @@ const categoryMap: Check = (v) =>
 export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
   entity: { new_entity_id: entityIdCheck, name: strOrNull(), icon, area_id: idOrNull, labels: ids, categories: categoryMap, hidden_by: userOrNull, disabled_by: userOrNull },
   device: { name_by_user: strOrNull(), area_id: idOrNull, labels: ids, disabled_by: userOrNull },
-  area: { name: str(), floor_id: idOrNull, icon, labels: ids },
+  area: { name: str(), floor_id: idOrNull, icon, labels: ids, temperature_entity_id: entityIdOrNull, humidity_entity_id: entityIdOrNull },
   floor: { name: str(), level, icon },
   label: { name: str(), color: strOrNull(32), icon, description: strOrNull(1000) },
   category: { name: str(), icon },
+  helper: {
+    helper: oneOf("group", "min_max"),
+    group_type: oneOf("light", "binary_sensor", "media_player"),
+    name: str(),
+    entity_id: entityIdCheck,
+    entities: entityIdList,
+    area_id: id,
+    set_area_sensor: oneOf("temperature", "humidity"),
+  },
 };
 
 // What can be created and deleted. Entities and devices come from integrations:
-// Taxis edits them but never creates or removes them.
-const CREATABLE = new Set<ChangeKind>(["area", "floor", "label", "category"]);
+// Taxis edits them but never creates or removes them. Helpers can be created
+// but, like entities, are never deleted.
+const CREATABLE = new Set<ChangeKind>(["area", "floor", "label", "category", "helper"]);
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const an = (kind: string) => (/^[aeiou]/.test(kind) ? `an ${kind}` : `a ${kind}`);
@@ -46,6 +59,7 @@ const an = (kind: string) => (/^[aeiou]/.test(kind) ? `an ${kind}` : `a ${kind}`
 export function validateInput(input: ChangeInput): string | null {
   if (!(input.kind in FIELDS)) return `Unknown kind "${String(input.kind)}".`;
   if (!["create", "update", "delete"].includes(input.op)) return `Unknown operation "${String(input.op)}".`;
+  if (input.kind === "helper" && input.op === "delete") return "A helper can be created or updated, not deleted.";
   if (input.op !== "update" && !CREATABLE.has(input.kind)) return `${cap(an(input.kind))} can be edited, not created or deleted.`;
   if (input.kind === "category") {
     if (!(CATEGORY_SCOPES as readonly string[]).includes(input.scope ?? "")) return "A category change needs a scope: automation, script, scene or helpers.";
@@ -62,6 +76,28 @@ export function validateInput(input: ChangeInput): string | null {
   }
   if (input.op === "create" && !str()(fields.name)) return `A new ${input.kind} needs a name.`;
   if (input.op === "update" && Object.keys(fields).length === 0) return "Nothing to change.";
+  if (input.kind === "helper") return validateHelper(input.op, fields);
+  return null;
+}
+
+// What a helper change needs beyond each field being valid on its own: a group
+// or min/max whose entity id and members are in the domain it works on.
+function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>): string | null {
+  if (op === "update") return Object.keys(fields).every((k) => k === "entities") ? null : "A helper update can only change its members.";
+  if (!("helper" in fields)) return "A new helper needs a kind.";
+  if (!("entity_id" in fields)) return "A new helper needs an entity id.";
+  if (!("entities" in fields)) return "A new helper needs members.";
+  if (!("area_id" in fields)) return "A new helper needs an area.";
+  const domain = String(fields.entity_id).split(".")[0];
+  if (fields.helper === "group") {
+    if (!("group_type" in fields)) return "A new group needs a group type.";
+    if (domain !== fields.group_type) return `A ${String(fields.group_type)} group's entity id has to start with “${String(fields.group_type)}.”.`;
+  } else {
+    if ("group_type" in fields) return "Only a group has a group type.";
+    if (domain !== "sensor") return "A min/max helper's entity id has to start with “sensor.”.";
+  }
+  if (!(fields.entities as string[]).every((m) => m.startsWith(`${domain}.`))) return `Its members have to be ${domain} entities.`;
+  if ("set_area_sensor" in fields && fields.helper !== "min_max") return "Only a min/max sensor can be the area's temperature or humidity sensor.";
   return null;
 }
 
@@ -89,7 +125,7 @@ export function currentValues(h: Hierarchy, kind: ChangeKind, targetId: string, 
     }
     case "area": {
       const a = h.areas[targetId];
-      return a ? { name: a.name, floor_id: a.floorId, icon: a.icon, labels: a.labels } : null;
+      return a ? { name: a.name, floor_id: a.floorId, icon: a.icon, labels: a.labels, temperature_entity_id: a.temperatureEntityId, humidity_entity_id: a.humidityEntityId } : null;
     }
     case "floor": {
       const f = h.floors.find((x) => x.id === targetId);
@@ -102,6 +138,10 @@ export function currentValues(h: Hierarchy, kind: ChangeKind, targetId: string, 
     case "category": {
       const c = scope ? h.categories[scope].find((x) => x.id === targetId) : undefined;
       return c ? { name: c.name, icon: c.icon } : null;
+    }
+    case "helper": {
+      const e = h.entities[targetId];
+      return e ? { entities: e.members } : null;
     }
   }
 }
@@ -215,6 +255,7 @@ export function planMerge(existing: Change[], input: ChangeInput, h: Hierarchy):
   const kind = input.kind;
   const scope = input.scope ?? null;
   const fields = input.fields ?? {};
+  if (kind === "helper") return planHelper(existing, input, h);
 
   if (input.op === "create") {
     const bad = checkRefs(existing, h, {}, fields);
@@ -316,12 +357,51 @@ export function planMerge(existing: Change[], input: ChangeInput, h: Hierarchy):
   return { action: "insert", change: { kind, op: "update", targetId, scope, before, after } };
 }
 
+const none = (reason: string): MergePlan => ({ action: "none", reason });
+
+// Helpers: a creation is its own change, keyed by the entity id it will have
+// (there is no temporary id: nothing points at a helper that isn't applied). An
+// update replaces the members; a second edit of the same helper folds into the
+// first and keeps the members as they were before either.
+function planHelper(existing: Change[], input: ChangeInput, h: Hierarchy): MergePlan {
+  const fields = input.fields ?? {};
+  const members = (fields.entities ?? []) as string[];
+  const absent = members.find((m) => !h.entities[m]);
+  if (absent) return none(`“${absent}” isn't in Home Assistant any more.`);
+
+  if (input.op === "create") {
+    const entityId = String(fields.entity_id);
+    if (h.entities[entityId]) return none(`Home Assistant already has an entity “${entityId}”.`);
+    if (existing.some((c) => c.kind === "helper" && c.op === "create" && c.after.entity_id === entityId)) return none(`The list already creates “${entityId}”.`);
+    if (existing.some((c) => c.kind === "entity" && c.after.new_entity_id === entityId)) return none(`A change in the list already renames an entity to “${entityId}”.`);
+    const bad = checkRefs(existing, h, {}, fields);
+    if (bad) return none(bad);
+    return { action: "insert", change: { kind: "helper", op: "create", targetId: entityId, scope: null, before: {}, after: { ...fields } } };
+  }
+
+  // The preview shows a pending rename under its new id; the helper is still
+  // under the old one in Home Assistant.
+  let targetId = input.targetId!;
+  const renamed = existing.find((c) => c.kind === "entity" && c.after.new_entity_id === targetId);
+  if (renamed) targetId = renamed.targetId;
+  const e = h.entities[targetId];
+  if (!e) return none("That helper isn't in Home Assistant any more.");
+  if (e.platform !== "group") return none("Taxis only updates the members of a group.");
+  if (!e.configEntryId) return none("This group isn't set up in the Home Assistant UI, so Taxis can't change its members.");
+  const pending = existing.find((c) => c.kind === "helper" && c.op === "update" && c.targetId === targetId);
+  const base = pending ? ((pending.before.entities as string[] | undefined) ?? e.members) : e.members;
+  if (sameValue(members, base)) return pending ? { action: "remove", ids: [pending.id] } : none("That's how it already is.");
+  if (pending) return { action: "replace", id: pending.id, after: { entities: members }, before: { entities: base } };
+  return { action: "insert", change: { kind: "helper", op: "update", targetId, scope: null, before: { entities: e.members }, after: { entities: members } } };
+}
+
 // Null when `newId` is a free id in the same domain.
 function checkRename(existing: Change[], h: Hierarchy, targetId: string, newId: string): string | null {
   const domain = targetId.slice(0, targetId.indexOf("."));
   if (!newId.startsWith(`${domain}.`)) return `An entity id keeps its domain: it has to start with “${domain}.”.`;
   if (!h.entities[targetId]?.inRegistry) return "This entity has no unique id, so Home Assistant doesn't let it be renamed.";
   if (h.entities[newId]) return `Home Assistant already has an entity “${newId}”.`;
+  if (existing.some((c) => c.kind === "helper" && c.op === "create" && c.after.entity_id === newId)) return `The list already creates a helper “${newId}”.`;
   const taken = existing.find((c) => c.kind === "entity" && c.targetId !== targetId && c.after.new_entity_id === newId);
   if (taken) return `Another change in the list already renames an entity to “${newId}”.`;
   // An id another rename frees only becomes free once that one is applied:

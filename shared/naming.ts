@@ -1,3 +1,4 @@
+import type { HelperNames } from "./helpers.ts";
 import type { AreaNode, EntityItem, EntityRole, Hierarchy } from "./types.ts";
 
 // Naming: a code per area, a pattern for entity ids and display names, and an
@@ -15,6 +16,9 @@ export type NamingSettings = {
   areaCodes: Record<string, string>;
   // Role -> the word for it in entity ids. Missing: the default.
   typeWords: Partial<Record<EntityRole, string>>;
+  // Helper key -> the end of its canonical entity id (shared/helpers.ts).
+  // Missing: the default.
+  helperNames: HelperNames;
 };
 
 export const DEFAULT_TYPE_WORDS: Record<EntityRole, string> = {
@@ -45,6 +49,7 @@ export const DEFAULT_NAMING: NamingSettings = {
   namePattern: "{Area} {Name}",
   areaCodes: {},
   typeWords: {},
+  helperNames: {},
 };
 
 export const slug = (s: string): string =>

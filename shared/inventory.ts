@@ -163,7 +163,10 @@ const emptyInventory = (): AreaInventory => Object.fromEntries(CAPABILITIES.map(
 
 const byName = (a: InventoryRow, b: InventoryRow) => a.name.localeCompare(b.name) || a.entityId.localeCompare(b.entityId);
 
-export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string): AreaInventory {
+// `exclude`: entity ids left out of the rows, for the area's own canonical
+// helpers (shared/helpers.ts), which are listed under Helpers instead. Passed in
+// so this file stays free of the naming settings.
+export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string, exclude?: ReadonlySet<string>): AreaInventory {
   const out = emptyInventory();
   const area = h.areas[areaId];
   if (!area) return out;
@@ -171,7 +174,7 @@ export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string
   const found: { c: Candidate; capability: Capability; counts: boolean; choice: EntityChoice }[] = [];
   for (const id of area.entityIds) {
     const e = h.entities[id];
-    if (!e || e.areaId !== areaId) continue;
+    if (!e || e.areaId !== areaId || exclude?.has(id)) continue;
     const c = candidate(h, e);
     if (!c) continue;
     const choice = ownChoice(s, id) ?? {};
@@ -241,9 +244,9 @@ export type MatrixRow = {
 
 const emptyTallies = (): Record<Capability, Tally> => Object.fromEntries(CAPABILITIES.map((c) => [c.key, { counted: 0, total: 0 }])) as Record<Capability, Tally>;
 
-export function inventoryMatrix(h: Hierarchy, s: InventorySettings): MatrixRow[] {
+export function inventoryMatrix(h: Hierarchy, s: InventorySettings, exclude?: (areaId: string) => ReadonlySet<string>): MatrixRow[] {
   return Object.values(h.areas).map((area) => {
-    const inv = areaInventory(h, s, area.id);
+    const inv = areaInventory(h, s, area.id, exclude?.(area.id));
     const floor = area.floorId ? h.floors.find((f) => f.id === area.floorId) : undefined;
     const perCapability = emptyTallies();
     let total = 0;

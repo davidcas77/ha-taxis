@@ -68,6 +68,9 @@ export type EntityItem = {
   // Only entities in the entity registry can be edited.
   inRegistry: boolean;
   platform: string;
+  // The config entry behind a helper set up in the UI (a group, a min/max…).
+  // Null for YAML and for anything an integration made without one.
+  configEntryId: string | null;
 };
 
 export type DeviceItem = {
@@ -139,7 +142,7 @@ export type Hierarchy = {
 // Changes: edits collected in Taxis, applied to Home Assistant together.
 // ---------------------------------------------------------------------------
 
-export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category";
+export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category" | "helper";
 export type ChangeOp = "create" | "update" | "delete";
 
 // The fields each kind of change may set, named as Home Assistant names them.
@@ -147,10 +150,23 @@ export type ChangeFields = {
   // new_entity_id renames the entity; Apply also updates what uses the old id.
   entity: { new_entity_id?: string; name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null };
   device: { name_by_user?: string | null; area_id?: string | null; labels?: string[]; disabled_by?: "user" | null };
-  area: { name?: string; floor_id?: string | null; icon?: string | null; labels?: string[] };
+  area: { name?: string; floor_id?: string | null; icon?: string | null; labels?: string[]; temperature_entity_id?: string | null; humidity_entity_id?: string | null };
   floor: { name?: string; level?: number | null; icon?: string | null };
   label: { name?: string; color?: string | null; icon?: string | null; description?: string | null };
   category: { name?: string; icon?: string | null };
+  // A native helper. Created: a group or min/max, named and filled in one go,
+  // with its canonical entity id and area; for a temperature or humidity sensor
+  // the area can be pointed at it in the same step. Updated: its members.
+  // Never deleted.
+  helper: {
+    helper?: "group" | "min_max";
+    group_type?: "light" | "binary_sensor" | "media_player";
+    name?: string;
+    entity_id?: string;
+    entities?: string[];
+    area_id?: string | null;
+    set_area_sensor?: "temperature" | "humidity";
+  };
 };
 
 export type Change = {

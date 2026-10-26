@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Helpers.** A new **Helpers** tab on Parameters, and a Helpers table at the
+  end of each area's Capabilities tab. For each area Taxis works out the
+  canonical helpers from what counts: a group for lights, motion, presence,
+  doors, windows and media (two or more players), and a min/max (mean) sensor
+  for temperature, humidity and light level. Each row says whether the helper
+  is in place, needs its members updated, can be adopted from an existing group
+  (renamed, with the old id replaced where it's used), has to be created, or
+  conflicts with something that already has the id. Tick rows and **Add to
+  changes**; temperature and humidity also point the area's own sensor setting
+  at the canonical sensor.
+- **Settings: Helper names.** The end of each canonical entity id (`all`,
+  `motions`, `doors`…) can be changed, with a live example.
+- **Apply makes helpers.** Apply creates a group or a min/max sensor through
+  Home Assistant's own helper setup dialogs, gives it the id and area, changes
+  a group's members through its options, then reads Home Assistant back to
+  check. It never deletes a helper. The Changes page describes them
+  ("Create group binary_sensor.kitchen_motions in Kitchen: 2 members").
+- The demo house has a light group to adopt, one with a member missing, real
+  sensors on canonical ids (conflicts), and areas that need a group or a
+  min/max sensor, so every status shows.
+
 - **Parameters.** A new page between Organize and Changes, with a bar of tabs
   for the settings later features use. The first tab, **Capabilities**, is a
   sortable table of areas by capability (lights, motion, presence, doors,

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { GROUP_ID, GROUP_LISTS, MAX_GROUPS, MAX_ITEMS, MAX_NAME, type GroupSettings } from "../shared/groups.ts";
+import { HELPERS, effectiveSuffixes, helperNameErrors, isHelperKey, type HelperNames } from "../shared/helpers.ts";
 import {
   AREA_TYPES,
   EMPTY_INVENTORY,
@@ -77,6 +78,7 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>): {
   const s = input as Partial<NamingSettings>;
   if (s.areaCodes !== undefined && !isRecord(s.areaCodes)) return { ok: false, error: "The area codes weren't readable." };
   if (s.typeWords !== undefined && !isRecord(s.typeWords)) return { ok: false, error: "The type words weren't readable." };
+  if (s.helperNames !== undefined && !isRecord(s.helperNames)) return { ok: false, error: "The helper names weren't readable." };
   const pattern = (v: unknown, need: string[], what: string) => {
     if (typeof v !== "string" || v.trim().length === 0) return `The ${what} pattern can't be empty.`;
     if (v.length > 120) return `The ${what} pattern is longer than 120 characters.`;
@@ -104,7 +106,19 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>): {
     if (word.trim() && !clean) return { ok: false, error: `The word for ${role} has no letters or digits.` };
     words[role as EntityRole] = clean;
   }
-  return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, typeWords: words } };
+  // Helper names: only real keys, only what differs from the default, each a
+  // valid slug and no two the same.
+  const helperNames: HelperNames = {};
+  for (const [key, v] of Object.entries((s.helperNames ?? {}) as Record<string, unknown>)) {
+    if (!isHelperKey(key) || v === undefined || v === null || v === "") continue;
+    if (typeof v !== "string") return { ok: false, error: `The helper name for ${key} wasn't readable.` };
+    helperNames[key] = v;
+  }
+  const bad = Object.entries(helperNameErrors(helperNames))[0];
+  if (bad) return { ok: false, error: `The helper name for ${HELPERS.find((x) => x.key === bad[0])!.label.toLowerCase()}: ${bad[1]}` };
+  const defaults = effectiveSuffixes({});
+  for (const key of Object.keys(helperNames) as (keyof HelperNames)[]) if (helperNames[key] === defaults[key]) delete helperNames[key];
+  return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, typeWords: words, helperNames } };
 }
 
 // Null when no two areas end up with the same code. Runs against the live

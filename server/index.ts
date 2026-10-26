@@ -22,6 +22,7 @@ import type {
   RenameRefs,
 } from "../shared/types.ts";
 import { applyChanges, isRename } from "./changes/apply.ts";
+import { applyHelperChanges } from "./changes/helpers.ts";
 import { overlayChanges } from "./changes/overlay.ts";
 import { changeStore } from "./changes/store.ts";
 import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming } from "./settings.ts";
@@ -350,7 +351,15 @@ app.post("/api/apply", async (c) => {
     }
 
     log.info(`Applying ${pending.length} change(s) to Home Assistant`);
-    const { results, appliedIds, realIds, retargets } = await applyChanges(pending, ha, async () => (await loadRead(true)).read.raw, rest ? { ha, rest } : undefined);
+    const readFresh = async () => (await loadRead(true)).read.raw;
+    // Registry changes first (and, with renames, what uses the old ids), then the
+    // helpers, which may need a new area or a renamed entity to be there.
+    const registry = await applyChanges(pending, ha, readFresh, rest ? { ha, rest } : undefined);
+    const renamed = new Map(pending.filter(isRename).map((c) => [c.targetId, String(c.after.new_entity_id)]));
+    const helpers = rest ? await applyHelperChanges(pending, { ha, rest, readFresh, realIds: registry.realIds, renamed }) : [];
+    const { realIds, retargets } = registry;
+    const results = pending.map((c) => registry.results.find((r) => r.changeId === c.id) ?? helpers.find((r) => r.changeId === c.id) ?? { changeId: c.id, ok: false, message: "Not sent." });
+    const appliedIds = results.filter((r) => r.ok).map((r) => r.changeId);
     for (const r of results) {
       const ch = pending.find((x) => x.id === r.changeId)!;
       const line = `${ch.op} ${ch.kind} ${ch.targetId}: ${r.message}`;

@@ -29,6 +29,7 @@ function entity(entityId: string, role: EntityItem["role"], state: string | null
     disabledBy: null,
     needsOwnName: false,
     inRegistry: true,
+    configEntryId: null,
     platform: "x",
     ...extra,
   };

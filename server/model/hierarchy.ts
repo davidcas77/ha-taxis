@@ -47,6 +47,8 @@ export type RawEntity = {
   disabled_by?: string | null;
   hidden_by?: string | null;
   entity_category?: string | null;
+  // Set for entities made by a config entry (helpers set up in the UI).
+  config_entry_id?: string | null;
   labels?: string[];
   icon?: string | null;
   categories?: Record<string, string>;
@@ -173,6 +175,7 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
       needsOwnName: Boolean(reg?.device_id && !text(reg?.original_name)),
       inRegistry: Boolean(reg),
       platform,
+      configEntryId: text(reg?.config_entry_id),
     };
     if (device) device.entityIds.push(entityId);
     if (areaId) areas[areaId].entityIds.push(entityId);

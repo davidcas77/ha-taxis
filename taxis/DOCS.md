@@ -91,7 +91,7 @@ in the list of changes.
 ## Parameters
 
 What Taxis knows about each area, and the choices later features build on. The
-page has a bar of tabs; for now there is one, **Capabilities**.
+page has a bar of tabs: **Capabilities** and **Helpers**.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, thermostats, speakers, TVs,
@@ -100,6 +100,56 @@ but left out, the rest show beside it in grey (`2 +1`). Hover a column header
 for its full name, and click a header to sort. Click an area or a cell to open
 that area's Capabilities tab. Areas with nothing in them are hidden until you
 tick **Show empty areas**. The bottom row adds up the home.
+
+### Helpers
+
+The helpers Taxis proposes per area, from the capabilities. Each area gets one
+**canonical** entity per capability, even with a single sensor, so an
+automation can point at it and adding or replacing a sensor changes one group,
+not the automation. Nothing is written until you apply the list of changes.
+
+| Helper | Entity id | Made of | Wanted when |
+|---|---|---|---|
+| Lights | `light.<code>_all` | group of the counted lights | 1 or more |
+| Motion | `binary_sensor.<code>_motions` | group (any on) of the counted motion sensors | 1 or more |
+| Presence | `binary_sensor.<code>_presences` | group of the counted presence sensors | 1 or more |
+| Doors | `binary_sensor.<code>_doors` | group of the counted door sensors | 1 or more |
+| Windows | `binary_sensor.<code>_windows` | group of the counted window sensors | 1 or more |
+| Temperature | `sensor.<code>_temperature` | min/max (mean) | 1 or more |
+| Humidity | `sensor.<code>_humidity` | min/max (mean) | 1 or more |
+| Light level | `sensor.<code>_illuminance` | min/max (mean) | 1 or more |
+| Media | `media_player.<code>_media` | group of the counted speakers and TVs | 2 or more |
+
+`<code>` is the area's entity id code from Settings. The name of a new helper
+is the area's name and a word: "Kitchen motions". Only entities that **count**
+are used, so exclude a sensor on the area's Capabilities tab and the helper
+follows. The area's own canonical helpers are not listed as its sensors.
+
+The table has a row per helper, with a filter by status, sortable columns, and
+the sources (click the number to see them). The status says what Taxis would do:
+
+- **In place**: the entity is already there as the right kind of helper. For a
+  group its members are checked. A min/max sensor's members can't be read from
+  Home Assistant, so it says "members not checked".
+- **Update members +2 −1**: the group is there but its members differ.
+- **Adopt**: no entity has the id yet, but a group in Home Assistant already has
+  exactly these members. Taxis renames it to the canonical id; the old id is
+  replaced in automations, scripts, scenes and dashboards like any rename. If
+  that group is in the area and shares at least half its members with the
+  sources, Taxis adopts it and updates its members too.
+- **Create**: nothing to adopt. Taxis makes the helper, puts it in the area and
+  gives it the id.
+- **Conflict**: the id is held by something that isn't that helper (a real
+  sensor named after the room, a template). Nothing is proposed. Change the name
+  in **Settings → Helper names**. A group written in YAML whose members differ
+  is also a conflict: Taxis can't edit it.
+- **In changes**: already in the list of changes.
+
+Tick the rows you want (a box in the header ticks them all) and use **Add to
+changes**. For temperature and humidity, the area's own temperature and humidity
+sensor setting is pointed at the canonical sensor in the same step. If the
+sensor is already in place but the area points elsewhere, that is a row of its
+own. Each area's Capabilities tab ends with its own Helpers table.
 
 ## Naming
 
@@ -117,6 +167,10 @@ Under **Settings → Naming**:
   `light.livingroom_lamp`.
 - **Type words.** The word for each kind of entity (`motion`, `door`,
   `temp`…).
+- **Helper names.** The end of each canonical helper's entity id (`all`,
+  `motions`, `presences`, `doors`, `windows`, `temperature`, `humidity`,
+  `illuminance`, `media`). Lower-case letters, digits and `_`, up to 30
+  characters, and each used once. Settings shows an example id as you type.
 
 Each area's **Naming** tab checks its entities against these: which ids start
 with the area's code, which use an older code, which name another area, and
@@ -146,15 +200,24 @@ changes were done, but Home Assistant doesn't change until you apply them on
 the **Changes** page. Apply:
 
 1. makes a backup of Home Assistant (if the backup fails, nothing is changed);
-2. applies the changes;
+2. applies the changes: first the registries (names, ids, areas, floors,
+   labels, categories), then the helpers;
 3. reads Home Assistant back and checks each one. A change that didn't take
    stays in the list with the reason.
 
 Taxis only edits what Home Assistant's own settings pages edit: names, ids,
-areas, floors, labels, categories, icons, hidden and disabled. When it renames
-an entity it replaces the old id in automations, scripts, scenes and
-dashboards, and changes nothing else in them. It never removes a device or an
-entity, and never calls a service.
+areas, floors, labels, categories, icons, hidden and disabled, an area's
+temperature and humidity sensor, and the helpers described above. When it
+renames an entity it replaces the old id in automations, scripts, scenes and
+dashboards, and changes nothing else in them. It never removes a device, an
+entity or a helper, and never calls a service.
+
+A **helper** is made the way Home Assistant's Helpers page makes it: Taxis
+starts the same setup dialog (a group, or a min/max sensor with the mean), fills
+it in, then gives the new entity its canonical id and area. A group's members
+are changed through the group's own options. If a helper with that id is already
+there, nothing is made twice; if one with that name sits under another id,
+Taxis stops and says so instead of making a copy.
 
 ## Data and privacy
 

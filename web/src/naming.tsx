@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
+import { HELPERS, canonicalId, effectiveSuffixes, helperNameErrors } from "../../shared/helpers.ts";
 import { DEFAULT_NAMING, DEFAULT_TYPE_WORDS, analyzeArea, areaCodes, duplicateCodes, slug, type NamingSettings, type NamingStatus } from "../../shared/naming.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
 import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
@@ -54,6 +55,10 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
     [codes, h, draft],
   );
   const { rows: areas, sort, toggle } = useSort(floorOrder, sortColumns, { key: "floor", dir: "asc" });
+  // Helper names: live problems, and an example id from the first area.
+  const helperErrors = useMemo(() => helperNameErrors(draft.helperNames), [draft.helperNames]);
+  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
+  const firstArea = floorOrder[0];
   const sample = h.entities[Object.keys(h.entities).find((id) => h.entities[id].areaId && h.entities[id].role === "light") ?? ""];
   const preview = useMemo(() => {
     if (!sample?.areaId) return null;
@@ -188,8 +193,50 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           </div>
         </section>
 
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h2 className="text-sm font-semibold">Helper names</h2>
+            <p className="text-xs text-muted">
+              The end of the entity id of each canonical helper: <code className="font-mono">{"<domain>.<area code>_<name>"}</code>. Each name is used once.
+            </p>
+          </div>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+            {HELPERS.map((s) => {
+              const error = helperErrors[s.key];
+              return (
+                <div key={s.key} className="flex flex-col gap-1">
+                  <label htmlFor={`helper-name-${s.key}`} className="text-xs font-medium text-muted">
+                    {s.label}
+                  </label>
+                  <input
+                    id={`helper-name-${s.key}`}
+                    className={`${inputClass} font-mono ${error ? "border-danger text-danger" : ""}`}
+                    value={draft.helperNames[s.key] ?? ""}
+                    placeholder={s.suffix}
+                    spellCheck={false}
+                    aria-invalid={error ? true : undefined}
+                    onChange={(e) => {
+                      const names = { ...draft.helperNames };
+                      if (e.target.value) names[s.key] = e.target.value;
+                      else delete names[s.key];
+                      setDraft({ ...draft, helperNames: names });
+                    }}
+                  />
+                  {error ? (
+                    <p role="alert" className="text-[11px] text-danger">
+                      {error}
+                    </p>
+                  ) : (
+                    firstArea && <p className="font-mono text-[11px] text-muted">{canonicalId(s.domain, codes[firstArea.id].code, suffixes[s.key])}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
-          <Button tone="primary" disabled={clashes.size > 0} onClick={() => void save()}>
+          <Button tone="primary" disabled={clashes.size > 0 || Object.keys(helperErrors).length > 0} onClick={() => void save()}>
             Save settings
           </Button>
           <Button tone="ghost" onClick={() => setDraft(naming)}>

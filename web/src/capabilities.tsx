@@ -27,6 +27,8 @@ import {
   type Tally,
 } from "../../shared/inventory.ts";
 import type { AreaNode, Hierarchy } from "../../shared/types.ts";
+import { helperExclusions } from "../../shared/helpers.ts";
+import { AreaHelpersSection } from "./helpers.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
 import { Button, EditedDot } from "./ui.tsx";
@@ -66,9 +68,10 @@ function floorKey(r: MatrixRow): string | null {
 }
 
 export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
-  const { inventory, inventoryLoaded } = useTaxis();
+  const { inventory, inventoryLoaded, naming } = useTaxis();
   const [showEmpty, setShowEmpty] = useState(false);
-  const all = useMemo(() => inventoryMatrix(h, inventory).sort((a, b) => a.name.localeCompare(b.name)), [h, inventory]);
+  // An area's own canonical helpers are under Helpers, not counted here.
+  const all = useMemo(() => inventoryMatrix(h, inventory, helperExclusions(h, naming)).sort((a, b) => a.name.localeCompare(b.name)), [h, inventory, naming]);
   const totals = useMemo(() => matrixTotals(all), [all]);
   const shown = useMemo(() => (showEmpty ? all : all.filter((r) => r.total > 0)), [all, showEmpty]);
   const empty = all.length - all.filter((r) => r.total > 0).length;
@@ -176,11 +179,11 @@ const KIND_LABEL: Partial<Record<Capability, string>> = { door: "Door", window: 
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-export function AreaCapabilitiesTab({ h, area }: { h: Hierarchy; area: AreaNode }) {
-  const { inventory, inventoryLoaded, inventorySaving, saveInventory } = useTaxis();
+export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
+  const { inventory, inventoryLoaded, inventorySaving, saveInventory, naming } = useTaxis();
   const [error, setError] = useState<string | null>(null);
   const locked = !inventoryLoaded || inventorySaving;
-  const inv = useMemo(() => areaInventory(h, inventory, area.id), [h, inventory, area.id]);
+  const inv = useMemo(() => areaInventory(h, inventory, area.id, helperExclusions(h, naming)(area.id)), [h, inventory, naming, area.id]);
   const choice = areaChoice(inventory, area.id);
 
   const run = async (edit: (s: InventorySettings) => InventorySettings) => {
@@ -240,6 +243,8 @@ export function AreaCapabilitiesTab({ h, area }: { h: Hierarchy; area: AreaNode 
       })}
 
       <p className="text-[13px] text-muted">{absent.length === 0 ? "This area has every capability." : `Not in this area: ${absent.map((c) => c.label).join(", ")}.`}</p>
+
+      <AreaHelpersSection h={h} areaId={area.id} go={go} />
     </div>
   );
 }

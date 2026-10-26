@@ -23,9 +23,15 @@ export type MockHome = RawRegistry & {
   // Scenes by id.
   scenes: Record<string, Config>;
   dashboards: MockDashboard[];
-  // Helpers set up in the UI.
-  configEntries: { entry_id: string; domain: string; title: string; entities: string[] }[];
+  // Helpers set up in the UI. Groups keep their options here; entities is the
+  // member list.
+  configEntries: { entry_id: string; domain: string; title: string; entities: string[]; hide_members?: boolean; all?: boolean }[];
+  // Config flows in progress (helper creation, group options), and a counter
+  // for the ids Home Assistant would generate.
+  flows: { next: number; open: Record<string, MockFlow> };
 };
+
+type MockFlow = { kind: "create" | "options"; handler: string; step: string; groupType?: string; entryId?: string };
 
 type Spec = { area: string; floor: string | null; devices: { name: string; model: string; entities: [string, string, string?, string?][] }[] };
 
@@ -66,6 +72,7 @@ const house: Spec[] = [
       { name: "Hall PIR", model: "AS007", entities: [["binary_sensor.hall_motion", "unavailable", "motion"]] },
       // A camera's own motion sensor sees outside the room, so it is listed but doesn't count.
       { name: "Porch camera", model: "Cam 2K", entities: [["camera.porch", "idle"], ["binary_sensor.porch_camera_motion", "off", "motion"]] },
+      { name: "Hall lights", model: "Hue White", entities: [["light.hall_ceiling", "off"], ["light.hall_mirror", "off"]] },
     ],
   },
   {
@@ -84,6 +91,7 @@ const house: Spec[] = [
       { name: "Desk light", model: "WLED", entities: [["light.desk", "on"]] },
       { name: "Desk mmWave", model: "LD2410", entities: [["binary_sensor.study_presence", "off", "occupancy"]] },
       { name: "Study window", model: "AS006", entities: [["binary_sensor.study_window", "on", "window"]] },
+      { name: "Study climate", model: "AS008", entities: [["sensor.study_climate_temperature", "20.8", "temperature", "°C"]] },
       // "opening" is a window until the user says it is a door.
       { name: "Skylight sensor", model: "AS006", entities: [["binary_sensor.study_skylight", "off", "opening"]] },
     ],
@@ -91,7 +99,10 @@ const house: Spec[] = [
   {
     area: "Garage",
     floor: null,
-    devices: [{ name: "Garage door", model: "Meross MSG100", entities: [["cover.garage_door", "closed"]] }],
+    devices: [
+      { name: "Garage door", model: "Meross MSG100", entities: [["cover.garage_door", "closed"]] },
+      { name: "Garage lights", model: "Shelly 1", entities: [["light.garage_ceiling", "off"], ["light.garage_bench", "off"]] },
+    ],
   },
 ];
 
@@ -127,6 +138,7 @@ export function buildMockRegistry(): MockHome {
     scenes: {},
     dashboards: [],
     configEntries: [],
+    flows: { next: 1, open: {} },
   };
   for (const room of house) {
     const areaId = slug(room.area);
@@ -154,6 +166,12 @@ export function buildMockRegistry(): MockHome {
   reg.entities.push({ entity_id: "binary_sensor.kitchen_any_motion", platform: "template", area_id: "kitchen" });
   reg.states.push({ entity_id: "binary_sensor.kitchen_any_motion", state: "off", attributes: { friendly_name: "Kitchen any motion", device_class: "motion" } });
   group("binary_sensor.downstairs_motion", "hallway", "off", ["binary_sensor.kitchen_motion", "binary_sensor.hall_motion"], "motion");
+  // Canonical helpers (see shared/helpers.ts), one of each case. The living room
+  // light group sits at its canonical id with the right members. The hallway one
+  // has the right members under another id. The garage one is at its canonical id
+  // with a member missing.
+  group("light.hall_lights", "hallway", "off", ["light.hall_ceiling", "light.hall_mirror"]);
+  group("light.garage_all", "garage", "off", ["light.garage_ceiling"]);
 
   // Entities an integration ships disabled: in the registry, with no state.
   for (const name of ["linkquality", "update_available", "power_outage_count"]) {
@@ -247,6 +265,15 @@ export function buildMockRegistry(): MockHome {
   // light.downstairs is that helper's entity, as HA links them.
   Object.assign(reg.entities.find((e) => e.entity_id === "light.downstairs")!, { config_entry_id: "01JHELPERDOWNSTAIRS" });
   reg.configEntries.push({ entry_id: "01JHELPERDOWNSTAIRS", domain: "group", title: "Downstairs", entities: ["light.living_spots", "light.kitchen_main", "light.kitchen_under_cabinet"] });
+  // The demo's other group helpers set up in the UI, so their members can be changed.
+  for (const [entityId, entryId, title] of [
+    ["light.hall_lights", "01JHELPERHALLLIGHTS", "Hall lights"],
+    ["light.garage_all", "01JHELPERGARAGEALL", "Garage all"],
+  ]) {
+    Object.assign(reg.entities.find((e) => e.entity_id === entityId)!, { config_entry_id: entryId, original_name: title });
+    const members = reg.states.find((s) => s.entity_id === entityId)!.attributes!.entity_id as string[];
+    reg.configEntries.push({ entry_id: entryId, domain: "group", title, entities: [...members], hide_members: false, all: false });
+  }
 
   reg.entities.push({ entity_id: "input_boolean.guest_mode", platform: "input_boolean" });
   reg.states.push({ entity_id: "input_boolean.guest_mode", state: "off", attributes: { friendly_name: "Guest mode" } });
@@ -477,6 +504,8 @@ export type MockRestReply = { status: number; body: unknown };
 // real HA creates a config on POST to a new id; here only existing ids can be
 // posted, and unknown ids answer 404.
 export function handleMockRest(home: MockHome, method: string, path: string, body: unknown): MockRestReply {
+  const flow = handleMockFlow(home, method, path, body);
+  if (flow) return flow;
   const m = /^\/api\/config\/(automation|script|scene)\/config\/([^/]+)$/.exec(path);
   if (!m) return { status: 404, body: { message: "Not found" } };
   if (method !== "GET" && method !== "POST") return { status: 405, body: { message: "Method not allowed" } };
@@ -496,4 +525,146 @@ export function handleMockRest(home: MockHome, method: string, path: string, bod
   );
   if (state && typeof title === "string") state.attributes = { ...state.attributes, friendly_name: title };
   return { status: 200, body: { result: "ok" } };
+}
+
+// ---------------------------------------------------------------------------
+// Config flows: how Home Assistant's UI makes a group or a min/max helper, and
+// edits a group's members. Simplified to what Taxis sends; ids look like the
+// real ones (32 hex characters for a flow, 26 letters and digits for an entry).
+// ---------------------------------------------------------------------------
+
+const GROUP_TYPES = ["binary_sensor", "cover", "event", "fan", "light", "lock", "media_player", "notify", "sensor", "switch"];
+const OFF_STATES = new Set(["off", "unavailable", "unknown", "idle", "standby", "closed", "locked"]);
+
+function nextFlowId(home: MockHome): string {
+  return (home.flows.next++).toString(16).padStart(32, "0");
+}
+
+function nextEntryId(home: MockHome): string {
+  return `01MOCK${String(home.flows.next++).padStart(20, "0")}`;
+}
+
+function freeEntityId(home: MockHome, domain: string, name: string): string {
+  const base = `${domain}.${slug(name)}`;
+  let id = base;
+  for (let n = 2; home.entities.some((e) => e.entity_id === id) || home.states.some((s) => s.entity_id === id); n++) id = `${base}_${n}`;
+  return id;
+}
+
+// A group's state follows its members; a min/max mean follows their numbers.
+function groupState(home: MockHome, members: string[]): string {
+  const states = members.map((m) => home.states.find((s) => s.entity_id === m)?.state ?? "unavailable");
+  return states.some((s) => !OFF_STATES.has(s)) ? "on" : "off";
+}
+
+function meanState(home: MockHome, members: string[]): string {
+  const values = members.map((m) => Number(home.states.find((s) => s.entity_id === m)?.state)).filter((v) => Number.isFinite(v));
+  return values.length ? String(Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10) : "unknown";
+}
+
+const isStringList = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string");
+
+function handleMockFlow(home: MockHome, method: string, path: string, body: unknown): MockRestReply | null {
+  const m = /^\/api\/config\/config_entries\/(options\/)?flow(?:\/([A-Za-z0-9]+))?$/.exec(path);
+  if (!m) return null;
+  if (method !== "POST") return { status: 405, body: { message: "Method not allowed" } };
+  const options = Boolean(m[1]);
+  const flowId = m[2];
+  const data = (body && typeof body === "object" && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+  const bad = (message: string): MockRestReply => ({ status: 400, body: { message } });
+  const form = (id: string, handler: string, step: string, schema: unknown[], errors: Record<string, string> | null = null): MockRestReply => ({
+    status: 200,
+    body: { type: "form", flow_id: id, handler, step_id: step, data_schema: schema, errors, description_placeholders: null, last_step: null },
+  });
+  const done = (id: string, handler: string, title: string, result: unknown): MockRestReply => {
+    delete home.flows.open[id];
+    return { status: 200, body: { type: "create_entry", flow_id: id, handler, version: 1, minor_version: 1, title, description: null, description_placeholders: null, result } };
+  };
+
+  // Starting a flow.
+  if (!flowId) {
+    const handler = data.handler;
+    if (typeof handler !== "string") return bad("Invalid handler specified");
+    const id = nextFlowId(home);
+    if (options) {
+      const entry = home.configEntries.find((e) => e.entry_id === handler);
+      if (!entry || entry.domain !== "group") return { status: 404, body: { message: "Invalid handler specified" } };
+      const type = home.entities.find((e) => e.config_entry_id === entry.entry_id)?.entity_id.split(".")[0] ?? "light";
+      home.flows.open[id] = { kind: "options", handler, step: "init", groupType: type, entryId: entry.entry_id };
+      const schema: unknown[] = [
+        { name: "entities", required: true, selector: { entity: { multiple: true } }, description: { suggested_value: entry.entities } },
+        { name: "hide_members", optional: true, selector: { boolean: {} }, description: { suggested_value: entry.hide_members ?? false } },
+      ];
+      if (type === "light" || type === "binary_sensor") schema.push({ name: "all", optional: true, selector: { boolean: {} }, description: { suggested_value: entry.all ?? false } });
+      return form(id, handler, "init", schema);
+    }
+    if (handler === "group") {
+      home.flows.open[id] = { kind: "create", handler, step: "user" };
+      return { status: 200, body: { type: "menu", flow_id: id, handler, step_id: "user", menu_options: GROUP_TYPES, description_placeholders: null } };
+    }
+    if (handler === "min_max") {
+      home.flows.open[id] = { kind: "create", handler, step: "user" };
+      return form(id, handler, "user", [{ name: "name", required: true }, { name: "entity_ids", required: true }, { name: "type", required: true }, { name: "round_digits", optional: true }]);
+    }
+    return { status: 404, body: { message: "Invalid handler specified" } };
+  }
+
+  // A step of a flow in progress.
+  const flow = home.flows.open[flowId];
+  if (!flow || flow.kind !== (options ? "options" : "create")) return { status: 404, body: { message: "Invalid flow specified" } };
+
+  if (flow.kind === "options") {
+    const entry = home.configEntries.find((e) => e.entry_id === flow.entryId)!;
+    if (!isStringList(data.entities)) return form(flowId, flow.handler, "init", [], { base: "entities_required" });
+    entry.entities = [...data.entities];
+    if (typeof data.hide_members === "boolean") entry.hide_members = data.hide_members;
+    if (typeof data.all === "boolean") entry.all = data.all;
+    // The group's entity follows its new members.
+    const entity = home.entities.find((e) => e.config_entry_id === entry.entry_id);
+    const st = entity && home.states.find((s) => s.entity_id === entity.entity_id);
+    if (st) {
+      st.attributes = { ...st.attributes, entity_id: [...entry.entities] };
+      st.state = groupState(home, entry.entities);
+    }
+    return done(flowId, flow.handler, "", true);
+  }
+
+  // Creating a group: the menu, then the form of the chosen type.
+  if (flow.handler === "group" && flow.step === "user") {
+    const next = data.next_step_id;
+    if (typeof next !== "string" || !GROUP_TYPES.includes(next)) return bad("Invalid step specified");
+    flow.step = next;
+    flow.groupType = next;
+    const schema: unknown[] = [{ name: "name", required: true }, { name: "entities", required: true }, { name: "hide_members", required: true, default: false }];
+    if (next === "light" || next === "binary_sensor") schema.push({ name: "all", optional: true, default: false });
+    return form(flowId, flow.handler, next, schema);
+  }
+
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  if (!name) return form(flowId, flow.handler, flow.step, [], { name: "name_required" });
+  const entryId = nextEntryId(home);
+  if (flow.handler === "group") {
+    if (!isStringList(data.entities)) return form(flowId, flow.handler, flow.step, [], { entities: "entities_required" });
+    const domain = flow.groupType!;
+    const entityId = freeEntityId(home, domain, name);
+    const members = [...data.entities];
+    home.configEntries.push({ entry_id: entryId, domain: "group", title: name, entities: members, hide_members: Boolean(data.hide_members), all: Boolean(data.all) });
+    home.entities.push({ entity_id: entityId, platform: "group", config_entry_id: entryId, original_name: name });
+    home.states.push({ entity_id: entityId, state: groupState(home, members), attributes: { friendly_name: name, entity_id: members } });
+    return done(flowId, flow.handler, name, { entry_id: entryId, domain: "group", title: name });
+  }
+  // min_max
+  if (!isStringList(data.entity_ids)) return form(flowId, flow.handler, flow.step, [], { entity_ids: "entities_required" });
+  const members = [...data.entity_ids];
+  const entityId = freeEntityId(home, "sensor", name);
+  const first = home.states.find((s) => s.entity_id === members[0]);
+  home.configEntries.push({ entry_id: entryId, domain: "min_max", title: name, entities: members });
+  home.entities.push({ entity_id: entityId, platform: "min_max", config_entry_id: entryId, original_name: name });
+  home.states.push({
+    entity_id: entityId,
+    state: meanState(home, members),
+    // A min/max sensor reports which entities gave the extremes, not its members.
+    attributes: { friendly_name: name, device_class: first?.attributes?.device_class, unit_of_measurement: first?.attributes?.unit_of_measurement, min_entity_id: members[0], max_entity_id: members[0] },
+  } as RawState);
+  return done(flowId, flow.handler, name, { entry_id: entryId, domain: "min_max", title: name });
 }

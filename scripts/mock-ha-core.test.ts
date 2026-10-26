@@ -180,3 +180,100 @@ describe("lovelace", () => {
     expect(fails(home, "lovelace/config/save", { url_path: "nope", config })).toBeTruthy();
   });
 });
+
+describe("config flows", () => {
+  const FLOW = "/api/config/config_entries/flow";
+  const OPTIONS = "/api/config/config_entries/options/flow";
+  const post = (home: Home, path: string, body: unknown) => handleMockRest(home, "POST", path, body);
+  const answer = (r: ReturnType<typeof handleMockRest>) => r.body as Record<string, unknown> & { flow_id: string; result: { entry_id: string } };
+
+  it("walks the group flow: a menu, the form of the chosen type, then an entry and its entity", () => {
+    const home = buildMockRegistry();
+    const menu = answer(post(home, FLOW, { handler: "group", show_advanced_options: false }));
+    expect(menu).toMatchObject({ type: "menu", handler: "group" });
+    expect(menu.flow_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(menu.menu_options).toContain("binary_sensor");
+    const form = post(home, `${FLOW}/${menu.flow_id}`, { next_step_id: "binary_sensor" });
+    expect(form.body).toMatchObject({ type: "form", step_id: "binary_sensor" });
+    const done = answer(post(home, `${FLOW}/${menu.flow_id}`, { name: "Kitchen motions", entities: ["binary_sensor.kitchen_motion"], hide_members: false, all: false }));
+    expect(done).toMatchObject({ type: "create_entry", title: "Kitchen motions" });
+    expect(done.result.entry_id).toMatch(/^[0-9A-Z]{26}$/);
+    expect(home.entities.find((e) => e.entity_id === "binary_sensor.kitchen_motions")).toMatchObject({ platform: "group", config_entry_id: done.result.entry_id });
+    expect(home.states.find((s) => s.entity_id === "binary_sensor.kitchen_motions")).toMatchObject({ state: "off", attributes: { friendly_name: "Kitchen motions", entity_id: ["binary_sensor.kitchen_motion"] } });
+    // The flow is over.
+    expect(post(home, `${FLOW}/${menu.flow_id}`, {}).status).toBe(404);
+  });
+
+  it("derives the entity id from the name, and numbers it when it's taken", () => {
+    const home = buildMockRegistry();
+    const make = () => {
+      const menu = answer(post(home, FLOW, { handler: "group" }));
+      post(home, `${FLOW}/${menu.flow_id}`, { next_step_id: "light" });
+      return answer(post(home, `${FLOW}/${menu.flow_id}`, { name: "Desk Lights", entities: ["light.desk"], hide_members: false, all: false }));
+    };
+    make();
+    make();
+    expect(home.entities.map((e) => e.entity_id)).toEqual(expect.arrayContaining(["light.desk_lights", "light.desk_lights_2"]));
+  });
+
+  it("makes a min/max sensor that reports the mean, not its members", () => {
+    const home = buildMockRegistry();
+    const start = answer(post(home, FLOW, { handler: "min_max" }));
+    expect(start).toMatchObject({ type: "form", step_id: "user" });
+    const done = answer(post(home, `${FLOW}/${start.flow_id}`, { name: "Living mean", entity_ids: ["sensor.living_temperature", "sensor.living_window_temperature"], type: "mean", round_digits: 1 }));
+    expect(done.type).toBe("create_entry");
+    const state = home.states.find((s) => s.entity_id === "sensor.living_mean")!;
+    expect(state.state).toBe("20.8");
+    expect(state.attributes).toMatchObject({ device_class: "temperature", unit_of_measurement: "°C" });
+    expect(state.attributes?.entity_id).toBeUndefined();
+    expect(home.entities.find((e) => e.entity_id === "sensor.living_mean")).toMatchObject({ platform: "min_max" });
+  });
+
+  it("changes a group's members through its options flow, and keeps the other options", () => {
+    const home = buildMockRegistry();
+    const start = answer(post(home, OPTIONS, { handler: "01JHELPERGARAGEALL" }));
+    expect(start).toMatchObject({ type: "form", step_id: "init" });
+    const schema = start.data_schema as { name: string; description?: { suggested_value?: unknown } }[];
+    expect(schema.map((f) => f.name)).toEqual(["entities", "hide_members", "all"]);
+    expect(schema[0].description?.suggested_value).toEqual(["light.garage_ceiling"]);
+    const done = post(home, `${OPTIONS}/${start.flow_id}`, { entities: ["light.garage_ceiling", "light.garage_bench"], hide_members: true, all: false });
+    expect(done.body).toMatchObject({ type: "create_entry" });
+    expect(home.states.find((s) => s.entity_id === "light.garage_all")?.attributes?.entity_id).toEqual(["light.garage_ceiling", "light.garage_bench"]);
+    expect(home.configEntries.find((e) => e.entry_id === "01JHELPERGARAGEALL")).toMatchObject({ hide_members: true });
+    // Asked again, the form shows what is now.
+    const again = answer(post(home, OPTIONS, { handler: "01JHELPERGARAGEALL" }));
+    expect((again.data_schema as { name: string; description?: { suggested_value?: unknown } }[]).find((f) => f.name === "hide_members")?.description?.suggested_value).toBe(true);
+  });
+
+  it("answers an unknown handler, entry or flow with 404, and anything but POST with 405", () => {
+    const home = buildMockRegistry();
+    expect(post(home, FLOW, { handler: "mqtt" }).status).toBe(404);
+    expect(post(home, OPTIONS, { handler: "NOSUCHENTRY123" }).status).toBe(404);
+    expect(post(home, `${FLOW}/00000000000000000000000000000000`, {}).status).toBe(404);
+    expect(post(home, FLOW, {}).status).toBe(400);
+    expect(handleMockRest(home, "GET", FLOW, undefined).status).toBe(405);
+    expect(handleMockRest(home, "DELETE", `${FLOW}/abc`, undefined).status).toBe(405);
+  });
+
+  it("asks again, with an error, for a form without a name or members", () => {
+    const home = buildMockRegistry();
+    const menu = answer(post(home, FLOW, { handler: "group" }));
+    post(home, `${FLOW}/${menu.flow_id}`, { next_step_id: "light" });
+    expect(post(home, `${FLOW}/${menu.flow_id}`, { name: "", entities: ["light.desk"] }).body).toMatchObject({ type: "form", errors: { name: "name_required" } });
+    expect(post(home, `${FLOW}/${menu.flow_id}`, { name: "X", entities: [] }).body).toMatchObject({ type: "form", errors: { entities: "entities_required" } });
+  });
+});
+
+describe("pointing an area at a sensor, and placing a new entity", () => {
+  it("sets an area's temperature and humidity sensor", () => {
+    const home = buildMockRegistry();
+    ok(home, "config/area_registry/update", { area_id: "study", temperature_entity_id: "sensor.study_climate_temperature", humidity_entity_id: null });
+    expect(home.areas.find((a) => a.area_id === "study")).toMatchObject({ temperature_entity_id: "sensor.study_climate_temperature", humidity_entity_id: null });
+  });
+
+  it("renames an entity and gives it an area in one update", () => {
+    const home = buildMockRegistry();
+    ok(home, "config/entity_registry/update", { entity_id: "light.hall_lights", new_entity_id: "light.hall_all", area_id: "study" });
+    expect(home.entities.find((e) => e.entity_id === "light.hall_all")).toMatchObject({ area_id: "study", platform: "group" });
+  });
+});
