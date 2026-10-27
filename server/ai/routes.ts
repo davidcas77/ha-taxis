@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
 import {
-  AI_JOBS,
+  AI_TIERS,
   AI_PROVIDERS,
-  type AiJob,
+  type AiTier,
   type AiModelsRequest,
   type AiModelsResponse,
   type AiProviderId,
@@ -111,10 +111,12 @@ export function aiRoutes(deps: AiRouteDeps): Hono {
 
   app.post("/ai/test", bodyLimit({ maxSize: 1024, onError: (c) => c.json<AiTestResponse>({ ok: false, error: "The request is too large." }, 413) }), async (c) => {
     const body = await c.req.json().catch(() => null);
-    const job = isRecord(body) ? body.job : undefined;
-    if (job !== undefined && !(AI_JOBS as readonly unknown[]).includes(job)) return c.json<AiTestResponse>({ ok: false, error: "Choose Quick or Ask." }, 400);
+    // Accept requests from a pre-tier browser tab during an app update.
+    const legacyJob = isRecord(body) ? body.job : undefined;
+    const tier = isRecord(body) && body.tier !== undefined ? body.tier : legacyJob === "quick" ? "low" : legacyJob === "ask" ? "medium" : legacyJob;
+    if (tier !== undefined && !(AI_TIERS as readonly unknown[]).includes(tier)) return c.json<AiTestResponse>({ ok: false, error: "Choose Low, Medium or Strong." }, 400);
     try {
-      const test = await service.test((job as AiJob | undefined) ?? "quick");
+      const test = await service.test((tier as AiTier | undefined) ?? "low");
       log.info(`AI test with ${test.model}: ${test.inputTokens} in, ${test.outputTokens} out`);
       return c.json<AiTestResponse>({ ok: true, test });
     } catch (e) {

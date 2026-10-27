@@ -32,9 +32,9 @@ describe("priceFor", () => {
   });
 
   it("covers the defaults", () => {
-    for (const id of Object.values(ANTHROPIC_DEFAULT_MODELS)) expect(Object.hasOwn(ANTHROPIC_PRICES, id)).toBe(true);
-    expect(defaultModels("anthropic")).toEqual({ quick: "claude-haiku-5-5", ask: "claude-sonnet-5-5" });
-    expect(defaultModels("openai-compatible")).toEqual({ quick: "", ask: "" });
+    for (const id of Object.values(ANTHROPIC_DEFAULT_MODELS).filter(Boolean)) expect(Object.hasOwn(ANTHROPIC_PRICES, id)).toBe(true);
+    expect(defaultModels("anthropic")).toEqual({ low: "claude-haiku-5-5", medium: "claude-sonnet-5-5", strong: "" });
+    expect(defaultModels("openai-compatible")).toEqual({ low: "", medium: "", strong: "" });
     expect(DEFAULT_AI).toMatchObject({ enabled: false, effort: "balanced", monthlyCapUsd: 5 });
   });
 });

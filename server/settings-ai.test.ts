@@ -14,15 +14,15 @@ const store = () => {
 
 describe("validateAi", () => {
   it("accepts the defaults and normalises what it keeps", () => {
-    const r = validateAi({ ...base(), baseUrl: " https://openrouter.ai/api/v1/ ", monthlyCapUsd: 5.004, models: { quick: " gpt-5-mini ", ask: "" } });
+    const r = validateAi({ ...base(), baseUrl: " https://openrouter.ai/api/v1/ ", monthlyCapUsd: 5.004, models: { low: " gpt-5-mini ", medium: "", strong: "" } });
     expect(r).toEqual({
       ok: true,
-      value: { ...base(), baseUrl: "https://openrouter.ai/api/v1", monthlyCapUsd: 5, models: { quick: "gpt-5-mini", ask: "" } },
+      value: { ...base(), baseUrl: "https://openrouter.ai/api/v1", monthlyCapUsd: 5, models: { low: "gpt-5-mini", medium: "", strong: "" } },
     });
   });
 
   it("starts with Anthropic's current Haiku and Sonnet", () => {
-    expect(DEFAULT_AI).toMatchObject({ provider: "anthropic", models: { quick: "claude-haiku-5-5", ask: "claude-sonnet-5-5" }, effort: "balanced", monthlyCapUsd: 5 });
+    expect(DEFAULT_AI).toMatchObject({ provider: "anthropic", models: { low: "claude-haiku-5-5", medium: "claude-sonnet-5-5", strong: "" }, effort: "balanced", monthlyCapUsd: 5 });
   });
 
   it("separates the key from the settings: left out, a string, or null", () => {
@@ -68,10 +68,10 @@ describe("validateAi", () => {
 
   it("checks model names", () => {
     for (const m of ["claude-haiku-5-5", "qwen2.5:7b", "anthropic/claude-sonnet-5.5", "gpt-5"]) {
-      expect(validateAi({ ...base(), models: { quick: m, ask: m } }), m).toMatchObject({ ok: true });
+      expect(validateAi({ ...base(), models: { low: m, medium: m, strong: "" } }), m).toMatchObject({ ok: true });
     }
     for (const m of ["has space", "semi;colon", "x".repeat(201), 3]) {
-      expect(validateAi({ ...base(), models: { quick: m, ask: "" } }), String(m)).toMatchObject({ ok: false });
+      expect(validateAi({ ...base(), models: { low: m, medium: "", strong: "" } }), String(m)).toMatchObject({ ok: false });
     }
   });
 
@@ -101,6 +101,24 @@ describe("validateAi", () => {
 });
 
 describe("settingsStore ai", () => {
+  it("reads legacy Quick/Ask settings as Low/Medium without rewriting the row or keys", () => {
+    const { db, s } = store();
+    const legacy = { ...base(), provider: "openai-compatible", baseUrl: "http://localhost:1234/v1", models: { quick: "my-small", ask: "my-large" }, effort: "thorough", monthlyCapUsd: 42, prices: { "my-large": { inputPerMTok: 2, outputPerMTok: 4 } } };
+    db.prepare("INSERT INTO settings(key,value) VALUES (?,?)").run("ai", JSON.stringify(legacy));
+    s.saveAiKey("openai-compatible", "saved-key-invented-0123456789");
+    expect(s.ai()).toEqual({ ...legacy, models: { low: "my-small", medium: "my-large", strong: "" } });
+    expect(s.aiKey("openai-compatible")).toBe("saved-key-invented-0123456789");
+    expect(JSON.parse((db.prepare("SELECT value FROM settings WHERE key='ai'").get() as { value: string }).value)).toEqual(legacy);
+    s.saveAi({ ...s.ai(), models: { ...s.ai().models, strong: "my-planner" } });
+    expect(s.ai().models).toEqual({ low: "my-small", medium: "my-large", strong: "my-planner" });
+    db.close();
+  });
+
+  it("keeps explicit tiers instead of filling them from leftover legacy model fields", () => {
+    const r = validateAi({ ...base(), models: { low: "chosen", medium: "", strong: "planner", quick: "old-small", ask: "old-large" } });
+    expect(r).toMatchObject({ ok: true, value: { models: { low: "chosen", medium: "", strong: "planner" } } });
+  });
+
   it("starts with AI off and the defaults", () => {
     const { s } = store();
     expect(s.ai()).toEqual(DEFAULT_AI);

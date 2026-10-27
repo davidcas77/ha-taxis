@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   AI_EFFORTS,
-  AI_JOBS,
+  AI_TIERS,
   AI_PROVIDERS,
   CAP_MAX,
   CAP_MIN,
@@ -452,9 +452,13 @@ export function validateAi(input: unknown): { ok: true; value: AiSettings; key?:
   if (!url.ok) return { ok: false, error: url.error };
 
   if (!isRecord(input.models)) return { ok: false, error: "The models weren't readable." };
-  const models = { quick: "", ask: "" };
-  for (const job of AI_JOBS) {
-    const v = input.models[job];
+  // Read pre-tier settings without losing their models or other settings.
+  // An explicit tier map always wins; Strong needs the user's own choice.
+  const legacy = !AI_TIERS.some(tier => Object.hasOwn(input.models as object, tier));
+  const rawModels = legacy ? { low: input.models.quick, medium: input.models.ask, strong: "" } : input.models;
+  const models = { low: "", medium: "", strong: "" };
+  for (const job of AI_TIERS) {
+    const v = rawModels[job];
     if (v === undefined || v === "") continue;
     if (typeof v !== "string" || v.trim().length > MAX_MODEL_ID) return { ok: false, error: `The ${job} model name is too long.` };
     const id = v.trim();

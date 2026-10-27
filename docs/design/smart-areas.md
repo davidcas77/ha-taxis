@@ -1020,11 +1020,11 @@ list (principle 5): the same preview, backup, apply and verify as any edit.
 
 | Piece | Where | What it does |
 |---|---|---|
-| Settings | `shared/ai.ts`, `validateAi` in `server/settings.ts` | `enabled`, `provider`, `baseUrl`, model per job (`quick`, `ask`), `effort`, `monthlyCapUsd`, `maxOutputTokens`, optional `prices` per model. Stored under the key `ai`; the API key is a row of its own per provider (`ai_key:<provider>`), so the settings can be returned as they are. |
+| Settings | `shared/ai.ts`, `validateAi` in `server/settings.ts` | `enabled`, `provider`, `baseUrl`, model per tier (`low`, `medium`, `strong`), `effort`, `monthlyCapUsd`, `maxOutputTokens`, optional `prices` per model. Stored under the key `ai`; the API key is a row of its own per provider (`ai_key:<provider>`), so the settings can be returned as they are. |
 | Providers | `server/ai/anthropic.ts`, `openai.ts` | `AiProvider { listModels(); complete(req) }`. A request has a system prompt, messages, `tools` (name, description, JSON Schema) and returns text, `toolCalls`, a stop reason and token usage. Plain `fetch`, no SDK. |
 | HTTP | `server/ai/http.ts` | Time and size limits, no redirects, errors scrubbed of the key. |
 | Ledger | `server/ai/ledger.ts` | One row per call in `ai_usage`: time, job, provider, model, tokens, estimated cost. No prompt or answer text. |
-| Service | `server/ai/service.ts` | The only way anything calls a model: refuses when AI is off, no key or model, or the month's spending has reached the cap; then calls, prices and records. |
+| Service | `server/ai/service.ts` | The only way anything calls a model: refuses when AI is off, no key or model, or the month's spending has reached the cap; then calls, prices and records. `complete(task, call)` selects the tier from the shared task map; callers cannot choose a different model directly. |
 | Routes | `server/ai/routes.ts` | `GET/PUT /api/settings/ai`, `POST /api/ai/models`, `POST /api/ai/test`, `GET /api/ai/usage`, behind the same `X-Taxis-Request` guard and body limits as the others. |
 
 ### Providers
@@ -1034,12 +1034,12 @@ list (principle 5): the same preview, backup, apply and verify as any edit.
   `temperature`, `top_p` or `top_k` (that version refuses them), no `thinking`
   field (adaptive thinking is the default on the 5.x models) and no forced
   `tool_choice` (the newest models refuse it). Defaults, from Anthropic's model
-  list of 2026-10: Quick = `claude-haiku-5-5`, Ask = `claude-sonnet-5-5`.
+  list of 2026-10: Low = `claude-haiku-5-5`, Medium = `claude-sonnet-5-5`; Strong is blank until explicitly chosen.
 - **OpenAI-compatible.** `GET {base}/models`, `POST {base}/chat/completions`
   with tools as function calling. Base URL defaults to
   `https://api.openai.com/v1`; works with OpenRouter, Ollama
   (`http://<host>:11434/v1`) and LM Studio. No default models: the user loads
-  the list and picks (the first two listed are offered).
+  the searchable list and assigns a model to each tier; loading never assigns models automatically.
 - **Address safety.** Only the configured base URL is contacted. `https://`
   anywhere; `http://` only for localhost, private ranges (10/8, 172.16/12,
   192.168/16, 100.64/10, fc00::/7), single-label names and `.local`, `.lan`,
@@ -1047,6 +1047,31 @@ list (principle 5): the same preview, backup, apply and verify as any edit.
   link-local address (cloud metadata). Redirects are never followed. The saved
   key is sent only to the saved address; asking about another address needs a
   key in the request.
+
+### Model tiers and task routing
+
+The model list opens visibly after Load models, supports search by ID or display name,
+and offers Low, Medium and Strong assignment buttons. Direct model-ID entry remains
+available. Choosing a model changes the draft only; Save AI settings persists it.
+Each tier has a separate connection test using only its saved model.
+
+| Tier | Tasks routed by the shared service |
+|---|---|
+| Low | `naming`, `classification` |
+| Medium | `explanation`, `analysis` |
+| Strong | `planning`, `review` |
+
+Routing is deterministic and does not send a separate classifier request. A missing
+model fails with the tier name; it never silently falls back to another tier. The
+service records the task and selected model in the existing usage ledger. Historical
+`quick` / `ask` usage rows remain untouched.
+
+Legacy settings are normalized on read: Quick becomes Low, Ask becomes Medium,
+and Strong is blank. Provider, URL, prices, effort, limits and provider keys are
+preserved. The settings row is only rewritten when saved, using the tier map.
+
+This is the common dispatch layer for the task features listed below; those features
+remain unconnected. The current UI performs connection tests only.
 
 ### Effort
 

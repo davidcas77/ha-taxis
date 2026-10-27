@@ -9,12 +9,19 @@ export const AI_PROVIDERS = ["anthropic", "openai-compatible"] as const;
 export type AiProviderId = (typeof AI_PROVIDERS)[number];
 export const PROVIDER_LABEL: Record<AiProviderId, string> = { anthropic: "Anthropic (Claude)", "openai-compatible": "OpenAI-compatible" };
 
-// Two jobs, each with its own model: "quick" for short answers (cheap and fast),
-// "ask" for open questions. The ledger also records "test" (Test connection).
-export const AI_JOBS = ["quick", "ask"] as const;
-export type AiJob = (typeof AI_JOBS)[number];
-export type LedgerJob = AiJob | "test";
-export const JOB_LABEL: Record<AiJob, string> = { quick: "Quick", ask: "Ask" };
+export const AI_TIERS = ["low", "medium", "strong"] as const;
+export type AiTier = (typeof AI_TIERS)[number];
+export const TIER_LABEL: Record<AiTier, string> = { low: "Low", medium: "Medium", strong: "Strong" };
+export const TIER_HINT: Record<AiTier, string> = {
+  low: "For routine naming and classification tasks.",
+  medium: "For explanations and analysis.",
+  strong: "For complex planning and review.",
+};
+// Callers name the task; the shared service selects its configured model tier.
+export const AI_TASK_TIERS = { naming: "low", classification: "low", explanation: "medium", analysis: "medium", planning: "strong", review: "strong" } as const satisfies Record<string, AiTier>;
+export type AiTask = keyof typeof AI_TASK_TIERS;
+// Keep the old job names readable in historical usage rows.
+export type LedgerJob = AiTask | AiTier | "quick" | "ask" | "test";
 
 // How hard a model should think. Each provider maps these to its own setting
 // (server/ai/anthropic.ts, server/ai/openai.ts).
@@ -35,7 +42,7 @@ export type AiSettings = {
   provider: AiProviderId;
   // OpenAI-compatible only; Anthropic has one fixed address.
   baseUrl: string;
-  models: Record<AiJob, string>;
+  models: Record<AiTier, string>;
   effort: AiEffort;
   monthlyCapUsd: number;
   maxOutputTokens: number;
@@ -46,7 +53,7 @@ export type AiSettings = {
 export const DEFAULT_OPENAI_BASE = "https://api.openai.com/v1";
 // Defaults for Anthropic: the current Haiku (fast, cheap) and Sonnet (balanced)
 // from Anthropic's published model list, 2026-10.
-export const ANTHROPIC_DEFAULT_MODELS: Record<AiJob, string> = { quick: "claude-haiku-5-5", ask: "claude-sonnet-5-5" };
+export const ANTHROPIC_DEFAULT_MODELS: Record<AiTier, string> = { low: "claude-haiku-5-5", medium: "claude-sonnet-5-5", strong: "" };
 
 export const CAP_MIN = 0.01;
 export const CAP_MAX = 10_000;
@@ -71,8 +78,8 @@ export const DEFAULT_AI: AiSettings = {
 
 // The models to start from when the provider changes. An OpenAI-compatible
 // service has no known names, so the user picks from what it lists.
-export const defaultModels = (provider: AiProviderId): Record<AiJob, string> =>
-  provider === "anthropic" ? { ...ANTHROPIC_DEFAULT_MODELS } : { quick: "", ask: "" };
+export const defaultModels = (provider: AiProviderId): Record<AiTier, string> =>
+  provider === "anthropic" ? { ...ANTHROPIC_DEFAULT_MODELS } : { low: "", medium: "", strong: "" };
 
 // ---------------------------------------------------------------------------
 // Prices
@@ -148,12 +155,12 @@ export type AiSaveRequest = AiSettings & { key?: string | null };
 export type AiModelsRequest = { provider?: AiProviderId; baseUrl?: string; key?: string };
 export type AiModelsResponse = { ok: true; models: ModelInfo[] } | { ok: false; error: string };
 
-export type AiTestRequest = { job?: AiJob };
+export type AiTestRequest = { tier?: AiTier };
 export type AiTestResult = {
   reply: string;
   model: string;
   provider: AiProviderId;
-  job: AiJob;
+  tier: AiTier;
   inputTokens: number;
   outputTokens: number;
   // Null when the model has no known price.

@@ -1,23 +1,24 @@
 import { useDraftGuard } from "./draft-guard.ts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   AI_EFFORTS,
-  AI_JOBS,
+  AI_TIERS,
   AI_PROVIDERS,
   CAP_MAX,
   CAP_MIN,
   DEFAULT_OPENAI_BASE,
   EFFORT_HINT,
   EFFORT_LABEL,
-  JOB_LABEL,
+  TIER_LABEL,
+  TIER_HINT,
   PROVIDER_LABEL,
   TOKENS_MAX,
   TOKENS_MIN,
   defaultModels,
   formatUsd,
   priceFor,
-  type AiJob,
+  type AiTier,
   type AiProviderId,
   type AiSettingsView,
   type AiTestResult,
@@ -31,12 +32,41 @@ import { useTaxis } from "./state.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
 
 // Settings → AI (optional): off by default; a provider, a key that only ever goes
-// to the server, a model for each of the two jobs, how hard to think, a monthly
+// to the server, a model for each of three task tiers, how hard to think, a monthly
 // cap, and a Test connection. Nothing here touches Home Assistant.
 
 type KeyEdit = "keep" | "replace" | "remove";
 
 const tokens = (n: number) => n.toLocaleString("en-US");
+
+function AvailableModels({ available, models, onChoose }: { available: ModelInfo[]; models: Record<AiTier, string>; onChoose: (job: AiTier, id: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(true);
+  const search = query.trim().toLowerCase();
+  const matches = available.filter(model => `${model.id} ${model.name}`.toLowerCase().includes(search));
+  return <section aria-labelledby="available-models-heading" className="min-w-0 rounded-lg border border-line bg-surface">
+    <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+      <h3 id="available-models-heading" className="text-[13px] font-semibold">Available models ({available.length})</h3>
+      <Button tone="ghost" aria-expanded={open} aria-controls="available-models-list" onClick={() => setOpen(!open)}>{open ? "Hide models" : "Show models"}</Button>
+    </div>
+    <div id="available-models-list" hidden={!open}>
+      <div className="flex flex-col gap-2 px-3 pb-3">
+        <label htmlFor="ai-model-search" className="text-xs font-medium text-muted">Search available models</label>
+        <input id="ai-model-search" type="search" className={inputClass} value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by model ID or name" />
+        <p role="status" className="text-xs text-muted">{matches.length} of {available.length} models. Choose a tier, then save AI settings.</p>
+      </div>
+      {matches.length ? <ul aria-label="Available AI models" className="max-h-80 overflow-y-auto border-t border-line">
+        {matches.map(model => <li key={model.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-line p-3 last:border-b-0">
+          <div className="min-w-0 flex-1 basis-48">
+            <code className="block break-all text-[13px]">{model.id}</code>
+            {model.name !== model.id && <span className="block break-words text-xs text-muted">{model.name}</span>}
+          </div>
+          <div className="flex flex-wrap gap-2">{AI_TIERS.map(job => <Button key={job} tone={models[job] === model.id ? "primary" : "ghost"} aria-label={`Use ${model.id} for ${TIER_LABEL[job]}`} aria-pressed={models[job] === model.id} onClick={() => onChoose(job, model.id)}>{models[job] === model.id ? `${TIER_LABEL[job]} selected` : `Use for ${TIER_LABEL[job]}`}</Button>)}</div>
+        </li>)}
+      </ul> : <p className="border-t border-line p-3 text-[13px] text-muted">No models match this search.</p>}
+    </div>
+  </section>;
+}
 
 function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
   return (
@@ -106,9 +136,17 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
   const [available, setAvailable] = useState<ModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelsMsg, setModelsMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const modelsRequest = useRef(0);
+  useEffect(() => () => { modelsRequest.current += 1; }, []);
+  const clearModels = () => {
+    modelsRequest.current += 1;
+    setAvailable([]);
+    setModelsMsg(null);
+    setLoadingModels(false);
+  };
 
   const [usage, setUsage] = useState<AiUsage | null>(null);
-  const [testing, setTesting] = useState<AiJob | null>(null);
+  const [testing, setTesting] = useState<AiTier | null>(null);
   const [test, setTest] = useState<{ ok: true; result: AiTestResult } | { ok: false; error: string } | null>(null);
 
   const refreshUsage = useCallback(() => {
@@ -132,29 +170,28 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
     if (p === provider) return;
     setProvider(p);
     setModels(defaultModels(p));
-    setAvailable([]);
-    setModelsMsg(null);
+    clearModels();
     setKeyEdit("keep");
     setKeyText("");
     if (p === "openai-compatible" && !baseUrl.trim()) setBaseUrl(DEFAULT_OPENAI_BASE);
   };
 
   const loadModels = async () => {
+    const request = ++modelsRequest.current;
     setLoadingModels(true);
+    setAvailable([]);
     setModelsMsg(null);
     const r = await api.aiModels({
       provider,
       ...(provider === "openai-compatible" ? { baseUrl } : {}),
       ...(edit === "replace" ? { key: keyText.trim() } : {}),
     });
+    if (request !== modelsRequest.current) return;
     setLoadingModels(false);
     if (!r.ok) return setModelsMsg({ ok: false, text: r.error });
     setAvailable(r.models);
-    setModelsMsg({ ok: true, text: r.models.length === 0 ? "The service lists no models." : `${r.models.length} model${r.models.length === 1 ? "" : "s"} available. Start typing in a model field to choose.` });
-    // An OpenAI-compatible service has no known names: start from the first two it lists.
-    if (provider === "openai-compatible" && !models.quick && !models.ask && r.models.length > 0) {
-      setModels({ quick: r.models[0].id, ask: (r.models[1] ?? r.models[0]).id });
-    }
+    setModelsMsg({ ok: true, text: r.models.length === 0 ? "The service lists no models." : `${r.models.length} model${r.models.length === 1 ? "" : "s"} available. Browse the list below or type a model ID.` });
+
   };
 
   const save = async () => {
@@ -188,9 +225,10 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
     setKeyEdit("keep");
     setKeyText("");
     setError(null);
+    clearModels();
   };
 
-  const runTest = async (job: AiJob) => {
+  const runTest = async (job: AiTier) => {
     setTesting(job);
     setTest(null);
     const r = await api.aiTest(job);
@@ -245,8 +283,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
                   aria-invalid={urlProblem ? true : undefined}
                   onChange={(e) => {
                     setBaseUrl(e.target.value);
-                    setAvailable([]);
-                    setModelsMsg(null);
+                    clearModels();
                   }}
                 />
                 {urlProblem && (
@@ -325,15 +362,17 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
                 </option>
               ))}
             </datalist>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {AI_JOBS.map((job) => (
+            <p className="text-xs text-muted">Task routing: Low for naming/classification, Medium for explanations/analysis, Strong for planning/review. You can also enter a model ID directly.</p>
+            <p className="text-xs text-muted">Configure and test each tier here. Task-based AI features are not connected yet.</p>
+            <div className="grid gap-3 lg:grid-cols-3">
+              {AI_TIERS.map((job) => (
                 <Field
                   key={job}
-                  label={`${JOB_LABEL[job]} model`}
+                  label={`${TIER_LABEL[job]} model`}
                   htmlFor={`ai-model-${job}`}
                   hint={
                     <>
-                      {job === "quick" ? "For short, simple answers. Pick a small, fast model." : "For open questions. Pick a more capable model."}
+                      {TIER_HINT[job]}
                       {priceNote(models[job]) && <span className="mt-0.5 block">{priceNote(models[job])}</span>}
                     </>
                   }
@@ -351,6 +390,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
                 </Field>
               ))}
             </div>
+            {available.length > 0 && <AvailableModels available={available} models={models} onChoose={(job, id) => setModels(current => ({ ...current, [job]: id }))} />}
           </div>
 
           <div className="flex flex-col gap-1">
@@ -440,9 +480,9 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
         <section aria-label="Test connection" className="flex flex-col gap-2 rounded-lg border border-line bg-surface p-3.5">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold">Test connection</h3>
-            {AI_JOBS.map((job) => (
-              <Button key={job} disabled={!canTest} onClick={() => void runTest(job)}>
-                {testing === job ? "Testing…" : `Test the ${JOB_LABEL[job]} model`}
+            {AI_TIERS.map((job) => (
+              <Button key={job} disabled={!canTest || !saved.models[job]} onClick={() => void runTest(job)}>
+                {testing === job ? "Testing…" : `Test the ${TIER_LABEL[job]} model`}
               </Button>
             ))}
           </div>
@@ -475,7 +515,7 @@ function TestResult({ r }: { r: AiTestResult }) {
         {r.reply ? <q className="text-fg">{r.reply}</q> : <span className="text-warn">{r.stop === "max_tokens" ? "No text: the model used its whole budget before answering." : "The model sent no text."}</span>}
       </p>
       <p className="text-xs text-muted">
-        <code className="font-mono">{r.model}</code> · {tokens(r.inputTokens)} in, {tokens(r.outputTokens)} out tokens ·{" "}
+        {TIER_LABEL[r.tier]} tier · <code className="font-mono">{r.model}</code> · {tokens(r.inputTokens)} in, {tokens(r.outputTokens)} out tokens ·{" "}
         {r.costUsd === null ? "cost unknown (no price for this model)" : formatUsd(r.costUsd)} · {(r.ms / 1000).toFixed(1)} s
       </p>
     </div>
