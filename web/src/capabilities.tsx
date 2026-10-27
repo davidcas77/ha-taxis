@@ -9,7 +9,6 @@ import {
   areaChoice,
   areaInventory,
   inventoryMatrix,
-  matrixTotals,
   setAppliance,
   setAreaType,
   setBed,
@@ -26,7 +25,6 @@ import {
   type InventorySettings,
   type MatrixRow,
   type MotionRole,
-  type Tally,
 } from "../../shared/inventory.ts";
 import { entryLights, setParameter } from "../../shared/parameters.ts";
 import type { AreaNode, EntityItem, Hierarchy } from "../../shared/types.ts";
@@ -34,6 +32,7 @@ import { helperExclusions, helperKeyFor, type HelperKey } from "../../shared/hel
 import { CombinedHelperRow, useAreaHelperLines } from "./helpers.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
+import { TooltipButton } from "./tooltip.tsx";
 import { AreaSelect, Button, EditedDot } from "./ui.tsx";
 
 // The capability inventory: a matrix of areas by capability, and for each area
@@ -158,18 +157,21 @@ export function LightsWithoutArea({ h }: { h: Hierarchy }) {
 // The matrix.
 // ---------------------------------------------------------------------------
 
-function cellText(t: Tally) {
-  if (t.total === 0) return null;
-  const left = t.total - t.counted;
-  return (
-    <>
-      {t.counted}
-      {left > 0 && <span className="ml-1 text-xs text-muted">+{left}</span>}
-    </>
-  );
+function CapabilityCount({ area, capability, entities, onOpen }: { area: string; capability: string; entities: InventoryRow[]; onOpen?: () => void }) {
+  if (entities.length === 0) return null;
+  const counted = entities.filter(entity => entity.counts);
+  const excluded = entities.filter(entity => !entity.counts);
+  const content = (rows: InventoryRow[], included: boolean) => <>
+    <p className="mb-2 font-semibold">{area} · {capability}: {rows.length} {included ? "counted" : "not counted"}</p>
+    {rows.length === 0 ? <p className="text-muted">No entities count for this capability.</p> : <ul className="flex flex-col gap-2">{rows.map(entity => <li key={entity.entityId}>
+      <span className="block">{entity.name}</span><code className="break-all font-mono text-[11px] text-muted">{entity.entityId}</code>
+    </li>)}</ul>}
+  </>;
+  return <span className="inline-flex items-center justify-center gap-1">
+    <TooltipButton label={`${area}, ${capability}: ${counted.length} counted`} onClick={onOpen} content={content(counted, true)} className="rounded px-1 py-1.5 hover:bg-sunken focus-visible:outline-accent">{counted.length}</TooltipButton>
+    {excluded.length > 0 && <TooltipButton label={`${area}, ${capability}: ${excluded.length} not counted`} onClick={onOpen} content={content(excluded, false)} className="rounded px-1 py-1.5 text-xs text-muted hover:bg-sunken focus-visible:outline-accent">+{excluded.length}</TooltipButton>}
+  </span>;
 }
-
-const cellLabel = (area: string, capability: string, t: Tally) => `${area}, ${capability}: ${t.counted} counted${t.total > t.counted ? `, ${t.total - t.counted} not counted` : ""}`;
 
 // Floors sort by level (lowest first), then areas by name; areas on no floor
 // come last. A string so one column can carry both.
@@ -184,9 +186,14 @@ export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => 
   const [showEmpty, setShowEmpty] = useState(false);
   // An area's own canonical helpers are under Helpers, not counted here.
   const all = useMemo(() => inventoryMatrix(h, inventory, helperExclusions(h, naming)).sort((a, b) => a.name.localeCompare(b.name)), [h, inventory, naming]);
-  const totals = useMemo(() => matrixTotals(all), [all]);
   const shown = useMemo(() => (showEmpty ? all : all.filter((r) => r.total > 0)), [all, showEmpty]);
   const empty = all.length - all.filter((r) => r.total > 0).length;
+  // Use the same inventory and canonical-helper exclusions as the displayed tallies.
+  const inventories = useMemo(() => {
+    const excluded = helperExclusions(h, naming);
+    return Object.fromEntries(shown.map(row => [row.areaId, areaInventory(h, inventory, row.areaId, excluded(row.areaId))]));
+  }, [h, inventory, naming, shown]);
+  const totals = useMemo(() => Object.fromEntries(CAPABILITIES.map(capability => [capability.key, shown.flatMap(row => inventories[row.areaId][capability.key])])), [shown, inventories]);
 
   const columns = useMemo(() => {
     const cols: Record<string, (r: MatrixRow) => string | number | null> = {
@@ -217,10 +224,10 @@ export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => 
           <table className="w-full text-[13px]">
             <thead className="bg-sunken text-left text-xs text-muted">
               <tr>
-                <SortHeader label="Floor" k="floor" sort={sort} onToggle={toggle} />
-                <SortHeader label="Area" k="area" sort={sort} onToggle={toggle} />
+                <SortHeader label="Floor" help="The floor that contains this area." k="floor" sort={sort} onToggle={toggle} />
+                <SortHeader label="Area" help="Open this area to choose which entities count." k="area" sort={sort} onToggle={toggle} />
                 {CAPABILITIES.map((c) => (
-                  <SortHeader key={c.key} label={c.short} title={c.label} k={c.key} sort={sort} onToggle={toggle} className="px-2 py-2 text-center" />
+                  <SortHeader key={c.key} label={c.short} title={c.label} help={`Entities counted toward ${c.label.toLowerCase()} in this area.`} k={c.key} sort={sort} onToggle={toggle} className="px-2 py-2 text-center" />
                 ))}
               </tr>
             </thead>
@@ -238,9 +245,7 @@ export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => 
                     return (
                       <td key={c.key} className="p-0 text-center tabular-nums">
                         {t.total > 0 && (
-                          <button type="button" aria-label={cellLabel(r.name, c.label, t)} onClick={() => open(r.areaId)} className="w-full px-2 py-1.5 hover:bg-sunken">
-                            {cellText(t)}
-                          </button>
+                          <CapabilityCount area={r.name} capability={c.label} entities={inventories[r.areaId][c.key]} onOpen={() => open(r.areaId)} />
                         )}
                       </td>
                     );
@@ -255,7 +260,7 @@ export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => 
                 </td>
                 {CAPABILITIES.map((c) => (
                   <td key={c.key} className="px-2 py-1.5 text-center tabular-nums">
-                    {cellText(totals[c.key])}
+                    <CapabilityCount area="Total" capability={c.label} entities={totals[c.key]} />
                   </td>
                 ))}
               </tr>

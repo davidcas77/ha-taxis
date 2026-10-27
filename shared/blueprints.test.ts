@@ -634,7 +634,9 @@ describe("area climate", () => {
     expect(String(each.skip)).toBe("{{ st in ['unavailable', 'unknown'] or (st == 'off' and not auto_hvac_on) }}");
     expect(String(each.use_preset)).toBe("{{ preset_name != '' and preset_name in presets }}");
     expect(String(each.presets)).toMatch(/state_attr\(t, 'preset_modes'\) or \[\]/);
-    expect(String(each.on_ok)).toBe("{{ st != 'off' or (mode_wanted in modes and (reference is none or (reference > goal if season == 'cooling' else reference < goal))) }}");
+    expect(String(each.opposite_mode)).toBe("{{ (st == 'heat' and mode_wanted == 'cool') or (st == 'cool' and mode_wanted == 'heat') }}");
+    expect(BLUEPRINTS.find(b => b.path === "taxis/area_climate.yaml")!.version).toBe(3);
+    expect(String(each.on_ok)).toBe("{{ (not opposite_mode or (auto_hvac_on and mode_wanted in modes)) and (st != 'off' or (mode_wanted in modes and (reference is none or (reference > goal if season == 'cooling' else reference < goal)))) }}");
   });
 
   it("calls climate services only, each tolerant of a thermostat that refuses, on the one thermostat", () => {
@@ -663,7 +665,7 @@ describe("area climate", () => {
     expect(json).not.toMatch(/set_preset_mode/);
     // On: only a thermostat on_ok lets through; a thermostat that is off got this far only because the switch is on.
     expect(JSON.stringify(normal.conditions)).toBe(JSON.stringify([{ condition: "template", value_template: "{{ on_ok }}" }]));
-    expect(JSON.stringify(normal)).toMatch(/"value_template":"\{\{ st == 'off' \}\}"\}\],"then":\[\{"action":"climate\.set_hvac_mode"[^]*"hvac_mode":"\{\{ mode_wanted \}\}"/);
+    expect(JSON.stringify(normal)).toMatch(/"value_template":"\{\{ st == 'off' or opposite_mode \}\}"\}\],"then":\[\{"action":"climate\.set_hvac_mode"[^]*"hvac_mode":"\{\{ mode_wanted \}\}"/);
     expect(JSON.stringify(perThermostat[1])).toMatch(/^\{"if":\[\{"condition":"template","value_template":"\{\{ not skip \}\}"\}\]/);
   });
 

@@ -872,7 +872,7 @@ const AREA_CLIMATE_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Sets the thermostats of an area by fixed rules, worked out again whenever an input changes, first match wins. A window open for the window delay turns the heating down to frost protection, or off when switching is allowed; for the restore delay after it closes nothing is changed. Then the away switch, then sleep (a bedroom with a bed sensor on or the house sleep switch on), then the night window, then comfort while the area schedule is on and the area is occupied (or was clear for less than the eco delay, or occupancy is not needed), and eco otherwise. The target is the heating temperature for the decision, kept between the lowest and highest temperature, or, in the cooling season, the cooling temperature (the night one also for sleep), which the lowest and highest do not limit. A thermostat with a mapped preset it offers gets the preset, the others a temperature, and only what differs from what the thermostat shows is sent. A thermostat that is off is left alone unless switching on and off is allowed. Does nothing while the pause switch is on or the season is off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 2."
+  description: "Sets the thermostats of an area by fixed rules, worked out again whenever an input changes, first match wins. A window open for the window delay turns the heating down to frost protection, or off when switching is allowed; for the restore delay after it closes nothing is changed. Then the away switch, then sleep (a bedroom with a bed sensor on or the house sleep switch on), then the night window, then comfort while the area schedule is on and the area is occupied (or was clear for less than the eco delay, or occupancy is not needed), and eco otherwise. The target is the heating temperature for the decision, kept between the lowest and highest temperature, or, in the cooling season, the cooling temperature (the night one also for sleep), which the lowest and highest do not limit. A thermostat with a mapped preset it offers gets the preset, the others a temperature, and only what differs from what the thermostat shows is sent. A thermostat that is off is left alone unless switching on and off is allowed. With that permission, an active thermostat in the opposite heating or cooling mode is switched to the selected season before its setpoint is changed; without permission it is left alone. Does nothing while the pause switch is on or the season is off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 3."
   input:
     climate_entities:
       name: Thermostats
@@ -1297,7 +1297,8 @@ actions:
                 differs: "{{ cur_temp is not number or ((cur_temp | float(0)) - goal) | abs >= 0.05 }}"
                 reference: "{{ states(temperature_entity) | float(none) if temperature_entity != '' else none }}"
                 skip: "{{ st in ['unavailable', 'unknown'] or (st == 'off' and not auto_hvac_on) }}"
-                on_ok: "{{ st != 'off' or (mode_wanted in modes and (reference is none or (reference > goal if season == 'cooling' else reference < goal))) }}"
+                opposite_mode: "{{ (st == 'heat' and mode_wanted == 'cool') or (st == 'cool' and mode_wanted == 'heat') }}"
+                on_ok: "{{ (not opposite_mode or (auto_hvac_on and mode_wanted in modes)) and (st != 'off' or (mode_wanted in modes and (reference is none or (reference > goal if season == 'cooling' else reference < goal)))) }}"
             - if:
                 - condition: template
                   value_template: "{{ not skip }}"
@@ -1340,7 +1341,7 @@ actions:
                       sequence:
                         - if:
                             - condition: template
-                              value_template: "{{ st == 'off' }}"
+                              value_template: "{{ st == 'off' or opposite_mode }}"
                           then:
                             - action: climate.set_hvac_mode
                               continue_on_error: true
@@ -2238,7 +2239,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/area_climate.yaml",
     recipe: "area_climate",
     domain: "automation",
-    version: 2,
+    version: 3,
     yaml: AREA_CLIMATE_YAML,
     inputs: {
       climate_entities: { kind: "entities", required: true, domain: "climate" },

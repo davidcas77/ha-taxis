@@ -1,3 +1,5 @@
+import { useStoredChoice } from "./storage.ts";
+import { PARAM_HELP } from "./parameter-help.ts";
 import { Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -14,6 +16,7 @@ import {
   setParameter,
   sourceName,
   type ParamDef,
+  type ParamKey,
   type ParamRow,
   type ParamTab,
   type ParamValue,
@@ -21,6 +24,7 @@ import {
 import { canonicalPeriods, describePeriods } from "../../shared/periods.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
+import { HelpDisclosure, HelpTopic } from "./help.tsx";
 import { SortHeader, useSort } from "./table.tsx";
 
 // The House, Occupancy, Lighting, Media, Climate, Bathroom fan, Exterior and Safety
@@ -31,26 +35,48 @@ import { SortHeader, useSort } from "./table.tsx";
 // cell to set it (a yes/no flips at once); empty it to inherit again. Saved at
 // once, in Taxis only.
 
-const NOTES: Record<ParamTab, string> = {
-  house:
-    "When night starts and ends. The lights use the night brightness and colour inside this window, and Area climate its night temperature. The away and sleep mode switches are the toggles Area climate reads: leave them empty and Taxis makes its own (input_boolean.taxis_away and taxis_sleep) when it installs Area climate, or pick toggles you already have. Notify services (separate them with commas, like notify.mobile_app_phone) are where Left open and Appliance done send their messages; left empty, the messages appear in Home Assistant's own notifications. The text-to-speech entity is what Announce speaks with. Both are set for the house only.",
-  occupancy:
-    "How long an area stays occupied after its sensors last changed: normally, once it has been occupied for a long time (extended), and while someone is in bed (bedrooms with a bed sensor). A shower holds the area occupied when the humidity rises at least this fast (in % per second; 0 is off): it needs the area's humidity rate sensor, which the Bathroom fan recipe makes.",
-  lighting:
-    "How the lights come on and go off. Brightness, colour, light level and timing. Manual override: how long the automation leaves an area alone after a light is changed by hand; 0 is until the area next clears. Entry lights: the lights that come on by day when the area becomes occupied. They are set for one area only and never inherited; left empty, the area's only light, or else its main lights, is used (shown in grey as suggested).",
-  media: "How long an area is clear before its speakers and its TVs are turned off. The announcement volume is what Announce speaks at when it is not given one (0 leaves the volume as it is); it is set for the house only.",
-  climate:
-    "Area climate sets an area's thermostats by fixed rules, first match wins: a window open for a while (frost protection, or off), away mode, sleep, the night window, comfort while the comfort periods are on and the area is occupied, eco otherwise. Temperatures are in the unit Home Assistant uses. In the heating season the target stays between lowest and highest; in the cooling season the Cool temperatures are used instead (night and sleep share one) and lowest and highest do not limit them. Comfort periods are days, then times, like Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00 (the end can be 23:59 at the latest). The Season picks what runs: an AC (see the Climate section of Capabilities) in both seasons, heating and radiator valves in the heating season only. Presets are the thermostat's own names, offered from what each thermostat reports, an AC's included; a thermostat that has one gets the preset, the others a temperature. Switch on and off itself lets Area climate switch a thermostat on, and a window switch it off; otherwise a thermostat that is off is left alone. A bedroom needs no one in the room for comfort unless you set it.",
-  fan:
-    "The Bathroom fan starts when the humidity rises at least this fast, is this far above the reference sensor, or reaches this level, and stops when it is back within this of the reference (without a reference sensor, of where it started), when the rate has been flat for this long, or after at most this long. The reference is another area's humidity sensor or a house average, picked here; left empty, only the rise rate and the humidity level start the fan. Rates are in % of humidity per second.",
-  exterior:
-    "Exterior lights, for areas whose type is exterior: the lights go on at sunset (moved by this many minutes; negative is earlier), stay on for the time shown, and the time starts again at every motion or person arriving home. At sunrise they go off.",
-  safety:
-    "Left open reports a door or a window that stays open: after the time shown, and again every so often if you set a repeat (0 is once). Appliance done reports a machine that has finished: a power sensor marked as an appliance on the Capabilities tab that stays above the running level for the running time is running, and it is done once it stays below the done level for the done time. Levels are in watts.",
+const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> = {
+  house: { summary: "Set night hours, home modes and notification destinations.", topics: [
+    ["Night hours", "Lights use night brightness and colour during this window; Area climate uses the night temperature."],
+    ["Away and sleep", "Choose existing switches, or leave them blank so Taxis creates its own when you install Area climate."],
+    ["Notifications", "Enter notify services separated by commas, such as notify.mobile_app_phone. Leave blank to use Home Assistant notifications."],
+    ["Speech", "Choose the text-to-speech entity for Announce. Notification destinations and speech are set for the whole house."],
+  ] },
+  occupancy: { summary: "Set how long rooms stay occupied after activity stops.", topics: [
+    ["Hold times", "Normal is the usual timeout. Extended applies after prolonged occupancy. Sleep applies in bedrooms while a bed sensor detects someone."],
+    ["Shower detection", "A humidity rise can hold an already-occupied room. Set the rate in % per second; 0 disables it. Requires the rate sensor made by Bathroom fan."],
+  ] },
+  lighting: { summary: "Set light levels, transitions and manual override timing.", topics: [
+    ["Brightness and colour", "Choose day and night levels, the darkness threshold and transition times."],
+    ["Manual override", "After someone changes a light, automation waits this long. Set 0 to wait until the room next clears."],
+    ["Entry lights", "Choose which lights come on when the room becomes occupied by day. This is per room, not inherited. Blank uses the room's only light or its main lights."],
+  ] },
+  media: { summary: "Set when speakers and TVs turn off after a room clears.", topics: [
+    ["Turn-off delays", "Speakers and TVs have separate delays, measured from when occupancy clears."],
+    ["Announcement volume", "House-wide default for Announce. Set 0 to keep the current volume; an individual announcement can override it."],
+  ] },
+  climate: { summary: "Set heating and cooling targets, schedules and switching permissions.", topics: [
+    ["Priority", "Open window → away → sleep → night → occupied during comfort periods → eco. The first matching rule wins."],
+    ["Season and targets", "ACs can heat or cool; heating devices and radiator valves run only in the heating season. Cooling uses the Cool targets. Lowest and highest bound heating targets only."],
+    ["Comfort periods", "Use day and time ranges, e.g. Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00. The latest end is 23:59."],
+    ["Presets", "Use preset names offered by each thermostat. A device without the chosen preset receives a temperature target instead."],
+    ["Automatic switching", "Enable Switch on and off itself to allow mode changes and window-triggered shutdown. Otherwise devices that are off or in the opposite seasonal mode are left alone."],
+    ["Bedroom comfort", "Bedrooms do not require occupancy for comfort unless you enable that requirement."],
+  ] },
+  fan: { summary: "Set when humidity starts the bathroom fan and when it stops.", topics: [
+    ["Start", "Triggered by a rapid humidity rise, a difference above a reference sensor, or the absolute humidity level. Rates use % per second."],
+    ["Stop", "Stops when humidity returns near the reference, the rise stays flat for the configured time, or the maximum run time is reached."],
+    ["Reference sensor", "Choose another room's humidity sensor or a house average. Without one, the starting humidity is used for stopping; only rise rate and absolute level start the fan."],
+  ] },
+  exterior: { summary: "Set sunset timing and how long outdoor lights stay on.", topics: [
+    ["Sunset and sunrise", "A negative sunset offset turns lights on earlier. Lights turn off at sunrise."],
+    ["Activity", "Motion or someone arriving home restarts the timer. Applies to areas marked exterior."],
+  ] },
+  safety: { summary: "Set open-door alerts and appliance-finished detection.", topics: [
+    ["Left open", "Notify after a door or window has stayed open for the delay. Repeat 0 sends one notification."],
+    ["Appliance done", "Mark a power sensor as an appliance in Capabilities. Above the running threshold for its duration means running; below the done threshold for its duration means finished. Thresholds use watts."],
+  ] },
 };
-
-const SCOPE_NOTE =
-  "Set a value at the level that fits: the house, interior or exterior areas, or one area. An empty cell takes the value of the level above it (area, then interior or exterior, then the house). Floors only group the areas and have no values of their own. Saved here at once; nothing is written to Home Assistant until you install a recipe.";
 
 // A value in a table cell is a button that opens the field: it shows a box on hover
 // and on focus, and a small pencil, so it reads as something to click.
@@ -186,7 +212,7 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
               onEdit(false);
             }
           }}
-          className={`${wide ? "w-72" : "w-24"} rounded-md border border-accent bg-bg px-1.5 py-0.5 text-[13px] tabular-nums outline-none`}
+          className={`${wide ? "w-72" : "w-24"} rounded-md border border-accent bg-bg px-1.5 py-0.5 text-[13px] tabular-nums outline-none ${def.kind === "number" || def.kind === "time" ? "text-center" : ""}`}
         />
         {suggestions.length > 0 && (
           <datalist id={listId}>
@@ -207,7 +233,7 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
         onClick={() => (def.kind === "bool" ? void save(!shown.value) : onEdit(true))}
         title={`${def.kind === "periods" ? `${describePeriods(String(shown.value))}. ` : ""}${own === undefined ? `From ${sourceName(h, shown.source)}. Click to set it here.` : "Set here. Click to change it."}`}
         aria-label={`${def.label} for ${row.label}: ${show(def, shown.value)}${def.unit && def.kind === "number" ? ` ${def.unit}` : ""}, ${own === undefined ? `from ${sourceName(h, shown.source)}` : "set here"}`}
-        className={`${EDITABLE} min-w-[3rem] ${def.kind === "periods" ? "max-w-[20rem]" : "tabular-nums"} ${own === undefined ? "text-muted" : "font-medium"}`}
+        className={`${EDITABLE} min-w-[3rem] ${def.kind === "periods" || def.kind === "entity" || def.kind === "services" ? "max-w-[20rem] truncate" : "tabular-nums"} ${own === undefined ? "text-muted" : "font-medium"}`}
       >
         {show(def, shown.value)}
         <Pencil className={PENCIL} aria-hidden />
@@ -290,9 +316,19 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
   );
 }
 
+const CLIMATE_GROUPS: { key: string; label: string; keys: ParamKey[] }[] = [
+  { key: "heating", label: "Heating", keys: ["comfort_temp", "eco_temp", "night_temp", "sleep_temp", "away_temp", "frost_temp", "min_temp", "max_temp"] },
+  { key: "cooling", label: "Cooling", keys: ["cool_comfort_temp", "cool_eco_temp", "cool_night_temp", "cool_away_temp"] },
+  { key: "timing", label: "Timing & schedule", keys: ["window_delay", "restore_delay", "eco_after_clear", "comfort_periods"] },
+  { key: "rules", label: "Rules & switching", keys: ["season", "comfort_needs_occupancy", "auto_hvac_on", "doors_open_count"] },
+  { key: "presets", label: "Presets", keys: ["preset_comfort", "preset_eco", "preset_away", "preset_sleep"] },
+];
+
 export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   const { inventory, inventoryLoaded, parameters, parametersLoaded } = useTaxis();
-  const defs = paramsOf(tab);
+  const [climateGroup, setClimateGroup] = useStoredChoice("taxis:parameters:climate-group", CLIMATE_GROUPS.map(group => group.key), "heating");
+  const group = CLIMATE_GROUPS.find(group => group.key === climateGroup) ?? CLIMATE_GROUPS[0];
+  const defs = paramsOf(tab).filter(def => tab !== "climate" || group.keys.includes(def.key));
   const [editing, setEditing] = useState<string | null>(null);
   const ready = inventoryLoaded && parametersLoaded;
   const { fixed, rest, floors } = useMemo(() => paramRows(h, inventory), [h, inventory]);
@@ -331,12 +367,12 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   );
   const line = (r: ParamRow, kind: "fixed" | "area") => (
     <tr key={rowKey(r)} className="border-t border-line">
-      <th scope="row" className={`px-3 py-1.5 text-left font-normal ${kind === "fixed" ? "font-medium" : ""}`}>
+      <th scope="row" className={`sticky left-0 z-10 bg-bg px-3 py-1.5 text-left font-normal ${kind === "fixed" ? "font-medium" : ""}`}>
         <span className={kind === "area" && grouped && r.floorId ? "pl-3" : ""}>{r.label}</span>
         {kind === "area" && !grouped && r.floorName && <span className="ml-2 text-[11px] text-muted">{r.floorName}</span>}
       </th>
       {defs.map((d) => (
-        <td key={d.key} className="px-3 py-1.5">
+        <td key={d.key} className={`px-3 py-1.5 ${d.kind === "number" || d.kind === "time" ? "text-center tabular-nums" : "text-left"}`}>
           {d.houseOnly && r.scope.level !== "house" ? (
             <span className="px-1.5 text-muted" title="Set for the house only: it is not set for a floor, an area or the interior or exterior areas">—</span>
           ) : d.kind === "entities" ? (
@@ -351,16 +387,21 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="max-w-[68ch] text-[13px] text-muted">{NOTES[tab]}</p>
-      <p className="max-w-[68ch] text-[13px] text-muted">{SCOPE_NOTE}</p>
-      <p className="text-[13px] font-medium">Click a value to change it.</p>
+      <HelpDisclosure key={tab} summary={`${GUIDES[tab].summary} Click a value to edit.`}>
+        <HelpTopic title="Inheritance">Set a house default, an interior/exterior default, or a room override. Clear a value to inherit. Floors only group rooms.</HelpTopic>
+        <HelpTopic title="Saving">Saved in Taxis immediately. Install or update a recipe through Changes to apply these settings to Home Assistant.</HelpTopic>
+        {GUIDES[tab].topics.map(([title, body]) => <HelpTopic key={title} title={title}>{body}</HelpTopic>)}
+      </HelpDisclosure>
+      {tab === "climate" && <div role="group" aria-label="Climate settings sections" className="flex flex-wrap gap-2">
+        {CLIMATE_GROUPS.map(section => <button key={section.key} type="button" aria-pressed={climateGroup === section.key} onClick={() => { setEditing(null); setClimateGroup(section.key); }} className={`rounded-md border px-3 py-1.5 text-[13px] ${climateGroup === section.key ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}>{section.label}</button>)}
+      </div>}
       <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-        <table aria-label={PARAM_TAB_LABEL[tab]} className="w-full text-[13px]">
+        <table key={tab === "climate" ? climateGroup : tab} aria-label={PARAM_TAB_LABEL[tab]} className="w-full text-[13px]">
           <thead className="bg-sunken text-left text-xs text-muted">
             <tr>
-              <SortHeader label="Level" k="name" sort={sort} onToggle={toggle} />
+              <SortHeader className="sticky left-0 z-20 bg-sunken px-3 py-2 text-left" label="Level" help="Choose a house default, area-type default or room override." k="name" sort={sort} onToggle={toggle} />
               {defs.map((d) => (
-                <SortHeader key={d.key} label={header(d)} k={d.key} sort={sort} onToggle={toggle} />
+                <SortHeader key={d.key} label={header(d)} help={PARAM_HELP[d.key]} k={d.key} sort={sort} onToggle={toggle} className={`px-3 py-2 ${d.kind === "number" || d.kind === "time" ? "text-center" : "text-left"}`} />
               ))}
             </tr>
           </thead>

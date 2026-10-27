@@ -95,6 +95,7 @@ export type HealthInput = {
 export type HealthTarget =
   | { page: "area"; areaId: string; tab: "overview" | "capabilities" | "devices-entities" | "health" }
   | { page: "parameters"; tab: "capabilities" | "helpers" | "recipes" | "house" }
+  | { page: "recipes" }
   | { page: "settings" };
 
 export type HealthFix = { kind: "changes"; label: string; inputs: ChangeInput[] } | { kind: "link"; label: string; to: HealthTarget };
@@ -803,7 +804,7 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
           detail: `${cell.reasons.join(". ")}.`,
           fix: cell.actionable
             ? { kind: "changes", label: "Update the recipe", inputs: cell.inputs }
-            : { kind: "link", label: "Open Recipes", to: { page: "parameters", tab: "recipes" } },
+            : { kind: "link", label: "Open Recipes", to: { page: "recipes" } },
         });
       }
       // Lights that nothing is in charge of.
@@ -844,7 +845,7 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
         severity: "warning",
         title: "Announce is out of date",
         detail: `${announce.reasons.join(". ")}.`,
-        fix: announce.actionable ? { kind: "changes", label: "Update the script", inputs: announce.inputs } : { kind: "link", label: "Open Recipes", to: { page: "parameters", tab: "recipes" } },
+        fix: announce.actionable ? { kind: "changes", label: "Update the script", inputs: announce.inputs } : { kind: "link", label: "Open Recipes", to: { page: "recipes" } },
       });
     } else if (announce.status === "missing" && scriptThere) {
       out.push({
@@ -853,7 +854,7 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
         severity: "warning",
         title: "Announce cannot work as it is set up",
         detail: `The script script.${ANNOUNCE_SCRIPT_ID} is in Home Assistant, but Taxis would not write it now. Missing: ${announce.missing.join("; ")}.`,
-        fix: { kind: "link", label: "Open Recipes", to: { page: "parameters", tab: "recipes" } },
+        fix: { kind: "link", label: "Open Recipes", to: { page: "recipes" } },
       });
     }
     const targets = resolveIn(c.parameters, [{ level: "house" }], "notify_targets").value;

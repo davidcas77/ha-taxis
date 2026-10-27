@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, FolderTree, HeartPulse, Layers, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
+import { RecipesPage } from "./recipes.tsx";
+import { Workflow, AlertTriangle, CheckCircle2, FolderTree, HeartPulse, Layers, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { ChangesPage } from "./changes.tsx";
@@ -61,6 +62,7 @@ function Shell() {
           <Tab active={route.page === "organize"} onClick={() => go(route.page === "organize" ? route : { page: "organize", type: "labels", id: null })} icon={<FolderTree className="size-4" aria-hidden />}>
             Organize
           </Tab>
+          <Tab active={route.page === "recipes"} onClick={() => go({ page: "recipes" })} icon={<Workflow className="size-4" aria-hidden />}>Recipes</Tab>
           <Tab active={route.page === "parameters"} onClick={() => go(route.page === "parameters" ? route : { page: "parameters", tab: "capabilities" })} icon={<SlidersHorizontal className="size-4" aria-hidden />}>
             Parameters
           </Tab>
@@ -138,6 +140,8 @@ function Shell() {
         </div>
       ) : route.page === "organize" ? (
         <OrganizePage h={hierarchy} type={route.type} id={route.id} go={go} />
+      ) : route.page === "recipes" ? (
+        <RecipesPage h={hierarchy} />
       ) : route.page === "parameters" ? (
         <ParametersPage h={hierarchy} tab={route.tab} go={go} />
       ) : route.page === "health" ? (

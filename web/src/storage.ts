@@ -75,3 +75,14 @@ export function useStoredChoice<T extends string>(key: string, allowed: readonly
   );
   return [value, set];
 }
+
+// Typed browser-only preferences. Reject malformed values instead of letting
+// a damaged localStorage entry break a view.
+export function useStoredValue<T>(key: string, initial: T, valid: (value: unknown) => value is T): [T, (value: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try { const saved: unknown = JSON.parse(read(key) ?? "null"); return valid(saved) ? saved : initial; }
+    catch { return initial; }
+  });
+  const set = useCallback((next: T) => { setValue(next); write(key, JSON.stringify(next)); }, [key]);
+  return [value, set];
+}

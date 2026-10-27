@@ -37,6 +37,9 @@ import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
 import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateNamingIgnores, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
+import { applyPreflight } from "./changes/preflight.ts";
+import { settingsConcurrency } from "./settings-concurrency.ts";
+import { applyHistory } from "./changes/history.ts";
 import { readRegistry } from "./ha/registry.ts";
 import { HaRest } from "./ha/rest.ts";
 import { HaSocket } from "./ha/socket.ts";
@@ -186,6 +189,7 @@ app.use("*", async (c, next) => {
 // that changes something must carry this header, which a form on another
 // website can't add: a simple guard against cross-site requests.
 app.use("/api/*", requireTaxisHeader);
+app.use("/api/settings/*", settingsConcurrency(store.db));
 
 app.onError((e, c) => {
   log.error(`Request ${c.req.method} ${c.req.path} failed`, e);
@@ -210,6 +214,16 @@ app.get("/api/hierarchy", async (c) => {
     log.error("Reading Home Assistant failed", message);
     return c.json<HierarchyResponse>({ ok: false, error: message }, 502);
   }
+});
+
+const history = applyHistory(store.db);
+app.get("/api/history", (c) => c.json({ ok: true, runs: history.runs() }));
+app.get("/api/repairs", (c) => c.json({ ok: true, repairs: history.repairs() }));
+app.post("/api/repairs/:id/acknowledge", (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isSafeInteger(id) || id < 1) return c.json({ ok: false, error: "Invalid repair id." }, 400);
+  if (!history.acknowledge(id)) return c.json({ ok: false, error: "This repair is already acknowledged or does not exist." }, 404);
+  return c.json({ ok: true, repairs: history.repairs() });
 });
 
 const listResponse = (): ChangesResponse => ({ ok: true, changes: changes.list(), version: changes.version() });
@@ -429,7 +443,16 @@ app.post("/api/apply", async (c) => {
   }
 
   applying = true;
+  let runId: number | null = null;
   try {
+    runId = history.begin(pending);
+    if (pending.some(c => ["helper", "automation", "script"].includes(c.kind))) {
+      const error = applyPreflight((await loadRead(true)).read.raw, pending, settings.naming());
+      if (error) {
+        history.finish(runId, [], error, false);
+        return c.json<ApplyResponse>({ ok: false, error }, 409);
+      }
+    }
     // Backup first. Inside Home Assistant it's required: no backup, no changes.
     // In development there's no Supervisor, so applying needs an explicit OK.
     let backup: ApplyResult["backup"];
@@ -438,24 +461,28 @@ app.post("/api/apply", async (c) => {
       log.info(`Making a backup: ${name}`);
       const made = await backupHomeAssistant(target.target.token, name);
       if (!made.ok) {
+        history.finish(runId, [], `Backup failed; nothing was changed. ${made.reason}`, false);
         log.error("Backup failed, nothing was applied", made.reason);
         return c.json<ApplyResponse>({ ok: false, error: `Nothing was changed. ${made.reason}` }, 502);
       }
-      backup = { made: true, name };
+      backup = { made: true, name, slug: made.slug };
     } else if (body.allowWithoutBackup) {
       backup = { made: false, reason: "Running outside Home Assistant, so no backup was possible." };
     } else {
+      history.finish(runId, [], "Development Apply requires explicit confirmation without a backup; nothing was changed.", false);
       return c.json<ApplyResponse>(
         { ok: false, error: "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one." },
         409,
       );
     }
 
+    history.backup(runId, backup);
     log.info(`Applying ${pending.length} change(s) to Home Assistant`);
     const readFresh = async () => (await loadRead(true)).read.raw;
     // Registry changes first (and, with renames, what uses the old ids), then
     // blueprints, helpers and the recipes' automations (changes/all.ts).
-    const { results, realIds, retargets } = await applyAll(pending, { ha, rest, readFresh });
+    const outcome = await applyAll(pending, { ha, rest, readFresh });
+    const { results } = outcome;
     const appliedIds = results.filter((r) => r.ok).map((r) => r.changeId);
     for (const r of results) {
       const ch = pending.find((x) => x.id === r.changeId)!;
@@ -466,10 +493,7 @@ app.post("/api/apply", async (c) => {
     }
     // Done changes leave the list; the rest stay. Creations that happened hand
     // their real ids to the changes still pointing at them.
-    for (const id of appliedIds) changes.done(id);
-    // A rename that took while another field didn't: the rest stays, under the new id.
-    for (const r of retargets) changes.retarget(r.changeId, r.targetId, r.after, r.before);
-    for (const [temp, real] of realIds) changes.swapTempId(temp, real);
+    changes.settle(outcome, () => history.finish(runId!, results));
     // Whatever happened, the next view must come from a fresh read, of the
     // registries and of what uses entity ids.
     cache = null;
@@ -477,6 +501,7 @@ app.post("/api/apply", async (c) => {
     log.info(`Applied ${appliedIds.length} of ${pending.length} change(s)`);
     return c.json<ApplyResponse>({ ok: true, backup, results });
   } catch (e) {
+    if (runId !== null) history.finish(runId, [], errorText(e));
     log.error("Applying changes failed", e);
     cache = null;
     dropSnapshot();

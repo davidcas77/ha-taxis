@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import { useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import { addGroup, deleteGroup, groupOf, moveItem, newGroupId, renameGroup, sectionsFor, shiftGroup, type GroupListKey, type GroupSettings } from "../../shared/groups.ts";
+import { Pagination, usePagination } from "./records.tsx";
 import { useTaxis } from "./state.tsx";
 import { Button, ConfirmAction, EditedDot, inputClass } from "./ui.tsx";
 
@@ -11,7 +12,6 @@ import { Button, ConfirmAction, EditedDot, inputClass } from "./ui.tsx";
 
 export type GroupRow = { id: string; name: string; edited: string; search: string; extra: ReactNode };
 
-const LIMIT = 400;
 // Not a valid group id ("~" can't be in one), so it can't clash with a real group.
 const NONE = "~ungrouped";
 
@@ -110,7 +110,7 @@ export function GroupedList({
     });
 
   // Plain function, not a component: it reads the drag state of this render.
-  const renderRows = (items: { id: string }[], total: number, empty: string | null) => {
+  const renderRows = (items: { id: string }[], empty: string | null) => {
     return (
       <div>
         {empty && <p className="px-4 py-1.5 text-xs text-muted">{empty}</p>}
@@ -145,11 +145,6 @@ export function GroupedList({
             );
           })}
         </ul>
-        {total > items.length && (
-          <p className="border-t border-line p-3 text-xs text-muted">
-            Showing the first {items.length} of {total.toLocaleString()}. Search to narrow the list.
-          </p>
-        )}
       </div>
     );
   };
@@ -158,6 +153,20 @@ export function GroupedList({
     .map((s) => ({ ...s, shown: q ? s.items.filter((i) => byId.get(i.id)!.search.toLowerCase().includes(q)) : s.items }))
     // While searching, a section with no matches hides.
     .filter((s) => !q || s.shown.length > 0);
+  const isOpen = (key: string) => !hasGroups || q !== "" || !collapsed.has(key);
+  // Page the open rows as one result set, but keep every group header on every
+  // page: collapsed/empty groups must remain available as drop targets and keep
+  // their rename, delete, and reorder controls.
+  const total = visible.reduce((count, s) => count + (isOpen(s.group?.id ?? NONE) ? s.shown.length : 0), 0);
+  const pagination = usePagination(total, JSON.stringify([list, q, [...collapsed].sort(), visible.map(s => [s.group?.id, s.shown.map(item => item.id)])]));
+  let offset = 0;
+  const paged = visible.map(s => {
+    if (!isOpen(s.group?.id ?? NONE)) return { ...s, pageItems: [] };
+    const start = Math.max(0, pagination.start - offset);
+    const end = Math.max(0, pagination.end - offset);
+    offset += s.shown.length;
+    return { ...s, pageItems: s.shown.slice(start, end) };
+  });
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -224,16 +233,16 @@ export function GroupedList({
       {groupsLoaded && rows.length > 0 && visible.length === 0 && <p className="p-3 text-[13px] text-muted">Nothing matches.</p>}
 
       {groupsLoaded &&
-        visible.map((s) => {
+        paged.map((s) => {
           const g = s.group;
           const key = g ? g.id : NONE;
-          const open = q !== "" || !collapsed.has(key);
+          const open = isOpen(key);
           const isOver = over === key;
           const first = g && sections[0].group?.id === g.id;
           const last = g && sections[sections.length - 2]?.group?.id === g.id;
-          const shown = s.shown.slice(0, LIMIT);
+          const shown = s.pageItems;
           // With no groups at all, the rows are just a list.
-          if (!hasGroups && !g) return <div key={key}>{renderRows(shown, s.shown.length, null)}</div>;
+          if (!hasGroups && !g) return <div key={key}>{renderRows(shown, null)}</div>;
           return (
             <div key={key} {...dropProps(key)} className={`border-b border-line ${isOver ? "bg-accent-soft ring-2 ring-inset ring-accent" : ""}`}>
               <div className="flex flex-wrap items-center gap-1 px-2 py-1.5">
@@ -319,10 +328,12 @@ export function GroupedList({
                   </>
                 )}
               </div>
-              {open && renderRows(shown, s.shown.length, g && s.items.length === 0 ? `No ${plural} in this group. Drag one here.` : !g && s.items.length === 0 ? `Every ${noun} is in a group.` : null)}
+              {open && s.shown.length > 0 && shown.length === 0 && <p className="px-4 py-1.5 text-xs text-muted">This group's {plural} are on another page.</p>}
+              {open && renderRows(shown, g && s.items.length === 0 ? `No ${plural} in this group. Drag one here.` : !g && s.items.length === 0 ? `Every ${noun} is in a group.` : null)}
             </div>
           );
         })}
+      {groupsLoaded && <Pagination {...pagination} />}
       {groupsLoaded && <p className="px-3 py-2 text-[11px] text-muted">Drag a {noun} onto a group to move it.</p>}
     </div>
   );

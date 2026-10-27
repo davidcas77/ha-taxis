@@ -249,9 +249,9 @@ export type ChangeInput = {
 };
 
 export type ApplyResult = {
-  backup: { made: boolean; name?: string; reason?: string };
+  backup: { made: boolean; name?: string; slug?: string | null; reason?: string };
   // details: for a rename, what was updated and what still needs a hand.
-  results: { changeId: number; ok: boolean; message: string; details?: string[] }[];
+  results: { changeId: number; ok: boolean; message: string; details?: string[]; status?: ApplyStatus }[];
 };
 
 // ---------------------------------------------------------------------------
@@ -290,14 +290,31 @@ export type HierarchyResponse =
 // sends back the version the user saw; any difference means they must look again.
 export type ChangesResponse = { ok: true; changes: Change[]; version: string } | { ok: false; error: string };
 
-export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
+export type NamingResponse = { ok: true; revision?: string; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
 
-export type GroupsResponse = { ok: true; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
+export type GroupsResponse = { ok: true; revision?: string; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
 
-export type NamingIgnoresResponse = { ok: true; ignores: import("./naming-ignores.ts").NamingIgnores } | { ok: false; error: string };
+export type NamingIgnoresResponse = { ok: true; revision?: string; ignores: import("./naming-ignores.ts").NamingIgnores } | { ok: false; error: string };
 
-export type InventoryResponse = { ok: true; inventory: import("./inventory.ts").InventorySettings } | { ok: false; error: string };
+export type InventoryResponse = { ok: true; revision?: string; inventory: import("./inventory.ts").InventorySettings } | { ok: false; error: string };
 
-export type ParametersResponse = { ok: true; parameters: import("./parameters.ts").ParameterSettings } | { ok: false; error: string };
+export type ParametersResponse = { ok: true; revision?: string; parameters: import("./parameters.ts").ParameterSettings } | { ok: false; error: string };
 
 export type ApplyResponse = ({ ok: true } & ApplyResult) | { ok: false; error: string };
+
+
+export type ApplyRun = {
+  id: number;
+  changes?: Change[];
+  startedAt: string;
+  finishedAt: string | null;
+  status: "running" | "completed" | "partial" | "failed" | "interrupted";
+  backup: ApplyResult["backup"] | null;
+  results: ApplyResult["results"];
+  error: string | null;
+};
+export type RepairItem = { id: number; runId: number; changeId: number | null; message: string; createdAt: string; acknowledgedAt: string | null };
+export type HistoryResponse = { ok: true; runs: ApplyRun[] } | { ok: false; error: string };
+export type RepairsResponse = { ok: true; repairs: RepairItem[] } | { ok: false; error: string };
+
+export type ApplyStatus = "verified" | "stored" | "loaded" | "partial" | "unverified" | "failed";

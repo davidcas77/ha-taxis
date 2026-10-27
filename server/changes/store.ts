@@ -1,3 +1,5 @@
+import { mapInputEntities } from "../../shared/blueprints.ts";
+import type { Outcome, Retarget } from "./apply.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -79,6 +81,36 @@ export function changeStore(db: DatabaseSync) {
     version(): string {
       const content = list().map((c) => [c.id, c.kind, c.op, c.targetId, c.scope, c.before, c.after]);
       return createHash("sha256").update(JSON.stringify(content)).digest("hex").slice(0, 16);
+    },
+
+    settle(outcome: { results: Outcome[]; realIds: Map<string, string>; retargets: Retarget[]; renamed: Map<string, string> }, record?: () => void): void {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const result of outcome.results) if (result.ok) remove.run(result.changeId);
+        for (const r of outcome.retargets) { setTarget.run(r.targetId, r.changeId); replace.run(JSON.stringify(r.before), JSON.stringify(r.after), r.changeId); }
+        for (const c of list()) {
+          let target = c.targetId;
+          let after = c.after;
+          let before = c.before;
+          for (const [temp, real] of outcome.realIds) { if (target === temp) target = real; after = swapRef(after, temp, real); }
+          const current = (id: string) => outcome.renamed.get(id) ?? id;
+          if (c.kind === "entity" || (c.kind === "helper" && c.op === "update")) target = current(target);
+          const remap = (fields: Record<string, unknown>) => {
+            const next = { ...fields };
+            for (const key of ["temperature_entity_id", "humidity_entity_id"]) if (typeof next[key] === "string") next[key] = current(next[key]);
+            if (c.kind === "helper" && Array.isArray(next.entities)) next.entities = next.entities.map(e => typeof e === "string" ? current(e) : e);
+            if ((c.kind === "automation" || c.kind === "script") && next.use_blueprint && typeof next.use_blueprint === "object") {
+              const use = next.use_blueprint as { path: string; input: Record<string, unknown> };
+              next.use_blueprint = { ...use, input: mapInputEntities(use.path, use.input, current) };
+            }
+            return next;
+          };
+          after = remap(after); before = remap(before);
+          setTarget.run(target, c.id); replace.run(JSON.stringify(before), JSON.stringify(after), c.id);
+        }
+        record?.();
+        db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
     },
 
     /** Folds an edit into the list. Returns an error message, or null when stored. */

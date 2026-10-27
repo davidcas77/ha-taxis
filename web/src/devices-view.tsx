@@ -23,6 +23,8 @@ import { displayRole } from "../../shared/roles.ts";
 import { diagnosisText, type Diagnosis } from "../../shared/entity-diagnosis.ts";
 import { sortRows } from "../../shared/sort.ts";
 import type { DeviceItem, EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
+import { ListEmpty, Pagination, ResizeHandle, usePagination, useWidths } from "./records.tsx";
+import { useStoredValue } from "./storage.ts";
 import { useTaxis } from "./state.tsx";
 import { useStoredChoice, useStoredFlag } from "./storage.ts";
 import { useWhy } from "./why.tsx";
@@ -54,6 +56,10 @@ export type DevicesEntitiesProps = {
   // Keep each the same function between renders, or the table is worked out again.
   entityOk: (e: EntityItem) => boolean;
   deviceOk?: (d: DeviceItem) => boolean;
+  deviceLabelOk?: (d: DeviceItem) => boolean;
+  includeLoose?: boolean;
+  onResetFilters?: () => void;
+  activeFilters?: ReactNode;
   areaOk?: (areaId: string | null) => boolean;
   picked: ReadonlySet<string>;
   toggle: (id: string) => void;
@@ -76,8 +82,8 @@ export type DevicesEntitiesProps = {
   onSelectAll?: (ids: string[]) => void;
 };
 
-export function DevicesEntities({ h, areaId, entityOk, deviceOk, areaOk, picked, toggle, onOpenEntity, onOpenDevice, toolbar, place, defaultShowEntities, onRecord, groups, limit, bulk, onSelectAll }: DevicesEntitiesProps) {
-  const [query, setQuery] = useState("");
+export function DevicesEntities({ h, areaId, entityOk, deviceOk, deviceLabelOk, includeLoose, onResetFilters, activeFilters, areaOk, picked, toggle, onOpenEntity, onOpenDevice, toolbar, place, defaultShowEntities, onRecord, groups, limit, bulk, onSelectAll }: DevicesEntitiesProps) {
+  const [query, setQuery] = useStoredValue(`taxis:search:${place}:${areaId ?? "home"}`, "", (v): v is string => typeof v === "string");
   const [chosen, setChosen] = useState<ReadonlySet<EntityRole>>(new Set());
   const [showAll, setShowAll] = useStoredFlag(`taxis:devices-entities:show:${place}`, defaultShowEntities ?? place === "area");
   const [grouped, setGrouped] = useStoredFlag("taxis:group-by-type:devices-entities");
@@ -86,16 +92,16 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, areaOk, picked,
   const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
   const { sort, toggle: toggleSort } = useSortState({ key: "name", dir: "asc" });
   const column = sort.key as TreeColumn;
+  const { widths, setWidth } = useWidths("taxis:table:columns:devices-entities", { name: 200, id: 210, type: 140, showAs: 100, state: 100, why: 240, area: 160 });
 
   // A new area starts with every kind showing and nothing opened by hand.
   useEffect(() => {
     setChosen(new Set());
     setOverrides(new Map());
-    setQuery("");
   }, [areaId]);
 
   const scope = useMemo<Scope>(() => (areaId ? { kind: "area", areaId } : { kind: "all" }), [areaId]);
-  const collected = useMemo(() => collectBranches(h, { scope, entityOk, deviceOk, areaOk }), [h, scope, entityOk, deviceOk, areaOk]);
+  const collected = useMemo(() => collectBranches(h, { scope, entityOk, deviceOk, deviceLabelOk, includeLoose, areaOk }), [h, scope, entityOk, deviceOk, deviceLabelOk, includeLoose, areaOk]);
   const counts = useMemo(() => branchRoleCounts(collected), [collected]);
   const entityTotal = counts.reduce((n, c) => n + c.count, 0);
   // A chip for a kind the table no longer has (its last entity moved away) is
@@ -111,12 +117,14 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, areaOk, picked,
 
   const flat = grouped && view === "devices";
   const branches = useMemo(() => sortBranches(h, filtered, column, sort.dir), [h, filtered, column, sort.dir]);
-  const drawnBranches = limit ? branches.slice(0, limit) : branches;
   const flatRows = useMemo(() => (flat ? sortRows(branchEntities(filtered), (e) => entityValue(h, e, column), sort.dir) : []), [flat, filtered, h, column, sort.dir]);
-  const drawnFlat = limit ? flatRows.slice(0, limit) : flatRows;
+  const paging = usePagination(flat ? flatRows.length : branches.length, JSON.stringify([query, [...active], sort, areaId, collected.map(b => [b.key, b.all.length])]), limit ?? 100);
+  const drawnBranches = branches.slice(paging.start, paging.end);
+  const drawnFlat = flatRows.slice(paging.start, paging.end);
   const shownIds = useMemo(() => new Set((flat ? drawnFlat : branchEntities(drawnBranches)).map((e) => e.entityId)), [flat, drawnFlat, drawnBranches]);
   const entityCount = flat ? flatRows.length : branchEntities(filtered).length;
-  const cut = flat ? flatRows.length - drawnFlat.length : branches.length - drawnBranches.length;
+  const deviceCount = branches.filter(branch => branch.device !== null).length;
+  const looseCount = branches.find(branch => branch.device === null)?.entities.length ?? 0;
 
   const setOpen = (key: string, open: boolean) => setOverrides((m) => new Map(m).set(key, open));
   // Show entities opens or folds every device, and leaves the chevrons clicked before it behind.
@@ -125,7 +133,7 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, areaOk, picked,
     setOverrides(new Map());
   };
 
-  if (collected.length === 0) return <p className="text-[13px] text-muted">No devices or entities here with the current filters.</p>;
+  const resetFilters = () => { setQuery(""); setChosen(new Set()); onResetFilters?.(); };
 
   return (
     <div className="flex flex-col gap-4">
@@ -135,7 +143,9 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, areaOk, picked,
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a device or an entity" aria-label="Find a device or an entity" className="w-full bg-transparent text-[13px] outline-none" />
         </label>
         {toolbar}
+        <button type="button" className="text-xs text-accent underline" onClick={resetFilters}>Reset filters</button>
       </div>
+      {activeFilters}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div role="group" aria-label="Show kinds" className="flex flex-1 flex-wrap gap-1 text-xs">
@@ -167,15 +177,15 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, areaOk, picked,
         )}
       </div>
 
-      {view === "groups" && groups ? (
+      {filtered.length === 0 ? <ListEmpty reset={resetFilters} /> : view === "groups" && groups ? (
         groups(branchEntities(filtered).map((e) => e.entityId))
       ) : (
         <>
           {bulk?.(shownIds)}
           <p className="text-xs text-muted">
-            {flat ? null : `${branches.length.toLocaleString()} ${branches.length === 1 ? "device" : "devices"}, `}
+            {flat ? null : `${deviceCount.toLocaleString()} ${deviceCount === 1 ? "device" : "devices"}${looseCount ? ` and ${looseCount} entities without a device` : ""}, `}
             {entityCount.toLocaleString()} {entityCount === 1 ? "entity" : "entities"}
-            {cut > 0 && `, showing the first ${(flat ? drawnFlat.length : drawnBranches.length).toLocaleString()}`}.{" "}
+.{" "}
             {onSelectAll && (
               <button type="button" className="text-accent hover:underline" onClick={() => onSelectAll([...shownIds].filter((id) => h.entities[id]?.inRegistry))}>
                 Select all shown
@@ -184,17 +194,18 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, areaOk, picked,
             {flat ? " Edits go in the list of changes; nothing reaches Home Assistant until it is applied." : " Edits go in the list of changes; nothing reaches Home Assistant until it is applied. A device's area is its entities' area unless an entity has one of its own."}
           </p>
           <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-            <table className="w-full text-[13px]">
+            <table className="records-table table-fixed text-[13px]" style={{ width: Object.values(widths).reduce((a, b) => a + b, 0) + 96 }}>
+              <colgroup><col style={{ width: 32 }} />{Object.keys(widths).map(key => <col key={key} style={{ width: widths[key] }} />)}<col style={{ width: 64 }} /></colgroup>
               <thead className="bg-sunken text-left text-xs text-muted">
                 <tr>
                   <th className="w-8 px-3 py-2" />
-                  <SortHeader label="Name" k="name" sort={sort} onToggle={toggleSort} />
-                  <SortHeader label={flat ? "Entity id" : "Model / entity id"} k="id" sort={sort} onToggle={toggleSort} />
-                  <SortHeader label={flat ? "Type" : "Entities / type"} k="type" sort={sort} onToggle={toggleSort} />
-                  <SortHeader label="Show as" k="showAs" sort={sort} onToggle={toggleSort} />
-                  <SortHeader label="State" k="state" sort={sort} onToggle={toggleSort} />
-                  <SortHeader label="Why" k="why" sort={sort} onToggle={toggleSort} />
-                  <SortHeader label="Area" k="area" sort={sort} onToggle={toggleSort} />
+                  <SortHeader label="Name" k="name" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize name column" value={widths["name"]} onChange={width => setWidth("name", width)} />} />
+                  <SortHeader label={flat ? "Entity id" : "Model / entity id"} k="id" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize id column" value={widths["id"]} onChange={width => setWidth("id", width)} />} />
+                  <SortHeader label={flat ? "Type" : "Entities / type"} k="type" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize type column" value={widths["type"]} onChange={width => setWidth("type", width)} />} />
+                  <SortHeader label="Show as" k="showAs" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize showAs column" value={widths["showAs"]} onChange={width => setWidth("showAs", width)} />} />
+                  <SortHeader label="State" k="state" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize state column" value={widths["state"]} onChange={width => setWidth("state", width)} />} />
+                  <SortHeader label="Why" k="why" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize why column" value={widths["why"]} onChange={width => setWidth("why", width)} />} />
+                  <SortHeader label="Area" k="area" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize area column" value={widths["area"]} onChange={width => setWidth("area", width)} />} />
                   <th className="w-16 px-1.5 py-2">
                     <span className="sr-only">Open</span>
                   </th>
@@ -217,6 +228,7 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, areaOk, picked,
               </tbody>
             </table>
           </div>
+          <Pagination {...paging} />
         </>
       )}
     </div>

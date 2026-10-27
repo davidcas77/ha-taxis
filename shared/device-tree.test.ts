@@ -330,3 +330,25 @@ describe("helpers and groups", () => {
     expect(branchEntities(filterBranches(branches, { roles: new Set<EntityRole>(["light"]), query: "" })).map((e) => e.entityId)).toEqual(["light.hall_lamp"]);
   });
 });
+
+describe("device label filtering", () => {
+  it("does not retain unrelated devices when no entity matches the active label", () => {
+    expect(collectBranches(h, { scope: { kind: "all" }, entityOk: () => false, deviceLabelOk: () => false })).toEqual([]);
+  });
+  it("keeps a device matching its own label even when it has no matching child", () => {
+    const branches = collectBranches(h, { scope: { kind: "all" }, entityOk: () => false, deviceLabelOk: d => d.id === "empty" });
+    expect(keys(branches)).toEqual(["empty"]);
+  });
+  it("keeps a device with a matching child and applies the child's effective area", () => {
+    const branches = collectBranches(h, { scope: { kind: "all" }, entityOk: e => e.entityId === "light.night_light", deviceLabelOk: () => false, areaOk: id => id === "hallway" });
+    expect(keys(branches)).toEqual(["lamp"]);
+    expect(idsOf(branches[0])).toEqual(["light.night_light"]);
+  });
+});
+
+
+it("keeps unowned entities when a device-visibility filter is active without a manufacturer restriction", () => {
+  const branches = collectBranches(h, { scope: { kind: "all" }, entityOk: visible, deviceOk: d => !d.disabled, includeLoose: true });
+  expect(keys(branches)).toContain(NO_DEVICE);
+  expect(idsOf(branches.find(b => b.key === NO_DEVICE)!)).toContain("weather.home");
+});

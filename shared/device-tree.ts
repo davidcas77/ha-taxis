@@ -34,6 +34,10 @@ export type CollectOptions = {
   entityOk: (e: EntityItem) => boolean;
   // The page's own filters for a device (the manufacturer…). Optional.
   deviceOk?: (d: DeviceItem) => boolean;
+  // With an active label, a device qualifies through its own label or a matching
+  // child. Without this filter, empty devices remain useful to organize.
+  deviceLabelOk?: (d: DeviceItem) => boolean;
+  includeLoose?: boolean;
   // The whole home only: an area filter. A device is listed when it, or any of its
   // entities that pass, is in an area it accepts.
   areaOk?: (areaId: string | null) => boolean;
@@ -61,11 +65,11 @@ export function collectBranches(h: Hierarchy, o: CollectOptions): Branch[] {
     for (const d of Object.values(h.devices)) {
       if (o.deviceOk && !o.deviceOk(d)) continue;
       const entities = d.entityIds.map((id) => h.entities[id]).filter((e): e is EntityItem => Boolean(e) && o.entityOk(e) && areaOk(e.areaId));
-      if (entities.length === 0 && !areaOk(d.areaId)) continue;
+      if (entities.length === 0 && (!areaOk(d.areaId) || (o.deviceLabelOk && !o.deviceLabelOk(d)))) continue;
       out.push(make(d, entities, null));
     }
     const loose = Object.values(h.entities).filter((e) => !deviceOf(e) && o.entityOk(e) && areaOk(e.areaId));
-    if (loose.length > 0 && !o.deviceOk) out.push(make(null, loose, null));
+    if (loose.length > 0 && (o.includeLoose ?? !o.deviceOk)) out.push(make(null, loose, null));
     return out;
   }
 

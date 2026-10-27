@@ -5,6 +5,7 @@ import { areaCodes } from "../../shared/naming.ts";
 import type { AreaNode, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
+import { HelpDisclosure, HelpTopic } from "./help.tsx";
 import { Button } from "./ui.tsx";
 
 // Canonical helpers: what Taxis proposes per area, from the capabilities. One
@@ -53,9 +54,30 @@ function usePlan(h: Hierarchy): { ready: boolean; lines: Line[] } {
   return { ready, lines };
 }
 
-const change = (added: number, removed: number) => `+${added} −${removed}`;
+const change = (added: number, removed: number) => `add ${added} and remove ${removed}`;
+const membershipSummary = (row: HelperRow) => row.membersUnreadable
+  ? "Replace the group's members with the selected entities"
+  : `Change group membership: ${change(row.added.length, row.removed.length)}`;
 
-function StatusCell({ line, go }: { line: Line; go: (r: Route) => void }) {
+// The same explanation is shown in the area capability card and Helpers table.
+function MembershipExplanation({ h, row }: { h: Hierarchy; row: HelperRow }) {
+  if (row.status !== "update-members" && !(row.status === "adopt" && row.membersDiffer)) return null;
+  const noun = row.key === "lights" ? "lights" : "entities";
+  const list = (ids: string[]) => <ul className="ml-4 list-disc">{ids.map(id => <li key={id}>{h.entities[id]?.name ?? id} <code className="font-mono text-[11px] text-muted">{id}</code></li>)}</ul>;
+  return <div className="text-xs text-muted">
+    <p>Updates which {noun} belong to this group. No {noun} are deleted. Nothing changes in Home Assistant until you apply the change list.</p>
+    <details className="mt-1">
+      <summary className="cursor-pointer text-accent">See exactly what changes</summary>
+      <div className="mt-2 flex flex-col gap-2">
+        {row.added.length > 0 ? <div><p className="font-medium text-fg">Add to the group ({row.added.length})</p>{list(row.added)}</div> : <p>No {noun} will be added.</p>}
+        {row.membersUnreadable ? <p>Home Assistant cannot report the current members, so the removals cannot be determined.</p> : row.removed.length > 0 ? <div><p className="font-medium text-fg">Remove from the group ({row.removed.length})</p>{list(row.removed)}</div> : <p>No {noun} will be removed.</p>}
+        <div><p className="font-medium text-fg">Group after applying ({row.sources.length})</p>{list(row.sources)}</div>
+      </div>
+    </details>
+  </div>;
+}
+
+function StatusCell({ h, line, go }: { h: Hierarchy; line: Line; go: (r: Route) => void }) {
   const { row } = line;
   const settings = (
     <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "settings" })}>
@@ -74,14 +96,14 @@ function StatusCell({ line, go }: { line: Line; go: (r: Route) => void }) {
         tone = "text-on";
         break;
       case "update-members":
-        main = `Update members ${change(row.added.length, row.removed.length)}`;
+        main = membershipSummary(row);
         tone = "text-warn";
         break;
       case "adopt":
         main = (
           <>
             Adopt: rename <code className="font-mono text-xs">{row.adoptFrom}</code> → <code className="font-mono text-xs">{row.canonicalId}</code>
-            {row.membersDiffer && ` and update members ${change(row.added.length, row.removed.length)}`}
+            {row.membersDiffer && ` and change group membership: ${change(row.added.length, row.removed.length)}`}
           </>
         );
         tone = "text-warn";
@@ -107,12 +129,13 @@ function StatusCell({ line, go }: { line: Line; go: (r: Route) => void }) {
   }
   const notes: string[] = [];
   if (!line.pending && row.status === "in-place" && row.membersUnknown) notes.push("members not checked");
-  if (!line.pending && row.status === "update-members" && row.membersUnreadable) notes.push("unavailable, so Home Assistant reports no members: they are probably all gone");
+  if (!line.pending && row.status === "update-members" && row.membersUnreadable) notes.push("Current members could not be read because the group is unavailable; the exact removals are unknown");
   else if (!line.pending && row.status === "update-members" && row.missing && row.missing.length > 0) notes.push(`members that don't exist: ${row.missing.join(", ")}`);
   if (row.areaSensor) notes.push(`Area ${row.key} sensor: ${row.areaSensor.current ?? "not set"} → ${row.canonicalId}`);
   return (
     <div className="flex flex-col gap-0.5">
       <span className={tone}>{main}</span>
+      {!line.pending && <MembershipExplanation h={h} row={row} />}
       {notes.length > 0 && <span className="text-[11px] text-muted">{notes.join("; ")}</span>}
     </div>
   );
@@ -124,7 +147,7 @@ function Sources({ h, row }: { h: Hierarchy; row: HelperRow }) {
       <summary className="cursor-pointer whitespace-nowrap tabular-nums" title={row.sources.map((id) => h.entities[id]?.name ?? id).join(", ")}>
         {row.sources.length}
       </summary>
-      <ul className="mt-1 flex flex-col gap-0.5 text-xs">
+      <ul className="mt-1 flex flex-col gap-0.5 text-left text-xs">
         {row.sources.map((id) => (
           <li key={id}>
             {h.entities[id]?.name ?? id} <code className="font-mono text-muted">{id}</code>
@@ -212,10 +235,10 @@ function HelperTable({ h, lines, showArea, go }: { h: Hierarchy; lines: Line[]; 
                     className="accent-[var(--accent)]"
                   />
                 </th>
-                {showArea && <SortHeader label={lines.some((l) => l.row.level !== "area") ? "Level" : "Area"} k="area" sort={sort} onToggle={toggle} />}
-                <SortHeader label="Helper" k="helper" sort={sort} onToggle={toggle} />
-                <SortHeader label="Sources" k="sources" sort={sort} onToggle={toggle} />
-                <SortHeader label="Status" k="status" sort={sort} onToggle={toggle} />
+                {showArea && <SortHeader label={lines.some((l) => l.row.level !== "area") ? "Level" : "Area"} help="The area, floor or house this helper serves." k="area" sort={sort} onToggle={toggle} />}
+                <SortHeader label="Helper" help="The combined entity Taxis will create or update." k="helper" sort={sort} onToggle={toggle} />
+                <SortHeader label="Sources" help="How many entities feed this helper; expand the count to see them." className="px-3 py-2 text-center" k="sources" sort={sort} onToggle={toggle} />
+                <SortHeader label="Status" help="Whether the helper is ready, needs changes or has a conflict." k="status" sort={sort} onToggle={toggle} />
               </tr>
             </thead>
             <tbody>
@@ -243,11 +266,11 @@ function HelperTable({ h, lines, showArea, go }: { h: Hierarchy; lines: Line[]; 
                     <code className="font-mono text-xs">{l.row.canonicalId}</code>
                     <div className="text-[11px] text-muted">{NAME_OF[l.row.key]}</div>
                   </td>
-                  <td className="px-3 py-1.5">
+                  <td className="px-3 py-1.5 text-center">
                     <Sources h={h} row={l.row} />
                   </td>
                   <td className="px-3 py-1.5">
-                    <StatusCell line={l} go={go} />
+                    <StatusCell h={h} line={l} go={go} />
                   </td>
                 </tr>
               ))}
@@ -280,7 +303,7 @@ export function HelpersTab({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
           {areas.length === 0 ? <p className="text-[13px] text-muted">No area has anything to roll up yet.</p> : <HelperTable h={h} lines={areas} showArea go={go} />}
           <section className="flex flex-col gap-2" aria-label="Floors and house">
             <h2 className="text-sm font-semibold">Floors and house</h2>
-            <p className="max-w-[68ch] text-xs text-muted">{UPPER_NOTE}</p>
+            <HelpDisclosure summary="Floor groups gather room lights; the house group gathers floors." label="How groups are built"><HelpTopic title="Membership and order">{UPPER_NOTE}</HelpTopic></HelpDisclosure>
             {upper.length === 0 ? <p className="text-[13px] text-muted">No area has a light group yet, so there is nothing for the floors and the house to gather. Add the areas' light groups to the changes first.</p> : <HelperTable h={h} lines={upper} showArea go={go} />}
           </section>
         </>
@@ -325,11 +348,11 @@ export function CombinedHelperRow({ h, area, helperKey, line, counted, go }: { h
         tone = "text-warn";
         break;
       case "adopt":
-        status = `Adopt: ${row.adoptFrom} renamed to ${row.canonicalId}${row.membersDiffer ? `, and update members ${change(row.added.length, row.removed.length)}` : ""}`;
+        status = `Adopt: ${row.adoptFrom} renamed to ${row.canonicalId}${row.membersDiffer ? `, and change group membership: ${change(row.added.length, row.removed.length)}` : ""}`;
         tone = "text-warn";
         break;
       case "update-members":
-        status = `Update members ${change(row.added.length, row.removed.length)}`;
+        status = membershipSummary(row);
         tone = "text-warn";
         break;
       case "conflict":
@@ -357,10 +380,11 @@ export function CombinedHelperRow({ h, area, helperKey, line, counted, go }: { h
     <div role="group" aria-label={`Combined ${name}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-surface px-3 py-2 text-[13px]">
       <span className="font-medium">Combined {name}</span>
       <code className="font-mono text-xs">{id}</code>
-      <span className="flex min-w-[10rem] flex-1 flex-col">
+      <div className="flex min-w-[10rem] flex-1 flex-col gap-1">
         <span className={tone}>{status}</span>
         {note && <span className="text-[11px] text-muted">{note}</span>}
-      </span>
+        {row && !line?.pending && <MembershipExplanation h={h} row={row} />}
+      </div>
       {line?.selectable && (
         <Button tone="primary" disabled={busy} onClick={() => void add()}>
           Add to changes

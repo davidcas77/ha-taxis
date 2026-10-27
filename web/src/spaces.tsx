@@ -1,3 +1,4 @@
+import { Pagination, usePagination } from "./records.tsx";
 import {
   Activity,
   AlertTriangle,
@@ -979,14 +980,15 @@ export function BulkBar({ h, ids, onDone }: { h: Hierarchy; ids: string[]; onDon
 export function SearchResults({ h, query, filters, select }: { h: Hierarchy; query: string; filters: Filters; select: (s: Selection) => void }) {
   const q = query.trim().toLowerCase();
   const results = useMemo(
-    () => Object.values(h.entities).filter((e) => visible(e, filters) && (e.name.toLowerCase().includes(q) || e.entityId.includes(q))).slice(0, 200),
+    () => Object.values(h.entities).filter((e) => visible(e, filters) && (e.name.toLowerCase().includes(q) || e.entityId.includes(q))),
     [h, q, filters],
   );
+  const paging = usePagination(results.length, JSON.stringify([q, filters]));
   return (
     <div className="flex flex-col gap-4">
-      <Heading title={`Entities matching “${query.trim()}”`} subtitle={results.length === 200 ? "Showing the first 200." : `${results.length} found.`} />
+      <Heading title={`Entities matching “${query.trim()}”`} subtitle={`${results.length} found.`} />
       <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
-        {results.map((e) => {
+        {results.slice(paging.start, paging.end).map((e) => {
           const area = e.areaId ? h.areas[e.areaId] : undefined;
           const Icon = ROLE_ICONS[e.role];
           return (
@@ -1006,6 +1008,7 @@ export function SearchResults({ h, query, filters, select }: { h: Hierarchy; que
           );
         })}
       </ul>
+      <Pagination {...paging} />
     </div>
   );
 }

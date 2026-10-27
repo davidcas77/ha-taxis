@@ -216,7 +216,7 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
     try {
       const existing = await io.rest.get(restKind, id);
       if (sameConfig(existing, config)) {
-        outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied (it was already like this)." });
+        sent.set(c.id, config); // Matching storage still needs runtime verification, including retries.
         continue;
       }
       await io.rest.post(restKind, id, config);
@@ -235,7 +235,7 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
     try {
       states = (await io.readFresh()).states;
     } catch {
-      // The stored config below is still checked; the state is a bonus.
+      // Keep the state unverified; the stored config alone does not prove it loaded.
     }
     const wrong = new Map<number, string>();
     for (const c of pending) {
@@ -250,8 +250,9 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
       else if (!sameConfig(stored, sent.get(c.id)!)) wrong.set(c.id, "Home Assistant stored something different from what Taxis sent.");
       else {
         const state = states.find((x) => stateOf(x, c.targetId));
-        if (state?.state === "unavailable") wrong.set(c.id, "Home Assistant saved it but couldn't load it (it shows as unavailable). Check the blueprint's inputs in Home Assistant.");
-        else outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied.", ...(state ? {} : { details: [`Home Assistant hasn't listed the ${what} yet; it may take a moment.`] }) });
+        if (!state) wrong.set(c.id, `Home Assistant saved the ${what}, but has not listed it as loaded yet. Check it before retrying.`);
+        else if (state.state === "unavailable") wrong.set(c.id, "Home Assistant saved it but couldn't load it (it shows as unavailable). Check the blueprint's inputs in Home Assistant.");
+        else outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied." });
       }
     }
     pending = pending.filter((c) => wrong.has(c.id));

@@ -218,6 +218,21 @@ describe("one thermostat", () => {
     expect(planThermostat({ ...valve, state: "off", hvacModes: ["off", "cool"] }, "comfort", allowed, null)).toEqual([]);
   });
 
+  it("switches an active opposite mode before setting the seasonal target, only with permission", () => {
+    const ac = { ...valve, hvacModes: ["off", "heat", "cool"] };
+    const cooling = { ...params, season: "cooling" as const, autoHvacOn: true };
+    expect(planThermostat(ac, "comfort", cooling, 28)).toEqual([
+      { service: "set_hvac_mode", mode: "cool" }, { service: "set_temperature", temperature: 24 },
+    ]);
+    expect(planThermostat({ ...ac, state: "cool", temperature: 24 }, "comfort", { ...params, autoHvacOn: true }, 18)).toEqual([
+      { service: "set_hvac_mode", mode: "heat" }, { service: "set_temperature", temperature: 21 },
+    ]);
+    expect(planThermostat(ac, "comfort", { ...cooling, autoHvacOn: false }, 28)).toEqual([]);
+    expect(planThermostat(valve, "comfort", cooling, 28)).toEqual([]);
+    // Auto modes are intentionally managed by the thermostat, not an opposite season.
+    expect(planThermostat({ ...ac, state: "auto", temperature: 24 }, "comfort", cooling, 28)).toEqual([]);
+  });
+
   it("does not switch it on when the room is warm enough (cool enough when cooling)", () => {
     const allowed = { ...params, autoHvacOn: true };
     const off = { ...valve, state: "off" };

@@ -1,5 +1,5 @@
 import { applyLabelDiff, currentValues, isRegistryKind, isTempId, labelDiff, sameValue } from "../../shared/changes.ts";
-import type { Change, ChangeKind, Hierarchy } from "../../shared/types.ts";
+import type { ApplyStatus, Change, ChangeKind, Hierarchy } from "../../shared/types.ts";
 import type { RestApi } from "../ha/rest.ts";
 import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
 import { findReferences, searchRelated, type Related } from "../references/find.ts";
@@ -126,7 +126,7 @@ const FIELD_NAMES: Record<string, string> = {
 };
 
 // details: for a rename, what was updated and what still needs a hand.
-export type Outcome = { changeId: number; ok: boolean; message: string; details?: string[] };
+export type Outcome = { changeId: number; ok: boolean; message: string; details?: string[]; status?: ApplyStatus };
 
 // Names Home Assistant treats as the same: categories compare case-folded;
 // floors, areas and labels also ignore spaces.
@@ -163,7 +163,7 @@ export async function applyChanges(
   // Needed to rename entity ids with what uses them; without it a rename only
   // changes the registry.
   rename?: RenameIO,
-): Promise<{ results: Outcome[]; appliedIds: number[]; realIds: Map<string, string>; retargets: Retarget[] }> {
+): Promise<{ results: Outcome[]; appliedIds: number[]; realIds: Map<string, string>; retargets: Retarget[]; renamed: Map<string, string> }> {
   const changes = all.filter((c) => isRegistryKind(c.kind));
   const realIds = new Map<string, string>();
   const outcome = new Map<number, Outcome>();
@@ -438,7 +438,7 @@ export async function applyChanges(
   }
 
   const results = changes.map((c) => outcome.get(c.id) ?? { changeId: c.id, ok: false, message: "Not sent." });
-  return { results, appliedIds: results.filter((r) => r.ok).map((r) => r.changeId), realIds, retargets };
+  return { results, appliedIds: results.filter((r) => r.ok).map((r) => r.changeId), realIds, retargets, renamed: new Map([...renameOf.values()].filter(r => confirmed.has(r.changeId)).map(r => [r.oldId, r.newId])) };
 }
 
 // Null when Home Assistant now shows what was sent; otherwise what's different.

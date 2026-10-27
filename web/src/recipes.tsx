@@ -1,10 +1,13 @@
+import { RecipeRecords } from "./recipe-records.tsx";
+import { useStoredChoice } from "./storage.ts";
+import { HelpDisclosure, HelpTopic } from "./help.tsx";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { RECIPES, planAnnounce, planRecipes, recipeChangeInputs, type RecipeCell, type RecipeInstalled, type RecipeStatus } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { useTaxis } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
+import { ColumnHeader, SortHeader, useSort } from "./table.tsx";
 import { Button } from "./ui.tsx";
 
 // Recipes: an automation Taxis makes for an area from a blueprint of its own,
@@ -14,8 +17,18 @@ import { Button } from "./ui.tsx";
 // changes in the list; nothing reaches Home Assistant until the list is applied.
 // Announce is the exception: one script for the whole house, in a row of its own.
 
-const NOTE =
-  "Recipes Taxis can install per area, from the sensors and lights that count in the Capabilities tab and the parameters. Installing writes a blueprint (once), the helpers the recipe needs and one automation per area. Announce is one script for the whole house. Nothing is written until you apply the change list.";
+const NOTE = "Choose recipes for each room. Review and apply installations in Changes.";
+
+const RECIPE_HELP: Record<string, string> = {
+  occupancy: "Keeps a room occupied while activity or its hold timer continues.",
+  motion_lights: "Turns room lights on with occupancy and off when the room clears.",
+  media_off: "Turns speakers and TVs off after the room clears.",
+  area_climate: "Sets thermostats from season, occupancy, schedules and home modes.",
+  bathroom_fan: "Runs the fan while humidity indicates steam or a shower.",
+  exterior_lights: "Controls outdoor lights using sunset and activity.",
+  left_open: "Notifies when a door or window stays open too long.",
+  appliance_done: "Notifies when an appliance's power use indicates it has finished.",
+};
 
 // Most useful first.
 const ORDER: RecipeStatus[] = ["ready", "out-of-date", "in-changes", "missing", "installed"];
@@ -212,13 +225,13 @@ export function RecipesTable({ h, installed }: { h: Hierarchy; installed: Recipe
           <table className="w-full text-[13px]">
             <thead className="bg-sunken text-left text-xs text-muted">
               <tr>
-                <SortHeader label="Area" k="area" sort={sort} onToggle={toggle} />
+                <SortHeader label="Area" help="The room this recipe will automate." k="area" sort={sort} onToggle={toggle} />
                 {RECIPES.map((r) => (
-                  <SortHeader key={r.key} label={r.label} k={r.key} sort={sort} onToggle={toggle} />
+                  <SortHeader key={r.key} label={r.label} help={RECIPE_HELP[r.key]} k={r.key} sort={sort} onToggle={toggle} />
                 ))}
-                <th scope="col" className="px-3 py-2 font-medium">
+                <ColumnHeader aria-label="Announce" help="Speaks a message in occupied rooms using text-to-speech." className="px-3 py-2 font-medium">
                   Announce
-                </th>
+                </ColumnHeader>
               </tr>
             </thead>
             <tbody>
@@ -260,7 +273,7 @@ export function RecipesTable({ h, installed }: { h: Hierarchy; installed: Recipe
   );
 }
 
-export function RecipesTab({ h }: { h: Hierarchy }) {
+export function RecipesTab({ h, view = "table" }: { h: Hierarchy; view?: "table" | "records" }) {
   const { inventoryLoaded, namingLoaded, parametersLoaded } = useTaxis();
   const ready = inventoryLoaded && namingLoaded && parametersLoaded;
   const [installed, setInstalled] = useState<RecipeInstalled | null>(null);
@@ -280,8 +293,8 @@ export function RecipesTab({ h }: { h: Hierarchy }) {
   }, [h.fetchedAt]);
 
   return (
-    <div className="flex flex-col gap-3">
-      <p className="max-w-[68ch] text-[13px] text-muted">{NOTE}</p>
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <HelpDisclosure summary={NOTE}><HelpTopic title="Requirements">Recipes use the entities counted in Capabilities and your parameter values.</HelpTopic><HelpTopic title="Installation">Creates a reusable blueprint, required helpers and one automation per room. Announce creates one house-wide script.</HelpTopic><HelpTopic title="Review first">Nothing changes in Home Assistant until you apply the queued installation.</HelpTopic></HelpDisclosure>
       {!ready ? (
         <p className="text-[13px] text-muted">Loading the settings…</p>
       ) : error ? (
@@ -291,8 +304,19 @@ export function RecipesTab({ h }: { h: Hierarchy }) {
       ) : !installed ? (
         <p className="text-[13px] text-muted">Checking what is installed in Home Assistant…</p>
       ) : (
-        <RecipesTable h={h} installed={installed} />
+        view === "records" ? <RecipeRecords h={h} installed={installed} descriptions={RECIPE_HELP} /> : <div className="min-h-0 overflow-auto"><RecipesTable h={h} installed={installed} /></div>
       )}
     </div>
   );
+}
+
+
+export function RecipesPage({ h }: { h: Hierarchy }) {
+  const [view, setView] = useStoredChoice("taxis:recipes:view", ["table", "records"] as const, "records");
+  return <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4 md:p-6">
+    <header className="flex shrink-0 flex-wrap items-center gap-3"><h1 className="flex-1 text-xl font-semibold">Recipes</h1>
+      <div role="group" aria-label="Recipe view" className="flex gap-1">{(["table", "records"] as const).map(mode => <Button key={mode} aria-pressed={view === mode} onClick={() => setView(mode)}>{mode === "table" ? "Table" : "Records"}</Button>)}</div>
+    </header>
+    <RecipesTab h={h} view={view} />
+  </main>;
 }

@@ -14,6 +14,7 @@ export const DEVICES_ENTITIES = "devices-entities";
 export function normalizeLegacyHash(hash: string): string {
   const parts = hash.replace(/^#/, "").split("/");
   const [head, a, b] = parts;
+  if (head === "parameters" && a === "recipes") return "#recipes";
   if ((head === "devices" || head === "entities" || head === DEVICES_ENTITIES) && parts.length <= 2) {
     const section = head === "entities" ? "entities" : "devices";
     return a ? `#organize/${section}/${a}` : `#organize/${section}`;

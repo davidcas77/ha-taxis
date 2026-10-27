@@ -144,7 +144,7 @@ describe("installing occupancy", () => {
       "Applied (it was already there).",
       "Applied (it was already there).",
       "Applied (it was already there).",
-      "Applied (it was already like this).",
+      "Applied.",
     ]);
     expect(t.fake.home.entities.filter((e) => e.platform === "timer")).toHaveLength(1);
   });
@@ -435,6 +435,11 @@ describe("when a step fails", () => {
     };
     const { results } = await t.apply();
     expect(results[4]).toMatchObject({ ok: false, message: expect.stringContaining("couldn't load it") });
+    // A retry with matching stored configuration must still check HA's state.
+    const retry = await t.apply();
+    expect(retry.results[4]).toMatchObject({ ok: false, message: expect.stringContaining("couldn't load it") });
+    t.fake.home.states.find(s => s.attributes?.id === "taxis_occupancy_study")!.state = "on";
+    expect((await t.apply()).results[4]).toMatchObject({ ok: true, status: "loaded" });
   });
 
   it("reports a stored config that is not what was sent", async () => {

@@ -1,7 +1,9 @@
+import { ColumnHeader } from "./table.tsx";
 import { useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { CATEGORY_SCOPES, type AreaNode, type ChangeInput, type DeviceItem, type EntityItem, type FloorNode, type Hierarchy } from "../../shared/types.ts";
+import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis } from "./state.tsx";
 import { Actions, AreaSelect, Button, ConfirmAction, Field, inputClass, LabelPicker, Panel } from "./ui.tsx";
 
@@ -14,7 +16,7 @@ const SCOPE_NAMES: Record<string, string> = { automation: "Automations", script:
 const iconOk = (v: string) => v === "" || /^[a-z0-9]+:[a-z0-9-]+$/.test(v);
 const same = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
 
-function useSubmit(onDone: () => void) {
+function useSubmit(onDone: () => void, onSaved?: () => void) {
   const { propose } = useTaxis();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +28,7 @@ function useSubmit(onDone: () => void) {
     setSaving(true);
     const ok = await propose(input);
     setSaving(false);
-    if (ok) onDone();
+    if (ok) { onSaved?.(); onDone(); }
   };
   return { saving, error, setError, submit };
 }
@@ -44,17 +46,7 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
   const [hidden, setHidden] = useState(entity.hidden);
   const [disabled, setDisabled] = useState(entity.disabled);
   const [icon, setIcon] = useState(entity.icon ?? "");
-  const { saving, error, setError, submit } = useSubmit(onClose);
-
-  if (!entity.inRegistry) {
-    return (
-      <Panel title={entity.name} onClose={onClose}>
-        <p className="text-[13px] text-muted">
-          This entity has no unique id (usually YAML without <code className="font-mono">unique_id</code>), so Home Assistant doesn't let it be renamed, moved or labelled.
-        </p>
-      </Panel>
-    );
-  }
+  const { saving, error, setError, submit } = useSubmit(onClose, () => guard.release());
 
   // What differs from the item now. Dirty means save would send a field.
   const newId = `${domain}.${objectId.trim()}`;
@@ -69,6 +61,17 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
   if (disabled !== entity.disabled) fields.disabled_by = disabled ? "user" : null;
   if ((icon.trim() || null) !== entity.icon) fields.icon = icon.trim() || null;
   const dirty = Object.keys(fields).length > 0;
+  const guard = useDraftGuard(dirty);
+
+  if (!entity.inRegistry) {
+    return (
+      <Panel title={entity.name} onClose={() => guard.close(onClose)}>
+        <p className="text-[13px] text-muted">
+          This entity has no unique id (usually YAML without <code className="font-mono">unique_id</code>), so Home Assistant doesn't let it be renamed, moved or labelled.
+        </p>
+      </Panel>
+    );
+  }
 
   const save = () => {
     if (!iconOk(icon.trim())) return setError("An icon looks like mdi:lightbulb.");
@@ -83,8 +86,8 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
           {entity.name} <code className="ml-1 font-mono text-xs font-normal text-muted">{entity.entityId}</code>
         </>
       }
-      onClose={onClose}
-      actions={<Actions dirty={dirty} onSave={save} onCancel={onClose} saving={saving} error={error} />}
+      onClose={() => guard.close(onClose)}
+      actions={<Actions dirty={dirty} onSave={save} onCancel={() => guard.close(onClose)} saving={saving} error={error} />}
     >
       <Field label="Name" htmlFor="ent-name" hint="Leave empty to use the name Home Assistant gives it.">
         <input id="ent-name" className={inputClass} value={name} placeholder={entity.name} onChange={(e) => setName(e.target.value)} />
@@ -174,7 +177,7 @@ export function DeviceEditor({ h, device, onClose }: { h: Hierarchy; device: Dev
   const [area, setArea] = useState<string | null>(device.areaId);
   const [labels, setLabels] = useState(device.labels);
   const [disabled, setDisabled] = useState(device.disabled);
-  const { saving, error, submit } = useSubmit(onClose);
+  const { saving, error, submit } = useSubmit(onClose, () => guard.release());
   const followers = device.entityIds.filter((id) => h.entities[id] && !h.entities[id].ownAreaId).length;
 
   const fields: Record<string, unknown> = {};
@@ -183,10 +186,12 @@ export function DeviceEditor({ h, device, onClose }: { h: Hierarchy; device: Dev
   if (!same(labels, device.labels)) fields.labels = labels;
   if (disabled !== device.disabled) fields.disabled_by = disabled ? "user" : null;
   const dirty = Object.keys(fields).length > 0;
+  const guard = useDraftGuard(dirty);
   const save = () => void submit(dirty ? { kind: "device", op: "update", targetId: device.id, fields } : null);
 
   return (
-    <Panel title={device.name} onClose={onClose} actions={<Actions dirty={dirty} onSave={save} onCancel={onClose} saving={saving} error={error} />}>
+    <div className="flex flex-col gap-4">
+    <Panel title={device.name} onClose={() => guard.close(onClose)} actions={<Actions dirty={dirty} onSave={save} onCancel={() => guard.close(onClose)} saving={saving} error={error} />}>
       <p className="text-xs text-muted">{[device.manufacturer, device.model].filter(Boolean).join(" · ") || "Unknown model"}</p>
       <Field label="Name" htmlFor="dev-name" hint="Leave empty to use the name its integration gives it.">
         <input id="dev-name" className={inputClass} value={name} placeholder={device.name} onChange={(e) => setName(e.target.value)} />
@@ -201,7 +206,30 @@ export function DeviceEditor({ h, device, onClose }: { h: Hierarchy; device: Dev
         <input type="checkbox" checked={disabled} onChange={(e) => setDisabled(e.target.checked)} /> Disabled (all its entities stop)
       </label>
     </Panel>
+    <DeviceEntities h={h} device={device} />
+    </div>
   );
+}
+
+// Every entity is shown here, including diagnostics and disabled entities, so a
+// device's detail never looks empty merely because a list filter hid its children.
+export function DeviceEntities({ h, device }: { h: Hierarchy; device: DeviceItem }) {
+  const entities = device.entityIds.map(id => h.entities[id]).filter((entity): entity is EntityItem => Boolean(entity)).sort((a, b) => a.name.localeCompare(b.name));
+  return <section aria-labelledby={`device-entities-${device.id}`} className="rounded-lg border border-line bg-surface">
+    <h2 id={`device-entities-${device.id}`} className="border-b border-line px-3.5 py-3 text-sm font-semibold">Entities ({entities.length})</h2>
+    {entities.length === 0 ? <p className="p-3.5 text-[13px] text-muted">This device has no entities.</p> : <div className="overflow-x-auto">
+      <table className="w-full text-left text-[13px]">
+        <thead className="bg-sunken text-xs text-muted"><tr><ColumnHeader>Name / entity id</ColumnHeader><ColumnHeader>State</ColumnHeader><ColumnHeader>Area</ColumnHeader></tr></thead>
+        <tbody>{entities.map(entity => <tr key={entity.entityId} className="border-t border-line align-top">
+          <td className="px-3 py-2"><a className="text-accent hover:underline" href={`#organize/entities/${encodeURIComponent(entity.entityId)}`}>{entity.name}</a><code className="block break-all font-mono text-[11px] text-muted">{entity.entityId}</code>
+            <div className="flex flex-wrap gap-1 text-[11px] text-muted">{entity.disabled && <span>Disabled</span>}{entity.hidden && <span>Hidden</span>}{entity.maintenance && <span>Diagnostic / configuration</span>}</div>
+          </td>
+          <td className="px-3 py-2">{entity.state ?? "No state"}{entity.unit && <span> {entity.unit}</span>}</td>
+          <td className="px-3 py-2">{entity.areaId ? h.areas[entity.areaId]?.name ?? entity.areaId : "No area"}{entity.ownAreaId === null && <span className="block text-[11px] text-muted">Follows device</span>}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
+  </section>;
 }
 
 export function AreaEditor({ h, area, onClose, onDeleted }: { h: Hierarchy; area: AreaNode; onClose: () => void; onDeleted: () => void }) {
@@ -209,8 +237,8 @@ export function AreaEditor({ h, area, onClose, onDeleted }: { h: Hierarchy; area
   const [floor, setFloor] = useState<string>(area.floorId ?? "");
   const [labels, setLabels] = useState(area.labels);
   const [icon, setIcon] = useState(area.icon ?? "");
-  const { saving, error, setError, submit } = useSubmit(onClose);
-  const del = useSubmit(onDeleted);
+  const { saving, error, setError, submit } = useSubmit(onClose, () => guard.release());
+  const del = useSubmit(onDeleted, () => guard.release());
 
   const fields: Record<string, unknown> = {};
   if (name.trim() !== area.name) fields.name = name.trim();
@@ -218,6 +246,7 @@ export function AreaEditor({ h, area, onClose, onDeleted }: { h: Hierarchy; area
   if (!same(labels, area.labels)) fields.labels = labels;
   if ((icon.trim() || null) !== area.icon) fields.icon = icon.trim() || null;
   const dirty = Object.keys(fields).length > 0;
+  const guard = useDraftGuard(dirty);
 
   const save = () => {
     if (!name.trim()) return setError("An area needs a name.");
@@ -228,12 +257,12 @@ export function AreaEditor({ h, area, onClose, onDeleted }: { h: Hierarchy; area
   return (
     <Panel
       title={`Edit area: ${area.name}`}
-      onClose={onClose}
+      onClose={() => guard.close(onClose)}
       actions={
         <Actions
           dirty={dirty}
           onSave={save}
-          onCancel={onClose}
+          onCancel={() => guard.close(onClose)}
           saving={saving}
           error={error ?? del.error}
           danger={
@@ -276,8 +305,8 @@ export function FloorEditor({ floor, onClose, onDeleted }: { floor: FloorNode; o
   const [name, setName] = useState(floor.name);
   const [level, setLevel] = useState(floor.level === null ? "" : String(floor.level));
   const [icon, setIcon] = useState(floor.icon ?? "");
-  const { saving, error, setError, submit } = useSubmit(onClose);
-  const del = useSubmit(onDeleted);
+  const { saving, error, setError, submit } = useSubmit(onClose, () => guard.release());
+  const del = useSubmit(onDeleted, () => guard.release());
 
   const lv = level === "" ? null : Number(level);
   const fields: Record<string, unknown> = {};
@@ -285,6 +314,7 @@ export function FloorEditor({ floor, onClose, onDeleted }: { floor: FloorNode; o
   if (lv !== floor.level) fields.level = lv;
   if ((icon.trim() || null) !== floor.icon) fields.icon = icon.trim() || null;
   const dirty = Object.keys(fields).length > 0;
+  const guard = useDraftGuard(dirty);
 
   const save = () => {
     if (!name.trim()) return setError("A floor needs a name.");
@@ -295,12 +325,12 @@ export function FloorEditor({ floor, onClose, onDeleted }: { floor: FloorNode; o
   return (
     <Panel
       title={`Edit floor: ${floor.name}`}
-      onClose={onClose}
+      onClose={() => guard.close(onClose)}
       actions={
         <Actions
           dirty={dirty}
           onSave={save}
-          onCancel={onClose}
+          onCancel={() => guard.close(onClose)}
           saving={saving}
           error={error ?? del.error}
           danger={
@@ -333,11 +363,12 @@ export function FloorEditor({ floor, onClose, onDeleted }: { floor: FloorNode; o
 export function NewItemForm({ kind, floorId, onDone }: { kind: "area" | "floor"; floorId?: string | null; onDone: () => void }) {
   const [name, setName] = useState("");
   const [level, setLevel] = useState("");
+  const guard = useDraftGuard(name.trim() !== "" || level.trim() !== "");
   const { saving, error, setError, submit } = useSubmit(() => {
     setName("");
     setLevel("");
     onDone();
-  });
+  }, () => guard.release());
   const create = () => {
     if (!name.trim()) return setError(`Give the new ${kind} a name.`);
     const fields: Record<string, unknown> = { name: name.trim() };
