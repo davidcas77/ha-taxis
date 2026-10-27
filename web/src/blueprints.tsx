@@ -50,7 +50,7 @@ export function BlueprintRecords({ onCount, refreshKey }: {
   const paging = usePagination(rows.length, JSON.stringify([query, domain, sort]));
   const pageRows = rows.slice(paging.start, paging.end);
   const selected = pageRows.find(blueprint => keyOf(blueprint) === selectedKey) ?? pageRows[0];
-  const { widths, setWidth } = useWidths("taxis:records:columns:blueprints", { name: 200, domain: 100, path: 230 });
+  const { widths, setWidth, savedWidth } = useWidths("taxis:records:columns:blueprints", { name: 200, domain: 100, path: 230 });
   const columns = [{ key: "name", label: "Name" }, { key: "domain", label: "Type" }, { key: "path", label: "Path" }];
   const reset = () => { setQuery(""); setDomain("all"); };
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -70,7 +70,7 @@ export function BlueprintRecords({ onCount, refreshKey }: {
       <div className="min-h-0 flex-1 overflow-auto">
         {rows.length === 0 ? <p role="status" className="p-3 text-[13px] text-muted">{blueprints.length === 0 ? complete ? "No automation or script blueprints are installed in Home Assistant." : "No blueprints were returned from the domains that could be read." : "No blueprints match these filters."}</p> : <table className="records-table table-fixed text-[13px]" style={{ width: Object.values(widths).reduce((total, width) => total + width, 0) }}>
           <colgroup>{columns.map(column => <col key={column.key} style={{ width: widths[column.key] }} />)}</colgroup>
-          <thead className="sticky top-0 bg-sunken text-left text-xs text-muted"><tr>{columns.map(column => <SortHeader key={column.key} label={column.label} k={column.key} sort={sort} onToggle={toggle} resize={<ResizeHandle label={`Resize blueprint ${column.label} column`} value={widths[column.key]} onChange={width => setWidth(column.key, width)} />} />)}</tr></thead>
+          <thead className="sticky top-0 bg-sunken text-left text-xs text-muted"><tr>{columns.map(column => <SortHeader key={column.key} label={column.label} k={column.key} sort={sort} onToggle={toggle} resize={<ResizeHandle label={`Resize blueprint ${column.label} column`} value={widths[column.key]} savedWidth={savedWidth(column.key)} onChange={width => setWidth(column.key, width)} />} />)}</tr></thead>
           <tbody>{pageRows.map(blueprint => <tr key={keyOf(blueprint)} tabIndex={0} aria-selected={selected && keyOf(selected) === keyOf(blueprint)} className={`cursor-pointer border-t border-line ${selected && keyOf(selected) === keyOf(blueprint) ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`} onClick={() => setSelectedKey(keyOf(blueprint))} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedKey(keyOf(blueprint)); } }}>
             <td className="px-3 py-2">{blueprint.name}{blueprint.error && <span className="block text-xs text-danger">Can't load</span>}</td><td className="px-3 py-2">{domainName(blueprint.domain)}</td><td className="px-3 py-2 font-mono text-[11px] text-muted">{blueprint.path}</td>
           </tr>)}</tbody>

@@ -116,3 +116,7 @@ button:not(:disabled),
    next column. Numeric/action cells can still opt into nowrap or truncation. */
 table :is(th, td) { overflow-wrap: anywhere; }
 table :is(th, td) code { white-space: normal; overflow-wrap: anywhere; }
+
+/* Keep the surrounding border close to content-sized tables as well. Wide
+   tables still scroll within the available pane or mobile viewport. */
+.border:has(> table[data-content-sized="true"]) { width: fit-content; max-width: 100%; }

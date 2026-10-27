@@ -65,6 +65,62 @@ class TableLayoutRegression(unittest.TestCase):
         self.assertGreater(result["lines"], 1, result)
         self.assertTrue(all(rect["left"] >= result["left"] - 1 and rect["right"] <= result["right"] + 1 for rect in result["rects"]), result)
 
+    def test_default_columns_fit_headers_and_values_without_filling_the_page(self):
+        area = next(iter(self.body["hierarchy"]["areas"]))
+        self.open("#area/" + area)
+        table = self.page.get_by_role("table", name="Area capabilities", exact=True)
+        self.page.wait_for_function("document.querySelector('table[aria-label=\"Area capabilities\"]')?.dataset.contentSized === 'true'")
+        result = table.evaluate("""table => {
+          const columns = [...table.tHead.rows[0].cells].map((header, index) => {
+            const cells = [header, ...[...table.tBodies[0].rows].map(row => row.cells[index])];
+            const natural = Math.max(...cells.map(cell => {
+              const range = document.createRange(), walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+              const rects = [];
+              while (walker.nextNode()) {
+                const node = walker.currentNode;
+                if (!node.textContent.trim() || node.parentElement.closest('.sr-only,[role="separator"]')) continue;
+                range.selectNodeContents(node);
+                rects.push(...[...range.getClientRects()].filter(rect => rect.width > 0));
+              }
+              const left = Math.min(...rects.map(rect => rect.left));
+              const right = Math.max(...rects.map(rect => rect.right));
+              const style = getComputedStyle(cell);
+              return right - left + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+            }));
+            return {width:header.getBoundingClientRect().width, natural};
+          });
+          return {columns, width:table.getBoundingClientRect().width, border:table.parentElement.getBoundingClientRect().width, viewport:innerWidth};
+        }""")
+        self.assertLess(result["width"], result["viewport"] / 2, result)
+        self.assertAlmostEqual(result["border"], result["width"] + 2, delta=2)
+        for column in result["columns"]:
+            self.assertGreaterEqual(column["width"], column["natural"], result)
+            self.assertLessEqual(column["width"], column["natural"] + 12, result)
+        original = table.locator("th").first.bounding_box()["width"]
+        self.page.set_viewport_size({"width": 2000, "height": 1100})
+        self.assertAlmostEqual(table.locator("th").first.bounding_box()["width"], original, delta=1)
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertTrue(table.evaluate("t=>t.parentElement.getBoundingClientRect().right<=innerWidth+1"))
+        self.assertEqual(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"), True)
+
+    def test_saved_explicit_columns_survive_and_reset_returns_to_content_widths(self):
+        self.page.add_init_script("localStorage.setItem('taxis:records:columns:automations', JSON.stringify({name: 360}))")
+        self.open("#organize/automations")
+        table = self.page.locator("table").first
+        self.page.wait_for_function("document.querySelector('table')?.dataset.contentSized === 'true'")
+        self.assertAlmostEqual(table.locator("th").first.bounding_box()["width"], 360, delta=1)
+        handle = self.page.get_by_role("separator", name="Resize Name column", exact=True)
+        handle.focus()
+        self.page.keyboard.press("ArrowRight")
+        self.assertAlmostEqual(table.locator("th").first.bounding_box()["width"], 380, delta=1)
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.wait_for_function("document.querySelector('table')?.dataset.contentSized === 'true'")
+        self.assertAlmostEqual(table.locator("th").first.bounding_box()["width"], 380, delta=1)
+        self.page.get_by_role("button", name="Reset layout", exact=True).click()
+        self.page.wait_for_function("document.querySelector('table th').getBoundingClientRect().width < 360")
+        reset_width = table.locator("th").first.bounding_box()["width"]
+        self.assertGreater(reset_width, 64)
+
     def test_category_entity_id_wraps_after_resize_and_reload(self):
         body = copy.deepcopy(self.body)
         h = body["hierarchy"]

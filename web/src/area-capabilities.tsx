@@ -15,10 +15,10 @@ export function AreaCapabilitySummary({ h, areaId }: { h: Hierarchy; areaId: str
     {!inventoryLoaded || !namingLoaded ? <p className="text-sm text-muted">Reading capability settings…</p> : <div className="overflow-x-auto rounded-lg border border-line bg-surface">
       <table aria-label="Area capabilities" className="w-full text-left text-[13px]">
         <thead className="bg-sunken text-xs text-muted"><tr><ColumnHeader>Capability</ColumnHeader><ColumnHeader className="px-3 py-2 text-center">Entity count</ColumnHeader><ColumnHeader>Current value</ColumnHeader></tr></thead>
-        <tbody>{rows.map(row => <tr key={row.capability} className="border-t border-line">
+        <tbody>{rows.map(row => <tr key={row.capability} className={`border-t border-line ${row.count > 0 ? "bg-accent-soft font-semibold" : "text-muted"}`}>
           <td className="px-3 py-2">{row.capability === "door" ? "Door" : row.capability === "window" ? "Window" : row.label}</td>
           <td className="px-3 py-2 text-center tabular-nums">{row.sourceIds.length ? <TooltipButton label={`Entities counted for ${row.label}`} className="tabular-nums text-accent" content={<ul className="space-y-2">{row.sourceIds.map(id => <li key={id}><span className="block">{h.entities[id]?.name ?? id}</span><code className="break-all font-mono text-[11px] text-muted">{id}</code></li>)}</ul>}>{row.count}</TooltipButton> : row.count}</td>
-          <td className="px-3 py-2 text-muted">{row.value}</td>
+          <td className={`px-3 py-2 ${row.count > 0 ? "text-fg" : "text-muted"}`}>{row.value}</td>
         </tr>)}</tbody>
       </table>
     </div>}
