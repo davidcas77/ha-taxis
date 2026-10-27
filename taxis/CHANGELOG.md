@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.1
 
 - **Devices & entities.** One table of devices with their entities under them
   replaces the separate Devices and Entities pages and the two tabs of an area. A
