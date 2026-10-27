@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.3
+
+- **Content-sized tables.** Columns fit their headers and rendered values, with
+  compact borders, wrapping and horizontal scrolling. Manual resizing, saved
+  widths and layout reset remain available. Populated area-capability rows have
+  stronger text and a subtle background, including unavailable readings.
+- **Floor and area codes.** Parameters > Area codes groups areas by floor and
+  includes editable floor codes, suggestions and light-group previews. Empty
+  floors and areas on no floor stay visible. Other naming settings stay in
+  Settings, and saving or resetting them preserves both code maps.
+- **Helper coverage.** Parameters > Helpers has an Overview matrix showing each
+  area's configured capability helpers and their status: present, create, adopt,
+  update members, conflict, in changes or not needed. Expand a cell for sources
+  and details. The Details tab retains the proposal tables and floor/house groups.
+- **Shared capability naming.** Settings has one set of Type words for entity
+  and helper names, with independent Door and Window fields. Aggregation markers
+  have their own section: for example, `door` + `all` gives `door_all`, and
+  `temp` + `avg` gives `temp_avg`. Existing complete helper suffixes retain their
+  exact IDs until the new naming form is saved. Saving may change proposed IDs;
+  Home Assistant entities still change only after review and Apply.
+- **Three AI tiers.** Assign a model to Low, Medium and Strong. Load models opens
+  a searchable list with assignment buttons; direct model IDs remain supported.
+  Each saved tier has a separate connection test. Quick/Ask settings migrate to
+  Low/Medium, leaving Strong empty. The shared service routes tasks by tier;
+  task-facing AI features such as Ask Taxis remain unconnected.
+- **Image builds.** Build shared JavaScript assets on the build machine's native
+  architecture to avoid ARM emulation crashes while preparing the supported images.
+
 ## 0.6.2
 
 - **Naming suggestions.** Area-wide motion groups use `motion_all`, matching the
