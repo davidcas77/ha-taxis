@@ -5,6 +5,7 @@ import { closureFor, renameGate } from "../../shared/apply-plan.ts";
 import { describePeriods } from "../../shared/periods.ts";
 import { RECIPE_LABEL } from "../../shared/recipes.ts";
 import type { ApplyResult, Change, Hierarchy, RenameRefs } from "../../shared/types.ts";
+import { ApplyHistory } from "./history.tsx";
 import { api } from "./api.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
 import { useTaxis } from "./state.tsx";
@@ -66,7 +67,7 @@ function helperTitle(h: Hierarchy, c: Change): string {
   if ("duration" in c.after) return `Set the duration of ${c.targetId} to ${minutes(c.after.duration)}`;
   if ("periods" in c.after) return `Set the comfort periods of ${c.targetId}: ${describePeriods(String(c.after.periods))}`;
   const { added, removed } = memberChange(c);
-  return `Update members of ${c.targetId}: +${added.length} −${removed.length}`;
+  return `Change group membership of ${c.targetId}: add ${added.length} and remove ${removed.length}`;
 }
 
 function recipeTitle(h: Hierarchy, c: Change): string {
@@ -136,7 +137,7 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
 }
 
 export function ChangesPage({ h }: { h: Hierarchy }) {
-  const { changes, version, removeChange, clearChanges, reload } = useTaxis();
+  const { changes, version, removeChange, clearChanges, reload, busy } = useTaxis();
   const hasRename = changes.some((c) => c.kind === "entity" && c.after.new_entity_id !== undefined);
   const hasHelper = changes.some((c) => c.kind === "helper");
   const hasRecipe = changes.some((c) => c.kind === "blueprint" || c.kind === "automation" || c.kind === "script");
@@ -160,11 +161,14 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ outcome: ApplyResult; titles: Map<number, string> } | null>(null);
 
+  const [historyVersion, setHistoryVersion] = useState(0);
   const apply = async (allowWithoutBackup: boolean) => {
+    if (busy || step === "applying") return;
     const titles = new Map(changes.map((c) => [c.id, title(h, c)]));
     setStep("applying");
     setError(null);
     const res = await api.apply(version, allowWithoutBackup, only ?? undefined);
+    setHistoryVersion(v => v + 1);
     if (!res.ok) {
       if (/without one/.test(res.error)) {
         setStep("confirmNoBackup");
@@ -191,7 +195,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold">Changes</h1>
           <p className="text-[13px] text-muted">
-            Edits made in Taxis wait here. Taxis shows the house as if they were done, but Home Assistant doesn't change until you apply them.
+            Queued for Home Assistant: edits made in Taxis wait here. Taxis shows the house as if they were done, but Home Assistant doesn't change until you apply them.
           </p>
         </div>
 
@@ -212,7 +216,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                 const needed = closureFor(changes, [c.id]);
                 const extra = needed.filter((x) => x.id !== c.id);
                 const gate = gateFor(needed);
-                const blocked = step !== "list" || gate.waiting.length > 0 || gate.unacknowledged.length > 0;
+                const blocked = busy || step !== "list" || gate.waiting.length > 0 || gate.unacknowledged.length > 0;
                 const mine = only !== null && only.length === needed.length && needed.every((x) => only.includes(x.id)) && only.includes(c.id);
                 const keys = c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" || c.kind === "script" ? [] : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
                 return (
@@ -239,6 +243,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                       </Button>
                       <ConfirmAction
                         tone="ghost"
+                        disabled={busy || step === "applying"}
                         ariaLabel={`Remove: ${title(h, c)}`}
                         question="Remove this change? Nothing was applied to Home Assistant."
                         onConfirm={() => void removeChange(c.id)}
@@ -290,7 +295,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   tone="primary"
-                  disabled={gateAll.waiting.length > 0 || gateAll.unacknowledged.length > 0}
+                  disabled={busy || gateAll.waiting.length > 0 || gateAll.unacknowledged.length > 0}
                   onClick={() => {
                     setOnly(null);
                     setStep("confirm");
@@ -305,6 +310,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                 )}
                 <ConfirmAction
                   tone="ghost"
+                  disabled={busy}
                   question={`Discard all ${changes.length} change${changes.length === 1 ? "" : "s"}? Nothing was applied to Home Assistant.`}
                   onConfirm={() => void clearChanges()}
                 >
@@ -342,6 +348,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
             {step === "applying" && <p className="text-[13px] text-muted">Backing up and applying{only ? " this change" : ""}… this can take a minute.</p>}
           </>
         )}
+        <ApplyHistory refreshKey={historyVersion} applying={step === "applying"} />
       </div>
     </main>
   );
@@ -569,8 +576,9 @@ function Outcome({ result, onClose }: { result: { outcome: ApplyResult; titles: 
   const { outcome, titles } = result;
   const ok = outcome.results.filter((r) => r.ok).length;
   const failed = outcome.results.length - ok;
+  const warnings = outcome.results.filter(r => r.status === "partial" || r.status === "unverified" || (r.details ?? []).some(detail => /^(Needs a hand:|Not updated:)/.test(detail))).length;
   return (
-    <section aria-label="Result" className={`flex flex-col gap-2 rounded-lg border px-3.5 py-3 ${failed ? "border-warn/50 bg-warn-soft" : "border-on/40 bg-surface"}`}>
+    <section aria-label="Result" className={`flex flex-col gap-2 rounded-lg border px-3.5 py-3 ${failed || warnings ? "border-warn/50 bg-warn-soft" : "border-on/40 bg-surface"}`}>
       <div className="flex items-center gap-2">
         <h2 className="flex-1 text-sm font-semibold">
           {failed ? `${ok} applied, ${failed} not applied` : `${ok} change${ok === 1 ? "" : "s"} applied`}
@@ -579,6 +587,7 @@ function Outcome({ result, onClose }: { result: { outcome: ApplyResult; titles: 
           Close
         </Button>
       </div>
+      {warnings > 0 && <p className="text-xs text-warn">{warnings} change{warnings === 1 ? " needs" : "s need"} attention. Review the details and saved repair reminders below.</p>}
       <p className="text-xs text-muted">{outcome.backup.made ? `Backup made first: “${outcome.backup.name}”.` : outcome.backup.reason}</p>
       <ul className="flex flex-col gap-1 text-[13px]">
         {outcome.results.map((r) => (
@@ -586,6 +595,7 @@ function Outcome({ result, onClose }: { result: { outcome: ApplyResult; titles: 
             {r.ok ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-on" aria-hidden /> : <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />}
             <span>
               {titles.get(r.changeId) ?? `Change ${r.changeId}`}
+              {r.status && <span className="block text-xs text-muted">Status: {r.status}</span>}
               {!r.ok && <span className="block text-xs text-muted">{r.message} It stays in the list.</span>}
               {r.details && r.details.length > 0 && (
                 <ul className="mt-0.5 list-disc pl-4 text-xs text-muted">

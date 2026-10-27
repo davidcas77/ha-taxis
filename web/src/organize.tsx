@@ -10,7 +10,9 @@ import { OrganizeTable } from "./lists.tsx";
 import { AreaCodeField } from "./naming.tsx";
 import { ROLE_LABEL } from "./spaces.tsx";
 import { useTaxis, type OrganizeType, type Route } from "./state.tsx";
+import { useStoredValue } from "./storage.ts";
 import { useStoredChoice } from "./storage.ts";
+import { AreaMultiSelect, FilterChips, Pagination, RecordsSplit, ResizeHandle, useAreaFilter, usePagination, useWidths } from "./records.tsx";
 import { SortHeader, useSort, type SortValue } from "./table.tsx";
 import { Button, EditedDot, Panel, labelColor } from "./ui.tsx";
 
@@ -18,7 +20,6 @@ import { Button, EditedDot, Panel, labelColor } from "./ui.tsx";
 // selected item's properties on the right. Every edit still goes through the
 // change list.
 
-const LIMIT = 400;
 
 const categoryScope = (t: OrganizeType): CategoryScope | null => (t.startsWith("category-") ? (t.slice(9) as CategoryScope) : null);
 
@@ -32,6 +33,7 @@ const TYPE_NAME: Record<OrganizeType, string> = {
   zones: "Zones",
   devices: "Devices",
   entities: "Entities",
+  helpers: "Helpers",
 };
 const TYPE_ORDER = Object.keys(TYPE_NAME) as OrganizeType[];
 
@@ -49,6 +51,8 @@ function typeCount(h: Hierarchy, t: OrganizeType): number {
       return Object.keys(h.devices).length;
     case "entities":
       return Object.keys(h.entities).length;
+    case "helpers":
+      return Object.values(h.entities).filter(e => e.categoryScope === "helpers").length;
     default:
       return h.categories[categoryScope(t)!].length;
   }
@@ -136,26 +140,18 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
           <OrganizeTable key={type} h={h} section={type} onRecord={showRecord} />
         </section>
       ) : (
-        <>
-          <section
-            aria-label={TYPE_NAME[type]}
-            className={`${show("items")} min-h-0 min-w-0 flex-1 flex-col border-b border-line md:flex md:w-64 md:flex-none md:border-r md:border-b-0 lg:w-80 xl:w-[26rem]`}
-          >
+        <RecordsSplit
+          listVisible={step === "items"} detailsVisible={step === "props"}
+          list={<>
             <BackBar label="Types" onBack={() => setStep("types")} />
-            {tabular && (
-              <div className="border-b border-line px-2.5 py-2">
-                <ViewSwitch view={view} onChange={choose} />
-              </div>
-            )}
+            {tabular && <div className="border-b border-line px-2.5 py-2"><ViewSwitch view={view} onChange={choose} /></div>}
             <ItemsPane key={type} h={h} type={type} id={id} select={select} />
-          </section>
-          <section aria-label="Properties" className={`${show("props")} min-h-0 min-w-0 flex-1 flex-col overflow-y-auto md:flex`}>
+          </>}
+          details={<>
             <BackBar label={TYPE_NAME[type]} onBack={() => select(null)} />
-            <div className="p-4">
-              <Properties h={h} type={type} id={id} go={go} clear={() => select(null)} />
-            </div>
-          </section>
-        </>
+            <div className="p-4"><Properties h={h} type={type} id={id} go={go} clear={() => select(null)} /></div>
+          </>}
+        />
       )}
     </div>
   );
@@ -184,7 +180,7 @@ function SearchInput({ value, onChange, label }: { value: string; onChange: (v: 
 // Middle pane
 
 type Col = { key: string; label: string };
-type Row = { id: string; edited: string; search: string; v: Record<string, SortValue>; cells: Record<string, ReactNode> };
+type Row = { areaId?: string | null; id: string; edited: string; search: string; v: Record<string, SortValue>; cells: Record<string, ReactNode> };
 
 function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] } {
   const areaName = (aid: string | null) => (aid ? h.areas[aid]?.name ?? null : null);
@@ -241,6 +237,7 @@ function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] }
         rows: Object.values(h.devices).map((d) => {
           const model = [d.manufacturer, d.model].filter(Boolean).join(" · ");
           return {
+            areaId: d.areaId,
             id: d.id,
             edited: `device:${d.id}`,
             search: `${d.name} ${model}`,
@@ -249,6 +246,7 @@ function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] }
           };
         }),
       };
+    case "helpers":
     case "entities":
       return {
         cols: [
@@ -257,7 +255,8 @@ function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] }
           { key: "area", label: "Area" },
           { key: "kind", label: "Kind" },
         ],
-        rows: Object.values(h.entities).map((e: EntityItem) => ({
+        rows: Object.values(h.entities).filter(e => type !== "helpers" || e.categoryScope === "helpers").map((e: EntityItem) => ({
+          areaId: e.areaId,
           id: e.entityId,
           edited: `entity:${e.entityId}`,
           search: `${e.name} ${e.entityId}`,
@@ -285,20 +284,31 @@ function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] }
   }
 }
 
+
 function ItemsPane({ h, type, id, select }: { h: Hierarchy; type: OrganizeType; id: string | null; select: (id: string | null) => void }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useStoredValue(`taxis:records:search:${type}`, "", (v): v is string => typeof v === "string");
+  const [areas, setAreas] = useAreaFilter();
+  const [showDisabled, setShowDisabled] = useStoredValue("taxis:filters:disabled-devices", false, (v): v is boolean => typeof v === "boolean");
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-2 border-b border-line p-2.5">
         <h1 className="text-sm font-semibold">{TYPE_NAME[type]}</h1>
-        <SearchInput value={query} onChange={setQuery} label={`Find in ${TYPE_NAME[type].toLowerCase()}`} />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1"><SearchInput value={query} onChange={setQuery} label={`Find in ${TYPE_NAME[type].toLowerCase()}`} /></div>
+          {(type === "devices" || type === "entities" || type === "helpers") && <AreaMultiSelect areas={Object.values(h.areas)} selected={areas} onChange={setAreas} />}
+        </div>
+        {type === "devices" && <label className="flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={showDisabled} onChange={e => setShowDisabled(e.target.checked)} />Show disabled devices</label>}
       </div>
+      {(type === "devices" || type === "entities" || type === "helpers") && <div className="px-2 py-1"><FilterChips items={[
+        ...[...areas].map(a => ({ label: h.areas[a]?.name ?? (a || "No area"), remove: () => setAreas(new Set([...areas].filter(id => id !== a))) })),
+        ...(query ? [{ label: query, remove: () => setQuery("") }] : []),
+      ]} clear={() => { setAreas(new Set()); setQuery(""); }} /></div>}
       {type === "spaces" ? (
         <SpacesTree h={h} id={id} select={select} query={query} />
       ) : listKeyFor(type) ? (
         <GroupedItems h={h} type={type} id={id} select={select} query={query} />
       ) : (
-        <ItemsTable h={h} type={type} id={id} select={select} query={query} />
+        <ItemsTable h={h} type={type} id={id} select={select} query={query} areas={areas} showDisabled={showDisabled} />
       )}
       <NewFooter type={type} />
     </div>
@@ -323,25 +333,28 @@ function GroupedItems({ h, type, id, select, query }: { h: Hierarchy; type: Orga
   return <GroupedList list={listKeyFor(type)!} noun={isLabel ? "label" : "category"} rows={items} id={id} select={select} query={query} />;
 }
 
-function ItemsTable({ h, type, id, select, query }: { h: Hierarchy; type: OrganizeType; id: string | null; select: (id: string | null) => void; query: string }) {
+function ItemsTable({ h, type, id, select, query, areas, showDisabled }: { h: Hierarchy; type: OrganizeType; id: string | null; select: (id: string | null) => void; query: string; areas: ReadonlySet<string>; showDisabled: boolean }) {
   const { edited } = useTaxis();
   const { cols, rows: all } = useMemo(() => rowsFor(h, type), [h, type]);
   const q = query.trim().toLowerCase();
-  const rows = useMemo(() => (q ? all.filter((r) => r.search.toLowerCase().includes(q)) : all), [all, q]);
+  const rows = useMemo(() => all.filter(r => (!q || r.search.toLowerCase().includes(q)) && ((type !== "devices" && type !== "entities" && type !== "helpers") || !areas.size || areas.has(r.areaId ?? "")) && (type !== "devices" || showDisabled || !h.devices[r.id]?.disabled)), [all, q, areas, type, showDisabled, h]);
+  const { widths, setWidth } = useWidths(`taxis:records:columns:${type}`, Object.fromEntries(cols.map(c => [c.key, c.key === "name" ? 180 : c.key === "area" ? 130 : 200])));
   const getters = Object.fromEntries(cols.map((c) => [c.key, (r: Row) => r.v[c.key]]));
   const { rows: sorted, sort, toggle } = useSort(rows, getters, { key: "name", dir: "asc" });
-  const shown = sorted.slice(0, LIMIT);
+  const paging = usePagination(sorted.length, JSON.stringify([q, [...areas], sort, type]));
+  const shown = sorted.slice(paging.start, paging.end);
   const numeric = (k: string) => k === "used" || k === "items" || k === "people";
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       {rows.length === 0 ? (
         <p className="p-3 text-[13px] text-muted">{all.length === 0 ? "Nothing here yet." : "Nothing matches."}</p>
       ) : (
-        <table className="w-full text-[13px]">
+        <table className="records-table table-fixed text-[13px]" style={{ width: Math.max(1, Object.values(widths).reduce((a, b) => a + b, 0)) }}>
+          <colgroup>{cols.map(c => <col key={c.key} style={{ width: widths[c.key] }} />)}</colgroup>
           <thead className="sticky top-0 bg-sunken text-left text-xs text-muted">
             <tr>
               {cols.map((c) => (
-                <SortHeader key={c.key} label={c.label} k={c.key} sort={sort} onToggle={toggle} className="px-3 py-1.5" />
+                <SortHeader key={c.key} label={c.label} k={c.key} sort={sort} onToggle={toggle} className="px-3 py-1.5" resize={<ResizeHandle label={`Resize ${c.label} column`} value={widths[c.key]} onChange={width => setWidth(c.key, width)} />} />
               ))}
             </tr>
           </thead>
@@ -377,11 +390,7 @@ function ItemsTable({ h, type, id, select, query }: { h: Hierarchy; type: Organi
           </tbody>
         </table>
       )}
-      {rows.length > shown.length && (
-        <p className="border-t border-line p-3 text-xs text-muted">
-          Showing the first {shown.length} of {rows.length.toLocaleString()}. Search to narrow the list.
-        </p>
-      )}
+      <Pagination {...paging} />
     </div>
   );
 }
@@ -557,6 +566,7 @@ function Properties({ h, type, id, go, clear }: { h: Hierarchy; type: OrganizeTy
       const d = h.devices[id];
       return d ? <DeviceEditor key={d.id} h={h} device={d} onClose={clear} /> : missing;
     }
+    case "helpers":
     case "entities": {
       const e = h.entities[id];
       return e ? <EntityEditor key={e.entityId} h={h} entity={e} onClose={clear} /> : missing;

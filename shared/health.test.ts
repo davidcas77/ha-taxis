@@ -803,7 +803,7 @@ describe("7: the recipes after Area climate", () => {
     it("is reported when Taxis would no longer write it: the text-to-speech entity is gone", () => {
       const r = check(entities.filter((e) => e !== tts), { installed: there(stored), parameters: params });
       const f = one(r, "setup:announce");
-      expect(f).toMatchObject({ severity: "warning", title: "Announce cannot work as it is set up", fix: { kind: "link", to: { page: "parameters", tab: "recipes" } } });
+      expect(f).toMatchObject({ severity: "warning", title: "Announce cannot work as it is set up", fix: { kind: "link", to: { page: "recipes" } } });
       expect(f.detail).toContain("The text-to-speech entity “tts.cloud” isn't in Home Assistant");
       // With no script, a missing prerequisite is the Recipes page's to say, not Health's.
       expect(ids(check(entities.filter((e) => e !== tts && e !== scriptEntity("taxis_announce")), { installed: { ...there(stored), scripts: {} }, parameters: params }), "setup").filter((id) => id === "setup:announce")).toEqual([]);

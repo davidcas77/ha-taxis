@@ -28,3 +28,8 @@ describe("old links to the devices and entities", () => {
     }
   });
 });
+
+
+it("moves the former Parameters Recipes bookmark to its standalone page", () => {
+  expect(normalizeLegacyHash("#parameters/recipes")).toBe("#recipes");
+});

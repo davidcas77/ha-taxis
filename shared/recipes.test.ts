@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { buildMockRegistry } from "../scripts/mock-ha-core.ts";
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { BLUEPRINTS, blueprintForRecipe } from "./blueprints.ts";
 import { sameValue, validateInput } from "./changes.ts";
@@ -2161,5 +2162,31 @@ describe("a list of objects is compared in order, a list of values as a set", ()
     expect(sameValue(["a"], ["a", "b"])).toBe(false);
     expect(sameValue([], [])).toBe(true);
     expect(sameValue([{ a: 1 }], ["a"])).toBe(false);
+  });
+});
+
+
+describe("ambiguous canonical area codes", () => {
+  it("blocks every recipe in rooms with duplicate inferred codes, even with a pending automation", () => {
+    const raw = buildMockRegistry();
+    raw.areas.push({ area_id: "living_annex", name: "Living annex" });
+    raw.entities.push({ entity_id: "binary_sensor.living_side_motion", area_id: "living_annex", platform: "demo", original_name: "Side motion" });
+    raw.states.push({ entity_id: "binary_sensor.living_side_motion", state: "off", attributes: { device_class: "motion" } });
+    raw.entities.push({ entity_id: "media_player.living_side_speaker", area_id: "living_annex", platform: "demo" });
+    raw.states.push({ entity_id: "media_player.living_side_speaker", state: "off", attributes: { device_class: "speaker" } });
+    const h = buildHierarchy(raw, "now");
+    const cells = planRecipes(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []);
+    const affected = cells.filter(c => ["living_room", "living_annex"].includes(c.areaId));
+    expect(affected).toHaveLength(16);
+    for (const c of affected) {
+      expect(c.status).toBe("missing");
+      expect(c.actionable).toBe(false);
+      expect(c.inputs).toEqual([]);
+      expect(c.missing.join(" ")).toMatch(/code “living”.*Living room.*Living annex/);
+    }
+    expect(cells.find(c => c.areaId === "study" && c.recipe === "occupancy")!.status).toBe("ready");
+    const pending: Change = { id: 10, kind: "automation", op: "create", targetId: "taxis_occupancy_living", scope: null, before: {}, after: {}, createdAt: "now" };
+    expect(planRecipes(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, [pending]).find(c => c.areaId === "living_room" && c.recipe === "occupancy")!.status).toBe("missing");
+    expect(planAnnounce(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []).missing.join(" ")).toMatch(/code “living”/);
   });
 });

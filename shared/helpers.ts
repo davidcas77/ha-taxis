@@ -1,6 +1,6 @@
 import { ENTITY_ID_RE } from "./changes.ts";
 import { isSilentGroup } from "./entity-diagnosis.ts";
-import { areaCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
+import { areaCodes, duplicateCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
 import { areaInventory, type AreaInventory, type Capability, type InventorySettings } from "./inventory.ts";
 import type { AreaNode, Change, ChangeInput, EntityItem, Hierarchy } from "./types.ts";
 
@@ -216,8 +216,20 @@ export const HOUSE_GROUP_NAME = "All lights";
 // `changes`: the change list. A light group an area is about to get (created, or
 // renamed from another group) counts as having one, so the floor and house groups
 // can be planned in the same sitting.
+// A code names every helper and recipe of an area, so sharing one would make
+// two rooms write the same HA objects. Recheck inferred codes on every plan.
+export function areaCodeConflicts(h: Hierarchy, naming: NamingSettings): Map<string, string> {
+  const conflicts = new Map<string, string>();
+  for (const [code, ids] of duplicateCodes(areaCodes(h, naming))) {
+    const message = `Area code “${code}” is shared by ${ids.map(id => h.areas[id].name).join(" and ")}. Choose unique area codes in Settings.`;
+    for (const id of ids) conflicts.set(id, message);
+  }
+  return conflicts;
+}
+
 export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: NamingSettings, changes: readonly Change[] = []): HelperRow[] {
   const codes = areaCodes(h, naming);
+  const conflicts = areaCodeConflicts(h, naming);
   const floors = floorCodes(h, naming);
   const suffix = effectiveSuffixes(naming.helperNames);
   const exclusions = helperExclusions(h, naming);
@@ -243,6 +255,11 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
   const settle = (row: HelperRow, spec: HelperSpec, area: AreaNode | null) => {
     const id = row.canonicalId;
     const sources = row.sources;
+    const conflict = area && conflicts.get(area.id);
+    if (conflict) {
+      Object.assign(row, { status: "conflict", conflict: "taken", heldBy: id, heldByName: conflict, actionable: false });
+      return;
+    }
     const held = h.entities[id];
     if (held) {
       const mine = held.domain === spec.domain && held.platform === spec.helper;
@@ -350,7 +367,7 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
   const willExist = (id: string) => isGroup(id) || incoming(id);
   const areaGroup = (areaId: string) => canonicalId("light", codes[areaId].code, suffix.lights);
 
-  const groupRow = (level: "floor" | "house", id: string, name: string, scopeName: string, floorId: string | null, members: readonly string[]): HelperRow | null => {
+  const groupRow = (level: "floor" | "house", id: string, name: string, scopeName: string, floorId: string | null, members: readonly string[], codeConflict?: string): HelperRow | null => {
     if (members.length === 0 || !ENTITY_ID_RE.test(id)) return null;
     const row: HelperRow = {
       level,
@@ -368,6 +385,10 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
       removed: [],
       actionable: true,
     };
+    if (codeConflict) {
+      Object.assign(row, { status: "conflict", conflict: "taken", heldBy: id, heldByName: codeConflict, actionable: false });
+      return row;
+    }
     const by = reserved.get(id);
     if (by) {
       Object.assign(row, { status: "conflict", conflict: "taken", heldBy: id, heldByName: by, actionable: false });
@@ -384,7 +405,7 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
     const id = floorIds.get(floor.id)!;
     const free = !reserved.has(id);
     const members = floor.areaIds.filter((a) => h.areas[a]).map(areaGroup).filter(willExist);
-    const row = groupRow("floor", id, `${floor.name} ${lightSpec.nameWord}`, floor.name, floor.id, members);
+    const row = groupRow("floor", id, `${floor.name} ${lightSpec.nameWord}`, floor.name, floor.id, members, floor.areaIds.map(a => conflicts.get(a)).find(Boolean));
     if (row) {
       rows.push(row);
       if (row.status !== "conflict") floorMembers.push(id);
@@ -394,7 +415,7 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
     }
   }
   const looseMembers = h.looseAreaIds.filter((a) => h.areas[a]).map(areaGroup).filter(willExist);
-  const house = groupRow("house", houseId, HOUSE_GROUP_NAME, "House", null, [...floorMembers.filter(willExist), ...looseMembers]);
+  const house = groupRow("house", houseId, HOUSE_GROUP_NAME, "House", null, [...floorMembers.filter(willExist), ...looseMembers], conflicts.values().next().value);
   if (house) rows.push(house);
   return rows;
 }

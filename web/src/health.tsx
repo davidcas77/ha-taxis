@@ -98,7 +98,9 @@ export function targetRoute(t: HealthTarget): Route {
     case "area":
       return { page: "areas", sel: { kind: "area", id: t.areaId }, tab: t.tab };
     case "parameters":
-      return { page: "parameters", tab: t.tab };
+      return t.tab === "recipes" ? { page: "recipes" } : { page: "parameters", tab: t.tab };
+    case "recipes":
+      return { page: "recipes" };
     case "settings":
       return { page: "settings" };
   }

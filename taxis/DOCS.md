@@ -129,7 +129,8 @@ Organize's **Table** view of Devices and of Entities (the whole home).
   The **search** finds a device by name, model or manufacturer, and an entity by
   name or id. The headers sort the devices, and the entities under each by the same
   column. Organize's table also filters by area, manufacturer and label, and can
-  include disabled, hidden and diagnostic entities.
+  include disabled, hidden and diagnostic entities. Search and filters remain
+  available when nothing matches, so you can change or reset them.
 - **Group by type** switches to a flat table of the entities, in sections by
   kind, each of which folds. A tree of devices and sections by kind don't mix, so
   with it on there are no device rows. An area's tab also has **Groups**, the
@@ -141,7 +142,7 @@ Organize's **Table** view of Devices and of Entities (the whole home).
 ## Organize
 
 Three panes: what you organize on the left (floors and areas, labels, the
-category lists, zones, devices, entities), its items in the middle, and the
+category lists, zones, devices, entities and helpers), its items in the middle, and the
 selected item's properties on the right. Floors and areas show as a tree: drag
 an area onto another floor, and add floors and areas in
 place. An area's properties include its entity id code.
@@ -153,6 +154,43 @@ properties pane; the button beside Open on a row shows that item in Records. The
 choice is remembered per section in this browser (Devices starts as a table,
 Entities as records). A link to one item, such as `#organize/entities/light.desk`,
 opens Records with it selected.
+
+On desktop, drag the vertical divider between the records list and the selected
+item's properties to give either side more room. Drag a list column's right edge
+to change its width. The divider and column widths are remembered in this browser;
+they do not change Home Assistant or the pending change list. Data columns across
+the app, including Parameters, Health and the device's entity list, use the same
+resize control. Their widths are remembered per view. **Reset layout**
+restores the default split and column widths. Resize handles also accept the left
+and right arrow keys when focused.
+
+Devices and Entities have an area filter beside search. Choose several areas to
+show their records together, select **No area** for unassigned records, or choose
+**All areas** to clear the area selection. The filter and search work together.
+Entities use their effective area: their own area when set, otherwise their
+device's area. Area multi-selection is available in both Table and Records.
+Active filter chips show what is selected; clear individual choices or reset the
+filters to show everything again. Filters remain visible when the list is empty.
+
+Long lists have **Previous page** and **Next page** controls and a shown-range
+count. Pagination makes every matching record reachable; use search and filters
+to narrow the results without losing the controls.
+
+**Helpers** follows Devices and Entities in Organize. It lists the existing
+helper entities Home Assistant files under its Helpers category scope, with
+search, area filtering, resizable columns and the ordinary entity editor. Use
+**Parameters → Helpers** to plan canonical helpers; Organize's Helpers list is for
+inspecting and editing helpers that already exist.
+
+Disabled devices are hidden by default in the Devices list. **Show disabled
+devices** includes them in Table and Records, and the choice is remembered in this
+browser. This is separate from including disabled, hidden or diagnostic entities.
+
+Selecting a device in Records shows **Entities (N)** below its properties. It
+includes all of the device's entities, including disabled, hidden and diagnostic
+ones. Each row shows the name and entity ID, state and effective area; **Follows
+device** identifies inherited area settings. Click the entity name to open its
+Records editor.
 
 ### Labels and Categories
 
@@ -174,15 +212,18 @@ in the list of changes.
 
 What Taxis knows about each area, and the choices later features build on. The
 page has a bar of tabs: **Capabilities**, **Helpers**, **House**, **Occupancy**,
-**Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior**, **Safety** and
-**Recipes**.
+**Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior** and **Safety**.
+**Recipes** has its own page in the main navigation, immediately after Organize.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, climate, speakers, TVs,
 covers, fans and power. A cell shows how many entities count; when some are listed
-but left out, the rest show beside it in grey (`2 +1`). Hover a column header
-for its full name, and click a header to sort. Click an area or a cell to open
-that area's Capabilities tab. Areas with nothing in them are hidden until you
+but left out, the rest show beside it in grey (`2 +1`). Hover or focus the counted
+number to see the names and entity IDs that count; hover or focus the grey `+N`
+separately to see those excluded. The totals row has the same separate lists.
+Press Escape to dismiss a tooltip. Hover a column header for its full name, and
+click a header to sort. Click an area count or excluded count to open that area's
+Capabilities tab; inspecting a total does not navigate away. Areas with nothing in them are hidden until you
 tick **Show empty areas**. The bottom row adds up the home.
 
 When some lights are in no area, a box at the top says **N lights have no
@@ -228,7 +269,12 @@ the sources (click the number to see them). The status says what Taxis would do:
 - **In place**: the entity is already there as the right kind of helper. For a
   group its members are checked. A min/max sensor's members can't be read from
   Home Assistant, so it says "members not checked".
-- **Update members +2 −1**: the group is there but its members differ.
+- **Change group membership: add 2 and remove 1**: the group is there but its
+  members differ. Expand **See exactly what changes** for the names and entity IDs
+  to add, those to remove, and the group's membership after applying. Removing a
+  member from a group never deletes its light or entity. The explanation is also
+  shown on the area's helper card; no membership changes reach Home Assistant
+  until Apply.
 - **Adopt**: no entity has the id yet, but a group in Home Assistant already has
   exactly these members. Taxis renames it to the canonical id; the old id is
   replaced in automations, scripts, scenes and dashboards like any rename. If
@@ -278,6 +324,15 @@ Media, Climate, Bathroom fan, Exterior and Safety. Each tab is a table with a
 row for the **House default**, one for **Interior** and one for **Exterior**
 areas, and one for each area, and a column per parameter. Floors have no values:
 they are only a heading over their areas.
+
+Each of the eight settings tabs begins with a short summary. Expand **How it
+works** for its rules, inheritance and saving details. Every parameter heading
+has a short explanation on hover or keyboard focus; press Escape to dismiss it.
+Numeric and time values are centred under their headings.
+
+Climate settings are divided into **Heating**, **Cooling**, **Timing & schedule**,
+**Rules & switching** and **Presets**, so you can work on one group of columns at
+a time without scrolling across one very wide table.
 
 A value can be set at any of those levels. The most specific one wins: the
 area, then interior or exterior (chosen per area on its Capabilities tab), then
@@ -362,7 +417,7 @@ runs from one time to a later one on the same day (the end can be 23:59 at the
 latest); a day is in one group only, and a day in none has no comfort time. Taxis
 writes the line in one spelling, and hovering over it spells it out.
 
-### Recipes
+## Recipes
 
 A recipe is an automation Taxis makes for an area from a blueprint of its own,
 filled in with the area's sensors, lights and parameters. There are eight, and
@@ -430,8 +485,13 @@ one script for the whole house (Announce):
 - **Bathroom fan**, **Exterior lights**, **Left open**, **Appliance done** and
   **Announce** are described below.
 
-The Recipes tab is a table of areas by recipes, with a row for the house at the
-top that has the Announce cell. A cell says:
+Open **Recipes** from the main navigation after Organize. Its **Table** view
+shows areas by recipes, with a row for the house at the top for Announce. Switch
+to **Records** for a searchable list and a selected recipe's explanation, status,
+requirements and proposed changes. Selecting or inspecting a recipe does not
+install it: add its proposal to Changes, then review and apply there.
+
+A recipe's status says:
 
 - **Ready**: it can be installed.
 - **Missing: …**: what is needed. Occupancy needs a counted motion or presence
@@ -521,9 +581,10 @@ needs an AC that counts. A change of season changes the thermostats the automati
 controls, so the cell says **Out of date**. The preset boxes on the Climate tab
 suggest what the area's thermostats report, an AC's own presets included.
 
-The Area climate blueprint is now **version 2**: an installed Area climate shows as
-out of date until it is updated (the blueprint version, and the four new cooling
-temperature inputs).
+The Area climate blueprint is **version 3**. An older installed version shows as
+out of date until you add its update to Changes and apply it. This version also
+corrects the mode of an already-running thermostat when you permit mode switching
+and change between heating and cooling.
 
 **Presets or temperatures.** Where you map a preset on the Climate tab (comfort,
 eco, away, sleep; night uses the sleep one) and the thermostat offers it, the
@@ -538,8 +599,11 @@ so with *Switch on and off itself*. When it is off, a thermostat that is off is
 left alone, and a window lowers the setpoint to frost protection. When it is on,
 a thermostat that is off is switched on again (heat, or cool when cooling; and, if
 the area has a temperature helper, only when the room is colder than the target,
-or warmer when cooling), and a window switches the thermostat off, to be switched
-on again when the target is worked out again.
+or warmer when cooling). An already-running thermostat in the opposite heat/cool
+mode is switched to the selected season before its setpoint is changed. If mode
+switching is not permitted, an incompatible thermostat is left alone rather than
+given the other season's temperature. A window switches the thermostat off, to be
+switched on again when the target is worked out again.
 
 **Away and sleep.** They come from two toggles. If you set neither on the House
 tab, installing the recipe makes `input_boolean.taxis_away` ("Taxis away mode") and
@@ -670,7 +734,7 @@ may tell you twice. Installing adds `taxis/appliance_done.yaml`, the pause switc
 #### Announce
 
 One script for the whole house, `script.taxis_announce`, in the House row of the
-Recipes tab. Called with a **message** (and, if you like, a **volume** in %), it
+Recipes page. Called with a **message** (and, if you like, a **volume** in %), it
 speaks on the speakers of the areas that are occupied, not asleep and not paused:
 an area counts when it has a speaker that counts (a TV is not a speaker) and
 Occupancy (installed or in the list), is occupied when its occupied sensor is on,
@@ -853,7 +917,10 @@ Under **Settings → Naming**:
   and you can set your own. When no entity settles it (an empty area, or no
   clear winner), the code is the area's id, which never changes. Two areas
   can't share a code, detected or set: Settings marks both rows and won't save
-  until each area has its own. The columns sort when you click their headers.
+  until each area has its own. Helpers and Recipes also block plans whose
+  generated IDs collide, including codes detected automatically before you save
+  Naming. Give the affected areas unique codes, then plan again. The columns sort
+  when you click their headers.
 - **Floor codes.** The word a floor's light group starts with:
   `light.<floor code>_all`. The default is the floor's id as a slug, and you can
   type your own (letters, digits and `_`, up to 40, like an area code). Two
@@ -919,9 +986,27 @@ Home Assistant moves the entity's history to the new id itself.
 
 ## Changes and Apply
 
-Every edit goes into the list of changes first. Taxis shows the house as if the
-changes were done, but Home Assistant doesn't change until you apply them on
-the **Changes** page. Apply:
+Edits to Home Assistant go into the list of changes first. Taxis shows the house
+as if the changes were done, but Home Assistant doesn't change until you apply
+them on the **Changes** page.
+
+Taxis-only settings, including capability choices, parameters, naming rules and
+label/category groups, are separate from that list. **Saved in Taxis** means the
+app has stored a setting; **Queued for HA** means a proposed Home Assistant edit
+is waiting for Apply; **Applied to HA** means Apply has completed its checks.
+A form's unsaved draft has reached none of those stages.
+
+When you leave a naming form or item editor with unsaved changes, Taxis asks
+whether to discard that draft. Edits already saved in Taxis or added to Changes
+are kept. A rejected save or Remove/Discard request displays its error instead of
+silently appearing to succeed.
+
+Settings saves also check that the settings have not changed in another browser
+session since this one loaded them. If they have, Taxis refuses the stale save
+rather than overwriting the other session's work. Reload to get the current
+settings, then review and reapply your intended edits.
+
+Apply:
 
 **Apply one change.** Each change on the page has its own **Apply** beside
 Remove. It does the same as Apply all, backup, apply, check, for that change only.
@@ -939,6 +1024,25 @@ Apply all:
    the automations of recipes, then the Announce script;
 3. reads Home Assistant back and checks each one. A change that didn't take
    stays in the list with the reason.
+
+### Apply history and repairs
+
+The **Apply history** section on Changes keeps recent runs across reloads and app
+restarts. Expand a run to see its status, backup result, and the outcome of each
+change. Stored configuration and a loaded, working automation are checked
+separately; an automation that remains unavailable is not treated as successfully
+applied merely because its stored configuration matches.
+
+**Repairs needing attention** keeps failures and references that still need a
+manual fix after a rename. After you repair and verify an item in Home Assistant,
+use **Mark repaired** and confirm. This only clears Taxis's reminder: it does not
+perform a repair, change Home Assistant, or restore a backup.
+
+If Taxis stops during Apply, the run is marked **interrupted** after restart and a
+repair reminder asks you to check Home Assistant and the remaining queue before
+retrying. Taxis does not automatically replay the writes. When a rename has been
+confirmed, entity references in the remaining pending changes follow the new ID,
+including helper members and recipe inputs.
 
 Taxis only edits what Home Assistant's own settings pages edit: names, ids,
 areas, floors, labels, categories, icons, hidden and disabled, an area's

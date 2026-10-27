@@ -9,11 +9,10 @@ backup first.
 It runs as a Home Assistant app and opens from the sidebar. It needs no token
 and no account, and it only talks to your own Home Assistant.
 
-> **Status: early.** Version 0.4 reads, shows and edits the organisation of
-> your home (areas, floors, labels, categories, names, entity ids and where
-> things are), checks it against a naming scheme you set, and renames entity
-> ids together with the automations, scripts, scenes and dashboards that use
-> them. Creating automations comes later.
+> **Status: early.** Taxis reads and edits the organisation of your home,
+> checks naming and configuration health, and plans native helpers and recipe
+> automations. Every proposed Home Assistant change goes through the change
+> list, with a backup before Apply and verification afterwards.
 
 ## Install
 
@@ -42,21 +41,34 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 - **Naming:** a code per area, patterns for ids and display names, and a check
   of each area against them, with display-name suggestions.
 - **Devices and Entities** (in Organize, as a table or as records): every
-  device with its entities under it, with filters, grouping and editing in place.
+  device with its entities under it, with search, multi-area filtering, grouping
+  and editing in place. Records has resizable panes and columns; longer lists
+  have page controls. A device's Records detail lists all its entities; Organize
+  also has a searchable Helpers list. Column resizing is shared across the app.
 - **Health:** rule-based checks (no AI) for what is broken or forgotten:
   references to entities that are gone, devices that stopped reporting,
   automations that never fire, conditions that can never pass, switches only
   turned one way, automations fighting over the same lights, unused helpers, and
   the state of Taxis's own setup. Read-only; a fix is a link or a change for the
   list.
-- **Changes:** every edit waits in a list, shown as before → after. Apply backs
-  up Home Assistant, applies the list, and reads Home Assistant back to check
-  each change.
+- **Parameters:** detect what each area has, review canonical helpers, and set
+  inherited values with short parameter explanations and expandable guidance.
+  Capability counts explain which named entities count and which are excluded.
+- **Recipes:** a main page after Organize, with Table and Records views to inspect
+  status, requirements and proposed native automations for occupancy, lighting,
+  media, climate, ventilation and notifications. The generated automations keep
+  working when Taxis is stopped.
+- **Changes:** proposed Home Assistant edits wait in a list, shown as before →
+  after. Apply backs up Home Assistant, applies the selected changes and their
+  dependencies, and reads Home Assistant back to check each change. Apply history
+  and unresolved repairs remain available across reloads and app restarts.
 
-Taxis never removes a device or an entity and never calls a service. In
-automations, scripts, scenes and dashboards it only ever replaces a renamed
-entity id. The commands it may send are fixed in `server/ha/socket.ts` and
-`server/ha/rest.ts`.
+Taxis never removes a device or an entity and does not call device-control
+services itself. It can create its own recipe automations and Announce script;
+in other automations, scripts, scenes and dashboards it only replaces renamed
+entity IDs. The native automations run inside Home Assistant and call the
+services they need. The commands Taxis may send are fixed in
+`server/ha/socket.ts` and `server/ha/rest.ts`.
 
 ## Privacy
 
@@ -64,9 +76,9 @@ entity id. The commands it may send are fixed in `server/ha/socket.ts` and
   connection. It needs no long-lived token.
 - It only answers requests that come through Home Assistant (Ingress), so only
   signed-in Home Assistant users can open it.
-- It keeps its change list and snapshots of what it read in `/data/taxis.db`
-  inside the app. Nothing leaves your Home Assistant, unless you turn on the
-  optional AI in Settings: then Taxis talks to the AI service you chose, with an
+- It keeps its change list, settings, snapshots, Apply history and repair
+  reminders in `/data/taxis.db` inside the app. Nothing leaves your Home Assistant,
+  unless you turn on the optional AI in Settings: then Taxis talks to the AI service you chose, with an
   API key that stays in the app, and to no other address. AI can't change Home
   Assistant; its proposals would go through the change list.
 
@@ -75,13 +87,16 @@ entity id. The commands it may send are fixed in `server/ha/socket.ts` and
 You need Node.js 22.13 or newer.
 
 ```bash
-npm install
+npm ci
 npm run dev:mock
 ```
 
 `dev:mock` starts a fake Home Assistant with an invented house
 (`scripts/mock-ha.ts`), the Taxis server, and the web UI at
-<http://localhost:5173>. No real Home Assistant is needed.
+<http://localhost:5173>. The house, devices, states and automations are dummy
+data; no real Home Assistant or credentials are needed. Mock Home Assistant
+lives in memory and resets when restarted. Taxis's own development settings
+and pending changes are kept in the ignored `data/` directory.
 
 To work against your own Home Assistant instead, copy `.env.example` to `.env`,
 fill in `HA_URL` and a long-lived `HA_TOKEN`, then run `npm run dev`. The token

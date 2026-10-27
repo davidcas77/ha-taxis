@@ -198,6 +198,13 @@ export function planThermostat(t: Thermostat, d: ClimateDecision, p: ClimatePara
   const goal = goalFor(t, targetTemperature(d, p)!);
   const wanted = modeWanted(p.season);
   const out: ThermostatAction[] = [];
+  const oppositeMode = (t.state === "heat" && wanted === "cool") || (t.state === "cool" && wanted === "heat");
+  if (oppositeMode) {
+    // Do not send a cooling setpoint while heating (or the reverse). Changing
+    // modes requires the same permission as switching the thermostat on/off.
+    if (!p.autoHvacOn || !t.hvacModes.includes(wanted)) return [];
+    out.push({ service: "set_hvac_mode", mode: wanted });
+  }
   if (t.state === "off") {
     const warmEnough = reference !== null && (p.season === "cooling" ? !(reference > goal) : !(reference < goal));
     if (!t.hvacModes.includes(wanted) || warmEnough) return [];

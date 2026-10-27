@@ -1,6 +1,8 @@
+import { TooltipButton } from "./tooltip.tsx";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight } from "lucide-react";
-import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 
+import { AutoColumnResize } from "./column-resize.tsx";
 import { sectionsByRole } from "../../shared/roles.ts";
 import { sortRows, type Dir, type Sort, type SortValue } from "../../shared/sort.ts";
 import type { EntityRole } from "../../shared/types.ts";
@@ -30,6 +32,8 @@ export function useSort<T>(rows: T[], columns: Record<string, (row: T) => SortVa
 export function SortHeader({
   label,
   title,
+  help,
+  resize,
   k,
   sort,
   onToggle,
@@ -38,19 +42,24 @@ export function SortHeader({
   label: string;
   // The full name, when the label is short.
   title?: string;
+  help?: string;
+  resize?: ReactNode;
   k: string;
   sort: Sort;
   onToggle: (key: string) => void;
   className?: string;
 }) {
+  const header = useRef<HTMLTableCellElement>(null);
   const active = sort.key === k;
   const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
   return (
-    <th scope="col" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={`${className} font-medium`}>
-      <button type="button" title={title} onClick={() => onToggle(k)} className="inline-flex items-center gap-1 hover:text-fg">
-        {label}
-        <Icon className={`size-3 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
-      </button>
+    <th ref={header} data-column-key={`${k}:${label}`} scope="col" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={`${className} relative pr-3 font-medium`}>
+      {help ? <TooltipButton label={title ?? label} content={help} compact onClick={() => onToggle(k)} className="inline-flex items-center gap-1 hover:text-fg">
+        {label}<Icon className={`size-3 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
+      </TooltipButton> : <button type="button" title={title} onClick={() => onToggle(k)} className="inline-flex items-center gap-1 hover:text-fg">
+        {label}<Icon className={`size-3 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
+      </button>}
+      {resize ?? <AutoColumnResize header={header} label={label} />}
     </th>
   );
 }
@@ -104,4 +113,12 @@ export function GroupedRows<T>({ rows, grouped, roleOf, colSpan, row }: { rows: 
       })}
     </>
   );
+}
+
+
+// Non-sortable data columns use the same resize engine as sortable headers.
+export function ColumnHeader({ children, help, className = "px-3 py-2", ...props }: ComponentPropsWithoutRef<"th"> & { help?: string }) {
+  const header = useRef<HTMLTableCellElement>(null);
+  const label = props["aria-label"] ?? (typeof children === "string" ? children : "Column");
+  return <th {...props} ref={header} scope="col" className={`${className} relative pr-3 font-medium`}>{help ? <TooltipButton label={label} content={help} compact>{children}</TooltipButton> : children}<AutoColumnResize header={header} label={label} /></th>;
 }

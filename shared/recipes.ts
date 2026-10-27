@@ -1,7 +1,7 @@
 import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeKey, type RecipeKey } from "./blueprints.ts";
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
 import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID, kindRunsIn, type Season } from "./climate.ts";
-import { RECIPE_HELPER_SUFFIX, canonicalId, effectiveSuffixes, helperExclusions } from "./helpers.ts";
+import { RECIPE_HELPER_SUFFIX, areaCodeConflicts, canonicalId, effectiveSuffixes, helperExclusions } from "./helpers.ts";
 import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import { entryLights, resolve, resolveAll, resolveIn, withSeconds, type ParameterSettings } from "./parameters.ts";
@@ -275,6 +275,7 @@ export function planRecipes(
   changes: readonly Change[],
 ): RecipeCell[] {
   const codes = areaCodes(h, naming);
+  const conflicts = areaCodeConflicts(h, naming);
   const exclusions = helperExclusions(h, naming);
   const suffix = effectiveSuffixes(naming.helperNames);
   const out: RecipeCell[] = [];
@@ -329,6 +330,11 @@ export function planRecipes(
     };
 
     const statusOf = (id: string, missing: string[], reasons: string[]): RecipeStatus => {
+      const conflict = conflicts.get(area.id);
+      if (conflict) {
+        missing.push(conflict);
+        return "missing";
+      }
       if (pendingAutomation(changes, id)) return "in-changes";
       if (missing.length > 0) return "missing";
       if (installed.automations[id]) return reasons.length === 0 ? "installed" : "out-of-date";
@@ -948,10 +954,12 @@ export function planAnnounce(
   changes: readonly Change[],
 ): RecipeCell {
   const codes = areaCodes(h, naming);
+  const conflicts = areaCodeConflicts(h, naming);
   const exclusions = helperExclusions(h, naming);
   // The house settings: the same for every area.
   const house = (key: "tts_entity" | "announce_volume") => resolveIn(params, [{ level: "house" }], key).value;
   const missing: string[] = [];
+  let hasConflictingSpeaker = false;
   const notes: string[] = [];
 
   // The areas that can be spoken to: counted speakers, and Occupancy (installed or
@@ -962,6 +970,8 @@ export function planAnnounce(
     const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
     const speakers = inv.speaker.filter((r) => r.counts).map((r) => r.entityId).sort();
     if (speakers.length === 0) continue;
+    const conflict = conflicts.get(area.id);
+    if (conflict) { hasConflictingSpeaker = true; if (!missing.includes(conflict)) missing.push(conflict); continue; }
     const code = codes[area.id].code;
     const ids = runtimeIds(code);
     const occupancyId = automationIdFor("occupancy", code);
@@ -1020,7 +1030,7 @@ export function planAnnounce(
   if (noOccupancy.length > 0) notes.push(`${noOccupancy.join(", ")} ${noOccupancy.length === 1 ? "has" : "have"} speakers but no Occupancy yet, so ${noOccupancy.length === 1 ? "it is" : "they are"} left out`);
   notes.push("The volume is set before speaking and is not put back");
 
-  const status: RecipeStatus = pendingScript(changes, ANNOUNCE_SCRIPT_ID) ? "in-changes" : missing.length > 0 ? "missing" : there ? (reasons.length === 0 ? "installed" : "out-of-date") : "ready";
+  const status: RecipeStatus = hasConflictingSpeaker ? "missing" : pendingScript(changes, ANNOUNCE_SCRIPT_ID) ? "in-changes" : missing.length > 0 ? "missing" : there ? (reasons.length === 0 ? "installed" : "out-of-date") : "ready";
   const inputs: ChangeInput[] = [];
   if (status === "ready" || status === "out-of-date") {
     const bp = blueprintForRecipe("announce");

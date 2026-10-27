@@ -599,3 +599,32 @@ describe("a group whose members are gone", () => {
     expect(row(rows, "lights")!.missing).toBeUndefined();
   });
 });
+
+
+describe("duplicate inferred area codes", () => {
+  it("blocks helpers in both rooms without disabling unrelated rooms", () => {
+    const raw = buildMockRegistry();
+    raw.areas.push({ area_id: "living_annex", name: "Living annex" });
+    raw.entities.push({ entity_id: "light.living_side_lamp", area_id: "living_annex", platform: "demo" });
+    raw.states.push({ entity_id: "light.living_side_lamp", state: "off", attributes: {} });
+    if (!raw.entities.some(e => e.entity_id === "light.living_all")) {
+      raw.entities.push({ entity_id: "light.living_all", area_id: "living_room", platform: "group", config_entry_id: "existing-group" });
+      raw.states.push({ entity_id: "light.living_all", state: "off", attributes: { entity_id: ["light.living_spots"] } });
+    }
+    const h = buildHierarchy(raw, "now");
+    const rows = planHelpers(h, EMPTY_INVENTORY, DEFAULT_NAMING);
+    // The ambiguity must not propose removing a room from aggregate groups.
+    const aggregates = rows.filter(r => r.level === "house" || (r.level === "floor" && r.floorId === "ground"));
+    expect(aggregates.length).toBeGreaterThan(0);
+    expect(aggregates.every(r => r.status === "conflict" && !r.actionable)).toBe(true);
+    const affected = rows.filter(r => r.areaId && ["living_room", "living_annex"].includes(r.areaId));
+    expect(affected.length).toBeGreaterThan(1);
+    for (const r of affected) {
+      expect(r.status).toBe("conflict");
+      expect(r.actionable).toBe(false);
+      expect(r.heldByName).toMatch(/code “living”/);
+      expect(helperChangeInputs(r)).toEqual([]);
+    }
+    expect(rows.find(r => r.areaId === "kitchen" && r.key === "lights")!.actionable).toBe(true);
+  });
+});

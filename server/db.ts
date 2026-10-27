@@ -43,6 +43,16 @@ const MIGRATIONS: string[] = [
      cost_usd REAL
    );
    CREATE INDEX IF NOT EXISTS ai_usage_at ON ai_usage (at)`,
+  `CREATE TABLE IF NOT EXISTS setting_revisions (path TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+   CREATE TABLE IF NOT EXISTS apply_runs (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT,
+     status TEXT NOT NULL, pending TEXT NOT NULL, backup TEXT, results TEXT NOT NULL DEFAULT '[]', error TEXT
+   );
+   CREATE TABLE IF NOT EXISTS repairs (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES apply_runs(id),
+     change_id INTEGER, message TEXT NOT NULL, created_at TEXT NOT NULL, acknowledged_at TEXT
+   );
+   CREATE INDEX IF NOT EXISTS repairs_open ON repairs(acknowledged_at, id);`,
 ];
 
 const KEEP_SNAPSHOTS = 10;

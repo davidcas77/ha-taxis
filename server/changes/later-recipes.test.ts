@@ -300,7 +300,7 @@ describe("installing announce", () => {
     const mark = { ws: t.fake.ws.length, rest: t.fake.rest.length };
     const second = await t.apply(changes);
     ok(second.results);
-    expect(second.results.map((r) => r.message)).toEqual(["Applied (the blueprint was already this version).", "Applied (it was already like this)."]);
+    expect(second.results.map((r) => r.message)).toEqual(["Applied (the blueprint was already this version).", "Applied."]);
     expect(t.fake.ws.slice(mark.ws).filter((x) => x.kind === "write")).toEqual([]);
     expect(t.fake.rest.slice(mark.rest).filter((x) => x.method === "POST")).toEqual([]);
     t.done();

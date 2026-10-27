@@ -1,7 +1,7 @@
 import type { Change } from "../../shared/types.ts";
 import type { HaRest } from "../ha/rest.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
-import { applyChanges, isRename, type Outcome, type Retarget } from "./apply.ts";
+import { applyChanges, type Outcome, type Retarget } from "./apply.ts";
 import { applyHelperChanges } from "./helpers.ts";
 import { applyAutomationChanges, applyBlueprintChanges, applyScriptChanges, type RecipeWs } from "./recipes.ts";
 
@@ -26,9 +26,9 @@ export type ApplyAllIO = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-export async function applyAll(pending: Change[], io: ApplyAllIO): Promise<{ results: Outcome[]; realIds: Map<string, string>; retargets: Retarget[] }> {
+export async function applyAll(pending: Change[], io: ApplyAllIO): Promise<{ results: Outcome[]; realIds: Map<string, string>; retargets: Retarget[]; renamed: Map<string, string> }> {
   const registry = await applyChanges(pending, io.ha, io.readFresh, { ha: io.ha, rest: io.rest });
-  const renamed = new Map(pending.filter(isRename).map((c) => [c.targetId, String(c.after.new_entity_id)]));
+  const renamed = registry.renamed;
   const blueprints = await applyBlueprintChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, sleep: io.sleep });
   const helpers = await applyHelperChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, realIds: registry.realIds, renamed, sleep: io.sleep });
   const automations = await applyAutomationChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, renamed, sleep: io.sleep });
@@ -37,5 +37,12 @@ export async function applyAll(pending: Change[], io: ApplyAllIO): Promise<{ res
     (c) =>
       [registry.results, blueprints, helpers, automations, scripts].map((list) => list.find((r) => r.changeId === c.id)).find(Boolean) ?? { changeId: c.id, ok: false, message: "Not sent." },
   );
-  return { results, realIds: registry.realIds, retargets: registry.retargets };
+  for (const result of results) {
+    const change = pending.find(c => c.id === result.changeId);
+    result.status = !result.ok ? (/has not listed|couldn't read.*back|not.*read back/.test(result.message) ? "unverified" : "failed")
+      : /not re-read/.test(result.message) ? "unverified"
+      : /Created, but/.test(result.message) || (result.details ?? []).some(d => /^(Needs a hand:|Not updated:)/.test(d)) ? "partial"
+      : change?.kind === "automation" || change?.kind === "script" ? "loaded" : change?.kind === "blueprint" ? "stored" : "verified";
+  }
+  return { results, realIds: registry.realIds, retargets: registry.retargets, renamed };
 }

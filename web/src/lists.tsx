@@ -4,37 +4,26 @@ import type { Hierarchy } from "../../shared/types.ts";
 import { DevicesEntities } from "./devices-view.tsx";
 import { DeviceEditor, EntityEditor } from "./editors.tsx";
 import { BulkBar } from "./spaces.tsx";
+import { AreaMultiSelect, FilterChips, useAreaFilter } from "./records.tsx";
+import { useStoredValue } from "./storage.ts";
 import { inputClass } from "./ui.tsx";
 
 // The Table view of Organize > Devices and Organize > Entities: every device with
 // its entities, and the entities with no device, in one table that can be searched
 // and filtered, grouped by type, sorted, and edited in place (devices-view.tsx).
 
-const LIMIT = 400;
+const PAGE_SIZE = 100;
 
 type Editing = { kind: "entity" | "device"; id: string } | null;
-
-function AreaFilter({ h, value, onChange }: { h: Hierarchy; value: string; onChange: (v: string) => void }) {
-  return (
-    <select aria-label="Area" className={`${inputClass} w-48!`} value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="*">Any area</option>
-      <option value="">No area</option>
-      {[...h.floors.flatMap((f) => f.areaIds), ...h.looseAreaIds].map((id) => (
-        <option key={id} value={id}>
-          {h.areas[id].name}
-        </option>
-      ))}
-    </select>
-  );
-}
 
 // `section`: which of the two it is shown for. Both are the same table; Entities
 // opens with every device's entities showing, Devices with them folded.
 export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section: "devices" | "entities"; onRecord: (id: string) => void }) {
-  const [area, setArea] = useState("*");
-  const [maker, setMaker] = useState("");
-  const [label, setLabel] = useState("");
-  const [extra, setExtra] = useState(false);
+  const [areas, setAreas] = useAreaFilter();
+  const [maker, setMaker] = useStoredValue("taxis:filters:maker", "", (v): v is string => typeof v === "string");
+  const [label, setLabel] = useStoredValue("taxis:filters:label", "", (v): v is string => typeof v === "string");
+  const [showDisabled, setShowDisabled] = useStoredValue("taxis:filters:disabled-devices", false, (v): v is boolean => typeof v === "boolean");
+  const [extra, setExtra] = useStoredValue("taxis:filters:extra", false, (v): v is boolean => typeof v === "boolean");
   const [editing, setEditing] = useState<Editing>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const makers = useMemo(() => [...new Set(Object.values(h.devices).map((d) => d.manufacturer).filter((m): m is string => Boolean(m)))].sort(), [h]);
@@ -44,8 +33,14 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
     (e: { disabled: boolean; hidden: boolean; maintenance: boolean; labels: string[] }) => (extra || (!e.disabled && !e.hidden && !e.maintenance)) && (!label || e.labels.includes(label)),
     [extra, label],
   );
-  const deviceOk = useMemo(() => (maker ? (d: { manufacturer: string | null }) => d.manufacturer === maker : undefined), [maker]);
-  const areaOk = useMemo(() => (area === "*" ? undefined : (id: string | null) => (area === "" ? id === null : id === area)), [area]);
+  const deviceOk = useMemo(() => (d: { manufacturer: string | null; disabled: boolean }) => (showDisabled || !d.disabled) && (!maker || d.manufacturer === maker), [maker, showDisabled]);
+  const deviceLabelOk = useMemo(() => label ? (d: { labels: string[] }) => d.labels.includes(label) : undefined, [label]);
+  const reset = () => { setAreas(new Set()); setMaker(""); setLabel(""); setExtra(false); setShowDisabled(false); };
+  const chips = [...areas].map(id => ({ label: id ? h.areas[id]?.name ?? id : "No area", remove: () => setAreas(new Set([...areas].filter(a => a !== id))) }));
+  if (maker) chips.push({ label: maker, remove: () => setMaker("") });
+  if (label) chips.push({ label: h.labels[label]?.name ?? label, remove: () => setLabel("") });
+  if (extra) chips.push({ label: "Include hidden/disabled", remove: () => setExtra(false) });
+  const areaOk = useMemo(() => areas.size ? (id: string | null) => areas.has(id ?? "") : undefined, [areas]);
 
   const toggle = (id: string) =>
     setPicked((p) => {
@@ -67,12 +62,16 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
           onRecord={onRecord}
           entityOk={entityOk}
           deviceOk={deviceOk}
+          deviceLabelOk={deviceLabelOk}
+          includeLoose={!maker}
+          onResetFilters={reset}
+          activeFilters={<FilterChips items={chips} clear={reset} />}
           areaOk={areaOk}
           picked={picked}
           toggle={toggle}
           onOpenEntity={(id) => setEditing({ kind: "entity", id })}
           onOpenDevice={(id) => setEditing({ kind: "device", id })}
-          limit={LIMIT}
+          limit={PAGE_SIZE}
           onSelectAll={(ids) => setPicked(new Set(ids))}
           // Only what the table shows is acted on.
           bulk={(shown) => {
@@ -81,7 +80,7 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
           }}
           toolbar={
             <>
-              <AreaFilter h={h} value={area} onChange={setArea} />
+              <AreaMultiSelect areas={Object.values(h.areas)} selected={areas} onChange={setAreas} />
               <select aria-label="Manufacturer" className={`${inputClass} w-44!`} value={maker} onChange={(e) => setMaker(e.target.value)}>
                 <option value="">Any manufacturer</option>
                 {makers.map((m) => (
@@ -98,8 +97,9 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
                   </option>
                 ))}
               </select>
+              <label className="flex items-center gap-1.5 text-xs text-muted"><input type="checkbox" checked={showDisabled} onChange={e => setShowDisabled(e.target.checked)} /> Show disabled devices</label>
               <label className="flex items-center gap-1.5 text-xs text-muted">
-                <input type="checkbox" checked={extra} onChange={(e) => setExtra(e.target.checked)} /> Include disabled, hidden and diagnostic
+                <input type="checkbox" checked={extra} onChange={(e) => setExtra(e.target.checked)} /> Include disabled, hidden and diagnostic entities
               </label>
             </>
           }

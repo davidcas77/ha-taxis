@@ -1,5 +1,5 @@
 import { Check, X } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { HELPERS, HELPER_SUFFIX_RE, canonicalId, effectiveSuffixes, helperNameErrors } from "../../shared/helpers.ts";
@@ -21,6 +21,7 @@ import { allIgnored, anyIgnored, fieldIgnored, hasSuggestion, ignoreSuggestions,
 import { ROLE_ORDER } from "../../shared/roles.ts";
 import type { AreaNode, ChangeInput, EntityRole, FloorNode, Hierarchy } from "../../shared/types.ts";
 import { AiSection } from "./ai.tsx";
+import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { useStoredFlag } from "./storage.ts";
 import { GroupToggle, GroupedRows, SortHeader, useSort } from "./table.tsx";
@@ -47,7 +48,10 @@ export function SettingsPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }
 function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void; naming: NamingSettings }) {
   const { saveNaming, notify } = useTaxis();
   const [draft, setDraft] = useState<NamingSettings>(naming);
+  useEffect(() => setDraft(naming), [naming]);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const draftGuard = useDraftGuard(JSON.stringify(draft) !== JSON.stringify(naming));
   const codes = useMemo(() => areaCodes(h, draft), [h, draft]);
   const floorOrder = useMemo(() => [...h.floors.flatMap((f) => f.areaIds), ...h.looseAreaIds].map((id) => h.areas[id]), [h]);
   // Two areas with the same effective code (detected or set): area id -> the other areas' names.
@@ -114,13 +118,18 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
   }, [h, draft, codes, sample]);
 
   const save = async () => {
+    if (saving) return;
+    setSaving(true);
     const err = await saveNaming(draft);
+    setSaving(false);
+    if (!err) draftGuard.release();
     setError(err);
-    if (!err) notify({ tone: "ok", text: "Naming settings saved" });
+    if (!err) notify({ tone: "ok", text: "Saved in Taxis. Home Assistant was unchanged." });
   };
 
   return (
     <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+      <fieldset disabled={saving} className="contents">
       <div className="mx-auto flex max-w-4xl flex-col gap-8">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold">Settings</h1>
@@ -378,7 +387,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
         </section>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
-          <Button tone="primary" disabled={clashes.size > 0 || floorClashes.size > 0 || Object.keys(helperErrors).length > 0 || houseGroupError !== null} onClick={() => void save()}>
+          <Button tone="primary" disabled={saving || clashes.size > 0 || floorClashes.size > 0 || Object.keys(helperErrors).length > 0 || houseGroupError !== null} onClick={() => void save()}>
             Save settings
           </Button>
           <Button tone="ghost" onClick={() => setDraft(naming)}>
@@ -409,6 +418,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
 
         <AiSection />
       </div>
+      </fieldset>
     </main>
   );
 }

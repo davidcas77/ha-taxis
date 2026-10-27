@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.6.0
+
+- **Resizable views.** Shared Records layouts let you drag the divider between
+  the list and properties. Table and Records columns support dragging and keyboard
+  resizing, remembered widths, and a layout reset. Search, multi-area filters,
+  filter chips and pagination keep large lists usable without silently hiding rows.
+- **Devices and helpers.** Device records list all of their entities, including
+  disabled and diagnostic entities, with names, ids, states and links to edit them.
+  A remembered **Show disabled devices** filter is available in both views.
+  **Helpers** now follows Devices and Entities under Organize. Device label
+  filtering and entities without a device are handled consistently.
+- **Recipes.** Recipes has its own main tab after Organize, with Table and Records
+  views. Records includes search, multi-area and status filters, concise behavior
+  and requirements, competing automation warnings, installation status, and the
+  proposed changes. Adding a recipe queues its configuration for review in Changes.
+  Existing Parameters > Recipes bookmarks open the new page.
+- **Parameters.** Short summaries and expandable **How it works** sections replace
+  long introductions. Parameter headings have short hover and keyboard-focus
+  explanations. Number and time values are centered. Climate columns are split
+  into Heating, Cooling, Timing & schedule, Rules & switching, and Presets so the
+  table fits without oversized rows.
+- **Count and membership explanations.** Capability counts and excluded counts
+  show the relevant entity names and ids on hover or focus, including totals.
+  Helper updates say how many members are added and removed; expandable details
+  list the exact entities and resulting membership, and explain that no entities
+  are deleted and Home Assistant changes only when Apply is used.
+- **Reliable Apply and recovery.** Confirmed entity renames persist and retarget
+  remaining dependent changes after a partially successful Apply. Recipe retries
+  verify that the installed automation or script is available. Results distinguish
+  verified, stored, loaded, partial, unverified and failed operations. Durable
+  Apply history records intended changes, outcomes and backup details; repair
+  reminders and interrupted runs remain visible after restarting Taxis.
+- **Safer editing.** Settings reject stale writes from another tab. Unsaved
+  editor drafts warn before navigation. Failed remove/discard requests remain
+  visible, and busy actions cannot be submitted twice. Duplicate area naming
+  codes block affected helper and recipe plans while allowing unrelated rooms.
+- **Climate correction.** An active AC switches to the selected season's heating
+  or cooling mode only when automatic switching is allowed and the mode is
+  supported. The Area climate blueprint is now **version 3**; review and apply
+  updates to existing recipe installations to use the corrected behavior.
+- **Verification.** Expanded unit and desktop browser regression coverage, plus
+  updated documentation and the local preview with invented Home Assistant data.
+
 ## 0.5.1
 
 - **Devices & entities.** One table of devices with their entities under them

@@ -1,3 +1,4 @@
+import { useDraftGuard } from "./draft-guard.ts";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -124,6 +125,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
   const form = { enabled, provider, baseUrl, models, effort, cap, maxTokens, prices };
   const built = settingsOf(form);
   const dirty = edit !== "keep" || formDiffers(form, savedSettings(saved));
+  const draftGuard = useDraftGuard(dirty);
   const urlProblem = provider === "openai-compatible" ? (() => { const c = checkBaseUrl(baseUrl); return c.ok ? null : c.error; })() : null;
 
   const changeProvider = (p: AiProviderId) => {
@@ -165,6 +167,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
     });
     setSaving(false);
     if (!r.ok) return setError(r.error);
+    draftGuard.release();
     onSaved(r.ai);
     setKeyEdit("keep");
     setKeyText("");
