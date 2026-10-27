@@ -141,6 +141,22 @@ describe("the cross-site header guard", () => {
 describe("POST /api/ai/models", () => {
   const list = { body: { data: [{ id: "claude-haiku-5-5", display_name: "Claude Haiku 5.5" }], has_more: false } };
 
+  it("reports a persistent HTML gateway timeout without exposing the page or changing settings", async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((line: string) => void lines.push(String(line)));
+    const s = setup({ status: 504, text: `<!DOCTYPE html><html>gateway diagnostics ${TEST_KEY}</html>` });
+    const before = s.settings.ai();
+    const res = await s.req("POST", "/api/ai/models", { provider: "openai-compatible", baseUrl: "https://api.openai.com/v1", key: TEST_KEY });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ ok: false, error: "api.openai.com answered 504. The service timed out. Try again shortly." });
+    expect(lines.join("\n")).not.toMatch(/<!DOCTYPE|<html>|gateway diagnostics/);
+    expect(lines.join("\n")).not.toContain(TEST_KEY);
+    expect(s.calls).toHaveLength(2);
+    expect(s.calls.every(call => call.method === "GET")).toBe(true);
+    expect(s.settings.ai()).toEqual(before);
+    expect(s.settings.aiKey("openai-compatible")).toBeNull();
+  });
+
   it("lists models with the saved key", async () => {
     const s = setup(list);
     await s.save({ key: TEST_KEY });

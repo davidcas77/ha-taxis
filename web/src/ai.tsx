@@ -350,7 +350,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
                 {loadingModels ? "Loading…" : "Load models"}
               </Button>
               {modelsMsg && (
-                <span role={modelsMsg.ok ? "status" : "alert"} className={`text-xs ${modelsMsg.ok ? "text-muted" : "text-danger"}`}>
+                <span role={modelsMsg.ok ? "status" : "alert"} className={`min-w-0 max-w-full text-xs [overflow-wrap:anywhere] ${modelsMsg.ok ? "text-muted" : "text-danger"}`}>
                   {modelsMsg.text}
                 </span>
               )}
