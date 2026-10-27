@@ -1,6 +1,8 @@
 # Build context is the repository root:
 #   docker build -f taxis/Dockerfile .
-FROM node:22-alpine AS build
+# dist contains architecture-independent JavaScript. Keep build tools native;
+# the final stage still installs production dependencies for the target platform.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci

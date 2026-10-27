@@ -25,6 +25,8 @@
   Each saved tier has a separate connection test. Quick/Ask settings migrate to
   Low/Medium, leaving Strong empty. The shared service routes tasks by tier;
   task-facing AI features such as Ask Taxis remain unconnected.
+- **Image builds.** Build shared JavaScript assets on the build machine's native
+  architecture to avoid ARM emulation crashes while preparing the supported images.
 
 ## 0.6.2
 
