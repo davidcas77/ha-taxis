@@ -131,7 +131,19 @@ export function LightsWithoutArea({ h }: { h: Hierarchy }) {
                 <label className="sr-only" htmlFor={`light-area-${e.entityId}`}>
                   Area of {e.name}
                 </label>
-                <AreaSelect h={h} id={`light-area-${e.entityId}`} value={why ? null : chosen[e.entityId] ?? null} onChange={(v) => setChosen((c) => ({ ...c, [e.entityId]: v }))} noneLabel="Choose an area" />
+                <AreaSelect
+                  h={h}
+                  id={`light-area-${e.entityId}`}
+                  value={e.inRegistry ? chosen[e.entityId] ?? null : null}
+                  onChange={(v) => {
+                    if (!e.inRegistry) return;
+                    setChosen((c) => ({ ...c, [e.entityId]: v }));
+                    // Picking an area for a device's main entity means giving it its name too;
+                    // the box stays visible, so it can be unticked.
+                    if (v && needsName(e)) setNamed((n) => (Object.hasOwn(n, e.entityId) ? n : { ...n, [e.entityId]: true }));
+                  }}
+                  noneLabel="Choose an area"
+                />
               </div>
             </li>
           );
