@@ -2,6 +2,7 @@ import { ColumnHeader } from "./table.tsx";
 import { useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
+import { organizeEntityType } from "../../shared/organize.ts";
 import { CATEGORY_SCOPES, type AreaNode, type ChangeInput, type DeviceItem, type EntityItem, type FloorNode, type Hierarchy } from "../../shared/types.ts";
 import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis } from "./state.tsx";
@@ -221,7 +222,7 @@ export function DeviceEntities({ h, device }: { h: Hierarchy; device: DeviceItem
       <table className="w-full text-left text-[13px]">
         <thead className="bg-sunken text-xs text-muted"><tr><ColumnHeader>Name / entity id</ColumnHeader><ColumnHeader>State</ColumnHeader><ColumnHeader>Area</ColumnHeader></tr></thead>
         <tbody>{entities.map(entity => <tr key={entity.entityId} className="border-t border-line align-top">
-          <td className="px-3 py-2"><a className="text-accent hover:underline" href={`#organize/entities/${encodeURIComponent(entity.entityId)}`}>{entity.name}</a><code className="block break-all font-mono text-[11px] text-muted">{entity.entityId}</code>
+          <td className="px-3 py-2"><a className="text-accent hover:underline" href={`#organize/${organizeEntityType(entity)}/${encodeURIComponent(entity.entityId)}`}>{entity.name}</a><code className="block break-all font-mono text-[11px] text-muted">{entity.entityId}</code>
             <div className="flex flex-wrap gap-1 text-[11px] text-muted">{entity.disabled && <span>Disabled</span>}{entity.hidden && <span>Hidden</span>}{entity.maintenance && <span>Diagnostic / configuration</span>}</div>
           </td>
           <td className="px-3 py-2">{entity.state ?? "No state"}{entity.unit && <span> {entity.unit}</span>}</td>

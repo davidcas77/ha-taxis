@@ -1,12 +1,14 @@
-import { ChevronLeft, Layers, Search } from "lucide-react";
-import { useMemo, useState, type DragEvent, type ReactNode } from "react";
+import { ChevronLeft, Clapperboard, Cpu, FileCode, FileCode2, FolderCog, Layers, List, ListChecks, MapPin, PanelLeftClose, PanelLeftOpen, Search, SlidersHorizontal, Tags, Workflow, type LucideIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type DragEvent, type ReactNode } from "react";
 
 import { listKeyFor } from "../../shared/groups.ts";
+import { entityMatchesSection, isOrganizeEntityType, organizeEntityType } from "../../shared/organize.ts";
 import type { CategoryScope, EntityItem, FloorNode, Hierarchy } from "../../shared/types.ts";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { GroupedList } from "./groups.tsx";
 import { CategoryDetail, LabelDetail, NewForm, categoryUsage, labelUsage } from "./labels.tsx";
 import { OrganizeTable } from "./lists.tsx";
+import { BlueprintRecords } from "./blueprints.tsx";
 import { AreaCodeField } from "./naming.tsx";
 import { ROLE_LABEL } from "./spaces.tsx";
 import { useTaxis, type OrganizeType, type Route } from "./state.tsx";
@@ -31,15 +33,31 @@ const TYPE_NAME: Record<OrganizeType, string> = {
   "category-scene": "Scene categories",
   "category-helpers": "Helper categories",
   zones: "Zones",
+  automations: "Automations",
+  blueprints: "Blueprints",
   devices: "Devices",
   entities: "Entities",
   helpers: "Helpers",
 };
 const TYPE_ORDER = Object.keys(TYPE_NAME) as OrganizeType[];
+const TYPE_ICON: Record<OrganizeType, LucideIcon> = {
+  spaces: Layers,
+  labels: Tags,
+  "category-automation": ListChecks,
+  "category-script": FileCode2,
+  "category-scene": Clapperboard,
+  "category-helpers": FolderCog,
+  zones: MapPin,
+  automations: Workflow,
+  blueprints: FileCode,
+  devices: Cpu,
+  entities: List,
+  helpers: SlidersHorizontal,
+};
 
 const zonesOf = (h: Hierarchy) => Object.values(h.entities).filter((e) => e.domain === "zone");
 
-function typeCount(h: Hierarchy, t: OrganizeType): number {
+function typeCount(h: Hierarchy, t: OrganizeType): number | null {
   switch (t) {
     case "spaces":
       return h.floors.length + Object.keys(h.areas).length;
@@ -49,10 +67,12 @@ function typeCount(h: Hierarchy, t: OrganizeType): number {
       return zonesOf(h).length;
     case "devices":
       return Object.keys(h.devices).length;
+    case "automations":
     case "entities":
-      return Object.keys(h.entities).length;
     case "helpers":
-      return Object.values(h.entities).filter(e => e.categoryScope === "helpers").length;
+      return Object.values(h.entities).filter(e => entityMatchesSection(e, t)).length;
+    case "blueprints":
+      return null;
     default:
       return h.categories[categoryScope(t)!].length;
   }
@@ -85,6 +105,15 @@ function ViewSwitch({ view, onChange }: { view: View; onChange: (v: View) => voi
 }
 
 export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: OrganizeType; id: string | null; go: (r: Route) => void }) {
+  // Existing entity links still reach their editor after the lists are split.
+  useEffect(() => {
+    const entity = id ? h.entities[id] : undefined;
+    if (entity && isOrganizeEntityType(type) && organizeEntityType(entity) !== type) go({ page: "organize", type: organizeEntityType(entity), id });
+  }, [h, type, id, go]);
+  const [blueprintCount, setBlueprintCount] = useState<number | null>(null);
+  const [blueprintsPartial, setBlueprintsPartial] = useState(false);
+  const updateBlueprintCount = useCallback((count: number | null, partial = false) => { setBlueprintCount(count); setBlueprintsPartial(partial); }, []);
+  const [collapsed, setCollapsed] = useStoredValue("taxis:organize:sidebar-collapsed", false, (value): value is boolean => typeof value === "boolean");
   // On narrow screens only one pane shows; wide screens show all three.
   const [step, setStep] = useState<Step>(id ? "props" : "items");
   const pick = (t: OrganizeType) => {
@@ -98,46 +127,68 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
   const show = (s: Step) => (step === s ? "flex" : "hidden");
   const [devicesView, setDevicesView] = useStoredChoice<View>("taxis:organize-view:devices", VIEWS, "table");
   const [entitiesView, setEntitiesView] = useStoredChoice<View>("taxis:organize-view:entities", VIEWS, "records");
-  const tabular = type === "devices" || type === "entities";
+  const [automationsView, setAutomationsView] = useStoredChoice<View>("taxis:organize-view:automations", VIEWS, "records");
+  const [helpersView, setHelpersView] = useStoredChoice<View>("taxis:organize-view:helpers", VIEWS, "records");
+  const tabular = type === "devices" || isOrganizeEntityType(type);
+  const storedView = type === "devices" ? devicesView : type === "automations" ? automationsView : type === "helpers" ? helpersView : entitiesView;
+  const setView = type === "devices" ? setDevicesView : type === "automations" ? setAutomationsView : type === "helpers" ? setHelpersView : setEntitiesView;
   // A link to one item (an old bookmark, a link from Health) opens the list with it selected.
-  const view: View = tabular && id === null ? (type === "devices" ? devicesView : entitiesView) : "records";
+  const view: View = tabular && id === null ? storedView : "records";
   const choose = (v: View) => {
-    (type === "devices" ? setDevicesView : setEntitiesView)(v);
+    setView(v);
     // The table shows no one item: leave the one selected.
     if (v === "table" && id !== null) select(null);
   };
   // The table's way to the list: that item, selected.
-  const showRecord = (item: string) => {
-    (type === "devices" ? setDevicesView : setEntitiesView)("records");
+  const showRecord = (item: string | null) => {
+    setView("records");
     select(item);
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <nav
+        id="organize-sidebar"
         aria-label="What to organize"
-        className={`${show("types")} min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto border-b border-line bg-surface p-2 md:flex md:w-44 md:flex-none lg:w-56 md:border-r md:border-b-0`}
+        onClick={event => {
+          if (event.target instanceof Element && !event.target.closest("button,a,input,select")) setCollapsed(!collapsed);
+        }}
+        className={`${show("types")} min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto border-b border-line bg-surface p-2 md:flex ${collapsed ? "md:w-24" : "md:w-44 lg:w-56"} md:flex-none md:border-r md:border-b-0`}
       >
-        {TYPE_ORDER.map((t) => (
+        <div className={`flex shrink-0 ${collapsed ? "justify-center" : "justify-end"}`}>
+          <button type="button" aria-label={collapsed ? "Expand Organize sidebar" : "Collapse Organize sidebar"} aria-expanded={!collapsed} aria-controls="organize-sidebar" title={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(!collapsed)} className="rounded p-1.5 text-muted hover:bg-sunken hover:text-accent">
+            {collapsed ? <PanelLeftOpen className="size-4" aria-hidden /> : <PanelLeftClose className="size-4" aria-hidden />}
+          </button>
+        </div>
+        {TYPE_ORDER.map((t) => {
+          const Icon = TYPE_ICON[t];
+          return (
           <button
             key={t}
             type="button"
             aria-current={t === type ? "true" : undefined}
             onClick={() => pick(t)}
-            className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${t === type ? "bg-accent-soft font-medium text-accent" : "hover:bg-sunken"}`}
+            className={`relative flex shrink-0 items-center rounded-md ${collapsed ? "min-h-14 flex-col justify-center gap-1 px-1 py-2 text-center text-[10px] leading-tight" : "gap-2 px-2 py-1.5 text-left text-[13px]"} ${t === type ? "bg-accent-soft font-medium text-accent" : "hover:bg-sunken"}`}
           >
-            <span className="min-w-0 flex-1 truncate">{TYPE_NAME[t]}</span>
-            <span className="text-xs tabular-nums text-muted">{typeCount(h, t).toLocaleString()}</span>
+            {collapsed && <Icon className="size-5 shrink-0" aria-hidden />}
+            <span className={collapsed ? "w-full min-w-0 break-words" : "min-w-0 flex-1 truncate"}>{TYPE_NAME[t]}</span>
+            <span className={`${collapsed ? "absolute right-1 top-0.5 text-[9px]" : "text-xs"} tabular-nums text-muted`} title={t === "blueprints" && blueprintCount === null ? "Open Blueprints to read installed blueprints" : t === "blueprints" && blueprintsPartial ? "Some blueprint domains could not be read" : undefined}>{t === "blueprints" ? blueprintCount === null ? "–" : `${blueprintCount.toLocaleString()}${blueprintsPartial ? "+" : ""}` : typeCount(h, t)?.toLocaleString()}</span>
           </button>
-        ))}
+          );
+        })}
       </nav>
-      {view === "table" && (type === "devices" || type === "entities") ? (
+      {type === "blueprints" ? (
+        <section aria-label="Blueprints" className={`${step === "types" ? "hidden" : "flex"} min-h-0 min-w-0 flex-1 flex-col md:flex`}>
+          <BackBar label="Types" onBack={() => setStep("types")} />
+          <BlueprintRecords onCount={updateBlueprintCount} refreshKey={h.fetchedAt} />
+        </section>
+      ) : view === "table" && tabular ? (
         <section aria-label={TYPE_NAME[type]} className={`${step === "types" ? "hidden" : "flex"} min-h-0 min-w-0 flex-1 flex-col md:flex`}>
           <BackBar label="Types" onBack={() => setStep("types")} />
           <div className="border-b border-line px-4 py-2">
             <ViewSwitch view={view} onChange={choose} />
           </div>
-          <OrganizeTable key={type} h={h} section={type} onRecord={showRecord} />
+          {type === "devices" || type === "entities" ? <OrganizeTable key={type} h={h} section={type} onRecord={showRecord} /> : <ItemsPane key={type} h={h} type={type} id={null} select={showRecord} />}
         </section>
       ) : (
         <RecordsSplit
@@ -246,6 +297,7 @@ function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] }
           };
         }),
       };
+    case "automations":
     case "helpers":
     case "entities":
       return {
@@ -255,7 +307,7 @@ function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] }
           { key: "area", label: "Area" },
           { key: "kind", label: "Kind" },
         ],
-        rows: Object.values(h.entities).filter(e => type !== "helpers" || e.categoryScope === "helpers").map((e: EntityItem) => ({
+        rows: Object.values(h.entities).filter(e => entityMatchesSection(e, type)).map((e: EntityItem) => ({
           areaId: e.areaId,
           id: e.entityId,
           edited: `entity:${e.entityId}`,
@@ -264,6 +316,8 @@ function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] }
           cells: { name: e.name, id: <code className="font-mono text-[11px]">{e.entityId}</code>, area: dash(areaName(e.areaId)), kind: ROLE_LABEL[e.role] },
         })),
       };
+    case "blueprints":
+      return { cols: [], rows: [] };
     default: {
       const scope = categoryScope(type)!;
       const use = categoryUsage(h);
@@ -295,11 +349,11 @@ function ItemsPane({ h, type, id, select }: { h: Hierarchy; type: OrganizeType; 
         <h1 className="text-sm font-semibold">{TYPE_NAME[type]}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1"><SearchInput value={query} onChange={setQuery} label={`Find in ${TYPE_NAME[type].toLowerCase()}`} /></div>
-          {(type === "devices" || type === "entities" || type === "helpers") && <AreaMultiSelect areas={Object.values(h.areas)} selected={areas} onChange={setAreas} />}
+          {(type === "devices" || isOrganizeEntityType(type)) && <AreaMultiSelect areas={Object.values(h.areas)} selected={areas} onChange={setAreas} />}
         </div>
         {type === "devices" && <label className="flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={showDisabled} onChange={e => setShowDisabled(e.target.checked)} />Show disabled devices</label>}
       </div>
-      {(type === "devices" || type === "entities" || type === "helpers") && <div className="px-2 py-1"><FilterChips items={[
+      {(type === "devices" || isOrganizeEntityType(type)) && <div className="px-2 py-1"><FilterChips items={[
         ...[...areas].map(a => ({ label: h.areas[a]?.name ?? (a || "No area"), remove: () => setAreas(new Set([...areas].filter(id => id !== a))) })),
         ...(query ? [{ label: query, remove: () => setQuery("") }] : []),
       ]} clear={() => { setAreas(new Set()); setQuery(""); }} /></div>}
@@ -337,7 +391,7 @@ function ItemsTable({ h, type, id, select, query, areas, showDisabled }: { h: Hi
   const { edited } = useTaxis();
   const { cols, rows: all } = useMemo(() => rowsFor(h, type), [h, type]);
   const q = query.trim().toLowerCase();
-  const rows = useMemo(() => all.filter(r => (!q || r.search.toLowerCase().includes(q)) && ((type !== "devices" && type !== "entities" && type !== "helpers") || !areas.size || areas.has(r.areaId ?? "")) && (type !== "devices" || showDisabled || !h.devices[r.id]?.disabled)), [all, q, areas, type, showDisabled, h]);
+  const rows = useMemo(() => all.filter(r => (!q || r.search.toLowerCase().includes(q)) && ((type !== "devices" && !isOrganizeEntityType(type)) || !areas.size || areas.has(r.areaId ?? "")) && (type !== "devices" || showDisabled || !h.devices[r.id]?.disabled)), [all, q, areas, type, showDisabled, h]);
   const { widths, setWidth } = useWidths(`taxis:records:columns:${type}`, Object.fromEntries(cols.map(c => [c.key, c.key === "name" ? 180 : c.key === "area" ? 130 : 200])));
   const getters = Object.fromEntries(cols.map((c) => [c.key, (r: Row) => r.v[c.key]]));
   const { rows: sorted, sort, toggle } = useSort(rows, getters, { key: "name", dir: "asc" });
@@ -566,15 +620,18 @@ function Properties({ h, type, id, go, clear }: { h: Hierarchy; type: OrganizeTy
       const d = h.devices[id];
       return d ? <DeviceEditor key={d.id} h={h} device={d} onClose={clear} /> : missing;
     }
+    case "automations":
     case "helpers":
     case "entities": {
       const e = h.entities[id];
-      return e ? <EntityEditor key={e.entityId} h={h} entity={e} onClose={clear} /> : missing;
+      return e && entityMatchesSection(e, type) ? <EntityEditor key={e.entityId} h={h} entity={e} onClose={clear} /> : missing;
     }
     case "zones": {
       const z = h.entities[id];
       return z ? <ZoneView key={z.entityId} zone={z} onClose={clear} /> : missing;
     }
+    case "blueprints":
+      return null;
     default: {
       const scope = categoryScope(type)!;
       const c = h.categories[scope].find((x) => x.id === id);

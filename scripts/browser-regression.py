@@ -37,6 +37,7 @@ class DesktopRegression(unittest.TestCase):
         self.context = self.browser.new_context(viewport={"width": 1600, "height": 1000})
         self.page = self.context.new_page()
         self.page.set_default_timeout(15000)
+        self.page.set_default_navigation_timeout(30000)
         self.page.route("**/api/hierarchy*", lambda route: route.fulfill(json=copy.deepcopy(self.hierarchy_body)))
         self.page.route("**/api/history", lambda route: route.fulfill(json={"ok": True, "runs": []}))
         self.page.route("**/api/repairs", lambda route: route.fulfill(json={"ok": True, "repairs": []}))
@@ -185,6 +186,55 @@ class DesktopRegression(unittest.TestCase):
         self.assertEqual(table.get_by_text("Regression helper", exact=True).count(), 1)
         self.assertEqual(table.get_by_text("Regression ordinary", exact=True).count(), 0)
 
+    def organize_partition_fixture(self):
+        def fixture(h):
+            base = next(iter(h["entities"].values()))
+            h["devices"] = {}
+            h["entities"] = {}
+            for entity_id, name, domain, role, platform, scope in [
+                ("sensor.partition_ordinary", "Partition ordinary", "sensor", "sensor", "demo", None),
+                ("automation.partition_auto", "Partition automation", "automation", "automation", "automation", "automation"),
+                ("input_boolean.partition_helper", "Partition helper", "input_boolean", "helper", "input_boolean", "helpers"),
+            ]:
+                entity = {**copy.deepcopy(base), "entityId": entity_id, "name": name, "customName": None, "domain": domain, "role": role, "platform": platform, "categoryScope": scope, "members": [], "deviceId": None, "areaId": None, "ownAreaId": None, "disabled": False, "hidden": False, "maintenance": False, "labels": [], "categories": {}, "inRegistry": True}
+                h["entities"][entity_id] = entity
+        self.hierarchy_fixture(fixture)
+
+    def test_organize_sections_are_disjoint_in_records_and_table(self):
+        self.organize_partition_fixture()
+        self.page.goto(BASE + "/#organize/entities", wait_until="networkidle")
+        nav = self.page.get_by_role("navigation", name="What to organize")
+        nav.get_by_role("button", name=re.compile(r"^Automations\b")).wait_for()
+        labels = nav.get_by_role("button").all_inner_texts()
+        names = [re.sub(r"\s+[\d,–+]+$", "", label).strip() for label in labels]
+        self.assertLess(names.index("Automations"), names.index("Blueprints"))
+        self.assertLess(names.index("Blueprints"), names.index("Devices"))
+        for section, label, expected in [("entities", "Entities", "Partition ordinary"), ("automations", "Automations", "Partition automation"), ("helpers", "Helpers", "Partition helper")]:
+            nav.get_by_role("button", name=re.compile(r"^" + label + r"\b")).click()
+            self.page.get_by_role("button", name="Records", exact=True).click()
+            table = self.page.locator(".records-table")
+            self.assertEqual(table.locator("tbody tr").count(), 1)
+            table.get_by_text(expected, exact=True).wait_for()
+            for other in {"Partition ordinary", "Partition automation", "Partition helper"} - {expected}:
+                self.assertEqual(table.get_by_text(other, exact=True).count(), 0)
+            self.assertRegex(nav.get_by_role("button", name=re.compile(r"^" + label + r"\b")).inner_text(), r"\b1$")
+            self.page.get_by_role("button", name="Table", exact=True).click()
+            if section == "entities":
+                self.page.get_by_role("textbox", name="Name of sensor.partition_ordinary", exact=True).wait_for()
+                self.assertEqual(self.page.get_by_role("textbox", name="Name of automation.partition_auto", exact=True).count(), 0)
+                self.assertEqual(self.page.get_by_role("textbox", name="Name of input_boolean.partition_helper", exact=True).count(), 0)
+            else:
+                table.get_by_text(expected, exact=True).wait_for()
+                self.assertEqual(table.locator("tbody tr").count(), 1)
+            self.page.get_by_role("button", name="Records", exact=True).click()
+
+    def test_existing_entity_links_open_their_new_organize_sections(self):
+        self.organize_partition_fixture()
+        for entity_id, section in [("automation.partition_auto", "automations"), ("input_boolean.partition_helper", "helpers")]:
+            self.page.goto(BASE + "/#organize/entities/" + entity_id, wait_until="networkidle")
+            self.page.wait_for_function("expected => window.location.hash === expected", arg="#organize/" + section + "/" + entity_id)
+            self.assertEqual(self.page.get_by_role("navigation", name="What to organize").locator("button[aria-current='true']").inner_text().split()[0].lower(), section)
+
     def test_disabled_device_is_hidden_until_explicitly_included(self):
         def fixture(h):
             device = next(iter(h["devices"].values()))
@@ -204,7 +254,7 @@ class DesktopRegression(unittest.TestCase):
             h["devices"] = {}
         self.hierarchy_fixture(fixture)
         self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")
-        self.page.get_by_role("checkbox", name="Show entities", exact=True).check()
+        self.page.get_by_role("group", name="Entity view", exact=True).get_by_role("button", name="Entities", exact=True).click()
         self.page.get_by_role("textbox", name="Name of sensor.regression_without_device", exact=True).wait_for()
 
     def test_records_can_page_past_four_hundred_entities(self):

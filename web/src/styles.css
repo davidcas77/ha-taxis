@@ -111,4 +111,8 @@ button:not(:disabled),
 @media (min-width: 768px) {
   .records-pane { width: clamp(240px, var(--records-width), calc(100% - 327px)); }
 }
-.records-table td { overflow-wrap: anywhere; }
+/* Every table shares the resize engine, including assignment and settings
+   tables. Long ids/paths must wrap inside resized cells, not paint over the
+   next column. Numeric/action cells can still opt into nowrap or truncation. */
+table :is(th, td) { overflow-wrap: anywhere; }
+table :is(th, td) code { white-space: normal; overflow-wrap: anywhere; }

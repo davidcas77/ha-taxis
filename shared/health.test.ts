@@ -896,9 +896,9 @@ describe("7: Taxis setup", () => {
   });
 
   it("reports a canonical helper id something else holds, pointing at Settings", () => {
-    const r = check([pir, { id: "binary_sensor.living_motions", platform: "mqtt", name: "Old motions" }]);
+    const r = check([pir, { id: "binary_sensor.living_motion_all", platform: "mqtt", name: "Old motions" }]);
     const f = one(r, "setup:helper:living_room:motion");
-    expect(f).toMatchObject({ severity: "warning", entity: "binary_sensor.living_motions", area: "living_room" });
+    expect(f).toMatchObject({ severity: "warning", entity: "binary_sensor.living_motion_all", area: "living_room" });
     expect(f.detail).toContain("“Old motions”");
     expect(f.fix).toEqual({ kind: "link", label: "Change the helper names", to: { page: "settings" } });
   });

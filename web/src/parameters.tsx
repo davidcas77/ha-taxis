@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { Hierarchy } from "../../shared/types.ts";
 import { CapabilitiesMatrix } from "./capabilities.tsx";
 import { HelpersTab } from "./helpers.tsx";
+import { AreaCodesTab } from "./area-codes.tsx";
 import { ParameterTable } from "./parameter-table.tsx";
 import type { ParameterTab, Route } from "./state.tsx";
 
@@ -12,6 +13,7 @@ import type { ParameterTab, Route } from "./state.tsx";
 const TABS: { key: ParameterTab; label: string }[] = [
   { key: "capabilities", label: "Capabilities" },
   { key: "helpers", label: "Helpers" },
+  { key: "area-codes", label: "Area codes" },
   { key: "house", label: "House" },
   { key: "occupancy", label: "Occupancy" },
   { key: "lighting", label: "Lighting" },
@@ -26,7 +28,8 @@ export function ParametersPage({ h, tab, go }: { h: Hierarchy; tab: ParameterTab
   let body: ReactNode = null;
   if (tab === "capabilities") body = <CapabilitiesMatrix h={h} go={go} />;
   if (tab === "helpers") body = <HelpersTab h={h} go={go} />;
-  if (tab !== "capabilities" && tab !== "helpers") body = <ParameterTable h={h} tab={tab} />;
+  if (tab === "area-codes") body = <AreaCodesTab h={h} go={go} />;
+  if (tab !== "capabilities" && tab !== "helpers" && tab !== "area-codes") body = <ParameterTable h={h} tab={tab} />;
   return (
     <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
       <div className="mx-auto flex max-w-6xl flex-col gap-5">

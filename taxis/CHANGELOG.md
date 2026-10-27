@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.6.2
+
+- **Naming suggestions.** Area-wide motion groups use `motion_all`, matching the
+  helper planner. Individual sensors and partial groups retain their identity.
+  Window contacts retain `window` rather than gaining a `door_window` prefix.
+  Explicit naming overrides are preserved; renames still require review in Changes.
+
+- **Not in any area.** Keep the Cards view or switch to a remembered Table view
+  with search by name, entity id or device. Select individual rows or all shown
+  rows, choose an area and queue the assignments in Changes. Both views have
+  pagination; the table has resizable columns and shows registry restrictions.
+- **Organize > Automations.** A dedicated list contains only automation entities,
+  with search, multi-area filtering, resizable columns and remembered Table and
+  Records views. **Blueprints** follows Automations in the sidebar.
+- **Compact navigation.** Click unused space in the Organize sidebar, or its
+  expand/collapse button, to switch to a narrow rail with icons and names. The
+  choice is remembered. In Areas, area rows are slightly indented under floors.
+- **Devices, Entities and Groups.** Three view buttons replace the old view and
+  entity-visibility controls. Devices shows collapsible trees with indented child
+  entities, Entities shows a flat table, and Groups shows grouped cards. The same
+  controls work in areas and Organize, with shared search, filters and pagination.
+- **Area overview capabilities.** Every area shows a Capability / Entity count /
+  Current value table. Counts follow the Capabilities settings and reveal their
+  entity names and ids on hover. Door and Window show readable contact states or
+  N/A when absent; unavailable, unknown, excluded and disabled contacts remain
+  distinguishable. Numeric means require matching units. Registered sensor classes
+  are retained even when a live state is missing.
+- **Area codes location.** The existing area-code table is now a separate
+  **Parameters > Area codes** tab. Stored codes, naming conventions, names and
+  entity ids are unchanged by this move. Floor codes and other naming settings
+  remain in Settings.
+- **Parameter layouts.** Level labels align left; Lighting uses narrower numeric
+  columns and a wider Entry lights column. Entry lights shows a compact count,
+  reveals names and ids on hover, and opens a bounded picker instead of stretching
+  the table row. Bathroom fan initially shows areas with both a counted fan and
+  humidity sensor; **Show all areas** reveals other saved settings. Defaults stay
+  visible and existing parameter values are preserved.
+- **Separate entity lists.** Entities excludes automations and helpers. Helpers
+  includes derived, template and group entities, as well as helpers without an
+  entity-registry entry. Sidebar counts use the same rules as the lists. Existing
+  entity links open the correct section, and device details still list all of
+  their entities with links to their respective editors.
+- **Installed blueprints.** Browse all installed automation and script blueprints
+  from Home Assistant, including community and user blueprints. Search and filter
+  by type, resize the list and columns, and inspect descriptions, inputs, defaults
+  and source links. Broken entries stay visible, and incomplete reads are clearly
+  distinguished from an empty inventory. This view does not modify blueprints.
+- **Table wrapping.** Long entity ids, names and paths wrap inside columns across
+  the app, including automation-category and label assignment tables. Resized
+  headers and editing controls stay within their columns. Naming suggestion
+  controls and parameter editors remain usable at narrow widths.
+- **Entity-first label assignment.** Area and Organize label tables show each
+  entity's current labels. Search, select rows and use **Add label** while keeping
+  existing labels, or create a label inline with **+ Add new label**. Creation and
+  assignments stay in Changes until Apply. Long lists have pagination, and
+  clearing filters returns to the first page.
+- **Verification.** Added regression coverage for list separation, existing links,
+  blueprint inventory and errors, long text across all table implementations,
+  persisted column resizing and active editors. Updated the app documentation.
+
 ## 0.6.0
 
 - **Resizable views.** Shared Records layouts let you drag the divider between

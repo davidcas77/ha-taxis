@@ -169,7 +169,9 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
   const add = (reg: RawEntity | null, entityId: string) => {
     const st = states.get(entityId);
     const domain = entityId.split(".")[0] ?? "";
-    const deviceClass = text(st?.attributes?.device_class);
+    // Disabled or temporarily missing entities may have no live state. Keep the
+    // registered class so a known door/window is not mistaken for no contact.
+    const deviceClass = text(st?.attributes?.device_class) ?? text(reg?.device_class) ?? text(reg?.original_device_class);
     const device = reg?.device_id ? devices[reg.device_id] : undefined;
     const ownArea = reg?.area_id && areas[reg.area_id] ? reg.area_id : null;
     const areaId = ownArea ?? device?.areaId ?? null;

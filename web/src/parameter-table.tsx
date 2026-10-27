@@ -1,4 +1,4 @@
-import { useStoredChoice } from "./storage.ts";
+import { useStoredChoice, useStoredFlag } from "./storage.ts";
 import { PARAM_HELP } from "./parameter-help.ts";
 import { Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -26,6 +26,9 @@ import type { Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
 import { HelpDisclosure, HelpTopic } from "./help.tsx";
 import { SortHeader, useSort } from "./table.tsx";
+import { ResizeHandle, useWidths } from "./records.tsx";
+import { TooltipButton } from "./tooltip.tsx";
+import { ParameterPopover } from "./parameter-popover.tsx";
 
 // The House, Occupancy, Lighting, Media, Climate, Bathroom fan, Exterior and Safety
 // tabs of the Parameters page: one table per tab, a row for the house, for interior
@@ -81,7 +84,7 @@ const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> 
 // A value in a table cell is a button that opens the field: it shows a box on hover
 // and on focus, and a small pencil, so it reads as something to click.
 const EDITABLE =
-  "group inline-flex items-center gap-1 rounded border border-transparent px-1.5 py-0.5 text-left hover:border-line hover:bg-sunken focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-60";
+  "group inline-flex min-w-0 max-w-full flex-wrap items-center gap-1 rounded border border-transparent px-1.5 py-0.5 text-left hover:border-line hover:bg-sunken focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-60";
 const PENCIL = "size-3 shrink-0 text-muted opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60";
 
 const header = (d: ParamDef) => (d.unit ? `${d.label} (${d.unit})` : d.label);
@@ -175,7 +178,7 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
         onBlur={() => {
           if (!ended.current) onEdit(false);
         }}
-        className="rounded-md border border-accent bg-bg px-1.5 py-0.5 text-[13px] outline-none"
+        className="min-w-0 max-w-full rounded-md border border-accent bg-bg px-1.5 py-0.5 text-[13px] outline-none"
       >
         <option value="" disabled>
           {String(shown.value)} (inherited)
@@ -212,7 +215,7 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
               onEdit(false);
             }
           }}
-          className={`${wide ? "w-72" : "w-24"} rounded-md border border-accent bg-bg px-1.5 py-0.5 text-[13px] tabular-nums outline-none ${def.kind === "number" || def.kind === "time" ? "text-center" : ""}`}
+          className={`${wide ? "w-72" : "w-24"} min-w-0 max-w-full rounded-md border border-accent bg-bg px-1.5 py-0.5 text-[13px] tabular-nums outline-none ${def.kind === "number" || def.kind === "time" ? "text-center" : ""}`}
         />
         {suggestions.length > 0 && (
           <datalist id={listId}>
@@ -226,14 +229,14 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
   }
 
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex max-w-full flex-wrap items-center gap-1">
       <button
         type="button"
         disabled={parametersSaving}
         onClick={() => (def.kind === "bool" ? void save(!shown.value) : onEdit(true))}
         title={`${def.kind === "periods" ? `${describePeriods(String(shown.value))}. ` : ""}${own === undefined ? `From ${sourceName(h, shown.source)}. Click to set it here.` : "Set here. Click to change it."}`}
         aria-label={`${def.label} for ${row.label}: ${show(def, shown.value)}${def.unit && def.kind === "number" ? ` ${def.unit}` : ""}, ${own === undefined ? `from ${sourceName(h, shown.source)}` : "set here"}`}
-        className={`${EDITABLE} min-w-[3rem] ${def.kind === "periods" || def.kind === "entity" || def.kind === "services" ? "max-w-[20rem] truncate" : "tabular-nums"} ${own === undefined ? "text-muted" : "font-medium"}`}
+        className={`${EDITABLE} min-w-0 ${def.kind === "periods" || def.kind === "entity" || def.kind === "services" ? "max-w-[20rem] truncate" : "tabular-nums"} ${own === undefined ? "text-muted" : "font-medium"}`}
       >
         {show(def, shown.value)}
         <Pencil className={PENCIL} aria-hidden />
@@ -251,6 +254,7 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
 // levels show a dash, since the parameter is not inherited.
 function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; def: ParamDef; editing: boolean; onEdit: (on: boolean) => void }) {
   const { parameters, parametersSaving, saveParameters, notify, inventory, naming } = useTaxis();
+  const anchor = useRef<HTMLSpanElement>(null);
   const areaId = row.scope.level === "area" ? row.scope.id : null;
   const entry = useMemo(() => {
     if (!areaId) return null;
@@ -268,52 +272,24 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
 
   if (rows.length === 0) return <span className="px-1.5 text-muted">–</span>;
 
-  if (editing) {
-    return (
-      <div role="group" aria-label={`${def.label} for ${row.label}`} className="flex min-w-[12rem] flex-col gap-1 rounded-md border border-accent bg-bg p-2">
-        {rows.map((r) => (
-          <label key={r.entityId} className="flex cursor-pointer items-center gap-1.5 text-[13px]">
-            <input
-              type="checkbox"
-              aria-label={`${r.name} is an entry light of ${row.label}`}
-              checked={resolved.lights.includes(r.entityId)}
-              disabled={parametersSaving}
-              onChange={(e) => void save(rows.map((x) => x.entityId).filter((id) => (id === r.entityId ? e.target.checked : resolved.lights.includes(id))))}
-              className="accent-[var(--accent)]"
-            />
-            {r.name}
-          </label>
-        ))}
-        <button type="button" onClick={() => onEdit(false)} className="self-start rounded px-1.5 py-0.5 text-xs text-accent hover:bg-sunken">
-          Done
-        </button>
-      </div>
-    );
-  }
-
   const own = resolved.source === "set";
-  const text = resolved.lights.length === 0 ? "–" : resolved.lights.map(name).join(", ");
-  return (
-    <span className="inline-flex items-center gap-1">
-      <button
-        type="button"
-        disabled={parametersSaving}
-        onClick={() => onEdit(true)}
-        title={own ? "Set here. Click to change it." : resolved.lights.length === 0 ? "Nothing to suggest: the area has several lights and none is a main light. Click to choose." : "Suggested: the only light of the area, or its main lights. Click to choose."}
-        aria-label={`${def.label} for ${row.label}: ${text}, ${own ? "set here" : resolved.lights.length === 0 ? "none" : "suggested"}`}
-        className={`${EDITABLE} max-w-[16rem] ${own ? "font-medium" : "text-muted"}`}
-      >
-        {text}
-        {!own && resolved.lights.length > 0 && <span className="ml-1.5 rounded-full border border-line px-1.5 py-px text-[11px]">suggested</span>}
-        <Pencil className={PENCIL} aria-hidden />
-      </button>
-      {resolved.set && (
-        <button type="button" disabled={parametersSaving} onClick={() => void save(null)} aria-label={`Clear ${def.label} for ${row.label}`} title="Clear, so the suggestion is used again" className="rounded p-0.5 text-muted hover:text-fg disabled:opacity-60">
-          <X className="size-3" aria-hidden />
-        </button>
-      )}
-    </span>
-  );
+  const text = `${resolved.lights.length} ${resolved.lights.length === 1 ? "light" : "lights"}`;
+  return <span ref={anchor} className="inline-flex max-w-full items-center gap-1">
+    <TooltipButton label={`${def.label} for ${row.label}: ${text}, ${own ? "set here" : resolved.lights.length === 0 ? "none" : "suggested"}`}
+      onClick={() => { if (!parametersSaving) onEdit(true); }} className={`${EDITABLE} flex-nowrap whitespace-nowrap ${own ? "font-medium" : "text-muted"}`}
+      content={<div className="flex flex-col gap-2"><p className="font-medium">{text}{!own && resolved.lights.length > 0 ? " · Suggested" : ""}</p>{resolved.lights.length ? resolved.lights.map(id => <div key={id}><p className="break-words">{name(id)}</p><code className="block break-all text-[11px] text-muted">{id}</code></div>) : <p>No entry lights are selected or suggested. Click to choose.</p>}</div>}>
+      {text}{!own && resolved.lights.length > 0 && <span className="rounded-full border border-line px-1 py-px text-[10px]">Suggested</span>}<Pencil className={PENCIL} aria-hidden />
+    </TooltipButton>
+    {resolved.set && <button type="button" disabled={parametersSaving} onClick={() => void save(null)} aria-label={`Clear ${def.label} for ${row.label}`} title="Clear, so the suggestion is used again" className="shrink-0 rounded p-0.5 text-muted hover:text-fg disabled:opacity-60"><X className="size-3" aria-hidden /></button>}
+    {editing && <ParameterPopover anchor={anchor} title={`${def.label} for ${row.label}`} onClose={() => onEdit(false)}>
+      <p className="mb-3 text-xs text-muted">Choose this area's entry lights. Saved in Taxis immediately. Clear the choice to use the area's suggested lights again.</p>
+      <div className="flex flex-col gap-2">{rows.map(r => <label key={r.entityId} className="flex cursor-pointer items-start gap-2 rounded border border-line p-2 text-[13px]">
+        <input type="checkbox" aria-label={`${r.name} is an entry light of ${row.label}`} checked={resolved.lights.includes(r.entityId)} disabled={parametersSaving}
+          onChange={event => void save(rows.map(light => light.entityId).filter(id => id === r.entityId ? event.target.checked : resolved.lights.includes(id)))} className="mt-0.5 shrink-0 accent-[var(--accent)]" />
+        <span className="min-w-0"><span className="block break-words">{r.name}</span><code className="block break-all text-[11px] text-muted">{r.entityId}</code></span>
+      </label>)}</div>
+    </ParameterPopover>}
+  </span>;
 }
 
 const CLIMATE_GROUPS: { key: string; label: string; keys: ParamKey[] }[] = [
@@ -325,13 +301,24 @@ const CLIMATE_GROUPS: { key: string; label: string; keys: ParamKey[] }[] = [
 ];
 
 export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
-  const { inventory, inventoryLoaded, parameters, parametersLoaded } = useTaxis();
+  const { inventory, inventoryLoaded, parameters, parametersLoaded, naming } = useTaxis();
+  const [showAllFanAreas, setShowAllFanAreas] = useStoredFlag("taxis:parameters:fan:show-all-areas", false);
   const [climateGroup, setClimateGroup] = useStoredChoice("taxis:parameters:climate-group", CLIMATE_GROUPS.map(group => group.key), "heating");
   const group = CLIMATE_GROUPS.find(group => group.key === climateGroup) ?? CLIMATE_GROUPS[0];
   const defs = paramsOf(tab).filter(def => tab !== "climate" || group.keys.includes(def.key));
   const [editing, setEditing] = useState<string | null>(null);
   const ready = inventoryLoaded && parametersLoaded;
+  const { widths, setWidth } = useWidths("taxis:parameters:lighting:columns:v2", { name: 200, ...Object.fromEntries(paramsOf("lighting").map(def => [def.key, def.kind === "entities" ? 240 : 88])) });
   const { fixed, rest, floors } = useMemo(() => paramRows(h, inventory), [h, inventory]);
+  const relevant = useMemo(() => {
+    if (tab !== "fan" || showAllFanAreas) return rest;
+    const exclude = helperExclusions(h, naming);
+    return rest.filter(row => {
+      if (row.scope.level !== "area") return true;
+      const capabilities = areaInventory(h, inventory, row.scope.id, exclude(row.scope.id));
+      return capabilities.fan.some(item => item.counts) && capabilities.humidity.some(item => item.counts);
+    });
+  }, [rest, tab, showAllFanAreas, h, inventory, naming]);
 
   // Sorting covers the areas; the house, interior and exterior rows stay on top.
   // The default order groups each floor's areas under a heading with the floor's
@@ -352,7 +339,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
     }),
     [defs, parameters],
   );
-  const { rows, sort, toggle } = useSort(rest, columns, { key: "order", dir: "asc" });
+  const { rows, sort, toggle } = useSort(relevant, columns, { key: "order", dir: "asc" });
 
   if (!ready) return <p className="text-[13px] text-muted">Loading the settings…</p>;
 
@@ -368,7 +355,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   const line = (r: ParamRow, kind: "fixed" | "area") => (
     <tr key={rowKey(r)} className="border-t border-line">
       <th scope="row" className={`sticky left-0 z-10 bg-bg px-3 py-1.5 text-left font-normal ${kind === "fixed" ? "font-medium" : ""}`}>
-        <span className={kind === "area" && grouped && r.floorId ? "pl-3" : ""}>{r.label}</span>
+        <span className="block text-left">{r.label}</span>
         {kind === "area" && !grouped && r.floorName && <span className="ml-2 text-[11px] text-muted">{r.floorName}</span>}
       </th>
       {defs.map((d) => (
@@ -395,13 +382,19 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       {tab === "climate" && <div role="group" aria-label="Climate settings sections" className="flex flex-wrap gap-2">
         {CLIMATE_GROUPS.map(section => <button key={section.key} type="button" aria-pressed={climateGroup === section.key} onClick={() => { setEditing(null); setClimateGroup(section.key); }} className={`rounded-md border px-3 py-1.5 text-[13px] ${climateGroup === section.key ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}>{section.label}</button>)}
       </div>}
+      {tab === "fan" && <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+        <p className="flex-1">Used only where Bathroom fan recipe is installed. By default, areas need a counted fan and humidity sensor in Capabilities.</p>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={showAllFanAreas} onChange={event => setShowAllFanAreas(event.target.checked)} />Show all areas</label>
+      </div>}
+      {tab === "fan" && !rows.length && <p role="status" className="rounded border border-line p-3 text-sm text-muted">No areas have both a counted fan and humidity sensor. Check <a className="text-accent underline" href="#parameters/capabilities">Capabilities</a> or enable Show all areas to inspect other areas' saved settings.</p>}
       <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-        <table key={tab === "climate" ? climateGroup : tab} aria-label={PARAM_TAB_LABEL[tab]} className="w-full text-[13px]">
+        <table key={tab === "climate" ? climateGroup : tab} aria-label={PARAM_TAB_LABEL[tab]} className={`${tab === "lighting" ? "table-fixed" : "w-full"} text-[13px]`} style={tab === "lighting" ? { width: widths.name + defs.reduce((sum, def) => sum + widths[def.key], 0) } : undefined}>
+          {tab === "lighting" && <colgroup><col style={{ width: widths.name }} />{defs.map(def => <col key={def.key} style={{ width: widths[def.key] }} />)}</colgroup>}
           <thead className="bg-sunken text-left text-xs text-muted">
             <tr>
-              <SortHeader className="sticky left-0 z-20 bg-sunken px-3 py-2 text-left" label="Level" help="Choose a house default, area-type default or room override." k="name" sort={sort} onToggle={toggle} />
+              <SortHeader className="sticky left-0 z-20 bg-sunken px-3 py-2 text-left" label="Level" help="Choose a house default, area-type default or room override." k="name" sort={sort} onToggle={toggle} resize={tab === "lighting" ? <ResizeHandle label="Resize Lighting Level column" value={widths.name} onChange={width => setWidth("name", width)} /> : undefined} />
               {defs.map((d) => (
-                <SortHeader key={d.key} label={header(d)} help={PARAM_HELP[d.key]} k={d.key} sort={sort} onToggle={toggle} className={`px-3 py-2 ${d.kind === "number" || d.kind === "time" ? "text-center" : "text-left"}`} />
+                <SortHeader key={d.key} label={header(d)} help={PARAM_HELP[d.key]} k={d.key} sort={sort} onToggle={toggle} resize={tab === "lighting" ? <ResizeHandle label={`Resize Lighting ${d.label} column`} value={widths[d.key]} onChange={width => setWidth(d.key, width)} /> : undefined} className={`px-3 py-2 ${d.kind === "number" || d.kind === "time" ? "text-center" : "text-left"}`} />
               ))}
             </tr>
           </thead>

@@ -6,7 +6,7 @@ import type { NamingSettings } from "../../shared/naming.ts";
 import type { NamingIgnores } from "../../shared/naming-ignores.ts";
 import type { ParameterSettings } from "../../shared/parameters.ts";
 import type { RecipesResponse } from "../../shared/recipes.ts";
-import type { ApplyRun, RepairItem, HistoryResponse, RepairsResponse, ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, InventoryResponse, NamingIgnoresResponse, NamingResponse, ParametersResponse, ReferencesResponse } from "../../shared/types.ts";
+import type { BlueprintsResponse, ApplyRun, RepairItem, HistoryResponse, RepairsResponse, ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, InventoryResponse, NamingIgnoresResponse, NamingResponse, ParametersResponse, ReferencesResponse } from "../../shared/types.ts";
 
 // Relative URLs on purpose: under Ingress the app lives at
 // /api/hassio_ingress/<token>/, so "/api/…" would miss it.
@@ -37,6 +37,7 @@ export type { ApplyRun };
 export type Repair = RepairItem;
 
 export const api = {
+  blueprints: () => call<BlueprintsResponse>("api/blueprints"),
   history: () => call<HistoryResponse>("api/history"),
   repairs: () => call<RepairsResponse>("api/repairs"),
   acknowledgeRepair: (id: number) => call<RepairsResponse>(`api/repairs/${id}/acknowledge`, { method: "POST" }),

@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 
-import type { Hierarchy } from "../../shared/types.ts";
+import type { EntityItem, Hierarchy } from "../../shared/types.ts";
+import { entityMatchesSection } from "../../shared/organize.ts";
 import { DevicesEntities } from "./devices-view.tsx";
 import { DeviceEditor, EntityEditor } from "./editors.tsx";
-import { BulkBar } from "./spaces.tsx";
+import { BulkBar, RoleSections } from "./spaces.tsx";
 import { AreaMultiSelect, FilterChips, useAreaFilter } from "./records.tsx";
 import { useStoredValue } from "./storage.ts";
 import { inputClass } from "./ui.tsx";
@@ -30,8 +31,8 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
 
   // The same function between renders unless a filter changes, so the table is not worked out again for nothing.
   const entityOk = useCallback(
-    (e: { disabled: boolean; hidden: boolean; maintenance: boolean; labels: string[] }) => (extra || (!e.disabled && !e.hidden && !e.maintenance)) && (!label || e.labels.includes(label)),
-    [extra, label],
+    (e: EntityItem) => (section !== "entities" || entityMatchesSection(e, "entities")) && (extra || (!e.disabled && !e.hidden && !e.maintenance)) && (!label || e.labels.includes(label)),
+    [extra, label, section],
   );
   const deviceOk = useMemo(() => (d: { manufacturer: string | null; disabled: boolean }) => (showDisabled || !d.disabled) && (!maker || d.manufacturer === maker), [maker, showDisabled]);
   const deviceLabelOk = useMemo(() => label ? (d: { labels: string[] }) => d.labels.includes(label) : undefined, [label]);
@@ -64,6 +65,7 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
           deviceOk={deviceOk}
           deviceLabelOk={deviceLabelOk}
           includeLoose={!maker}
+          groups={ids => <RoleSections h={h} ids={ids} filters={{ maintenance: true, disabled: true }} rows={{ picked, toggle, edit: id => setEditing({ kind: "entity", id }) }} showDevice />}
           onResetFilters={reset}
           activeFilters={<FilterChips items={chips} clear={reset} />}
           areaOk={areaOk}

@@ -1,4 +1,4 @@
-import { Pagination, usePagination } from "./records.tsx";
+import { Pagination, ResizeHandle, usePagination, useWidths } from "./records.tsx";
 import {
   Activity,
   AlertTriangle,
@@ -38,13 +38,14 @@ import { diagnosisText } from "../../shared/entity-diagnosis.ts";
 import { areaHealth, floorListed, healthBadges, listedAreas, type AreaHealth as Health, type HealthBadge } from "../../shared/area-health.ts";
 import { analyzeArea } from "../../shared/naming.ts";
 import { namingFit } from "../../shared/naming-ignores.ts";
-import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
+import { EntityLabels } from "./entity-labels.tsx";
+import { AreaCapabilitySummary } from "./area-capabilities.tsx";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { AreaCapabilitiesTab } from "./capabilities.tsx";
 import { AreaFindings, useAreaFindings, useHealth } from "./health.tsx";
 import { DevicesEntities } from "./devices-view.tsx";
 import { AreaNamingTab } from "./naming.tsx";
-import { useStoredSet } from "./storage.ts";
+import { useStoredChoice, useStoredSet } from "./storage.ts";
 import { SortHeader, useSort } from "./table.tsx";
 import { useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
 import { AreaSelect, Button, ConfirmAction, EditedDot, LabelChip, inputClass } from "./ui.tsx";
@@ -136,7 +137,9 @@ function TreeRow({ depth, icon: Icon, label, count, health, active, muted, edite
       onClick={onClick}
       aria-current={active ? "true" : undefined}
       aria-expanded={expanded}
-      style={{ paddingLeft: 8 + depth * 14 }}
+      // Floors have an extra chevron before their icon. Account for its width
+      // so an area's label sits 12px beyond the floor label, not before it.
+      style={{ paddingLeft: 8 + depth * 14 + (depth === 2 ? 16 : 0) }}
       className={`flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px] ${
         active ? "bg-accent-soft font-medium text-accent" : muted ? "text-muted hover:bg-sunken" : "hover:bg-sunken"
       }`}
@@ -324,12 +327,7 @@ export function SpaceView({ h, sel, tab, go, select, filters }: {
   } else if (sel.kind === "loose") {
     body = <AreaList h={h} title="No floor" subtitle="Areas that aren't on any floor" areaIds={h.looseAreaIds} filters={filters} select={select} floorId={null} />;
   } else if (sel.kind === "unassigned") {
-    body = (
-      <div className="flex flex-col gap-5">
-        <Heading title="Not in any area" subtitle="Neither the entity nor its device has an area. Pick some and move them to an area below." />
-        <RoleSections h={h} ids={h.unassignedEntityIds} filters={filters} rows={rows} showDevice />
-      </div>
-    );
+    body = <UnassignedView h={h} filters={filters} edit={rows.edit} />;
   } else {
     body = <HomeView h={h} filters={filters} select={select} />;
   }
@@ -341,6 +339,45 @@ export function SpaceView({ h, sel, tab, go, select, filters }: {
       {body}
     </div>
   );
+}
+
+function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; edit: (id: string) => void }) {
+  const [view, setView] = useStoredChoice("taxis:unassigned:view", ["cards", "table"] as const, "cards");
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const deviceName = (e: EntityItem) => e.deviceId ? h.devices[e.deviceId]?.name ?? e.deviceId : "";
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return h.unassignedEntityIds.map(id => h.entities[id]).filter((e): e is EntityItem => Boolean(e) && visible(e, filters) && `${e.name} ${e.entityId} ${deviceName(e)}`.toLowerCase().includes(q));
+  }, [h, filters, query]);
+  const { rows: sorted, sort, toggle: sortBy } = useSort(matches, { name: e => e.name, entityId: e => e.entityId, device: deviceName, state: stateText }, { key: "name", dir: "asc" });
+  const paging = usePagination(sorted.length, JSON.stringify([query, filters, sort]));
+  const shown = sorted.slice(paging.start, paging.end);
+  const eligible = shown.filter(e => e.inRegistry);
+  // Selection never follows an entity hidden by the current query, filters or page.
+  const selected = eligible.filter(e => picked.has(e.entityId)).map(e => e.entityId);
+  const all = eligible.length > 0 && selected.length === eligible.length;
+  const toggle = (id: string) => setPicked(previous => { const next = new Set(previous); if (!next.delete(id)) next.add(id); return next; });
+  const { widths, setWidth } = useWidths("taxis:unassigned:columns", { name: 250, entityId: 300, device: 240, state: 130 });
+  const columns = [{ key: "name", label: "Name" }, { key: "entityId", label: "Entity ID" }, { key: "device", label: "Device" }, { key: "state", label: "State" }];
+  return <section aria-label="Unassigned entities" className="flex min-w-0 flex-col gap-4">
+    <Heading title="Not in any area" subtitle="Neither the entity nor its device has an area. Select entities and queue an area assignment in Changes." />
+    <div className="flex flex-wrap items-center gap-3">
+      <div role="group" aria-label="Unassigned view" className="flex gap-1">{(["cards", "table"] as const).map(value => <Button key={value} tone={view === value ? "plain" : "ghost"} aria-pressed={view === value} onClick={() => setView(value)}>{value === "cards" ? "Cards" : "Table"}</Button>)}</div>
+      <input className={`${inputClass} max-w-md`} aria-label="Find unassigned entities" placeholder="Search name, entity ID or device" value={query} onChange={event => { setQuery(event.target.value); setPicked(new Set()); }} />
+      <span className="text-xs text-muted">{matches.length} matching entities</span>
+      {query && <Button tone="ghost" onClick={() => { setQuery(""); setPicked(new Set()); }}>Clear search</Button>}
+    </div>
+    <label className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label="Select all shown entities" checked={all} disabled={!eligible.length} onChange={() => setPicked(all ? new Set() : new Set(eligible.map(e => e.entityId)))} />Select all shown ({eligible.length})</label>
+    {selected.length > 0 && <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} />}
+    <p className="text-xs text-muted">Only selected entities on this page are changed. Entities outside the registry cannot be selected. A device’s main entity needs its own name to take an area; otherwise move its device in Organize.</p>
+    {!shown.length ? <p role="status" className="p-3 text-sm text-muted">{query ? "No unassigned entities match your search." : "No entities without an area match the current visibility filters."}</p> : view === "cards" ? <RoleSections h={h} ids={shown.map(e => e.entityId)} filters={filters} rows={{ picked: new Set(selected), toggle, edit }} showDevice /> : <div className="overflow-x-auto rounded-lg border border-line"><table aria-label="Unassigned entities table" className="records-table table-fixed text-[13px]" style={{ width: 44 + Object.values(widths).reduce((sum, width) => sum + width, 0), minWidth: "100%" }}>
+      <colgroup><col style={{ width: 44 }} />{columns.map(column => <col key={column.key} style={{ width: widths[column.key] }} />)}</colgroup>
+      <thead className="bg-sunken text-left text-xs text-muted"><tr><th scope="col" className="px-3 py-2"><span className="sr-only">Select</span></th>{columns.map(column => <SortHeader key={column.key} label={column.label} k={column.key} sort={sort} onToggle={sortBy} resize={<ResizeHandle label={`Resize unassigned ${column.label} column`} value={widths[column.key]} onChange={width => setWidth(column.key, width)} />} />)}</tr></thead>
+      <tbody>{shown.map(e => <tr key={e.entityId} className="border-t border-line hover:bg-sunken"><td className="px-3 py-2">{e.inRegistry ? <input type="checkbox" aria-label={`Select ${e.name}`} checked={picked.has(e.entityId)} onChange={() => toggle(e.entityId)} /> : <span title="Not in the entity registry">—</span>}</td><td className="px-3 py-2"><button type="button" className="text-left text-accent hover:underline" onClick={() => edit(e.entityId)}>{e.name}</button>{(e.disabled || e.hidden || e.maintenance) && <span className="block text-xs text-muted">{[e.disabled && "Disabled", e.hidden && "Hidden", e.maintenance && "Diagnostic"].filter(Boolean).join(" · ")}</span>}</td><td className="px-3 py-2 font-mono text-xs">{e.entityId}</td><td className="px-3 py-2">{deviceName(e) || "No device"}</td><td className="px-3 py-2">{stateText(e)}</td></tr>)}</tbody>
+    </table></div>}
+    <Pagination {...paging} />
+  </section>;
 }
 
 function Missing({ what, select }: { what: string; select: (s: Selection) => void }) {
@@ -601,7 +638,6 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
 }) {
   const { edited, naming, namingIgnores } = useTaxis();
   const floor = h.floors.find((f) => f.id === area.floorId);
-  const summary = summarizeRoom(area, h);
   const nameCheck = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
   // A suggestion the user ignored counts as fine: the entity fits for them.
   const fit = useMemo(() => namingFit(nameCheck, namingIgnores), [nameCheck, namingIgnores]);
@@ -669,7 +705,7 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
       <div role="tabpanel">
         {tab === "overview" && (
           <div className="flex flex-col gap-5">
-            <SummaryChips s={summary} h={h} />
+            <AreaCapabilitySummary h={h} areaId={area.id} />
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
               <Stat dense label="Devices" value={area.deviceIds.length} onClick={() => onTab("devices-entities")} />
               <Stat dense label="Entities" value={countVisible(area.entityIds, h, filters)} onClick={() => onTab("devices-entities")} />
@@ -749,62 +785,12 @@ function AreaHealthTab({ h, areaId, health, rows, go }: { h: Hierarchy; areaId: 
 // Labels in an area: what's used here, and the assign tool for this area's
 // entities.
 function AreaLabelsTab({ h, area }: { h: Hierarchy; area: AreaNode }) {
-  const { propose } = useTaxis();
-  const labels = Object.values(h.labels).sort((a, b) => a.name.localeCompare(b.name));
-  const [labelId, setLabelId] = useState(labels[0]?.id ?? "");
-  const used = new Map<string, number>();
-  for (const id of area.entityIds) for (const l of h.entities[id]?.labels ?? []) used.set(l, (used.get(l) ?? 0) + 1);
-  const label = h.labels[labelId];
-  if (labels.length === 0) return <p className="text-[13px] text-muted">No labels yet. Create them on the Labels page.</p>;
-  return (
-    <div className="flex flex-col gap-5">
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold">Labels on this area's entities</h2>
-        {used.size === 0 ? (
-          <p className="text-[13px] text-muted">None yet.</p>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {[...used.entries()].map(([id, n]) =>
-              h.labels[id] ? (
-                <button key={id} type="button" onClick={() => setLabelId(id)} className="inline-flex items-center gap-1">
-                  <LabelChip label={h.labels[id]} />
-                  <span className="text-xs tabular-nums text-muted">{n}</span>
-                </button>
-              ) : null,
-            )}
-          </div>
-        )}
-      </section>
-      <div className="flex items-center gap-2">
-        <label htmlFor="area-label-pick" className="text-[13px] text-muted">
-          Work with the label
-        </label>
-        <select id="area-label-pick" className={`${inputClass} w-56!`} value={labelId} onChange={(e) => setLabelId(e.target.value)}>
-          {labels.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      {label && (
-        <AssignTool
-          key={label.id}
-          h={h}
-          title={`“${label.name}” in ${area.name}`}
-          fixedArea={area.id}
-          isMember={(e) => e.labels.includes(label.id)}
-          suggestedRoles={rolesSuggestedBy(label.name)}
-          onAdd={(ids) => void propose(ids.map((id) => ({ kind: "entity", op: "update", targetId: id, fields: { labels: [...h.entities[id].labels, label.id] } })))}
-          onRemove={(ids) => void propose(ids.map((id) => ({ kind: "entity", op: "update", targetId: id, fields: { labels: h.entities[id].labels.filter((l) => l !== label.id) } })))}
-        />
-      )}
-    </div>
-  );
+  return <EntityLabels h={h} fixedArea={area.id} title={`Entities in ${area.name}`} />;
 }
 
-function RoleSections({ h, ids, filters, rows, showDevice }: { h: Hierarchy; ids: string[]; filters: Filters; rows: Rows; showDevice?: boolean }) {
+export function RoleSections({ h, ids, filters, rows, showDevice }: { h: Hierarchy; ids: string[]; filters: Filters; rows: Rows; showDevice?: boolean }) {
   const groups = groupByRole(ids, h, filters);
+  const visibleIds = new Set(groups.flatMap(group => group.entities.map(entity => entity.entityId)));
   const memberOf = useMemo(() => membershipIndex(h), [h]);
   if (groups.length === 0) return <p className="text-[13px] text-muted">No entities here with the current filters.</p>;
   return (
@@ -821,7 +807,7 @@ function RoleSections({ h, ids, filters, rows, showDevice }: { h: Hierarchy; ids
             </h3>
             <ul className="flex flex-col py-1">
               {grouped.map((gv) => (
-                <GroupBlock key={gv.group.entityId} h={h} group={gv.group} members={gv.members} rows={rows} memberOf={memberOf} />
+                <GroupBlock key={gv.group.entityId} h={h} group={gv.group} members={gv.members.filter(entity => visibleIds.has(entity.entityId))} rows={rows} memberOf={memberOf} />
               ))}
               {loose.map((e) => (
                 <EntityRow key={e.entityId} e={e} rows={rows} device={showDevice && e.deviceId ? h.devices[e.deviceId]?.name : undefined} badge={e.platform === "group" && e.members.length === 0 ? "group" : undefined} />

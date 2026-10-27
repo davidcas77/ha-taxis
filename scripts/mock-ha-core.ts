@@ -1222,8 +1222,8 @@ export function withHealthDemo(reg: MockHome, now = Date.now()): MockHome {
   );
 
   // Taxis setup.
-  reg.entities.push({ entity_id: "binary_sensor.kitchen_motions", platform: "mqtt", area_id: "kitchen", original_name: "Kitchen motions (old)" });
-  reg.states.push({ entity_id: "binary_sensor.kitchen_motions", state: "off", last_changed: ago(D), attributes: { friendly_name: "Kitchen motions (old)" } } as RawState);
+  reg.entities.push({ entity_id: "binary_sensor.kitchen_motion_all", platform: "mqtt", area_id: "kitchen", original_name: "Kitchen motions (old)" });
+  reg.states.push({ entity_id: "binary_sensor.kitchen_motion_all", state: "off", last_changed: ago(D), attributes: { friendly_name: "Kitchen motions (old)" } } as RawState);
   touch("binary_sensor.study_presence", { state: "unavailable", ago: 6 * H });
   reg.areas.find((a) => a.area_id === "study")!.temperature_entity_id = "sensor.study_temp_old";
 

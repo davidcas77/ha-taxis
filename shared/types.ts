@@ -318,3 +318,16 @@ export type HistoryResponse = { ok: true; runs: ApplyRun[] } | { ok: false; erro
 export type RepairsResponse = { ok: true; repairs: RepairItem[] } | { ok: false; error: string };
 
 export type ApplyStatus = "verified" | "stored" | "loaded" | "partial" | "unverified" | "failed";
+
+
+export type BlueprintItem = {
+  domain: "automation" | "script";
+  path: string;
+  name: string;
+  description: string | null;
+  author: string | null;
+  sourceUrl: string | null;
+  inputs: Record<string, { name: string; description: string | null; section?: string; default?: unknown; selector?: Record<string, unknown> }>;
+  error: string | null;
+};
+export type BlueprintsResponse = { ok: true; blueprints: BlueprintItem[]; complete: boolean; warnings: string[] } | { ok: false; error: string };

@@ -34,10 +34,10 @@ export type HelperSpec = {
 
 // The suffixes are chosen so they rarely collide with a single real sensor
 // named after the room ("sensor.kitchen_motion" stays a sensor, the group is
-// "binary_sensor.kitchen_motions"). They are settings: see helperNames.
+// "binary_sensor.kitchen_motion_all"). They are settings: see helperNames.
 export const HELPERS: readonly HelperSpec[] = [
   { key: "lights", label: "Lights", nameWord: "lights", domain: "light", helper: "group", groupType: "light", suffix: "all", min: 1 },
-  { key: "motion", label: "Motion", nameWord: "motions", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "motions", min: 1 },
+  { key: "motion", label: "Motion", nameWord: "motions", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "motion_all", min: 1 },
   { key: "presence", label: "Presence", nameWord: "presences", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "presences", min: 1 },
   { key: "door", label: "Doors", nameWord: "doors", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "doors", min: 1 },
   { key: "window", label: "Windows", nameWord: "windows", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "windows", min: 1 },
@@ -221,7 +221,7 @@ export const HOUSE_GROUP_NAME = "All lights";
 export function areaCodeConflicts(h: Hierarchy, naming: NamingSettings): Map<string, string> {
   const conflicts = new Map<string, string>();
   for (const [code, ids] of duplicateCodes(areaCodes(h, naming))) {
-    const message = `Area code “${code}” is shared by ${ids.map(id => h.areas[id].name).join(" and ")}. Choose unique area codes in Settings.`;
+    const message = `Area code “${code}” is shared by ${ids.map(id => h.areas[id].name).join(" and ")}. Choose unique area codes in Parameters → Area codes.`;
     for (const id of ids) conflicts.set(id, message);
   }
   return conflicts;

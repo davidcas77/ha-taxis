@@ -28,31 +28,43 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 ## What it does
 
 - **Spaces:** home → floors → areas, plus areas on no floor and entities that
-  are in no area at all.
-- **Each area:** tabs for a summary (temperature, humidity, light level, presence,
-  motion, doors and windows, lights on), its devices with their entities under
-  them (or the entities grouped by role with live states, groups shown with their
-  members), each with a reason when it does not work.
+  are in no area at all. **Not in any area** has Cards and searchable Table
+  views, with paged results and bulk area assignment through Changes.
+- **Each area:** an Overview table shows all capabilities, counted entities and
+  current values, with entity names and IDs available from each count. Other tabs
+  show its devices and entities, naming, labels and health, with reasons when
+  something does not work.
 - **Editing:** entities (name, area, labels, category, icon, hidden, disabled),
   devices (name, area, labels, disabled), areas and floors (create, rename,
   move, delete), several entities at once.
-- **Labels and Categories:** create, rename, recolor, delete, see what
-  they're on, and add a label to many entities at once.
-- **Naming:** a code per area, patterns for ids and display names, and a check
-  of each area against them, with display-name suggestions.
-- **Devices and Entities** (in Organize, as a table or as records): every
-  device with its entities under it, with search, multi-area filtering, grouping
-  and editing in place. Records has resizable panes and columns; longer lists
-  have page controls. A device's Records detail lists all its entities; Organize
-  also has a searchable Helpers list. Column resizing is shared across the app.
+- **Labels and Categories:** create, rename, recolor, delete and see what
+  they're on. An entity-first label table shows every entity's labels, supports
+  bulk assignment without replacing existing labels, and can queue a new label
+  inline.
+- **Naming:** edit area codes under **Parameters → Area codes**; patterns,
+  floor codes and helper names remain in Settings. Each area checks its entity
+  IDs against the naming scheme and suggests display names. Area-wide motion
+  groups use `motion_all`; window contacts retain their own type. Suggested
+  renames require review in Changes.
+- **Devices and Entities** (in Organize, as a table or as records): choose
+  **Groups** for cards, **Devices** for collapsible device trees, or **Entities**
+  for a flat entity table. They share search, filters, selection and page controls.
+  Records has resizable panes and columns. A device's Records detail lists all its entities; Organize
+  also has separate searchable Automations and Helpers lists, with Table and
+  Records views. Entities excludes those two groups. Column resizing is shared
+  across the app. Organize's sidebar can collapse to a remembered icon rail.
+- **Blueprints** (in Organize): browse all installed automation and script
+  blueprints, filter by type, and inspect descriptions, inputs and source links
+  in a read-only Records view. Read errors and incomplete results are shown.
 - **Health:** rule-based checks (no AI) for what is broken or forgotten:
   references to entities that are gone, devices that stopped reporting,
   automations that never fire, conditions that can never pass, switches only
   turned one way, automations fighting over the same lights, unused helpers, and
   the state of Taxis's own setup. Read-only; a fix is a link or a change for the
   list.
-- **Parameters:** detect what each area has, review canonical helpers, and set
-  inherited values with short parameter explanations and expandable guidance.
+- **Parameters:** detect what each area has, review canonical helpers, manage
+  area codes, and set inherited values with short parameter explanations and
+  expandable guidance.
   Capability counts explain which named entities count and which are excluded.
 - **Recipes:** a main page after Organize, with Table and Records views to inspect
   status, requirements and proposed native automations for occupancy, lighting,

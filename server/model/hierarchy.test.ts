@@ -81,6 +81,19 @@ describe("buildHierarchy", () => {
     expect(h.devices.cloud.isService).toBe(true);
   });
 
+  it("keeps registered contact classes without a live state and prefers the reported class when present", () => {
+    const r = raw();
+    r.entities.push(
+      { entity_id: "binary_sensor.disabled_door", platform: "demo", area_id: "kitchen", original_device_class: "door", disabled_by: "user" },
+      { entity_id: "binary_sensor.missing_window", platform: "demo", area_id: "kitchen", device_class: "window", original_device_class: "door" },
+    );
+    r.entities[0].original_device_class = "door";
+    const result = buildHierarchy(r, "now");
+    expect(result.entities["binary_sensor.disabled_door"]).toMatchObject({ deviceClass: "door", state: null, areaId: "kitchen", role: "opening", disabled: true });
+    expect(result.entities["binary_sensor.missing_window"]).toMatchObject({ deviceClass: "window", state: null, areaId: "kitchen", role: "opening" });
+    expect(result.entities["binary_sensor.kitchen_pir"].deviceClass).toBe("motion");
+  });
+
   it("marks maintenance and disabled entities", () => {
     expect(h.entities["sensor.kitchen_pir_battery"].maintenance).toBe(true);
     expect(h.entities["switch.old_plug"].disabled).toBe(true);

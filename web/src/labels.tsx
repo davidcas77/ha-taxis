@@ -1,63 +1,18 @@
 import { useState, type ReactNode } from "react";
 
-import { type CategoryItem, type CategoryScope, type ChangeInput, type EntityItem, type Hierarchy, type LabelItem } from "../../shared/types.ts";
+import { type CategoryItem, type ChangeInput, type EntityItem, type Hierarchy, type LabelItem } from "../../shared/types.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
-import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
+import { AssignTool } from "./assign.tsx";
+import { EntityLabels } from "./entity-labels.tsx";
 import { useTaxis } from "./state.tsx";
-import { Actions, Button, ConfirmAction, Field, HeaderBar, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
+import { Actions, ConfirmAction, Field, HeaderBar, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
 
 // Label and category details, shown in the Organize page's right pane. Labels
 // go on areas, devices and entities; categories file automations, scripts,
 // scenes and helpers, one list per kind as in Home Assistant. Both have an
 // assign tool to put many entities in or take them out at once.
 
-export function NewForm({ kind, scope, onCreated }: { kind: "label" | "category"; scope?: CategoryScope; onCreated: () => void }) {
-  const { propose } = useTaxis();
-  const [name, setName] = useState("");
-  const [color, setColor] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const id = `new-${kind}`;
-  return (
-    <form
-      className="flex flex-wrap items-end gap-1.5"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        if (!name.trim()) return setError(`Give the new ${kind} a name.`);
-        setError(null);
-        const fields: Record<string, unknown> = { name: name.trim() };
-        if (kind === "label" && color) fields.color = color;
-        const ok = await propose({ kind, op: "create", scope, fields });
-        if (ok) {
-          setName("");
-          onCreated();
-        }
-      }}
-    >
-      <div className="min-w-0 flex-1">
-        <label htmlFor={id} className="sr-only">
-          New {kind} name
-        </label>
-        <input id={id} className={inputClass} value={name} placeholder={kind === "label" ? "New label" : `New ${SCOPE_NAMES[scope!].toLowerCase().replace(/s$/, "")} category`} onChange={(e) => setName(e.target.value)} />
-      </div>
-      {kind === "label" && (
-        <select aria-label="Color" className={`${inputClass} w-28!`} value={color} onChange={(e) => setColor(e.target.value)}>
-          <option value="">No color</option>
-          {LABEL_COLORS.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      )}
-      <Button type="submit">Add</Button>
-      {error && (
-        <p role="alert" className="w-full text-xs text-danger">
-          {error}
-        </p>
-      )}
-    </form>
-  );
-}
+export { NewForm } from "./new-form.tsx";
 
 // ---------------------------------------------------------------------------
 
@@ -216,14 +171,7 @@ export function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; labe
         items={(usage?.devices ?? []).map((id) => ({ id, name: h.devices[id]?.name ?? id }))}
         onRemove={(id) => void propose(removeFrom("device", id, h.devices[id].labels))}
       />
-      <AssignTool
-        h={h}
-        title={`Entities with “${label.name}”`}
-        isMember={(e) => e.labels.includes(label.id)}
-        suggestedRoles={rolesSuggestedBy(label.name)}
-        onAdd={(ids) => void propose(ids.map((id) => ({ kind: "entity", op: "update", targetId: id, fields: { labels: [...h.entities[id].labels, label.id] } })))}
-        onRemove={(ids) => void propose(ids.map((id) => removeFrom("entity", id, h.entities[id].labels)))}
-      />
+      <EntityLabels h={h} initialLabelId={label.id} title="Entities and labels" />
     </div>
   );
 }

@@ -5,8 +5,8 @@ the areas on each floor, and every device and entity in them, and lets you
 organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
-The pages along the top: **Areas**, **Organize**, **Parameters**, **Health**,
-**Changes** and **Settings**. Devices and entities are in Organize, and in a tab
+The pages along the top: **Areas**, **Organize**, **Recipes**, **Parameters**,
+**Health**, **Changes** and **Settings**. Devices and entities are in Organize, and in a tab
 of each area. Old links to the Devices and Entities pages (`#devices`,
 `#entities`, `#entities/<id>`) open the same section of Organize.
 
@@ -19,14 +19,16 @@ of each area. Old links to the Devices and Entities pages (`#devices`,
   diagnostic entities**, **Show disabled and hidden entities** and **Show empty
   areas** (on to begin with) are remembered in this browser. With empty areas
   off, an area with no entities under the current filters is left out, and so is
-  a floor that had only such areas; the area you are on stays.
-- Each area starts with a summary: temperature, humidity, light level,
-  presence, motion, doors and windows, and how many lights are on, in large
-  figures, with the counts of devices, entities, ids that fit the naming and
-  things to look at in smaller cards below. Where Home Assistant has a main
-  temperature or humidity sensor set for the area, that one is used; humidity is
-  worked out the way temperature is, and is left out when the area has no
-  humidity sensor.
+  a floor that had only such areas; the area you are on stays. Areas are slightly
+  indented below their floor, so the tree hierarchy stays visible.
+- Each area's Overview shows a **Capabilities** table for all 14 capabilities,
+  with **Capability**, centred **Entity count**, and **Current value** columns.
+  Counts use the choices on the area's Capabilities tab; hover or focus a count
+  to see the counted entities' names and IDs. Numeric readings are averaged only
+  when their units match; mixed-unit readings are listed per entity instead.
+  **Door** and **Window** show Open or Closed, or explain Unknown, Unavailable,
+  Disabled or Not counted; N/A means no candidates were found. Counts of devices,
+  entities, naming matches and things to look at remain below the table.
 - Entities are grouped by what they do. A group (a light group, a group of
   motion sensors…) shows its members under it; a member that's in several
   groups appears under each, marked "also in…". A helper or a group (a light
@@ -42,6 +44,21 @@ of each area. Old links to the Devices and Entities pages (`#devices`,
 - Click an entity or a device to edit it: name, area, labels, category, icon,
   hidden, disabled. Tick several entities to move them, label them or hide them
   together. Areas and floors have an Edit button, and you can add new ones.
+
+### Not in any area
+
+Choose **Not in any area** in the Areas tree to find entities whose own area and
+device's area are both unset. Switch between **Cards** and **Table**; the choice
+is remembered in this browser. Cards keeps the lists grouped by what entities do.
+Table adds search by name, entity ID or device, paged results and resizable
+columns shared with the app's other tables.
+
+Tick several entities, or use **Select all shown** for the current page, then
+choose an area in the bulk action bar. This queues each eligible entity's area
+change in **Changes**; Home Assistant is updated only after Apply. Entities that
+Home Assistant cannot edit are not selectable, and the bulk action explains any
+selected entity it must skip. The existing filters for disabled, hidden,
+configuration and diagnostic entities still apply.
 
 ### Capabilities tab
 
@@ -101,21 +118,25 @@ nothing changes in Home Assistant and nothing goes in the list of changes.
 
 ## Devices & entities
 
-The same table is in two places: the **Devices & entities** tab of an area (the
-devices in the area, and the entities in the area whose device is elsewhere), and
-Organize's **Table** view of Devices and of Entities (the whole home).
+The same view controls are in two places: the **Devices & entities** tab of an
+area (including entities whose device is elsewhere), and Organize's **Table**
+view of Devices and of Entities (the whole home). Choose one of three buttons,
+**Groups**, **Devices** or **Entities**; the choice is remembered in this browser.
 
-- **A tree of devices.** Each device is a row: name, manufacturer and model, how
-  many entities it has, a summary of their states ("2 on", "1 unavailable"), its
+- **Groups** shows the familiar cards by entity kind, with a group's members
+  under it. Area and whole-home views use the same cards.
+- **Devices** shows a tree of devices. Each device is a row: name, manufacturer
+  and model, how many entities it has, a summary of their states ("2 on", "1 unavailable"), its
   area and why it doesn't work, if it doesn't. Open it with its chevron to see its
   entities under it, with the same columns: name, entity id, type, **Show as**,
   state, **Why**, area and Open. Entities with no device are under **No device**.
   In an area, an entity in the area whose device is elsewhere is under its device,
   marked "device in <area>" (or "device has no area").
-- **Show entities** opens or folds every device at once, and is remembered in this
-  browser (an area's tab starts open, the whole home folded; Organize's Entities
-  starts open). A chevron you click decides for its device from then on, until you
-  use Show entities again. A search opens the devices that have matching entities.
+  Devices start collapsed; use a chevron to show or hide a device's entities. Child
+  entities are indented with a tree guide to make their parent clear. A search
+  opens devices with matching entities.
+- **Entities** shows one flat table of entities, without device parent rows.
+  Switching view keeps the shared search, filters, sorting and selection.
 - **Edit in place.** The name and the area of a device, and the name, entity id,
   **Show as** and area of an entity, change in the table. Every edit goes in the
   list of changes (a device's name and area as the changes the device's editor
@@ -131,29 +152,43 @@ Organize's **Table** view of Devices and of Entities (the whole home).
   column. Organize's table also filters by area, manufacturer and label, and can
   include disabled, hidden and diagnostic entities. Search and filters remain
   available when nothing matches, so you can change or reset them.
-- **Group by type** switches to a flat table of the entities, in sections by
-  kind, each of which folds. A tree of devices and sections by kind don't mix, so
-  with it on there are no device rows. An area's tab also has **Groups**, the
-  cards by kind with a group's members under it.
+- **Shared controls.** Search, kind chips, area and other available filters,
+  selection and page controls use the same behavior across views; the table views
+  also share column resizing. Select all shown acts on the current page's
+  editable entities.
 - **Why.** An entity that is disabled, left over, unavailable or unknown, a group
   with members that are gone, or a device that is offline says why; see
   [Why an entity doesn't work](#why-an-entity-doesnt-work).
 
 ## Organize
 
-Three panes: what you organize on the left (floors and areas, labels, the
-category lists, zones, devices, entities and helpers), its items in the middle, and the
-selected item's properties on the right. Floors and areas show as a tree: drag
-an area onto another floor, and add floors and areas in
-place. An area's properties include its entity id code.
+Click empty space in the sidebar, or its expand/collapse button, to switch between
+the full sidebar and a compact rail with an icon above each name. The choice is
+remembered in this browser; section buttons keep navigating normally.
 
-**Devices and Entities** have a switch at the top of the middle pane, **Table**
-or **Records**. Records is the three panes above. Table is the table of
-[Devices & entities](#devices--entities) across the middle and right panes, with no
-properties pane; the button beside Open on a row shows that item in Records. The
-choice is remembered per section in this browser (Devices starts as a table,
-Entities as records). A link to one item, such as `#organize/entities/light.desk`,
-opens Records with it selected.
+Three panes: what you organize on the left (floors and areas, labels, the
+category lists, zones, automations, blueprints, devices, entities and helpers),
+its items in the middle, and the selected item's properties on the right. Floors
+and areas show as a tree: drag an area onto another floor, and add floors and
+areas in place. An area's properties include its entity id code.
+
+Use the sidebar's collapse button, or click its empty background, to switch
+between the full Organize list and a compact icon rail. The choice is remembered
+in this browser; the rail keeps section names and counts visible.
+
+**Automations**, **Devices**, **Entities** and **Helpers** each have a **Table |
+Records** switch, remembered separately in this browser. Records shows the list
+and selected item's properties. Devices and Entities use the
+[Devices & entities](#devices--entities) table across the middle and right panes;
+Automations and Helpers show their filtered entity lists. Devices starts as a
+table; the other sections start as records.
+
+Automations contains only `automation.*` entities. Helpers contains helper
+entities, including templates, groups and derived sensors, even when Home
+Assistant reports them only through states rather than its entity registry.
+Entities contains the remaining entities, so automations and helpers are not
+listed twice. Links to an entity open its matching section in Records; existing
+entity links continue to work.
 
 On desktop, drag the vertical divider between the records list and the selected
 item's properties to give either side more room. Drag a list column's right edge
@@ -163,9 +198,11 @@ the app, including Parameters, Health and the device's entity list, use the same
 resize control. Their widths are remembered per view. **Reset layout**
 restores the default split and column widths. Resize handles also accept the left
 and right arrow keys when focused.
+Long names, entity ids and paths wrap inside their columns, including label and
+category assignment tables. Editing controls stay within narrowed columns.
 
-Devices and Entities have an area filter beside search. Choose several areas to
-show their records together, select **No area** for unassigned records, or choose
+Automations, Devices, Entities and Helpers have an area filter beside search.
+Choose several areas to show their records together, select **No area** for unassigned records, or choose
 **All areas** to clear the area selection. The filter and search work together.
 Entities use their effective area: their own area when set, otherwise their
 device's area. Area multi-selection is available in both Table and Records.
@@ -176,11 +213,18 @@ Long lists have **Previous page** and **Next page** controls and a shown-range
 count. Pagination makes every matching record reachable; use search and filters
 to narrow the results without losing the controls.
 
-**Helpers** follows Devices and Entities in Organize. It lists the existing
-helper entities Home Assistant files under its Helpers category scope, with
-search, area filtering, resizable columns and the ordinary entity editor. Use
-**Parameters → Helpers** to plan canonical helpers; Organize's Helpers list is for
-inspecting and editing helpers that already exist.
+Organize's **Helpers** list inspects helpers that already exist, with search,
+area filtering, resizable columns and the ordinary entity editor where Home
+Assistant permits editing. Use **Parameters → Helpers** to plan canonical helpers.
+
+**Blueprints** follows Automations, before Devices, Entities and Helpers. It reads
+all installed automation and script blueprints, including providers other than
+Taxis. Search by name, description, author or path, filter by type, and select a
+record to inspect its description, inputs, defaults and available source link.
+The list and details use the resizable Records layout. Blueprint errors remain
+visible as entries, and an incomplete read shows a warning rather than presenting
+a partial list as complete. This page is read-only: inspecting a blueprint does
+not import, edit or delete it, or create an automation or script.
 
 Disabled devices are hidden by default in the Devices list. **Show disabled
 devices** includes them in Table and Records, and the choice is remembered in this
@@ -197,9 +241,24 @@ Records editor.
 Labels (on areas, devices and entities) and categories (on automations,
 scripts, scenes and helpers; Home Assistant keeps a separate list for each).
 Rename them, change colors and icons, create and delete them, and see what
-they're on. The assign tool lists entities you can filter by area, role and
-domain, with or without the label, and adds the label to the ones you tick or
-takes it off.
+they're on. The area's **Labels** tab and the selected label's detail in
+Organize share an entity-first assignment table: **Name**, **Entity ID**,
+**Device**, **Area** and **Labels**. Labels shows every label on each entity,
+including queued changes; choosing a label to add does not hide entities that
+already have it.
+
+Search at the top by name, entity ID, device or label, and use the area filter
+when assigning outside one fixed area. Tick several entities, or **Select all
+shown** for the eligible entities on the current page, choose a label and press
+**Add label**. Existing labels are preserved and duplicates are not added.
+**Remove label** is available for selected entities that already carry the chosen
+label, with confirmation. Only selected, editable entities on the current page
+and under the current filters are affected; read-only entities remain visible.
+
+**+ Add new label** opens a name and colour form in place. Creating it queues a
+label creation in Changes and selects the new preview label for assignment; its
+real Home Assistant ID is resolved during Apply. Adding or removing labels also
+queues changes. Nothing is written to Home Assistant before Apply.
 
 Labels and each category list can also be split into **groups**. Groups exist
 only in Taxis: Home Assistant has no label or category groups, so making,
@@ -211,8 +270,9 @@ in the list of changes.
 ## Parameters
 
 What Taxis knows about each area, and the choices later features build on. The
-page has a bar of tabs: **Capabilities**, **Helpers**, **House**, **Occupancy**,
-**Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior** and **Safety**.
+page has a bar of tabs: **Capabilities**, **Helpers**, **Area codes**, **House**,
+**Occupancy**, **Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior**
+and **Safety**.
 **Recipes** has its own page in the main navigation, immediately after Organize.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
@@ -247,7 +307,7 @@ not the automation. Nothing is written until you apply the list of changes.
 | Helper | Entity id | Made of | Wanted when |
 |---|---|---|---|
 | Lights | `light.<code>_all` | group of the counted lights | 1 or more |
-| Motion | `binary_sensor.<code>_motions` | group (any on) of the counted motion sensors | 1 or more |
+| Motion | `binary_sensor.<code>_motion_all` | group (any on) of the counted motion sensors | 1 or more |
 | Presence | `binary_sensor.<code>_presences` | group of the counted presence sensors | 1 or more |
 | Doors | `binary_sensor.<code>_doors` | group of the counted door sensors | 1 or more |
 | Windows | `binary_sensor.<code>_windows` | group of the counted window sensors | 1 or more |
@@ -256,8 +316,8 @@ not the automation. Nothing is written until you apply the list of changes.
 | Light level | `sensor.<code>_illuminance` | min/max (mean) | 1 or more |
 | Media | `media_player.<code>_media` | group of the counted speakers and TVs | 2 or more |
 
-`<code>` is the area's entity id code from Settings. The name of a new helper
-is the area's name and a word: "Kitchen motions". The humidity rate sensor of
+`<code>` is the area's entity id code from **Parameters → Area codes**. The name
+of a new helper is the area's name and a word: "Kitchen motions". The humidity rate sensor of
 the Bathroom fan recipe (`sensor.<code>_humidity_rate`) is not in this table:
 the recipe makes it. Only entities that **count**
 are used, so exclude a sensor on the area's Capabilities tab and the helper
@@ -328,7 +388,18 @@ they are only a heading over their areas.
 Each of the eight settings tabs begins with a short summary. Expand **How it
 works** for its rules, inheritance and saving details. Every parameter heading
 has a short explanation on hover or keyboard focus; press Escape to dismiss it.
-Numeric and time values are centred under their headings.
+Numeric and time values are centred under their headings. Lighting keeps Level
+on the left and uses compact numeric columns. Its **Entry lights** cell shows a
+short light count, with a **Suggested** mark when using detected lights; hover or
+focus it for their names and entity IDs. Click it to open a bounded, scrollable
+picker instead of expanding the table row. Choices save in Taxis immediately;
+clear the choice to use the area's suggestion again, and close with **Done** or
+Escape.
+
+Bathroom fan initially lists only areas with both a counted fan and humidity
+sensor, alongside the house/interior/exterior defaults. **Show all areas** reveals
+other saved overrides without changing them. These thresholds affect Home
+Assistant only after installing or updating the Bathroom fan recipe.
 
 Climate settings are divided into **Heating**, **Cooling**, **Timing & schedule**,
 **Rules & switching** and **Presets**, so you can work on one group of columns at
@@ -910,17 +981,23 @@ are meant to be looked at, not trusted blindly.
 
 ## Naming
 
-Under **Settings → Naming**:
+**Area codes** is under **Parameters → Area codes**, immediately after Helpers.
+The code is the word each area's entity IDs start with. Taxis finds the one your
+IDs already use (`livingroom` for Living Room, say), and you can set your own.
+When no entity settles it, the code is the area's ID. Two areas cannot share a
+code, detected or set: the table marks both rows and blocks saving until each
+has its own. Helpers and Recipes also block plans whose generated IDs collide.
+The columns sort when you click their headers. Use **Save area codes** to store
+your choices, **Undo changes** to discard your draft, or **Back to detected
+codes** to remove your overrides before saving.
 
-- **Area codes.** The word each area's entity ids start with. Taxis finds the
-  one your ids already use (`livingroom` for an area called Living Room, say)
-  and you can set your own. When no entity settles it (an empty area, or no
-  clear winner), the code is the area's id, which never changes. Two areas
-  can't share a code, detected or set: Settings marks both rows and won't save
-  until each area has its own. Helpers and Recipes also block plans whose
-  generated IDs collide, including codes detected automatically before you save
-  Naming. Give the affected areas unique codes, then plan again. The columns sort
-  when you click their headers.
+Moving the table does not change stored codes, detection, entity IDs or names.
+Saving a code changes Taxis's naming rules; it does not itself rename entities
+or write to Home Assistant. Links from an area's Naming tab open this Parameters
+tab. Resetting the other naming settings preserves your area codes.
+
+The other naming controls remain under **Settings → Naming**:
+
 - **Floor codes.** The word a floor's light group starts with:
   `light.<floor code>_all`. The default is the floor's id as a slug, and you can
   type your own (letters, digits and `_`, up to 40, like an area code). Two
@@ -939,7 +1016,7 @@ Under **Settings → Naming**:
 - **Type words.** The word for each kind of entity (`motion`, `door`,
   `temp`…).
 - **Helper names.** The end of each canonical helper's entity id (`all`,
-  `motions`, `presences`, `doors`, `windows`, `temperature`, `humidity`,
+  `motion_all`, `presences`, `doors`, `windows`, `temperature`, `humidity`,
   `illuminance`, `media`). Lower-case letters, digits and `_`, up to 30
   characters, and each used once. Settings shows an example id as you type.
   The recipes' own helpers end in `hold`, `occupied`, `paused`, `override`, `climate`
