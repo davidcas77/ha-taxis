@@ -8,7 +8,6 @@ import {
   areaInventory,
   inventoryMatrix,
   matrixTotals,
-  resetEntity,
   setAppliance,
   setAreaType,
   setBed,
@@ -22,7 +21,6 @@ import {
   type InventoryFlag,
   type InventoryRow,
   type InventorySettings,
-  type LightRole,
   type MatrixRow,
   type MotionRole,
   type Tally,
@@ -339,26 +337,9 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
         </p>
       )}
 
-      {present.map((c) => {
-        const rows = inv[c.key];
-        const counted = rows.filter((r) => r.counts).length;
-        return (
-          <section key={c.key} className="flex flex-col gap-2">
-            <h2 className="text-sm font-semibold">
-              {c.label} · {counted} of {rows.length} count{rows.length === 1 ? "s" : ""}
-            </h2>
-            {(c.key === "motion" || c.key === "presence") && <p className="text-xs text-muted">{ROLE_HINT}</p>}
-            {c.key === "fan" && <p className="text-xs text-muted">{FAN_HINT}</p>}
-            {c.key === "power" && <p className="text-xs text-muted">{APPLIANCE_HINT}</p>}
-            {c.key === "lights" && <EntryLightPicker area={area} rows={rows} />}
-            <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
-              {rows.map((r) => (
-                <CapabilityRow key={r.entityId} h={h} row={r} locked={locked} run={run} />
-              ))}
-            </ul>
-          </section>
-        );
-      })}
+      {present.map((c) => (
+        <CapabilitySection key={c.key} h={h} area={area} capability={c.key} label={c.label} rows={inv[c.key]} locked={locked} run={run} />
+      ))}
 
       <p className="text-[13px] text-muted">{absent.length === 0 ? "This area has every capability." : `Not in this area: ${absent.map((c) => c.label).join(", ")}.`}</p>
 
@@ -405,13 +386,100 @@ function EntryLightPicker({ area, rows }: { area: AreaNode; rows: InventoryRow[]
   );
 }
 
-function CapabilityRow({ h, row, locked, run }: { h: Hierarchy; row: InventoryRow; locked: boolean; run: (edit: (s: InventorySettings) => InventorySettings) => Promise<void> }) {
+type RunEdit = (edit: (s: InventorySettings) => InventorySettings) => Promise<void>;
+
+const chipClass = (active: boolean) =>
+  `rounded-md border px-2 py-0.5 text-xs outline-none focus-visible:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${active ? "border-accent bg-accent-soft text-accent" : "border-line bg-bg text-muted hover:text-fg"}`;
+
+// A row of buttons in place of a select: the active one is pressed, and a click picks another.
+function Chips<T extends string>({ options, value, ariaLabel, disabled, onPick }: { options: { value: T; label: string }[]; value: T; ariaLabel: (label: string) => string; disabled: boolean; onPick: (v: T) => void }) {
+  return (
+    <span role="group" className="inline-flex flex-wrap gap-1">
+      {options.map((o) => (
+        <button key={o.value} type="button" aria-pressed={o.value === value} aria-label={ariaLabel(o.label)} disabled={disabled} onClick={() => o.value !== value && onPick(o.value)} className={chipClass(o.value === value)}>
+          {o.label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+const MOTION_ROLES: { value: MotionRole; label: string }[] = [
+  { value: "starts", label: "Starts" },
+  { value: "holds", label: "Holds" },
+];
+
+function stateText(h: Hierarchy, row: InventoryRow) {
   const e = h.entities[row.entityId];
-  const state = e?.state === null || e === undefined ? "no state" : e.unit ? `${e.state} ${e.unit}` : e.state;
+  return e?.state === null || e === undefined ? "no state" : e.unit ? `${e.state} ${e.unit}` : e.state;
+}
+
+// One capability: a sortable table of its entities.
+function CapabilitySection({
+  h,
+  area,
+  capability,
+  label,
+  rows,
+  locked,
+  run,
+}: {
+  h: Hierarchy;
+  area: AreaNode;
+  capability: Capability;
+  label: string;
+  rows: InventoryRow[];
+  locked: boolean;
+  run: RunEdit;
+}) {
+  const counted = rows.filter((r) => r.counts).length;
+  const columns = useMemo(
+    () => ({
+      counts: (r: InventoryRow) => (r.counts ? 0 : 1),
+      name: (r: InventoryRow) => r.name,
+      state: (r: InventoryRow) => stateText(h, r),
+      type: (r: InventoryRow) => r.flags.map((f) => FLAGS[f].label).join(", "),
+      role: (r: InventoryRow) => (r.capability === "lights" ? r.light : r.capability === "motion" || r.capability === "presence" ? r.role : SWITCHABLE[r.capability] ? r.capability : null),
+    }),
+    [h],
+  );
+  const { rows: sorted, sort, toggle } = useSort(rows, columns, { key: "name", dir: "asc" });
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-sm font-semibold">
+        {label} · {counted} of {rows.length} count{rows.length === 1 ? "s" : ""}
+      </h2>
+      {(capability === "motion" || capability === "presence") && <p className="text-xs text-muted">{ROLE_HINT}</p>}
+      {capability === "fan" && <p className="text-xs text-muted">{FAN_HINT}</p>}
+      {capability === "power" && <p className="text-xs text-muted">{APPLIANCE_HINT}</p>}
+      {capability === "lights" && <EntryLightPicker area={area} rows={rows} />}
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+        <table className="w-full text-[13px]">
+          <thead className="bg-sunken text-left text-xs text-muted">
+            <tr>
+              <SortHeader label="Counts" k="counts" sort={sort} onToggle={toggle} />
+              <SortHeader label="Name" k="name" sort={sort} onToggle={toggle} />
+              <SortHeader label="State" k="state" sort={sort} onToggle={toggle} />
+              <SortHeader label="Type" k="type" sort={sort} onToggle={toggle} />
+              <SortHeader label="Role" k="role" sort={sort} onToggle={toggle} />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => (
+              <CapabilityRow key={r.entityId} h={h} row={r} locked={locked} run={run} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function CapabilityRow({ h, row, locked, run }: { h: Hierarchy; row: InventoryRow; locked: boolean; run: RunEdit }) {
   const pair = SWITCHABLE[row.capability];
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-3 py-2 text-[13px]">
-      <label className="flex shrink-0 cursor-pointer items-center gap-1.5">
+    <tr className="border-t border-line align-middle">
+      <td className="px-3 py-2">
         <input
           type="checkbox"
           aria-label={`Counts: ${row.name}`}
@@ -420,82 +488,77 @@ function CapabilityRow({ h, row, locked, run }: { h: Hierarchy; row: InventoryRo
           onChange={(ev) => void run((s) => setCounts(h, s, row.entityId, ev.target.checked))}
           className="accent-[var(--accent)]"
         />
-        Counts
-      </label>
-      <div className="flex min-w-[10rem] flex-1 flex-col">
+      </td>
+      <td className="min-w-[10rem] px-3 py-2">
         <span className="flex items-center gap-1.5 font-medium">
           {row.name}
           {row.overridden && <EditedDot title="Differs from what Taxis detected" />}
         </span>
         <code className="font-mono text-xs text-muted">{row.entityId}</code>
-      </div>
-      <span className="text-xs text-muted tabular-nums">{state}</span>
-      {row.flags.length > 0 && (
-        <span className="flex flex-wrap gap-1">
-          {row.flags.map((f) => (
-            <span key={f} title={FLAGS[f].hint} className={`rounded-full border px-1.5 py-0.5 text-[11px] ${FLAGS[f].tone}`}>
-              {FLAGS[f].label}
-            </span>
-          ))}
+      </td>
+      <td className="px-3 py-2 text-xs text-muted tabular-nums">{stateText(h, row)}</td>
+      <td className="px-3 py-2">
+        {row.flags.length > 0 && (
+          <span className="flex flex-wrap gap-1">
+            {row.flags.map((f) => (
+              <span key={f} title={FLAGS[f].hint} className={`rounded-full border px-1.5 py-0.5 text-[11px] ${FLAGS[f].tone}`}>
+                {FLAGS[f].label}
+              </span>
+            ))}
+          </span>
+        )}
+      </td>
+      <td className="px-3 py-2">
+        <span className="flex flex-wrap items-center gap-3">
+          {(row.capability === "motion" || row.capability === "presence") && (
+            <Chips options={MOTION_ROLES} value={row.role ?? "starts"} ariaLabel={(l) => `${l}: ${row.name}`} disabled={locked} onPick={(v) => void run((s) => setRole(h, s, row.entityId, v))} />
+          )}
+          {row.capability === "presence" && (
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                aria-label={`Bed sensor: ${row.name}`}
+                checked={row.bed ?? false}
+                disabled={locked}
+                onChange={(ev) => void run((s) => setBed(s, row.entityId, ev.target.checked))}
+                className="accent-[var(--accent)]"
+              />
+              Bed
+            </label>
+          )}
+          {row.capability === "power" && (
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                aria-label={`Appliance: ${row.name}`}
+                checked={row.appliance ?? false}
+                disabled={locked}
+                onChange={(ev) => void run((s) => setAppliance(s, row.entityId, ev.target.checked))}
+                className="accent-[var(--accent)]"
+              />
+              Appliance
+            </label>
+          )}
+          {pair && (
+            <Chips
+              options={pair.map((k) => ({ value: k, label: KIND_LABEL[k] ?? k }))}
+              value={row.capability}
+              ariaLabel={(l) => `${l}: ${row.name}`}
+              disabled={locked}
+              onPick={(v) => void run((s) => setKind(h, s, row.entityId, v))}
+            />
+          )}
+          {row.capability === "lights" && (
+            <Chips
+              options={LIGHT_ROLES.map((l) => ({ value: l, label: cap(l) }))}
+              value={row.light ?? "main"}
+              ariaLabel={(l) => `${l}: ${row.name}`}
+              disabled={locked}
+              onPick={(v) => void run((s) => setLightRole(s, row.entityId, v))}
+            />
+          )}
         </span>
-      )}
-      <span className="flex items-center gap-3">
-        {(row.capability === "motion" || row.capability === "presence") && (
-          <select aria-label={`Role of ${row.name}`} className={selectClass} value={row.role} disabled={locked} onChange={(ev) => void run((s) => setRole(h, s, row.entityId, ev.target.value as MotionRole))}>
-            <option value="starts">Starts</option>
-            <option value="holds">Holds</option>
-          </select>
-        )}
-        {row.capability === "presence" && (
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input
-              type="checkbox"
-              aria-label={`Bed sensor: ${row.name}`}
-              checked={row.bed ?? false}
-              disabled={locked}
-              onChange={(ev) => void run((s) => setBed(s, row.entityId, ev.target.checked))}
-              className="accent-[var(--accent)]"
-            />
-            Bed
-          </label>
-        )}
-        {row.capability === "power" && (
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input
-              type="checkbox"
-              aria-label={`Appliance: ${row.name}`}
-              checked={row.appliance ?? false}
-              disabled={locked}
-              onChange={(ev) => void run((s) => setAppliance(s, row.entityId, ev.target.checked))}
-              className="accent-[var(--accent)]"
-            />
-            Appliance
-          </label>
-        )}
-        {pair && (
-          <select aria-label={`Kind of ${row.name}`} className={selectClass} value={row.capability} disabled={locked} onChange={(ev) => void run((s) => setKind(h, s, row.entityId, ev.target.value as Capability))}>
-            {pair.map((k) => (
-              <option key={k} value={k}>
-                {KIND_LABEL[k]}
-              </option>
-            ))}
-          </select>
-        )}
-        {row.capability === "lights" && (
-          <select aria-label={`Light role of ${row.name}`} className={selectClass} value={row.light} disabled={locked} onChange={(ev) => void run((s) => setLightRole(s, row.entityId, ev.target.value as LightRole))}>
-            {LIGHT_ROLES.map((l) => (
-              <option key={l} value={l}>
-                {cap(l)}
-              </option>
-            ))}
-          </select>
-        )}
-        {row.overridden && (
-          <Button tone="ghost" className="px-2 py-1 text-xs" disabled={locked} aria-label={`Reset ${row.name}`} onClick={() => void run((s) => resetEntity(s, row.entityId))}>
-            Reset
-          </Button>
-        )}
-      </span>
-    </li>
+      </td>
+    </tr>
   );
 }
