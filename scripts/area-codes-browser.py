@@ -250,13 +250,177 @@ class AreaCodesRegression(unittest.TestCase):
         self.fixture["areaCodes"]["living_room"] = "living"
         self.current = copy.deepcopy(self.fixture)
 
-    def coverage_row(self):
+    def coverage_row(self, name="Living room"):
         table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
-        return table.locator("tbody tr").filter(has=self.page.get_by_role("button", name="Living room", exact=True))
+        return table.locator("tbody tr").filter(has=self.page.get_by_role("button", name=name, exact=True))
+
+    def test_helper_filters_blank_not_needed_cells_without_removing_statuses_or_rows(self):
+        self.helper_coverage_fixture()
+        self.open("#parameters/helpers")
+        table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
+        before = table.locator("tbody tr").count()
+        self.assertTrue(self.page.get_by_role("checkbox", name="Hide not needed", exact=True).is_checked())
+        self.assertEqual(self.coverage_row().locator("td").nth(7).inner_text(), "")
+        self.page.get_by_role("checkbox", name="Hide not needed", exact=True).uncheck()
+        self.assertIn("Not needed", self.coverage_row().locator("td").nth(7).inner_text())
+        self.page.get_by_role("checkbox", name="Hide not needed", exact=True).check()
+        self.assertEqual(table.locator("tbody tr").count(), before)
+        self.assertEqual(self.coverage_row().locator("td").nth(7).inner_text(), "")
+        self.assertEqual(self.coverage_row().locator("td").count(), 16)
+        for capability, status in [("Lights", "Present"), ("Motion", "Create"), ("Presence", "Update members"), ("Doors", "Conflict"), ("Windows", "Adopt")]:
+            self.assertIn(status, self.coverage_row().get_by_label("Living room " + capability + " helper details", exact=True).inner_text())
+        self.assertIn("No helper in Taxis", self.coverage_row().locator("td").nth(10).inner_text())
+        self.page.get_by_role("checkbox", name="Hide not needed", exact=True).uncheck()
+        self.assertIn("Not needed", self.coverage_row().locator("td").nth(7).inner_text())
+        self.assertEqual(self.puts, [])
+
+    def test_helper_capability_filter_changes_columns_and_survives_details_switch(self):
+        self.helper_coverage_fixture()
+        self.open("#parameters/helpers")
+        table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
+        picker = self.page.get_by_label("Capability", exact=True)
+        self.assertEqual(picker.locator("option").count(), 15)
+        picker.select_option("window")
+        self.assertEqual(table.locator("thead th").count(), 3)
+        self.assertIn("Windows", table.locator("thead th").nth(2).inner_text())
+        self.assertEqual(self.coverage_row().locator("td").count(), 3)
+        self.assertIn("Adopt", self.coverage_row().locator("td").nth(2).inner_text())
+        self.page.get_by_role("checkbox", name="Hide not needed", exact=True).check()
+        self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).check()
+        self.page.get_by_role("tab", name="Details", exact=True).click()
+        self.page.get_by_role("region", name="Floors and house", exact=True).wait_for()
+        self.page.get_by_role("tab", name="Overview", exact=True).click()
+        self.assertEqual(picker.input_value(), "window")
+        self.assertTrue(self.page.get_by_role("checkbox", name="Hide not needed", exact=True).is_checked())
+        self.assertTrue(self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).is_checked())
+        table.get_by_role("button", name="Area", exact=True).click()
+        self.assertIn("Living room", table.inner_text())
+        picker.select_option("thermostat")
+        self.assertIn("No helper in Taxis", self.coverage_row().locator("td").nth(2).inner_text())
+        picker.select_option("all")
+        self.assertEqual(table.locator("thead th").count(), 16)
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+        self.assertEqual(self.puts, [])
+
+    def test_helper_empty_area_filter_keeps_helpers_disabled_and_unrelated_entities(self):
+        self.helper_coverage_fixture()
+        h = self.body["hierarchy"]
+        base = copy.deepcopy(h["entities"]["light.living_lamp_all"])
+        areas = [area for area in h["areas"].values() if area["id"] != "living_room"]
+        for area, kind in zip(areas[:2], ["helper", "unrelated"]):
+            self.fixture["areaCodes"][area["id"]] = area["id"]
+            entity_id = ("light." + area["id"] + "_lamp_all") if kind == "helper" else ("button." + area["id"] + "_identify")
+            h["entities"][entity_id] = {**copy.deepcopy(base), "entityId": entity_id, "domain": "light" if kind == "helper" else "button", "role": "light" if kind == "helper" else "button", "platform": "group" if kind == "helper" else "demo", "members": [], "areaId": area["id"], "ownAreaId": area["id"], "disabled": kind == "unrelated"}
+            area["entityIds"] = [entity_id]
+        self.current = copy.deepcopy(self.fixture)
+        self.open("#parameters/helpers")
+        self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).check()
+        table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
+        self.assertEqual(table.locator("tbody tr").count(), 3)
+        for area in areas[:2]:
+            self.assertEqual(self.coverage_row(area["name"]).count(), 1)
+        self.assertIn("Present · not required", self.coverage_row(areas[0]["name"]).inner_text())
+        self.page.get_by_role("checkbox", name="Hide not needed", exact=True).check()
+        self.assertIn("Present · not required", self.coverage_row(areas[0]["name"]).inner_text())
+        self.page.get_by_label("Capability", exact=True).select_option("window")
+        self.assertEqual(table.locator("tbody tr").count(), 3)
+        self.assertEqual(self.coverage_row(areas[1]["name"]).locator("td").nth(2).inner_text(), "")
+        self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).uncheck()
+        self.assertEqual(table.locator("tbody tr").count(), len(h["areas"]))
+        self.assertEqual(self.puts, [])
+
+    def test_helper_filters_have_a_recoverable_empty_state(self):
+        self.helper_coverage_fixture()
+        h = self.body["hierarchy"]
+        h["entities"] = {}
+        for area in h["areas"].values():
+            area["entityIds"] = []
+        self.open("#parameters/helpers")
+        self.page.get_by_label("Capability", exact=True).select_option("motion")
+        self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).check()
+        table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
+        self.assertIn("No areas have entities", table.inner_text())
+        self.assertEqual(table.locator("tbody td").get_attribute("colspan"), "3")
+        self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).uncheck()
+        self.assertEqual(table.locator("tbody tr").count(), len(h["areas"]))
+        self.assertEqual(self.puts, [])
+
+    def test_helper_overview_uses_compact_wrapped_cells_and_a_narrow_capability_view(self):
+        self.helper_coverage_fixture()
+        self.open("#parameters/helpers")
+        table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
+        self.assertTrue(self.page.get_by_role("checkbox", name="Hide not needed", exact=True).is_checked())
+        table.get_by_role("columnheader").first.wait_for()
+        self.page.wait_for_function("document.querySelector('table[aria-label=\"Area helper coverage\"]')?.dataset.contentSized === 'true'")
+        widths = [cell.bounding_box()["width"] for cell in self.coverage_row().locator("td").all()]
+        # 192px content + cell padding and the shared resize engine's breathing room.
+        self.assertTrue(all(width <= 232 for width in widths), widths)
+        self.assertTrue(all(content.bounding_box()["width"] <= 192 for content in self.coverage_row().locator("td > div").all()))
+        self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).check()
+        self.coverage_row().get_by_label("Living room Motion helper details", exact=True).click()
+        self.assertTrue(self.coverage_row().get_by_label("Living room Motion helper details", exact=True).locator("..").get_by_role("button", name="Add to changes", exact=True).is_visible())
+        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output.mkdir(parents=True, exist_ok=True)
+        self.page.get_by_role("region", name="Helper coverage", exact=True).screenshot(path=str(output / "helper-overview-filters.png"))
+        self.page.get_by_label("Capability", exact=True).select_option("motion")
+        self.page.wait_for_function("(() => { const t = document.querySelector('table[aria-label=\"Area helper coverage\"]'); return t.getBoundingClientRect().width <= t.parentElement.clientWidth; })()")
+        self.page.get_by_role("region", name="Helper coverage", exact=True).screenshot(path=str(output / "helper-overview-motion.png"))
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+        self.assertEqual(self.puts, [])
+
+    def test_helper_overview_adds_missing_helper_to_changes_without_applying(self):
+        self.helper_coverage_fixture()
+        queued, posted = [], []
+        def changes(route):
+            if route.request.method == "POST":
+                body = route.request.post_data_json
+                posted.append(body)
+                queued.append({"id": 901, "kind": body["kind"], "op": body["op"], "targetId": body["fields"]["entity_id"], "scope": "group", "before": None, "after": body["fields"], "createdAt": "2026-10-28T00:00:00Z"})
+            route.fulfill(json={"ok": True, "changes": queued, "version": str(len(queued))})
+        self.page.route("**/api/changes", changes)
+        self.open("#parameters/helpers")
+        row = self.coverage_row()
+        for capability in ["Lights", "Doors"]:
+            row.get_by_label("Living room " + capability + " helper details", exact=True).click()
+            self.assertEqual(row.get_by_label("Living room " + capability + " helper details", exact=True).locator("..").get_by_role("button", name="Add to changes", exact=True).count(), 0)
+        row.get_by_label("Living room Motion helper details", exact=True).click()
+        row.get_by_label("Living room Motion helper details", exact=True).locator("..").get_by_role("button", name="Add to changes", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="Added to the list of changes").wait_for()
+        self.assertEqual(posted, [{"kind": "helper", "op": "create", "fields": {"helper": "group", "group_type": "binary_sensor", "name": "Living room motions", "entity_id": "binary_sensor.living_motion_all", "entities": ["binary_sensor.living_pir"], "area_id": "living_room"}}])
+        motion = self.coverage_row().get_by_label("Living room Motion helper details", exact=True)
+        self.assertIn("In changes", motion.inner_text())
+        self.assertNotIn("Present", motion.inner_text())
+        self.assertEqual(motion.locator("..").get_by_role("button", name="Add to changes", exact=True).count(), 0)
+        self.assertNotIn("binary_sensor.living_motion_all", self.body["hierarchy"]["entities"])
+        self.assertEqual(self.puts, [])
+
+    def test_helper_overview_failed_queue_keeps_create_action_available(self):
+        self.helper_coverage_fixture()
+        posted = []
+        def changes(route):
+            if route.request.method == "POST":
+                posted.append(route.request.post_data_json)
+                route.fulfill(status=409, json={"ok": False, "error": "Fixture queue conflict"})
+            else:
+                route.fulfill(json={"ok": True, "changes": [], "version": "fixture"})
+        self.page.route("**/api/changes", changes)
+        self.open("#parameters/helpers")
+        summary = self.coverage_row().get_by_label("Living room Motion helper details", exact=True)
+        summary.click()
+        button = summary.locator("..").get_by_role("button", name="Add to changes", exact=True)
+        button.click()
+        self.page.get_by_role("status").filter(has_text="Fixture queue conflict").wait_for()
+        self.assertEqual(len(posted), 1)
+        self.assertIn("Create", summary.inner_text())
+        self.assertNotIn("In changes", summary.inner_text())
+        self.assertTrue(button.is_enabled())
+        self.assertEqual(self.puts, [])
 
     def test_helper_overview_shows_all_areas_and_distinguishes_actual_plan_states(self):
         self.helper_coverage_fixture()
         self.open("#parameters/helpers")
+        self.page.get_by_role("checkbox", name="Hide not needed", exact=True).uncheck()
         table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
         self.assertEqual(table.locator("tbody tr").count(), len(self.body["hierarchy"]["areas"]))
         row = self.coverage_row()

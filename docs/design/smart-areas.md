@@ -1222,3 +1222,13 @@ membership, disabled state and unavailability are identified. Expanding a cell
 shows the existing detailed status and sources. The Area column stays visible
 during horizontal scrolling. Details retains the proposal tables and floor/house
 light-group controls.
+
+Overview has independent Hide not needed, Capability and Hide empty areas
+filters. Hide not needed starts on; hidden cells remain empty in their existing
+rows. Helper IDs and expanded details wrap within compact cells. Capability
+selects one column or all columns; empty-area filtering checks actual area
+entities, including helpers, unrelated and disabled entities, rather than counted
+sources. Filters survive switching between Overview and Details during the visit.
+Expanded actionable cells offer Add to changes through the same helper planner
+as Details. This queues the proposal for review; only Apply writes it to Home
+Assistant. Queued, conflicting and already satisfied rows have no duplicate action.

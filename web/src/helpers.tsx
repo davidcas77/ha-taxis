@@ -1,13 +1,13 @@
 import { useMemo, useState, type ReactNode } from "react";
 
 import { HELPERS, HELPER_SPEC, canonicalId, helperSuffixes, hasPendingChange, helperChangeInputs, helperExclusions, helperKeyFor, planHelpers, type HelperKey, type HelperRow, type HelperStatus } from "../../shared/helpers.ts";
-import { CAPABILITIES, inventoryMatrix, type MatrixRow } from "../../shared/inventory.ts";
+import { CAPABILITIES, inventoryMatrix, type Capability, type MatrixRow } from "../../shared/inventory.ts";
 import { areaCodes } from "../../shared/naming.ts";
 import type { AreaNode, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { ColumnHeader, SortHeader, useSort } from "./table.tsx";
 import { HelpDisclosure, HelpTopic } from "./help.tsx";
-import { Button } from "./ui.tsx";
+import { Button, inputClass } from "./ui.tsx";
 
 // Canonical helpers: what Taxis proposes per area, from the capabilities. One
 // table on the Parameters page (every area), and under each capability of an
@@ -290,8 +290,11 @@ function matches(l: Line, f: (typeof FILTERS)[number]["key"]): boolean {
 }
 
 // The Parameters page: every area, then the floors and the house.
+type OverviewFilters = { hideNotNeeded: boolean; capability: Capability | "all"; hideEmpty: boolean };
+
 export function HelpersTab({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
   const [view, setView] = useState<"overview" | "details">("overview");
+  const [filters, setFilters] = useState<OverviewFilters>({ hideNotNeeded: true, capability: "all", hideEmpty: false });
   const { ready, lines } = usePlan(h);
   const areas = useMemo(() => lines.filter((l) => l.row.level === "area"), [lines]);
   const upper = useMemo(() => lines.filter((l) => l.row.level !== "area"), [lines]);
@@ -305,7 +308,7 @@ export function HelpersTab({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
         <p className="text-[13px] text-muted">Loading the settings…</p>
       ) : (
         <div id="helper-view-panel" role="tabpanel" aria-labelledby={`helper-view-${view}`} className="flex min-w-0 flex-col gap-6">
-          {view === "overview" ? <HelpersOverview h={h} lines={areas} go={go} /> : <>
+          {view === "overview" ? <HelpersOverview h={h} lines={areas} go={go} filters={filters} onFiltersChange={setFilters} /> : <>
           {areas.length === 0 ? <p className="text-[13px] text-muted">No area has anything to roll up yet.</p> : <HelperTable h={h} lines={areas} showArea go={go} />}
           <section className="flex flex-col gap-2" aria-label="Floors and house">
             <h2 className="text-sm font-semibold">Floors and house</h2>
@@ -319,9 +322,13 @@ export function HelpersTab({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
   );
 }
 
-function HelpersOverview({ h, lines, go }: { h: Hierarchy; lines: Line[]; go: (route: Route) => void }) {
-  const { inventory, naming } = useTaxis();
+function HelpersOverview({ h, lines, go, filters, onFiltersChange }: { h: Hierarchy; lines: Line[]; go: (route: Route) => void; filters: OverviewFilters; onFiltersChange: (filters: OverviewFilters) => void }) {
+  const { inventory, naming, propose, busy } = useTaxis();
   const all = useMemo(() => inventoryMatrix(h, inventory, helperExclusions(h, naming)).sort((a, b) => a.name.localeCompare(b.name)), [h, inventory, naming]);
+  // Empty means no actual entities, independent of the selected capability,
+  // counting choices and canonical-helper exclusions used by the planner.
+  const shown = useMemo(() => filters.hideEmpty ? all.filter(area => h.areas[area.areaId].entityIds.some(id => Boolean(h.entities[id]))) : all, [all, h, filters.hideEmpty]);
+  const capabilities = CAPABILITIES.filter(capability => filters.capability === "all" || capability.key === filters.capability);
   const codes = useMemo(() => areaCodes(h, naming), [h, naming]);
   const suffixes = useMemo(() => helperSuffixes(naming), [naming]);
   const byArea = useMemo(() => {
@@ -337,26 +344,37 @@ function HelpersOverview({ h, lines, go }: { h: Hierarchy; lines: Line[]; go: (r
     floor: (area: MatrixRow) => area.floorId ? h.floors.findIndex(floor => floor.id === area.floorId) : null,
     area: (area: MatrixRow) => area.name,
   }), [h]);
-  const { rows, sort, toggle } = useSort(all, columns, { key: "floor", dir: "asc" });
+  const { rows, sort, toggle } = useSort(shown, columns, { key: "floor", dir: "asc" });
   return <section aria-label="Helper coverage" className="flex min-w-0 flex-col gap-3">
-    <p className="text-xs text-muted">Every area and capability, using the helper names from Settings. Present, Create, Adopt, Update members, Conflict and In changes show different states. Expand a cell for details. Speakers and TVs share one media helper.</p>
+    <p className="text-xs text-muted">Each cell shows the configured helper ID and its status. Create means the helper is missing. Expand a cell for sources and Add to changes; review and Apply creates or updates it in Home Assistant. Speakers and TVs share one media helper.</p>
+    <div role="group" aria-label="Helper overview filters" className="flex flex-wrap items-center gap-x-5 gap-y-3 text-[13px]">
+      <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="accent-[var(--accent)]" checked={filters.hideNotNeeded} onChange={event => onFiltersChange({ ...filters, hideNotNeeded: event.target.checked })} />Hide not needed</label>
+      <div className="flex min-w-0 items-center gap-2"><label htmlFor="helper-capability">Capability</label>
+        <select id="helper-capability" className={inputClass} value={filters.capability} onChange={event => onFiltersChange({ ...filters, capability: event.target.value as OverviewFilters["capability"] })}>
+          <option value="all">All capabilities</option>
+          {CAPABILITIES.map(capability => <option key={capability.key} value={capability.key}>{capability.label}</option>)}
+        </select>
+      </div>
+      <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="accent-[var(--accent)]" checked={filters.hideEmpty} onChange={event => onFiltersChange({ ...filters, hideEmpty: event.target.checked })} />Hide empty areas</label>
+    </div>
     <div className="overflow-x-auto rounded-lg border border-line bg-surface">
       <table aria-label="Area helper coverage" className="w-full text-[13px]">
         <thead className="bg-sunken text-left text-xs text-muted"><tr>
           <SortHeader label="Floor" k="floor" sort={sort} onToggle={toggle} />
           <SortHeader label="Area" k="area" sort={sort} onToggle={toggle} className="sticky left-0 z-10 bg-sunken px-3 py-2" />
-          {CAPABILITIES.map(capability => <ColumnHeader key={capability.key}>{capability.label}</ColumnHeader>)}
+          {capabilities.map(capability => <ColumnHeader key={capability.key}>{capability.label}</ColumnHeader>)}
         </tr></thead>
         <tbody>{rows.map(area => <tr key={area.areaId} className="border-t border-line align-top">
-          <td className="px-3 py-2 text-xs text-muted">{area.floorName ?? "No floor"}</td>
-          <td className="sticky left-0 z-10 bg-surface px-3 py-2"><button type="button" className="text-left text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: area.areaId }, tab: "capabilities" })}>{area.name}</button></td>
-          {CAPABILITIES.map(capability => {
+          <td className="px-3 py-2 text-xs text-muted"><span className="block max-w-24 [overflow-wrap:anywhere]">{area.floorName ?? "No floor"}</span></td>
+          <td className="sticky left-0 z-10 bg-surface px-3 py-2"><button type="button" className="max-w-48 text-left text-accent [overflow-wrap:anywhere] hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: area.areaId }, tab: "capabilities" })}>{area.name}</button></td>
+          {capabilities.map(capability => {
             const key = helperKeyFor(capability.key);
             if (!key) return <td key={capability.key} className="px-3 py-2 text-xs text-muted">No helper in Taxis</td>;
             const spec = HELPER_SPEC[key];
             const id = canonicalId(spec.domain, codes[area.areaId].code, suffixes[key]);
             const line = byArea.get(area.areaId)?.get(key);
             const exists = h.entities[id];
+            if (filters.hideNotNeeded && !line && !exists) return <td key={capability.key} className="px-3 py-2" />;
             let label = "Not needed";
             let tone = "text-muted";
             if (line) {
@@ -370,10 +388,12 @@ function HelpersOverview({ h, lines, go }: { h: Hierarchy; lines: Line[]; go: (r
               if (exists.platform === spec.helper && (exists.disabled || exists.state === "unavailable")) { label += exists.disabled ? " · disabled" : " · unavailable"; tone = "text-warn"; }
             }
             return <td key={capability.key} className="px-3 py-2 text-xs">
-              {line ? <details><summary aria-label={`${area.name} ${capability.label} helper details`} className="cursor-pointer"><code className="break-all">{id}</code><span className={`mt-1 block font-medium ${tone}`}>{label}</span></summary><div className="mt-2"><StatusCell h={h} line={line} go={go} /><Sources h={h} row={line.row} /></div></details> : <><code className="block break-all">{id}</code><span className={`mt-1 block ${tone}`}>{label}</span>{!exists && <span className="mt-1 block text-muted">{key === "media" ? "Needs at least two counted media players." : "No counted sources."}</span>}</>}
+              <div className="max-w-48 [overflow-wrap:anywhere]">
+              {line ? <details><summary aria-label={`${area.name} ${capability.label} helper details`} className="cursor-pointer"><code className="break-all">{id}</code><span className={`mt-1 block font-medium ${tone}`}>{label}</span></summary><div className="mt-2 flex flex-col items-start gap-2"><StatusCell h={h} line={line} go={go} /><Sources h={h} row={line.row} />{line.selectable && <Button disabled={busy} title="Queue this helper for review. Home Assistant changes only when you Apply." onClick={() => void propose(helperChangeInputs(line.row))}>Add to changes</Button>}</div></details> : <><code className="block break-all">{id}</code><span className={`mt-1 block ${tone}`}>{label}</span>{!exists && <span className="mt-1 block text-muted">{key === "media" ? "Needs at least two counted media players." : "No counted sources."}</span>}</>}
+              </div>
             </td>;
           })}
-        </tr>)}</tbody>
+        </tr>)}{rows.length === 0 && <tr><td colSpan={2 + capabilities.length} className="px-3 py-4 text-muted">{all.length === 0 ? "Home Assistant has no areas yet." : "No areas have entities. Clear Hide empty areas to show all areas."}</td></tr>}</tbody>
       </table>
     </div>
   </section>;
