@@ -195,6 +195,53 @@ describe("placing a light that is in no area", () => {
   });
 });
 
+describe("showing an entity as another device class", () => {
+  const show = (targetId: string, device_class: string | null): ChangeInput => ({ kind: "entity", op: "update", targetId, fields: { device_class } });
+
+  it("accepts a class of the entity's own domain, or null to go back to the default", () => {
+    expect(validateInput(show("binary_sensor.study_skylight", "window"))).toBeNull();
+    expect(validateInput(show("binary_sensor.study_skylight", null))).toBeNull();
+    expect(validateInput(show("sensor.study_climate_temperature", "humidity"))).toBeNull();
+    expect(validateInput(show("cover.shutter", "shutter"))).toBeNull();
+  });
+
+  it("refuses a class the domain doesn't have, a domain with none, and anything that isn't a class", () => {
+    expect(validateInput(show("binary_sensor.study_skylight", "temperature"))).toMatch(/isn't a device class for a binary_sensor/);
+    expect(validateInput(show("light.desk", "window"))).toMatch(/no device class to choose/);
+    expect(validateInput(show("binary_sensor.study_skylight", "Window"))).toMatch(/wouldn't accept/);
+    expect(validateInput(show("binary_sensor.study_skylight", "window; drop"))).toMatch(/wouldn't accept/);
+    expect(validateInput({ kind: "entity", op: "update", targetId: "binary_sensor.study_skylight", fields: { device_class: 3 as never } })).toMatch(/wouldn't accept/);
+    // Only an entity has one: a device or an area can't be shown as anything.
+    expect(validateInput({ kind: "device", op: "update", targetId: "plug", fields: { device_class: "outlet" } })).toMatch(/can't be changed/);
+  });
+
+  it("previews the new role at once, and Apply writes only the class and reads it back", async () => {
+    const t = setup();
+    expect(t.live().entities["binary_sensor.study_skylight"]).toMatchObject({ role: "opening", deviceClass: "opening", deviceClassOverride: null });
+    expect(t.add(show("binary_sensor.study_skylight", "motion"))).toBeNull();
+    expect(t.store.list()[0]).toMatchObject({ before: { device_class: null }, after: { device_class: "motion" } });
+    const preview = buildHierarchy(overlayChanges(structuredClone(t.ha) as RawRegistry, t.store.list()), "now");
+    expect(preview.entities["binary_sensor.study_skylight"]).toMatchObject({ role: "motion", deviceClass: "motion", deviceClassOverride: "motion" });
+    // The live read is untouched until Apply.
+    expect(t.live().entities["binary_sensor.study_skylight"].deviceClass).toBe("opening");
+
+    const { results } = await t.apply();
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(t.writes).toEqual([{ type: "config/entity_registry/update", payload: { entity_id: "binary_sensor.study_skylight", device_class: "motion" } }]);
+    expect(t.live().entities["binary_sensor.study_skylight"]).toMatchObject({ role: "motion", deviceClassOverride: "motion" });
+  });
+
+  it("refuses to apply over a class that changed in Home Assistant meanwhile", async () => {
+    const t = setup();
+    t.add(show("binary_sensor.study_skylight", "motion"));
+    t.ha.entities.find((e) => e.entity_id === "binary_sensor.study_skylight")!.device_class = "door";
+    const { results } = await t.apply();
+    expect(results[0]).toMatchObject({ ok: false });
+    expect(results[0].message).toMatch(/device class was changed in Home Assistant/);
+    expect(t.writes).toEqual([]);
+  });
+});
+
 describe("helper changes", () => {
   const group = (fields: Record<string, unknown> = {}): ChangeInput => ({
     kind: "helper",

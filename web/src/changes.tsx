@@ -123,6 +123,8 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
     case "temperature_entity_id":
     case "humidity_entity_id":
       return { label: key === "temperature_entity_id" ? "Temperature sensor" : "Humidity sensor", from: b ? mono(b) : "none", to: a ? mono(a) : "none" };
+    case "device_class":
+      return { label: "Show as", from: plain(b, "default"), to: plain(a, "default") };
     case "hidden_by":
       return { label: "Hidden", from: b ? "yes" : "no", to: a ? "yes" : "no" };
     case "disabled_by":

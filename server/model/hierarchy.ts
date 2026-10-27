@@ -55,6 +55,9 @@ export type RawEntity = {
   labels?: string[];
   icon?: string | null;
   categories?: Record<string, string>;
+  // The class the user chose, and the one the integration gave it.
+  device_class?: string | null;
+  original_device_class?: string | null;
 };
 export type RawLabel = { label_id: string; name: string; color?: string | null; icon?: string | null; description?: string | null };
 export type RawCategory = { category_id: string; name: string; icon?: string | null };
@@ -171,6 +174,7 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
       domain,
       role: entityRole(domain, deviceClass),
       deviceClass,
+      deviceClassOverride: text(reg?.device_class),
       state: st ? String(st.state) : null,
       unit: text(st?.attributes?.unit_of_measurement),
       icon: text(reg?.icon),

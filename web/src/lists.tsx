@@ -2,16 +2,19 @@ import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ROLE_ORDER } from "../../shared/roles.ts";
-import type { Hierarchy } from "../../shared/types.ts";
+import type { EntityItem, Hierarchy } from "../../shared/types.ts";
 import { DeviceEditor, EntityEditor } from "./editors.tsx";
 import { BulkBar, ROLE_ICONS, ROLE_LABEL } from "./spaces.tsx";
 import { useTaxis } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
+import { useStoredFlag } from "./storage.ts";
+import { GroupToggle, GroupedRows, SortHeader, useSort } from "./table.tsx";
 import { EditedDot, LabelChip, inputClass } from "./ui.tsx";
 
 // Every device, and every entity, in one filterable list.
 
 const LIMIT = 400;
+
+const roleOf = (e: EntityItem) => e.role;
 
 function AreaFilter({ h, value, onChange }: { h: Hierarchy; value: string; onChange: (v: string) => void }) {
   return (
@@ -45,6 +48,7 @@ export function EntitiesPage({ h }: { h: Hierarchy }) {
   const [extra, setExtra] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [grouped, setGrouped] = useStoredFlag("taxis:group-by-type:entities");
   const q = query.trim().toLowerCase();
   const rows = useMemo(
     () =>
@@ -80,6 +84,33 @@ export function EntitiesPage({ h }: { h: Hierarchy }) {
       return n;
     });
 
+  const renderRow = (e: EntityItem) => {
+    const Icon = ROLE_ICONS[e.role];
+    return (
+      <tr key={e.entityId} className="border-t border-line align-top hover:bg-sunken">
+        <td className="px-3 py-1.5">{e.inRegistry && <input type="checkbox" aria-label={`Select ${e.name}`} checked={picked.has(e.entityId)} onChange={() => toggle(e.entityId)} />}</td>
+        <td className="px-3 py-1.5">
+          <button type="button" className="flex items-center gap-1.5 text-left hover:text-accent" onClick={() => setEditing(e.entityId)}>
+            {e.name}
+            {edited.has(`entity:${e.entityId}`) && <EditedDot />}
+          </button>
+          <code className="font-mono text-[11px] text-muted">{e.entityId}</code>
+        </td>
+        <td className="px-3 py-1.5 text-muted">{e.areaId ? h.areas[e.areaId]?.name : "–"}</td>
+        <td className="px-3 py-1.5 text-muted">
+          <span className="inline-flex items-center gap-1">
+            <Icon className="size-3.5" aria-hidden />
+            {ROLE_LABEL[e.role]}
+          </span>
+        </td>
+        <td className="px-3 py-1.5">
+          <span className="flex flex-wrap gap-1">{e.labels.map((l) => h.labels[l] && <LabelChip key={l} label={h.labels[l]} />)}</span>
+        </td>
+        <td className="max-w-[10rem] truncate px-3 py-1.5 tabular-nums text-muted">{e.state === null ? "–" : e.unit ? `${e.state} ${e.unit}` : e.state}</td>
+      </tr>
+    );
+  };
+
   return (
     <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
       <div className="flex flex-col gap-4">
@@ -107,6 +138,7 @@ export function EntitiesPage({ h }: { h: Hierarchy }) {
           <label className="flex items-center gap-1.5 text-xs text-muted">
             <input type="checkbox" checked={extra} onChange={(e) => setExtra(e.target.checked)} /> Include disabled, hidden and diagnostic
           </label>
+          <GroupToggle on={grouped} onChange={setGrouped} />
         </div>
         {(() => {
           // Only what the filters show is acted on.
@@ -132,32 +164,7 @@ export function EntitiesPage({ h }: { h: Hierarchy }) {
               </tr>
             </thead>
             <tbody>
-              {shown.map((e) => {
-                const Icon = ROLE_ICONS[e.role];
-                return (
-                  <tr key={e.entityId} className="border-t border-line align-top hover:bg-sunken">
-                    <td className="px-3 py-1.5">{e.inRegistry && <input type="checkbox" aria-label={`Select ${e.name}`} checked={picked.has(e.entityId)} onChange={() => toggle(e.entityId)} />}</td>
-                    <td className="px-3 py-1.5">
-                      <button type="button" className="flex items-center gap-1.5 text-left hover:text-accent" onClick={() => setEditing(e.entityId)}>
-                        {e.name}
-                        {edited.has(`entity:${e.entityId}`) && <EditedDot />}
-                      </button>
-                      <code className="font-mono text-[11px] text-muted">{e.entityId}</code>
-                    </td>
-                    <td className="px-3 py-1.5 text-muted">{e.areaId ? h.areas[e.areaId]?.name : "–"}</td>
-                    <td className="px-3 py-1.5 text-muted">
-                      <span className="inline-flex items-center gap-1">
-                        <Icon className="size-3.5" aria-hidden />
-                        {ROLE_LABEL[e.role]}
-                      </span>
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <span className="flex flex-wrap gap-1">{e.labels.map((l) => h.labels[l] && <LabelChip key={l} label={h.labels[l]} />)}</span>
-                    </td>
-                    <td className="max-w-[10rem] truncate px-3 py-1.5 tabular-nums text-muted">{e.state === null ? "–" : e.unit ? `${e.state} ${e.unit}` : e.state}</td>
-                  </tr>
-                );
-              })}
+              <GroupedRows rows={shown} grouped={grouped} roleOf={roleOf} colSpan={6} row={renderRow} />
             </tbody>
           </table>
         </div>

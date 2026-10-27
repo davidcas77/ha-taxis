@@ -1,5 +1,6 @@
 import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, BLUEPRINT_PATH_RE, blueprintByPath, blueprintForRecipe, checkBlueprintInput, isRecipeKey } from "./blueprints.ts";
 import { HOUSE_HELPER_IDS } from "./climate.ts";
+import { deviceClassError } from "./device-classes.ts";
 import { checkPeriods } from "./periods.ts";
 import { CATEGORY_SCOPES, type CategoryScope, type Change, type ChangeInput, type ChangeKind, type Hierarchy } from "./types.ts";
 
@@ -41,10 +42,13 @@ const categoryMap: Check = (v) =>
   typeof v === "object" && v !== null && !Array.isArray(v) &&
   Object.entries(v).every(([k, c]) => (CATEGORY_SCOPES as readonly string[]).includes(k) && idOrNull(c));
 
+// The class itself is checked against the entity's domain in validateInput.
+const deviceClassField: Check = (v) => v === null || (typeof v === "string" && /^[a-z0-9_]{1,40}$/.test(v));
+
 // Every field each kind may change, named as Home Assistant names it. Anything
 // else is refused before it is stored, let alone sent.
 export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
-  entity: { new_entity_id: entityIdCheck, name: strOrNull(), icon, area_id: idOrNull, labels: ids, categories: categoryMap, hidden_by: userOrNull, disabled_by: userOrNull },
+  entity: { new_entity_id: entityIdCheck, name: strOrNull(), icon, area_id: idOrNull, labels: ids, categories: categoryMap, hidden_by: userOrNull, disabled_by: userOrNull, device_class: deviceClassField },
   device: { name_by_user: strOrNull(), area_id: idOrNull, labels: ids, disabled_by: userOrNull },
   area: { name: str(), floor_id: idOrNull, icon, labels: ids, temperature_entity_id: entityIdOrNull, humidity_entity_id: entityIdOrNull },
   floor: { name: str(), level, icon },
@@ -118,6 +122,10 @@ export function validateInput(input: ChangeInput): string | null {
   for (const [key, value] of Object.entries(fields)) {
     if (!(key in allowed)) return `"${key}" can't be changed on ${an(input.kind)}.`;
     if (!allowed[key](value)) return `"${key}" has a value Home Assistant wouldn't accept.`;
+  }
+  if (input.kind === "entity" && "device_class" in fields) {
+    const bad = deviceClassError(input.targetId ?? "", fields.device_class);
+    if (bad) return bad;
   }
   if (input.op === "create" && !keyed && !str()(fields.name)) return `A new ${input.kind} needs a name.`;
   if (input.op === "update" && Object.keys(fields).length === 0) return "Nothing to change.";
@@ -236,6 +244,7 @@ export function currentValues(h: Hierarchy, kind: ChangeKind, targetId: string, 
         categories: e.categories,
         hidden_by: e.hiddenBy,
         disabled_by: e.disabledBy,
+        device_class: e.deviceClassOverride,
       };
     }
     case "device": {

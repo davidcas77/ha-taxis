@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import {
   AREA_TYPES,
@@ -27,8 +27,8 @@ import {
 } from "../../shared/inventory.ts";
 import { entryLights, setParameter } from "../../shared/parameters.ts";
 import type { AreaNode, EntityItem, Hierarchy } from "../../shared/types.ts";
-import { helperExclusions } from "../../shared/helpers.ts";
-import { AreaHelpersSection } from "./helpers.tsx";
+import { helperExclusions, helperKeyFor, type HelperKey } from "../../shared/helpers.ts";
+import { CombinedHelperRow, useAreaHelperLines } from "./helpers.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
 import { AreaSelect, Button, EditedDot } from "./ui.tsx";
@@ -298,6 +298,9 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
   const locked = !inventoryLoaded || inventorySaving;
   const inv = useMemo(() => areaInventory(h, inventory, area.id, helperExclusions(h, naming)(area.id)), [h, inventory, naming, area.id]);
   const choice = areaChoice(inventory, area.id);
+  // The combined entity of each capability, planned from the counts above, so
+  // it follows a change to Counts at once.
+  const helperLines = useAreaHelperLines(h, area.id);
 
   const run = async (edit: (s: InventorySettings) => InventorySettings) => {
     setError(null);
@@ -309,6 +312,12 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
 
   const present = CAPABILITIES.filter((c) => inv[c.key].length > 0);
   const absent = CAPABILITIES.filter((c) => inv[c.key].length === 0);
+  // Speakers and TVs share one media group; it sits under the first of them the area has.
+  const combinedUnder = (c: Capability): HelperKey | null => {
+    const key = helperKeyFor(c);
+    return key === "media" && present.find((p) => helperKeyFor(p.key) === "media")?.key !== c ? null : key;
+  };
+  const countedFor = (key: HelperKey) => CAPABILITIES.filter((c) => helperKeyFor(c.key) === key).reduce((n, c) => n + inv[c.key].filter((r) => r.counts).length, 0);
 
   return (
     <div className="flex flex-col gap-5">
@@ -337,13 +346,18 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
         </p>
       )}
 
-      {present.map((c) => (
-        <CapabilitySection key={c.key} h={h} area={area} capability={c.key} label={c.label} rows={inv[c.key]} locked={locked} run={run} />
-      ))}
+      {present.map((c) => {
+        const key = combinedUnder(c.key);
+        return (
+          <CapabilitySection key={c.key} h={h} area={area} capability={c.key} label={c.label} rows={inv[c.key]} locked={locked} run={run}>
+            {key && helperLines.ready && (
+              <CombinedHelperRow h={h} area={area} helperKey={key} line={helperLines.lines.find((l) => l.row.key === key)} counted={countedFor(key)} go={go} />
+            )}
+          </CapabilitySection>
+        );
+      })}
 
       <p className="text-[13px] text-muted">{absent.length === 0 ? "This area has every capability." : `Not in this area: ${absent.map((c) => c.label).join(", ")}.`}</p>
-
-      <AreaHelpersSection h={h} areaId={area.id} go={go} />
     </div>
   );
 }
@@ -423,6 +437,7 @@ function CapabilitySection({
   rows,
   locked,
   run,
+  children,
 }: {
   h: Hierarchy;
   area: AreaNode;
@@ -431,6 +446,8 @@ function CapabilitySection({
   rows: InventoryRow[];
   locked: boolean;
   run: RunEdit;
+  // Under the table: the capability's combined entity.
+  children?: ReactNode;
 }) {
   const counted = rows.filter((r) => r.counts).length;
   const columns = useMemo(
@@ -471,6 +488,7 @@ function CapabilitySection({
           </tbody>
         </table>
       </div>
+      {children}
     </section>
   );
 }

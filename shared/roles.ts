@@ -99,3 +99,29 @@ export function categoryScopeFor(domain: string, platform: string): CategoryScop
   if (HELPER_DOMAINS.has(domain) || HELPER_PLATFORMS.has(platform)) return "helpers";
   return null;
 }
+
+// Rows sectioned by role, in the order of ROLE_ORDER. A section is left out
+// when it has no rows; rows keep the order they came in, so a sorted list stays
+// sorted inside each section. A role not in ROLE_ORDER goes under "other".
+export type RoleSection<T> = { role: EntityRole; label: string; rows: T[] };
+
+export function sectionsByRole<T>(rows: readonly T[], roleOf: (row: T) => EntityRole): RoleSection<T>[] {
+  const known = new Set<EntityRole>(ROLE_ORDER.map((r) => r.role));
+  const by = new Map<EntityRole, T[]>();
+  for (const row of rows) {
+    const r = roleOf(row);
+    const role = known.has(r) ? r : "other";
+    const list = by.get(role);
+    if (list) list.push(row);
+    else by.set(role, [row]);
+  }
+  return ROLE_ORDER.filter((r) => by.has(r.role)).map((r) => ({ ...r, rows: by.get(r.role)! }));
+}
+
+// The kinds of entity there are, in display order, with how many of each (for
+// the chips above an area's entities).
+export function roleCounts(roles: readonly EntityRole[]): { role: EntityRole; label: string; count: number }[] {
+  const n = new Map<EntityRole, number>();
+  for (const r of roles) n.set(r, (n.get(r) ?? 0) + 1);
+  return ROLE_ORDER.filter((r) => n.has(r.role)).map((r) => ({ ...r, count: n.get(r.role)! }));
+}

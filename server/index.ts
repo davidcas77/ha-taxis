@@ -18,6 +18,7 @@ import type {
   Hierarchy,
   HierarchyResponse,
   InventoryResponse,
+  NamingIgnoresResponse,
   NamingResponse,
   ParametersResponse,
   ReferencesResponse,
@@ -33,7 +34,7 @@ import { changeStore } from "./changes/store.ts";
 import { aiLedger } from "./ai/ledger.ts";
 import { aiRoutes } from "./ai/routes.ts";
 import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
-import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateParameters } from "./settings.ts";
+import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateNamingIgnores, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
@@ -254,6 +255,18 @@ app.put("/api/settings/groups", bodyLimit({ maxSize: 64 * 1024, onError: (c) => 
   settings.saveGroups(value);
   log.info("Saved groups");
   return c.json<GroupsResponse>({ ok: true, groups: value });
+});
+
+// The naming suggestions the user ignored. Taxis only; Home Assistant doesn't
+// know about them.
+app.get("/api/settings/naming-ignores", (c) => c.json<NamingIgnoresResponse>({ ok: true, ignores: settings.namingIgnores() }));
+
+app.put("/api/settings/naming-ignores", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json<NamingIgnoresResponse>({ ok: false, error: "The ignored suggestions are too large." }, 413) }), async (c) => {
+  const checked = validateNamingIgnores(await c.req.json().catch(() => null));
+  if (!checked.ok) return c.json<NamingIgnoresResponse>({ ok: false, error: checked.error }, 400);
+  settings.saveNamingIgnores(checked.value);
+  log.info("Saved ignored naming suggestions");
+  return c.json<NamingIgnoresResponse>({ ok: true, ignores: checked.value });
 });
 
 // The capability inventory: what each area has, and the user's choices on top

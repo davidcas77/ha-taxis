@@ -1,6 +1,6 @@
 import { ENTITY_ID_RE } from "./changes.ts";
 import { areaCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
-import { areaInventory, type AreaInventory, type InventorySettings } from "./inventory.ts";
+import { areaInventory, type AreaInventory, type Capability, type InventorySettings } from "./inventory.ts";
 import type { AreaNode, Change, ChangeInput, EntityItem, Hierarchy } from "./types.ts";
 
 // Canonical helpers: for each area, one entity per capability that rolls the
@@ -49,6 +49,13 @@ export const HELPERS: readonly HelperSpec[] = [
 export const HELPER_SPEC = Object.fromEntries(HELPERS.map((s) => [s.key, s])) as Record<HelperKey, HelperSpec>;
 
 export const isHelperKey = (k: string): k is HelperKey => Object.hasOwn(HELPER_SPEC, k);
+
+// The helper that rolls up a capability: the media group gathers speakers and
+// TVs; thermostats, covers, fans and power have none.
+export function helperKeyFor(capability: Capability): HelperKey | null {
+  if (capability === "speaker" || capability === "tv") return "media";
+  return isHelperKey(capability) ? capability : null;
+}
 
 // ---------------------------------------------------------------------------
 // The suffix of each canonical id (a naming setting).
@@ -380,6 +387,10 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
   if (house) rows.push(house);
   return rows;
 }
+
+// The row an area has for a helper, or undefined when the area doesn't get one
+// (nothing counted for it, or too few players for a media group).
+export const areaHelperRow = (rows: readonly HelperRow[], areaId: string, key: HelperKey): HelperRow | undefined => rows.find((r) => r.level === "area" && r.areaId === areaId && r.key === key);
 
 // ---------------------------------------------------------------------------
 // Rows and the change list.

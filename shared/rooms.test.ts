@@ -11,6 +11,7 @@ function entity(entityId: string, role: EntityItem["role"], state: string | null
     domain: entityId.split(".")[0],
     role,
     deviceClass: null,
+    deviceClassOverride: null,
     state,
     unit: role === "temperature" ? "°C" : null,
     icon: null,

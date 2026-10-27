@@ -1,7 +1,11 @@
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight } from "lucide-react";
+import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
 
-// Click-to-sort column headers shared by the entity lists.
+import { sectionsByRole } from "../../shared/roles.ts";
+import type { EntityRole } from "../../shared/types.ts";
+
+// Click-to-sort column headers shared by the entity lists, and the optional
+// grouping of their rows by type.
 
 export type SortValue = string | number | null | undefined;
 export type Dir = "asc" | "desc";
@@ -60,5 +64,56 @@ export function SortHeader({
         <Icon className={`size-3 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
       </button>
     </th>
+  );
+}
+
+// "Group by type": the rows in sections by role, each with a header that folds
+// it away. The rows come in already sorted, so each section is sorted too.
+export function GroupToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-muted">
+      <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} className="accent-[var(--accent)]" /> Group by type
+    </label>
+  );
+}
+
+// The body rows of a table: flat, or in sections when `grouped`. `colSpan` is
+// the number of columns, for the section headers.
+export function GroupedRows<T>({ rows, grouped, roleOf, colSpan, row }: { rows: readonly T[]; grouped: boolean; roleOf: (row: T) => EntityRole; colSpan: number; row: (row: T) => ReactNode }) {
+  const [closed, setClosed] = useState<ReadonlySet<EntityRole>>(new Set());
+  const sections = useMemo(() => (grouped ? sectionsByRole(rows, roleOf) : []), [grouped, rows, roleOf]);
+  if (!grouped) return <>{rows.map(row)}</>;
+  return (
+    <>
+      {sections.map((sec) => {
+        const open = !closed.has(sec.role);
+        const Chevron = open ? ChevronDown : ChevronRight;
+        return (
+          <Fragment key={sec.role}>
+            <tr className="border-t border-line bg-sunken">
+              <td colSpan={colSpan} className="p-0">
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() =>
+                    setClosed((c) => {
+                      const n = new Set(c);
+                      if (!n.delete(sec.role)) n.add(sec.role);
+                      return n;
+                    })
+                  }
+                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-xs font-medium hover:text-accent"
+                >
+                  <Chevron className="size-3.5 shrink-0" aria-hidden />
+                  {sec.label}
+                  <span className="font-normal tabular-nums text-muted">{sec.rows.length}</span>
+                </button>
+              </td>
+            </tr>
+            {open && sec.rows.map(row)}
+          </Fragment>
+        );
+      })}
+    </>
   );
 }

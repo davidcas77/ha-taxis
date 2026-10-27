@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { HELPERS, HELPER_SUFFIX_RE, canonicalId, effectiveSuffixes, helperNameErrors } from "../../shared/helpers.ts";
@@ -12,14 +13,17 @@ import {
   floorCodeAdvice,
   floorCodes,
   slug,
+  type NamingRow,
   type NamingSettings,
   type NamingStatus,
 } from "../../shared/naming.ts";
+import { hasSuggestion, ignoreSuggestions, namingFit, restoreSuggestions, splitIgnored } from "../../shared/naming-ignores.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
-import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
+import type { AreaNode, ChangeInput, EntityRole, FloorNode, Hierarchy } from "../../shared/types.ts";
 import { AiSection } from "./ai.tsx";
 import { useTaxis, type Route } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
+import { useStoredFlag } from "./storage.ts";
+import { GroupToggle, GroupedRows, SortHeader, useSort } from "./table.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
 
 // Naming: the Settings panel (a code per area, the patterns, the type words)
@@ -87,9 +91,20 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
     [codes, h, draft],
   );
   const { rows: areas, sort, toggle } = useSort(floorOrder, sortColumns, { key: "floor", dir: "asc" });
+  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
+  // Floors: also in the order Home Assistant gives them until a column is clicked.
+  const floorColumns = useMemo(
+    () => ({
+      floor: (f: FloorNode) => f.name,
+      id: (f: FloorNode) => f.id,
+      code: (f: FloorNode) => floorCodeMap[f.id].code,
+      group: (f: FloorNode) => canonicalId("light", floorCodeMap[f.id].code, suffixes.lights),
+    }),
+    [floorCodeMap, suffixes],
+  );
+  const { rows: floors, sort: floorSort, toggle: toggleFloor } = useSort(h.floors, floorColumns, { key: "order", dir: "asc" });
   // Helper names: live problems, and an example id from the first area.
   const helperErrors = useMemo(() => helperNameErrors(draft.helperNames), [draft.helperNames]);
-  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
   const firstArea = floorOrder[0];
   const sample = h.entities[Object.keys(h.entities).find((id) => h.entities[id].areaId && h.entities[id].role === "light") ?? ""];
   const preview = useMemo(() => {
@@ -213,14 +228,14 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
               <table className="w-full text-[13px]">
                 <thead className="bg-sunken text-left text-xs text-muted">
                   <tr>
-                    <th className="px-3 py-2 font-medium">Floor</th>
-                    <th className="px-3 py-2 font-medium">Floor id</th>
-                    <th className="px-3 py-2 font-medium">Code</th>
-                    <th className="px-3 py-2 font-medium">Light group</th>
+                    <SortHeader label="Floor" k="floor" sort={floorSort} onToggle={toggleFloor} />
+                    <SortHeader label="Floor id" k="id" sort={floorSort} onToggle={toggleFloor} />
+                    <SortHeader label="Code" k="code" sort={floorSort} onToggle={toggleFloor} />
+                    <SortHeader label="Light group" k="group" sort={floorSort} onToggle={toggleFloor} />
                   </tr>
                 </thead>
                 <tbody>
-                  {h.floors.map((f) => {
+                  {floors.map((f) => {
                     const c = floorCodeMap[f.id];
                     const also = floorClashes.get(f.id);
                     const advice = floorCodeAdvice(f, c);
@@ -399,23 +414,49 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
 }
 
 export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
-  const { naming, propose, busy } = useTaxis();
+  const { naming, propose, busy, namingIgnores, namingIgnoresLoaded, namingIgnoresSaving, saveNamingIgnores, notify } = useTaxis();
   const analysis = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
-  const [filter, setFilter] = useState<NamingStatus | "all" | "suggested">("all");
+  const [filter, setFilter] = useState<NamingStatus | "all" | "suggested" | "ignored">("all");
   const [names, setNames] = useState<Record<string, string>>({});
   const [ids, setIds] = useState<Record<string, string>>({});
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [grouped, setGrouped] = useStoredFlag("taxis:group-by-type:naming");
   const total = analysis.rows.length;
-  const rows = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? Boolean(r.editable && (r.suggestedName || r.suggestedId)) : r.status === filter));
+  // Ignored rows have no suggestion for Taxis to make: they are left out of every
+  // count and selection below, and shown under their own filter.
+  const ignoredIds = useMemo(() => new Set(splitIgnored(analysis.rows, namingIgnores).ignored.map((r) => r.entityId)), [analysis, namingIgnores]);
+  const isIgnored = (r: NamingRow) => ignoredIds.has(r.entityId);
+  const open = (r: NamingRow) => hasSuggestion(r) && !isIgnored(r);
+  const fit = namingFit(analysis, namingIgnores);
+  const filtered = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? open(r) : filter === "ignored" ? isIgnored(r) : r.status === filter));
+  const sortColumns = useMemo(
+    () => ({
+      name: (r: NamingRow) => r.name,
+      id: (r: NamingRow) => r.entityId,
+      suggestedName: (r: NamingRow) => (ignoredIds.has(r.entityId) ? null : r.suggestedName),
+      suggestedId: (r: NamingRow) => (ignoredIds.has(r.entityId) ? null : r.suggestedId),
+    }),
+    [ignoredIds],
+  );
+  const { rows, sort, toggle: toggleSort } = useSort(filtered, sortColumns, { key: "name", dir: "asc" });
+  const roleOf = useCallback((r: NamingRow): EntityRole => h.entities[r.entityId]?.role ?? "other", [h]);
   const nameFor = (id: string, fallback: string | null) => names[id] ?? fallback ?? "";
   const idFor = (id: string, fallback: string | null) => ids[id] ?? fallback ?? "";
   // Fields already added to the change list, per row. A row stays picked until
   // neither of its suggestions (name, id) is left to add.
   const [proposed, setProposed] = useState<Record<string, { name?: boolean; id?: boolean }>>({});
   // Everything below acts on the visible rows only, so a hidden pick is never added.
-  const withName = rows.filter((r) => r.editable && r.suggestedName);
-  const withId = rows.filter((r) => r.editable && r.suggestedId);
-  const pickedRows = rows.filter((r) => r.editable && picked.has(r.entityId));
+  const withName = rows.filter((r) => r.editable && r.suggestedName && !isIgnored(r));
+  const withId = rows.filter((r) => r.editable && r.suggestedId && !isIgnored(r));
+  const pickedRows = rows.filter((r) => r.editable && picked.has(r.entityId) && !isIgnored(r));
+  const ignoreLocked = !namingIgnoresLoaded || namingIgnoresSaving;
+
+  // Ignoring or restoring a suggestion is saved at once, in Taxis only.
+  const setIgnored = async (r: NamingRow, ignore: boolean) => {
+    const err = await saveNamingIgnores((s) => (ignore ? ignoreSuggestions(s, [r.entityId]) : restoreSuggestions(s, [r.entityId])));
+    if (err) notify({ tone: "error", text: err });
+    else if (ignore) setPicked((p) => (p.has(r.entityId) ? new Set([...p].filter((x) => x !== r.entityId)) : p));
+  };
 
   // A name or an id is proposed only if it differs from what the entity has.
   const nameInputs = pickedRows
@@ -454,6 +495,107 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
 
   if (total === 0) return <p className="text-[13px] text-muted">No entities in this area to check.</p>;
 
+  const renderRow = (r: NamingRow) => {
+    const st = STATUS[r.status];
+    const other = r.otherAreaId ? h.areas[r.otherAreaId]?.name : null;
+    const ignored = isIgnored(r);
+    return (
+      <tr key={r.entityId} className="border-t border-line align-top">
+        <td className="px-3 py-1.5">
+          {open(r) && (
+            <input
+              type="checkbox"
+              aria-label={`Change ${r.name}`}
+              checked={picked.has(r.entityId)}
+              onChange={() =>
+                setPicked((p) => {
+                  const n = new Set(p);
+                  if (n.has(r.entityId)) n.delete(r.entityId);
+                  else n.add(r.entityId);
+                  return n;
+                })
+              }
+            />
+          )}
+        </td>
+        <td className="px-3 py-1.5">
+          <div>{r.name}</div>
+          <div className={`text-[11px] ${st.tone}`}>
+            {st.label}
+            {r.status === "old-prefix" && r.foundPrefix && ` (${r.foundPrefix})`}
+            {other && ` (${other})`}
+          </div>
+        </td>
+        <td className="px-3 py-1.5 font-mono text-xs">{r.entityId}</td>
+        <td className="px-3 py-1.5">
+          {ignored ? (
+            <span className="text-xs text-muted">ignored</span>
+          ) : r.suggestedName !== null && r.editable ? (
+            <input
+              aria-label={`New name for ${r.name}`}
+              className={inputClass}
+              value={nameFor(r.entityId, r.suggestedName)}
+              onChange={(e) => {
+                setNames((n) => ({ ...n, [r.entityId]: e.target.value }));
+                setProposed((p) => (p[r.entityId]?.name ? { ...p, [r.entityId]: { ...p[r.entityId], name: false } } : p));
+                setPicked((p) => new Set(p).add(r.entityId));
+              }}
+            />
+          ) : (
+            <span className="text-xs text-muted">{r.editable ? "fits" : "can't be renamed (no unique id)"}</span>
+          )}
+        </td>
+        <td className="px-3 py-1.5 font-mono text-xs">
+          {ignored ? (
+            <span className="font-sans text-muted">ignored</span>
+          ) : r.suggestedId && r.editable ? (
+            <input
+              aria-label={`New id for ${r.name}`}
+              className={`${inputClass} font-mono`}
+              value={idFor(r.entityId, r.suggestedId)}
+              spellCheck={false}
+              aria-invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
+              onChange={(e) => {
+                setIds((n) => ({ ...n, [r.entityId]: e.target.value }));
+                setProposed((p) => (p[r.entityId]?.id ? { ...p, [r.entityId]: { ...p[r.entityId], id: false } } : p));
+                setPicked((p) => new Set(p).add(r.entityId));
+              }}
+            />
+          ) : (
+            <span className="text-muted">{r.suggestedId ? "can't be renamed" : "fits"}</span>
+          )}
+        </td>
+        <td className="px-1.5 py-1.5">
+          {ignored ? (
+            <button
+              type="button"
+              aria-label={`Restore the suggestion for ${r.name}`}
+              title="Restore the suggestion"
+              disabled={ignoreLocked}
+              onClick={() => void setIgnored(r, false)}
+              className="rounded-md p-1 text-muted hover:bg-sunken hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Eye className="size-4" aria-hidden />
+            </button>
+          ) : (
+            hasSuggestion(r) && (
+              <button
+                type="button"
+                aria-label={`Ignore the suggestion for ${r.name}`}
+                title="Ignore the suggestion"
+                disabled={ignoreLocked}
+                onClick={() => void setIgnored(r, true)}
+                className="rounded-md p-1 text-muted hover:bg-sunken hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <EyeOff className="size-4" aria-hidden />
+              </button>
+            )
+          )}
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -470,21 +612,26 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
         </div>
         <span className="text-xs tabular-nums text-muted">
           {analysis.counts.ok} of {total} ids start with the code
+          {fit.ignored > 0 && `; ${fit.ignored} ignored, so ${fit.fits} of ${total} count as fine`}
         </span>
       </div>
 
-      <div role="group" aria-label="Show" className="flex flex-wrap gap-1 text-xs">
-        {(
-          [
-            ["all", `All ${total}`],
-            ["suggested", `With a suggestion ${analysis.rows.filter((r) => r.editable && (r.suggestedName || r.suggestedId)).length}`],
-            ...(Object.keys(STATUS) as NamingStatus[]).map((s) => [s, `${STATUS[s].label} ${analysis.counts[s]}`]),
-          ] as [typeof filter, string][]
-        ).map(([v, l]) => (
-          <button key={v} type="button" aria-pressed={filter === v} onClick={() => setFilter(v)} className={`rounded-md border px-2 py-1 ${filter === v ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}>
-            {l}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div role="group" aria-label="Show" className="flex flex-wrap gap-1 text-xs">
+          {(
+            [
+              ["all", `All ${total}`],
+              ["suggested", `With a suggestion ${analysis.rows.filter(open).length}`],
+              ...(Object.keys(STATUS) as NamingStatus[]).map((s) => [s, `${STATUS[s].label} ${analysis.counts[s]}`]),
+              ["ignored", `Ignored ${fit.ignored}`],
+            ] as [typeof filter, string][]
+          ).map(([v, l]) => (
+            <button key={v} type="button" aria-pressed={filter === v} onClick={() => setFilter(v)} className={`rounded-md border px-2 py-1 ${filter === v ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <GroupToggle on={grouped} onChange={setGrouped} />
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-line bg-surface">
@@ -492,81 +639,17 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
           <thead className="bg-sunken text-left text-xs text-muted">
             <tr>
               <th className="w-8 px-3 py-2" />
-              <th className="px-3 py-2 font-medium">Entity</th>
-              <th className="px-3 py-2 font-medium">Id</th>
-              <th className="px-3 py-2 font-medium">Suggested name</th>
-              <th className="px-3 py-2 font-medium">Suggested id</th>
+              <SortHeader label="Entity" k="name" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Id" k="id" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Suggested name" k="suggestedName" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Suggested id" k="suggestedId" sort={sort} onToggle={toggleSort} />
+              <th className="w-9 px-1.5 py-2">
+                <span className="sr-only">Ignore or restore the suggestion</span>
+              </th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
-              const st = STATUS[r.status];
-              const other = r.otherAreaId ? h.areas[r.otherAreaId]?.name : null;
-              return (
-                <tr key={r.entityId} className="border-t border-line align-top">
-                  <td className="px-3 py-1.5">
-                    {r.editable && (r.suggestedName !== null || r.suggestedId) && (
-                      <input
-                        type="checkbox"
-                        aria-label={`Change ${r.name}`}
-                        checked={picked.has(r.entityId)}
-                        onChange={() =>
-                          setPicked((p) => {
-                            const n = new Set(p);
-                            if (n.has(r.entityId)) n.delete(r.entityId);
-                            else n.add(r.entityId);
-                            return n;
-                          })
-                        }
-                      />
-                    )}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <div>{r.name}</div>
-                    <div className={`text-[11px] ${st.tone}`}>
-                      {st.label}
-                      {r.status === "old-prefix" && r.foundPrefix && ` (${r.foundPrefix})`}
-                      {other && ` (${other})`}
-                    </div>
-                  </td>
-                  <td className="px-3 py-1.5 font-mono text-xs">{r.entityId}</td>
-                  <td className="px-3 py-1.5">
-                    {r.suggestedName !== null && r.editable ? (
-                      <input
-                        aria-label={`New name for ${r.name}`}
-                        className={inputClass}
-                        value={nameFor(r.entityId, r.suggestedName)}
-                        onChange={(e) => {
-                          setNames((n) => ({ ...n, [r.entityId]: e.target.value }));
-                          setProposed((p) => (p[r.entityId]?.name ? { ...p, [r.entityId]: { ...p[r.entityId], name: false } } : p));
-                          setPicked((p) => new Set(p).add(r.entityId));
-                        }}
-                      />
-                    ) : (
-                      <span className="text-xs text-muted">{r.editable ? "fits" : "can't be renamed (no unique id)"}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-1.5 font-mono text-xs">
-                    {r.suggestedId && r.editable ? (
-                      <input
-                        aria-label={`New id for ${r.name}`}
-                        className={`${inputClass} font-mono`}
-                        value={idFor(r.entityId, r.suggestedId)}
-                        spellCheck={false}
-                        aria-invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
-                        onChange={(e) => {
-                          setIds((n) => ({ ...n, [r.entityId]: e.target.value }));
-                          setProposed((p) => (p[r.entityId]?.id ? { ...p, [r.entityId]: { ...p[r.entityId], id: false } } : p));
-                          setPicked((p) => new Set(p).add(r.entityId));
-                        }}
-                      />
-                    ) : (
-                      <span className="text-muted">{r.suggestedId ? "can't be renamed" : "fits"}</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            <GroupedRows rows={rows} grouped={grouped} roleOf={roleOf} colSpan={6} row={renderRow} />
           </tbody>
         </table>
       </div>

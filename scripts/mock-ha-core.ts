@@ -619,7 +619,12 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
         entity.entity_id = next;
       }
       const { categories, ...rest } = p as { categories?: Record<string, string | null> };
-      pick(entity, Object.keys(rest).filter((k) => ["name", "icon", "area_id", "labels", "hidden_by", "disabled_by"].includes(k)));
+      pick(entity, Object.keys(rest).filter((k) => ["name", "icon", "area_id", "labels", "hidden_by", "disabled_by", "device_class"].includes(k)));
+      // Home Assistant shows a new device class in the live state too (it reloads the entity).
+      if ("device_class" in rest) {
+        const st = reg.states.find((s) => s.entity_id === entity.entity_id);
+        if (st) st.attributes = { ...st.attributes, device_class: typeof rest.device_class === "string" ? rest.device_class : entity.original_device_class ?? undefined };
+      }
       // Home Assistant shows a new name in the live state too.
       if ("name" in rest) {
         const st = reg.states.find((s) => s.entity_id === entity.entity_id);

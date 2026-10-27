@@ -48,11 +48,12 @@ import {
   type ParamValues,
   type ParameterSettings,
 } from "../shared/parameters.ts";
+import { EMPTY_NAMING_IGNORES, MAX_NAMING_IGNORES, NAMING_IGNORE_ID, type NamingIgnores } from "../shared/naming-ignores.ts";
 import { DEFAULT_HOUSE_GROUP, DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, floorCodes, slug, type NamingSettings } from "../shared/naming.ts";
 import type { EntityRole, Hierarchy } from "../shared/types.ts";
 
-// App settings, one JSON value per key in SQLite: naming, groups, the
-// capability inventory, the recipe parameters and the optional AI.
+// App settings, one JSON value per key in SQLite: naming, the naming
+// suggestions the user ignored, groups, the capability inventory, the recipe parameters and the optional AI.
 
 export function settingsStore(db: DatabaseSync) {
   const get = db.prepare("SELECT value FROM settings WHERE key = ?");
@@ -70,6 +71,20 @@ export function settingsStore(db: DatabaseSync) {
     },
     saveNaming(s: NamingSettings): void {
       put.run("naming", JSON.stringify(s));
+    },
+    namingIgnores(): NamingIgnores {
+      const row = get.get("namingIgnores") as { value: string } | undefined;
+      if (!row) return structuredClone(EMPTY_NAMING_IGNORES);
+      try {
+        // Same as groups: validate again in case the row was edited by hand.
+        const checked = validateNamingIgnores(JSON.parse(row.value));
+        return checked.ok ? checked.value : structuredClone(EMPTY_NAMING_IGNORES);
+      } catch {
+        return structuredClone(EMPTY_NAMING_IGNORES);
+      }
+    },
+    saveNamingIgnores(s: NamingIgnores): void {
+      put.run("namingIgnores", JSON.stringify(s));
     },
     groups(): GroupSettings {
       const row = get.get("groups") as { value: string } | undefined;
@@ -341,6 +356,22 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
     if (Object.keys(choice).length > 0) areaEntries.push([id, choice]);
   }
   return { ok: true, value: { entities: Object.fromEntries(entityEntries), areas: Object.fromEntries(areaEntries) } };
+}
+
+// The naming suggestions the user ignored: a list of entity ids. Sorted and
+// deduplicated on the way in, so the stored value is always the same shape.
+export function validateNamingIgnores(input: unknown): { ok: true; value: NamingIgnores } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "The ignored suggestions weren't readable." };
+  for (const key of Object.keys(input)) {
+    if (key !== "entities") return { ok: false, error: `${key.slice(0, 40)} isn't part of the ignored suggestions.` };
+  }
+  const entities = input.entities ?? [];
+  if (!Array.isArray(entities)) return { ok: false, error: "The ignored entities weren't readable." };
+  if (entities.length > MAX_NAMING_IGNORES) return { ok: false, error: `More than ${MAX_NAMING_IGNORES} suggestions are ignored.` };
+  for (const id of entities) {
+    if (typeof id !== "string" || id.length > 255 || !NAMING_IGNORE_ID.test(id)) return { ok: false, error: `${String(id).slice(0, 60)} isn't an entity id.` };
+  }
+  return { ok: true, value: { entities: [...new Set(entities as string[])].sort() } };
 }
 
 // The recipe parameters: values per level (house, interior/exterior, floor,

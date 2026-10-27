@@ -35,11 +35,15 @@ import { ROLE_ORDER } from "../../shared/roles.ts";
 import { arrangeGroups, membershipIndex, summarizeRoom, type BinarySummary, type NumericSummary } from "../../shared/rooms.ts";
 import type { AreaNode, ChangeInput, EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { analyzeArea } from "../../shared/naming.ts";
+import { namingFit, splitIgnored, type NamingIgnores } from "../../shared/naming-ignores.ts";
 import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { AreaCapabilitiesTab } from "./capabilities.tsx";
 import { AreaFindings, useAreaFindings } from "./health.tsx";
+import { AreaEntities } from "./entities-view.tsx";
 import { AreaNamingTab } from "./naming.tsx";
+import { useStoredSet } from "./storage.ts";
+import { SortHeader, useSort } from "./table.tsx";
 import { useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
 import { AreaSelect, Button, ConfirmAction, EditedDot, LabelChip, inputClass } from "./ui.tsx";
 
@@ -106,7 +110,7 @@ function groupByRole(ids: string[], h: Hierarchy, f: Filters) {
 // Left: the tree of spaces.
 // ---------------------------------------------------------------------------
 
-function TreeRow({ depth, icon: Icon, label, count, active, muted, edited, onClick }: {
+function TreeRow({ depth, icon: Icon, label, count, active, muted, edited, expanded, onClick }: {
   depth: number;
   icon: LucideIcon;
   label: string;
@@ -114,18 +118,23 @@ function TreeRow({ depth, icon: Icon, label, count, active, muted, edited, onCli
   active: boolean;
   muted?: boolean;
   edited?: boolean;
+  // Set on a row that folds its areas away: whether they are showing.
+  expanded?: boolean;
   onClick: () => void;
 }) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
     <button
       type="button"
       onClick={onClick}
       aria-current={active ? "true" : undefined}
+      aria-expanded={expanded}
       style={{ paddingLeft: 8 + depth * 14 }}
       className={`flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px] ${
         active ? "bg-accent-soft font-medium text-accent" : muted ? "text-muted hover:bg-sunken" : "hover:bg-sunken"
       }`}
     >
+      {expanded !== undefined && <Chevron className="-mr-1 size-3.5 shrink-0 text-muted" aria-hidden />}
       <Icon className="size-4 shrink-0" aria-hidden />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {edited && <EditedDot />}
@@ -138,6 +147,17 @@ export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; se
   const { edited } = useTaxis();
   const q = query.trim().toLowerCase();
   const matches = (a: AreaNode) => !q || a.name.toLowerCase().includes(q);
+  // Floors folded away, per viewer: "floor:<id>", or "loose" for areas on no floor.
+  const [collapsed, changeCollapsed] = useStoredSet("taxis:tree-collapsed");
+  // Choosing an area (a link, say) opens the floor it is on.
+  const selectedArea = sel.kind === "area" ? h.areas[sel.id] : undefined;
+  const selectedGroup = selectedArea ? (selectedArea.floorId ? `floor:${selectedArea.floorId}` : "loose") : null;
+  useEffect(() => {
+    if (selectedGroup) changeCollapsed((s) => s.delete(selectedGroup));
+  }, [selectedGroup, sel, changeCollapsed]);
+  // A search shows every match, folded or not.
+  const isOpen = (group: string) => Boolean(q) || !collapsed.has(group);
+  const fold = (group: string) => changeCollapsed((s) => void (s.delete(group) || s.add(group)));
   const areaRow = (a: AreaNode) => (
     <TreeRow
       key={a.id}
@@ -162,18 +182,33 @@ export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; se
               depth={1}
               icon={Layers}
               label={f.name}
+              expanded={isOpen(`floor:${f.id}`)}
               active={sel.kind === "floor" && sel.id === f.id}
               edited={edited.has(`floor:${f.id}`)}
-              onClick={() => select({ kind: "floor", id: f.id })}
+              onClick={() => {
+                fold(`floor:${f.id}`);
+                select({ kind: "floor", id: f.id });
+              }}
             />
-            {areas.map(areaRow)}
+            {isOpen(`floor:${f.id}`) && areas.map(areaRow)}
           </div>
         );
       })}
       {h.looseAreaIds.length > 0 && (
         <div>
-          <TreeRow depth={1} icon={Layers} label="No floor" muted active={sel.kind === "loose"} onClick={() => select({ kind: "loose" })} />
-          {h.looseAreaIds.map((id) => h.areas[id]).filter(matches).map(areaRow)}
+          <TreeRow
+            depth={1}
+            icon={Layers}
+            label="No floor"
+            muted
+            expanded={isOpen("loose")}
+            active={sel.kind === "loose"}
+            onClick={() => {
+              fold("loose");
+              select({ kind: "loose" });
+            }}
+          />
+          {isOpen("loose") && h.looseAreaIds.map((id) => h.areas[id]).filter(matches).map(areaRow)}
         </div>
       )}
       <TreeRow
@@ -324,6 +359,23 @@ function Stat({ label, value, note, onClick }: { label: string; value: number; n
 
 function HomeView({ h, filters, select }: { h: Hierarchy; filters: Filters; select: (s: Selection) => void }) {
   const roleTotals = groupByRole(Object.keys(h.entities), h, filters);
+  // The floors in the order Home Assistant gives them (the areas on no floor last) until a column is clicked.
+  const floorRows = [
+    ...h.floors.map((f) => ({ key: f.id, name: f.name, ids: f.areaIds, go: { kind: "floor", id: f.id } as Selection })),
+    ...(h.looseAreaIds.length ? [{ key: "__loose", name: "No floor", ids: h.looseAreaIds, go: { kind: "loose" } as Selection }] : []),
+  ].map((row) => ({
+    ...row,
+    areas: row.ids.length,
+    devices: row.ids.reduce((n, id) => n + h.areas[id].deviceIds.length, 0),
+    entities: row.ids.reduce((n, id) => n + countVisible(h.areas[id].entityIds, h, filters), 0),
+  }));
+  const floorColumns = {
+    floor: (r: (typeof floorRows)[number]) => r.name,
+    areas: (r: (typeof floorRows)[number]) => r.areas,
+    devices: (r: (typeof floorRows)[number]) => r.devices,
+    entities: (r: (typeof floorRows)[number]) => r.entities,
+  };
+  const { rows: floorsSorted, sort: floorSort, toggle: toggleFloor } = useSort(floorRows, floorColumns, { key: "order", dir: "asc" });
   return (
     <div className="flex flex-col gap-6">
       <Heading title={h.home.name} subtitle={h.home.haVersion ? `Home Assistant ${h.home.haVersion}` : undefined} />
@@ -340,26 +392,23 @@ function HomeView({ h, filters, select }: { h: Hierarchy; filters: Filters; sele
           <table className="w-full text-[13px]">
             <thead className="bg-sunken text-left text-xs text-muted">
               <tr>
-                <th className="px-3 py-2 font-medium">Floor</th>
-                <th className="px-3 py-2 font-medium">Areas</th>
-                <th className="px-3 py-2 font-medium">Devices</th>
-                <th className="px-3 py-2 font-medium">Entities</th>
+                <SortHeader label="Floor" k="floor" sort={floorSort} onToggle={toggleFloor} />
+                <SortHeader label="Areas" k="areas" sort={floorSort} onToggle={toggleFloor} />
+                <SortHeader label="Devices" k="devices" sort={floorSort} onToggle={toggleFloor} />
+                <SortHeader label="Entities" k="entities" sort={floorSort} onToggle={toggleFloor} />
               </tr>
             </thead>
             <tbody>
-              {[
-                ...h.floors.map((f) => ({ key: f.id, name: f.name, ids: f.areaIds, go: { kind: "floor", id: f.id } as Selection })),
-                ...(h.looseAreaIds.length ? [{ key: "__loose", name: "No floor", ids: h.looseAreaIds, go: { kind: "loose" } as Selection }] : []),
-              ].map((row) => (
+              {floorsSorted.map((row) => (
                 <tr key={row.key} className="border-t border-line">
                   <td className="px-3 py-2">
                     <button type="button" className="text-accent hover:underline" onClick={() => select(row.go)}>
                       {row.name}
                     </button>
                   </td>
-                  <td className="px-3 py-2 tabular-nums">{row.ids.length}</td>
-                  <td className="px-3 py-2 tabular-nums">{row.ids.reduce((n, id) => n + h.areas[id].deviceIds.length, 0)}</td>
-                  <td className="px-3 py-2 tabular-nums">{row.ids.reduce((n, id) => n + countVisible(h.areas[id].entityIds, h, filters), 0)}</td>
+                  <td className="px-3 py-2 tabular-nums">{row.areas}</td>
+                  <td className="px-3 py-2 tabular-nums">{row.devices}</td>
+                  <td className="px-3 py-2 tabular-nums">{row.entities}</td>
                 </tr>
               ))}
             </tbody>
@@ -523,20 +572,22 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
   onEditArea: () => void;
   onEditDevice: (id: string) => void;
 }) {
-  const { edited, naming } = useTaxis();
+  const { edited, naming, namingIgnores } = useTaxis();
   const floor = h.floors.find((f) => f.id === area.floorId);
   const summary = summarizeRoom(area, h);
   const nameCheck = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
-  const health = useMemo(() => areaHealth(area, h, nameCheck), [area, h, nameCheck]);
+  // A suggestion the user ignored counts as fine: the entity fits for them.
+  const fit = useMemo(() => namingFit(nameCheck, namingIgnores), [nameCheck, namingIgnores]);
+  const health = useMemo(() => areaHealth(area, h, nameCheck, namingIgnores), [area, h, nameCheck, namingIgnores]);
   // What the health checks (shared/health.ts) found about this area, on top of the lists in the tab.
   const checks = useAreaFindings(area.id).findings.length;
-  const named =Object.values(nameCheck.counts).reduce((a, b) => a + b, 0);
+  const named = fit.total;
   const tabs: { key: AreaTab; label: string; count?: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "capabilities", label: "Capabilities" },
     { key: "entities", label: "Entities", count: String(countVisible(area.entityIds, h, filters)) },
     { key: "devices", label: "Devices", count: String(area.deviceIds.length) },
-    { key: "naming", label: "Naming", count: named ? `${nameCheck.counts.ok}/${named}` : undefined },
+    { key: "naming", label: "Naming", count: named ? `${fit.fits}/${named}` : undefined },
     { key: "labels", label: "Labels" },
     { key: "health", label: "Health", count: health.total + checks ? String(health.total + checks) : undefined },
   ];
@@ -594,13 +645,24 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <Stat label="Devices" value={area.deviceIds.length} onClick={() => onTab("devices")} />
               <Stat label="Entities" value={countVisible(area.entityIds, h, filters)} onClick={() => onTab("entities")} />
-              <Stat label="Ids that fit the naming" value={nameCheck.counts.ok} note={named ? `of ${named}` : undefined} onClick={() => onTab("naming")} />
+              <Stat label="Ids that fit the naming" value={fit.fits} note={named ? `of ${named}` : undefined} onClick={() => onTab("naming")} />
               <Stat label="Things to look at" value={health.total + checks} onClick={() => onTab("health")} />
             </div>
           </div>
         )}
         {tab === "capabilities" && <AreaCapabilitiesTab h={h} area={area} go={go} />}
-        {tab === "entities" && <RoleSections h={h} ids={area.entityIds} filters={filters} rows={rows} />}
+        {tab === "entities" && (
+          <AreaEntities
+            key={area.id}
+            h={h}
+            areaId={area.id}
+            entities={area.entityIds.map((id) => h.entities[id]).filter((e): e is EntityItem => Boolean(e) && visible(e, filters))}
+            picked={rows.picked}
+            toggle={rows.toggle}
+            onOpen={rows.edit}
+            groups={(ids) => <RoleSections h={h} ids={ids} filters={filters} rows={rows} />}
+          />
+        )}
         {tab === "devices" &&
           (area.deviceIds.length === 0 ? (
             <p className="text-[13px] text-muted">No devices are assigned to this area.</p>
@@ -640,14 +702,17 @@ type Health = {
   total: number;
 };
 
-function areaHealth(area: AreaNode, h: Hierarchy, nameCheck: ReturnType<typeof analyzeArea>): Health {
+function areaHealth(area: AreaNode, h: Hierarchy, nameCheck: ReturnType<typeof analyzeArea>, ignores: NamingIgnores): Health {
   const inRoom = area.entityIds.map((id) => h.entities[id]).filter((e): e is EntityItem => Boolean(e) && !e.disabled);
   const unavailable = inRoom.filter((e) => !e.maintenance && (e.state === "unavailable" || e.state === "unknown") && !["button", "event", "scene"].includes(e.domain));
   const brokenGroups = inRoom
     .filter((e) => e.members.length > 0)
     .map((group) => ({ group, missing: group.members.filter((m) => !h.entities[m]) }))
     .filter((g) => g.missing.length > 0);
+  // An id the user said is fine as it is (its suggestion ignored) isn't worth a look.
+  const ignored = new Set(splitIgnored(nameCheck.rows, ignores).ignored.map((r) => r.entityId));
   const namedElsewhere = nameCheck.rows
+    .filter((r) => !ignored.has(r.entityId))
     .filter((r) => r.status === "other-area" && r.otherAreaId)
     .map((r) => ({ entity: h.entities[r.entityId], area: h.areas[r.otherAreaId!]?.name ?? r.otherAreaId! }))
     .filter((x) => Boolean(x.entity));

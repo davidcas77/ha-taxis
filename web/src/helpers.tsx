@@ -1,15 +1,16 @@
 import { useMemo, useState, type ReactNode } from "react";
 
-import { HELPERS, hasPendingChange, helperChangeInputs, planHelpers, type HelperRow, type HelperStatus } from "../../shared/helpers.ts";
-import type { Hierarchy } from "../../shared/types.ts";
+import { HELPERS, HELPER_SPEC, canonicalId, effectiveSuffixes, hasPendingChange, helperChangeInputs, planHelpers, type HelperKey, type HelperRow, type HelperStatus } from "../../shared/helpers.ts";
+import { areaCodes } from "../../shared/naming.ts";
+import type { AreaNode, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
 import { Button } from "./ui.tsx";
 
 // Canonical helpers: what Taxis proposes per area, from the capabilities. One
-// table, used on the Parameters page (every area) and at the end of an area's
-// Capabilities tab (that area). Adding rows puts changes in the list; nothing
-// reaches Home Assistant until the list is applied.
+// table on the Parameters page (every area), and under each capability of an
+// area's Capabilities tab, its combined entity. Adding rows puts changes in the
+// list; nothing reaches Home Assistant until the list is applied.
 
 export const HELPERS_NOTE = "Helpers Taxis proposes per area, from the capabilities. Nothing is written until you apply the change list.";
 
@@ -34,7 +35,7 @@ const FILTERS: { key: Shown | "all" | "todo"; label: string }[] = [
   { key: "in-changes", label: "In changes" },
 ];
 
-type Line = { row: HelperRow; shown: Shown; pending: boolean; selectable: boolean };
+export type Line = { row: HelperRow; shown: Shown; pending: boolean; selectable: boolean };
 
 function usePlan(h: Hierarchy): { ready: boolean; lines: Line[] } {
   const { inventory, inventoryLoaded, naming, namingLoaded, changes } = useTaxis();
@@ -286,16 +287,83 @@ export function HelpersTab({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
   );
 }
 
-// The end of an area's Capabilities tab: that area only.
-export function AreaHelpersSection({ h, areaId, go }: { h: Hierarchy; areaId: string; go: (r: Route) => void }) {
+// An area's own helper lines, for its Capabilities tab (the same plan as the
+// Parameters page, so the two always agree).
+export function useAreaHelperLines(h: Hierarchy, areaId: string): { ready: boolean; lines: Line[] } {
   const { ready, lines } = usePlan(h);
   const mine = useMemo(() => lines.filter((l) => l.row.level === "area" && l.row.areaId === areaId), [lines, areaId]);
-  if (!ready || mine.length === 0) return null;
+  return { ready, lines: mine };
+}
+
+// The one entity that rolls up a capability, under that capability's table: its
+// id, where it stands, and a button when there is something to add. `counted`
+// is how many entities of the capability count; `line` is undefined when the area
+// gets no helper for it.
+export function CombinedHelperRow({ h, area, helperKey, line, counted, go }: { h: Hierarchy; area: AreaNode; helperKey: HelperKey; line: Line | undefined; counted: number; go: (r: Route) => void }) {
+  const { propose, busy, naming } = useTaxis();
+  const spec = HELPER_SPEC[helperKey];
+  const name = spec.label.toLowerCase();
+  const id = line?.row.canonicalId ?? canonicalId(spec.domain, areaCodes(h, naming)[area.id].code, effectiveSuffixes(naming.helperNames)[helperKey]);
+  const row = line?.row;
+  let status: ReactNode;
+  let tone = "text-muted";
+  if (!line || !row) {
+    status = spec.min > 1 ? `Not needed: a combined ${name} group takes at least ${spec.min} players, and ${counted} count${counted === 1 ? "s" : ""}.` : "Not needed: nothing of this counts yet.";
+  } else if (line.pending) {
+    status = "In changes";
+    tone = "text-accent";
+  } else {
+    switch (row.status) {
+      case "in-place":
+        status = "In place";
+        tone = "text-on";
+        break;
+      case "create":
+        status = `Will be created as ${row.canonicalId}`;
+        tone = "text-warn";
+        break;
+      case "adopt":
+        status = `Adopt: ${row.adoptFrom} renamed to ${row.canonicalId}${row.membersDiffer ? `, and update members ${change(row.added.length, row.removed.length)}` : ""}`;
+        tone = "text-warn";
+        break;
+      case "update-members":
+        status = `Update members ${change(row.added.length, row.removed.length)}`;
+        tone = "text-warn";
+        break;
+      case "conflict":
+        tone = "text-danger";
+        status =
+          row.conflict === "not-editable" ? (
+            `Conflict: ${row.heldBy} is a group written in YAML, so its members can't be changed here`
+          ) : (
+            <>
+              Conflict: held by {row.heldBy} ({row.heldByName});{" "}
+              <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "settings" })}>
+                change it in Settings → Helper names
+              </button>
+            </>
+          );
+        break;
+    }
+  }
+  const note = row?.areaSensor && !line?.pending ? `Area ${row.key} sensor: ${row.areaSensor.current ?? "not set"} → ${row.canonicalId}` : row?.membersUnknown && row.status === "in-place" && !line?.pending ? "members not checked" : null;
+  const add = async () => {
+    if (!row) return;
+    await propose(helperChangeInputs(row));
+  };
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="text-sm font-semibold">Helpers</h2>
-      <p className="text-xs text-muted">{HELPERS_NOTE}</p>
-      <HelperTable h={h} lines={mine} showArea={false} go={go} />
-    </section>
+    <div role="group" aria-label={`Combined ${name}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-surface px-3 py-2 text-[13px]">
+      <span className="font-medium">Combined {name}</span>
+      <code className="font-mono text-xs">{id}</code>
+      <span className="flex min-w-[10rem] flex-1 flex-col">
+        <span className={tone}>{status}</span>
+        {note && <span className="text-[11px] text-muted">{note}</span>}
+      </span>
+      {line?.selectable && (
+        <Button tone="primary" disabled={busy} onClick={() => void add()}>
+          Add to changes
+        </Button>
+      )}
+    </div>
   );
 }

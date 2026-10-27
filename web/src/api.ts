@@ -3,9 +3,10 @@ import type { GroupSettings } from "../../shared/groups.ts";
 import type { HealthOptions, HealthReportResponse } from "../../shared/health.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
+import type { NamingIgnores } from "../../shared/naming-ignores.ts";
 import type { ParameterSettings } from "../../shared/parameters.ts";
 import type { RecipesResponse } from "../../shared/recipes.ts";
-import type { ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, InventoryResponse, NamingResponse, ParametersResponse, ReferencesResponse } from "../../shared/types.ts";
+import type { ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, InventoryResponse, NamingIgnoresResponse, NamingResponse, ParametersResponse, ReferencesResponse } from "../../shared/types.ts";
 
 // Relative URLs on purpose: under Ingress the app lives at
 // /api/hassio_ingress/<token>/, so "/api/…" would miss it.
@@ -31,6 +32,8 @@ async function call<T extends { ok: boolean }>(path: string, init?: RequestInit)
 export const api = {
   naming: () => call<NamingResponse>("api/settings/naming"),
   saveNaming: (naming: NamingSettings) => call<NamingResponse>("api/settings/naming", { method: "PUT", body: JSON.stringify(naming) }),
+  namingIgnores: () => call<NamingIgnoresResponse>("api/settings/naming-ignores"),
+  saveNamingIgnores: (ignores: NamingIgnores) => call<NamingIgnoresResponse>("api/settings/naming-ignores", { method: "PUT", body: JSON.stringify(ignores) }),
   groups: () => call<GroupsResponse>("api/settings/groups"),
   saveGroups: (groups: GroupSettings) => call<GroupsResponse>("api/settings/groups", { method: "PUT", body: JSON.stringify(groups) }),
   inventory: () => call<InventoryResponse>("api/settings/inventory"),

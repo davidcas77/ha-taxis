@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_NAMING } from "../shared/naming.ts";
 import { buildMockRegistry } from "../scripts/mock-ha-core.ts";
 import { buildHierarchy } from "./model/hierarchy.ts";
-import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateParameters } from "./settings.ts";
+import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateNamingIgnores, validateParameters } from "./settings.ts";
 
 const base = { idPattern: DEFAULT_NAMING.idPattern, namePattern: DEFAULT_NAMING.namePattern };
 
@@ -178,6 +178,45 @@ describe("settingsStore inventory", () => {
     expect(s.inventory()).toEqual({ entities: {}, areas: {} });
     db.prepare("UPDATE settings SET value = ? WHERE key = ?").run("{not json", "inventory");
     expect(s.inventory()).toEqual({ entities: {}, areas: {} });
+  });
+});
+
+describe("validateNamingIgnores", () => {
+  it("accepts entity ids, sorted and once", () => {
+    expect(validateNamingIgnores({ entities: ["sensor.b", "light.a", "light.a"] })).toEqual({ ok: true, value: { entities: ["light.a", "sensor.b"] } });
+    expect(validateNamingIgnores({})).toEqual({ ok: true, value: { entities: [] } });
+  });
+
+  it("refuses shapes that aren't a list of entity ids", () => {
+    for (const bad of [null, [], "x", 3, { entities: "light.a" }, { entities: {} }, { entities: [1] }, { entities: ["Light.a"] }, { entities: ["light"] }, { entities: ["light.a b"] }, { entities: [["light.a"]] }]) {
+      expect(validateNamingIgnores(bad)).toMatchObject({ ok: false });
+    }
+  });
+
+  it("refuses unknown keys, saying which, and too long a list", () => {
+    expect(validateNamingIgnores({ names: [] })).toMatchObject({ ok: false, error: expect.stringContaining("names") });
+    expect(validateNamingIgnores({ entities: Array.from({ length: 5001 }, (_, i) => `light.l${i}`) })).toMatchObject({ ok: false });
+  });
+});
+
+describe("settingsStore namingIgnores", () => {
+  it("starts empty, saves and reads back", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const s = settingsStore(db);
+    expect(s.namingIgnores()).toEqual({ entities: [] });
+    s.saveNamingIgnores({ entities: ["light.lamp"] });
+    expect(s.namingIgnores()).toEqual({ entities: ["light.lamp"] });
+  });
+
+  it("falls back to empty when the stored value was edited into nonsense", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const s = settingsStore(db);
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("namingIgnores", '{"entities": [3]}');
+    expect(s.namingIgnores()).toEqual({ entities: [] });
+    db.prepare("UPDATE settings SET value = ? WHERE key = ?").run("{not json", "namingIgnores");
+    expect(s.namingIgnores()).toEqual({ entities: [] });
   });
 });
 

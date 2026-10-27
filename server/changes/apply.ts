@@ -120,6 +120,7 @@ const FIELD_NAMES: Record<string, string> = {
   new_entity_id: "entity id",
   hidden_by: "hidden setting",
   disabled_by: "disabled setting",
+  device_class: "device class",
   temperature_entity_id: "temperature sensor",
   humidity_entity_id: "humidity sensor",
 };

@@ -5,10 +5,12 @@ import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import {
   HELPERS,
   HELPER_SUFFIX_RE,
+  areaHelperRow,
   effectiveSuffixes,
   hasPendingChange,
   helperChangeInputs,
   helperExclusions,
+  helperKeyFor,
   helperNameErrors,
   planHelpers,
   type HelperRow,
@@ -92,6 +94,33 @@ describe("what gets a helper", () => {
     const rows = plan([...lights, { id: "binary_sensor.living_pir", dc: "motion" }], EMPTY_INVENTORY, { ...naming, helperNames: { lights: "lamps", motion: "pirs" } });
     expect(row(rows, "lights")!.canonicalId).toBe("light.living_lamps");
     expect(row(rows, "motion")!.canonicalId).toBe("binary_sensor.living_pirs");
+  });
+});
+
+describe("the combined entity of a capability", () => {
+  it("maps each capability to its helper, speakers and TVs to the media group", () => {
+    expect(helperKeyFor("lights")).toBe("lights");
+    expect(helperKeyFor("illuminance")).toBe("illuminance");
+    expect(helperKeyFor("speaker")).toBe("media");
+    expect(helperKeyFor("tv")).toBe("media");
+    for (const none of ["thermostat", "cover", "fan", "power"] as const) expect(helperKeyFor(none)).toBeNull();
+  });
+
+  it("finds the row of an area for a helper, and nothing where the area gets none", () => {
+    const rows = plan([...lights, { id: "media_player.living_speaker" }, { id: "binary_sensor.kitchen_pir", dc: "motion", area: "kitchen" }]);
+    expect(areaHelperRow(rows, "living_room", "lights")?.canonicalId).toBe("light.living_all");
+    expect(areaHelperRow(rows, "kitchen", "motion")?.canonicalId).toBe("binary_sensor.kitchen_motions");
+    // One player is not enough for a media group; the other area has no lights.
+    expect(areaHelperRow(rows, "living_room", "media")).toBeUndefined();
+    expect(areaHelperRow(rows, "kitchen", "lights")).toBeUndefined();
+  });
+
+  it("follows the counts: a capability whose entities no longer count has no row", () => {
+    const specs = [{ id: "binary_sensor.living_pir", dc: "motion" }];
+    const h = house(specs);
+    expect(areaHelperRow(planHelpers(h, EMPTY_INVENTORY, naming), "living_room", "motion")).toBeDefined();
+    const off = setCounts(h, EMPTY_INVENTORY, "binary_sensor.living_pir", false);
+    expect(areaHelperRow(planHelpers(h, off, naming), "living_room", "motion")).toBeUndefined();
   });
 });
 

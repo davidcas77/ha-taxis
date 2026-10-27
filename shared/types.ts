@@ -37,6 +37,8 @@ export type EntityItem = {
   domain: string;
   role: EntityRole;
   deviceClass: string | null;
+  // The class the user chose in the registry (null: the integration's own).
+  deviceClassOverride: string | null;
   state: string | null;
   unit: string | null;
   icon: string | null;
@@ -150,7 +152,7 @@ export type ChangeOp = "create" | "update" | "delete";
 // The fields each kind of change may set, named as Home Assistant names them.
 export type ChangeFields = {
   // new_entity_id renames the entity; Apply also updates what uses the old id.
-  entity: { new_entity_id?: string; name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null };
+  entity: { new_entity_id?: string; name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null; device_class?: string | null };
   device: { name_by_user?: string | null; area_id?: string | null; labels?: string[]; disabled_by?: "user" | null };
   area: { name?: string; floor_id?: string | null; icon?: string | null; labels?: string[]; temperature_entity_id?: string | null; humidity_entity_id?: string | null };
   floor: { name?: string; level?: number | null; icon?: string | null };
@@ -267,6 +269,8 @@ export type ChangesResponse = { ok: true; changes: Change[]; version: string } |
 export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
 
 export type GroupsResponse = { ok: true; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
+
+export type NamingIgnoresResponse = { ok: true; ignores: import("./naming-ignores.ts").NamingIgnores } | { ok: false; error: string };
 
 export type InventoryResponse = { ok: true; inventory: import("./inventory.ts").InventorySettings } | { ok: false; error: string };
 
