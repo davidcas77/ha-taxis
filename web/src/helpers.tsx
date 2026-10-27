@@ -1,10 +1,11 @@
 import { useMemo, useState, type ReactNode } from "react";
 
-import { HELPERS, HELPER_SPEC, canonicalId, effectiveSuffixes, hasPendingChange, helperChangeInputs, planHelpers, type HelperKey, type HelperRow, type HelperStatus } from "../../shared/helpers.ts";
+import { HELPERS, HELPER_SPEC, canonicalId, helperSuffixes, hasPendingChange, helperChangeInputs, helperExclusions, helperKeyFor, planHelpers, type HelperKey, type HelperRow, type HelperStatus } from "../../shared/helpers.ts";
+import { CAPABILITIES, inventoryMatrix, type MatrixRow } from "../../shared/inventory.ts";
 import { areaCodes } from "../../shared/naming.ts";
 import type { AreaNode, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
+import { ColumnHeader, SortHeader, useSort } from "./table.tsx";
 import { HelpDisclosure, HelpTopic } from "./help.tsx";
 import { Button } from "./ui.tsx";
 
@@ -290,26 +291,92 @@ function matches(l: Line, f: (typeof FILTERS)[number]["key"]): boolean {
 
 // The Parameters page: every area, then the floors and the house.
 export function HelpersTab({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
+  const [view, setView] = useState<"overview" | "details">("overview");
   const { ready, lines } = usePlan(h);
   const areas = useMemo(() => lines.filter((l) => l.row.level === "area"), [lines]);
   const upper = useMemo(() => lines.filter((l) => l.row.level !== "area"), [lines]);
   return (
     <div className="flex flex-col gap-6">
       <p className="max-w-[68ch] text-[13px] text-muted">{HELPERS_NOTE}</p>
+      <div role="tablist" aria-label="Helper view" className="flex gap-1 border-b border-line">
+        {(["overview", "details"] as const).map(tab => <button key={tab} id={`helper-view-${tab}`} type="button" role="tab" aria-selected={view === tab} aria-controls="helper-view-panel" onClick={() => setView(tab)} className={`border-b-2 px-3 py-2 text-[13px] ${view === tab ? "border-accent font-medium text-accent" : "border-transparent text-muted hover:text-fg"}`}>{tab === "overview" ? "Overview" : "Details"}</button>)}
+      </div>
       {!ready ? (
         <p className="text-[13px] text-muted">Loading the settings…</p>
       ) : (
-        <>
+        <div id="helper-view-panel" role="tabpanel" aria-labelledby={`helper-view-${view}`} className="flex min-w-0 flex-col gap-6">
+          {view === "overview" ? <HelpersOverview h={h} lines={areas} go={go} /> : <>
           {areas.length === 0 ? <p className="text-[13px] text-muted">No area has anything to roll up yet.</p> : <HelperTable h={h} lines={areas} showArea go={go} />}
           <section className="flex flex-col gap-2" aria-label="Floors and house">
             <h2 className="text-sm font-semibold">Floors and house</h2>
             <HelpDisclosure summary="Floor groups gather room lights; the house group gathers floors." label="How groups are built"><HelpTopic title="Membership and order">{UPPER_NOTE}</HelpTopic></HelpDisclosure>
             {upper.length === 0 ? <p className="text-[13px] text-muted">No area has a light group yet, so there is nothing for the floors and the house to gather. Add the areas' light groups to the changes first.</p> : <HelperTable h={h} lines={upper} showArea go={go} />}
           </section>
-        </>
+          </>}
+        </div>
       )}
     </div>
   );
+}
+
+function HelpersOverview({ h, lines, go }: { h: Hierarchy; lines: Line[]; go: (route: Route) => void }) {
+  const { inventory, naming } = useTaxis();
+  const all = useMemo(() => inventoryMatrix(h, inventory, helperExclusions(h, naming)).sort((a, b) => a.name.localeCompare(b.name)), [h, inventory, naming]);
+  const codes = useMemo(() => areaCodes(h, naming), [h, naming]);
+  const suffixes = useMemo(() => helperSuffixes(naming), [naming]);
+  const byArea = useMemo(() => {
+    const out = new Map<string, Map<HelperKey, Line>>();
+    for (const line of lines) {
+      const id = line.row.areaId!;
+      if (!out.has(id)) out.set(id, new Map());
+      out.get(id)!.set(line.row.key, line);
+    }
+    return out;
+  }, [lines]);
+  const columns = useMemo(() => ({
+    floor: (area: MatrixRow) => area.floorId ? h.floors.findIndex(floor => floor.id === area.floorId) : null,
+    area: (area: MatrixRow) => area.name,
+  }), [h]);
+  const { rows, sort, toggle } = useSort(all, columns, { key: "floor", dir: "asc" });
+  return <section aria-label="Helper coverage" className="flex min-w-0 flex-col gap-3">
+    <p className="text-xs text-muted">Every area and capability, using the helper names from Settings. Present, Create, Adopt, Update members, Conflict and In changes show different states. Expand a cell for details. Speakers and TVs share one media helper.</p>
+    <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+      <table aria-label="Area helper coverage" className="w-full text-[13px]">
+        <thead className="bg-sunken text-left text-xs text-muted"><tr>
+          <SortHeader label="Floor" k="floor" sort={sort} onToggle={toggle} />
+          <SortHeader label="Area" k="area" sort={sort} onToggle={toggle} className="sticky left-0 z-10 bg-sunken px-3 py-2" />
+          {CAPABILITIES.map(capability => <ColumnHeader key={capability.key}>{capability.label}</ColumnHeader>)}
+        </tr></thead>
+        <tbody>{rows.map(area => <tr key={area.areaId} className="border-t border-line align-top">
+          <td className="px-3 py-2 text-xs text-muted">{area.floorName ?? "No floor"}</td>
+          <td className="sticky left-0 z-10 bg-surface px-3 py-2"><button type="button" className="text-left text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: area.areaId }, tab: "capabilities" })}>{area.name}</button></td>
+          {CAPABILITIES.map(capability => {
+            const key = helperKeyFor(capability.key);
+            if (!key) return <td key={capability.key} className="px-3 py-2 text-xs text-muted">No helper in Taxis</td>;
+            const spec = HELPER_SPEC[key];
+            const id = canonicalId(spec.domain, codes[area.areaId].code, suffixes[key]);
+            const line = byArea.get(area.areaId)?.get(key);
+            const exists = h.entities[id];
+            let label = "Not needed";
+            let tone = "text-muted";
+            if (line) {
+              label = line.pending ? "In changes" : line.row.status === "in-place" ? "Present" : line.row.status === "update-members" ? "Update members" : line.row.status === "adopt" ? "Adopt" : line.row.status === "conflict" ? "Conflict" : "Create";
+              tone = line.pending ? "text-accent" : line.row.status === "in-place" ? "text-on" : line.row.status === "conflict" ? "text-danger" : "text-warn";
+              if (!line.pending && line.row.status === "in-place" && (exists?.disabled || exists?.state === "unavailable")) { label += exists.disabled ? " · disabled" : " · unavailable"; tone = "text-warn"; }
+              if (!line.pending && line.row.membersUnknown) label += " · members unchecked";
+            } else if (exists) {
+              label = exists.platform === spec.helper ? "Present · not required" : "Conflict";
+              tone = exists.platform === spec.helper ? "text-muted" : "text-danger";
+              if (exists.platform === spec.helper && (exists.disabled || exists.state === "unavailable")) { label += exists.disabled ? " · disabled" : " · unavailable"; tone = "text-warn"; }
+            }
+            return <td key={capability.key} className="px-3 py-2 text-xs">
+              {line ? <details><summary aria-label={`${area.name} ${capability.label} helper details`} className="cursor-pointer"><code className="break-all">{id}</code><span className={`mt-1 block font-medium ${tone}`}>{label}</span></summary><div className="mt-2"><StatusCell h={h} line={line} go={go} /><Sources h={h} row={line.row} /></div></details> : <><code className="block break-all">{id}</code><span className={`mt-1 block ${tone}`}>{label}</span>{!exists && <span className="mt-1 block text-muted">{key === "media" ? "Needs at least two counted media players." : "No counted sources."}</span>}</>}
+            </td>;
+          })}
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </section>;
 }
 
 // An area's own helper lines, for its Capabilities tab (the same plan as the
@@ -328,7 +395,7 @@ export function CombinedHelperRow({ h, area, helperKey, line, counted, go }: { h
   const { propose, busy, naming } = useTaxis();
   const spec = HELPER_SPEC[helperKey];
   const name = spec.label.toLowerCase();
-  const id = line?.row.canonicalId ?? canonicalId(spec.domain, areaCodes(h, naming)[area.id].code, effectiveSuffixes(naming.helperNames)[helperKey]);
+  const id = line?.row.canonicalId ?? canonicalId(spec.domain, areaCodes(h, naming)[area.id].code, helperSuffixes(naming)[helperKey]);
   const row = line?.row;
   let status: ReactNode;
   let tone = "text-muted";
@@ -364,7 +431,7 @@ export function CombinedHelperRow({ h, area, helperKey, line, counted, go }: { h
             <>
               Conflict: held by {row.heldBy} ({row.heldByName});{" "}
               <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "settings" })}>
-                change it in Settings → Helper names
+                change it in Settings → Type words and Aggregation markers
               </button>
             </>
           );

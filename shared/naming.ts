@@ -1,4 +1,4 @@
-import type { HelperNames } from "./helpers.ts";
+import type { HelperNames, HelperKey } from "./helpers.ts";
 import type { AreaNode, EntityItem, EntityRole, FloorNode, Hierarchy } from "./types.ts";
 
 // Naming: a code per area, a pattern for entity ids and display names, and an
@@ -21,18 +21,22 @@ export type NamingSettings = {
   // light.<houseGroup>. Empty or missing: "all".
   houseGroup: string;
   // Role -> the word for it in entity ids. Missing: the default.
-  typeWords: Partial<Record<EntityRole, string>>;
-  // Helper key -> the end of its canonical entity id (shared/helpers.ts).
-  // Missing: the default.
+  typeWords: Partial<Record<EntityRole | "door" | "window", string>>;
+  // Legacy complete helper suffixes, used until aggregationMarkers is saved.
   helperNames: HelperNames;
+  // Present when helpers use shared Type words plus these independent markers.
+  // Absent: retain the legacy helper suffixes until the owner saves the new form.
+  aggregationMarkers?: Partial<Record<HelperKey, string>>;
 };
 
-export const DEFAULT_TYPE_WORDS: Record<EntityRole, string> = {
+export const DEFAULT_TYPE_WORDS: Record<EntityRole | "door" | "window", string> = {
   light: "light",
   switch: "switch",
   motion: "motion",
   presence: "presence",
   opening: "door",
+  door: "door",
+  window: "window",
   climate: "climate",
   temperature: "temp",
   humidity: "hum",
@@ -71,15 +75,29 @@ export const slug = (s: string): string =>
 const objectId = (entityId: string) => entityId.slice(entityId.indexOf(".") + 1);
 const startsWithCode = (id: string, code: string) => code.length > 0 && (id === code || id.startsWith(`${code}_`));
 
+const HELPER_TYPE_WORD = { lights: "light", motion: "motion", presence: "presence", door: "door", window: "window", temperature: "temperature", humidity: "humidity", illuminance: "illuminance", media: "media" } as const;
+export const defaultAggregationMarker = (key: HelperKey): string => ["temperature", "humidity", "illuminance"].includes(key) ? "avg" : "all";
+
+export function sharedHelperSuffix(naming: Pick<NamingSettings, "typeWords" | "aggregationMarkers">, key: HelperKey): string {
+  const word = HELPER_TYPE_WORD[key];
+  const configured = Object.hasOwn(naming.typeWords, word) ? naming.typeWords[word]! : (word === "door" || word === "window") && Object.hasOwn(naming.typeWords, "opening") ? naming.typeWords.opening! : DEFAULT_TYPE_WORDS[word];
+  return [slug(configured), naming.aggregationMarkers?.[key] ?? defaultAggregationMarker(key)].filter(Boolean).join("_");
+}
+
 // A real device class wins over wording. For an unclassified/general opening
 // contact, retain an explicit window token rather than inventing a door prefix.
 export function typeWord(e: EntityItem, s: NamingSettings, suffix: string = objectId(e.entityId)): string {
-  if (Object.hasOwn(s.typeWords, e.role)) return s.typeWords[e.role] ?? DEFAULT_TYPE_WORDS[e.role];
   if (e.domain === "binary_sensor") {
-    if (e.deviceClass === "window") return "window";
-    if (e.deviceClass === "garage_door") return "garage";
-    if ((!e.deviceClass || e.deviceClass === "opening") && suffix.split("_").includes("window")) return "window";
+    const window = e.deviceClass === "window" || ((!e.deviceClass || e.deviceClass === "opening") && suffix.split("_").includes("window"));
+    const key = window ? "window" : "door";
+    if (window || e.role === "opening") {
+      if (e.deviceClass !== "garage_door" && Object.hasOwn(s.typeWords, key)) return s.typeWords[key]!;
+      if (Object.hasOwn(s.typeWords, e.role)) return s.typeWords[e.role]!;
+      if (e.deviceClass === "garage_door") return "garage";
+      return DEFAULT_TYPE_WORDS[key];
+    }
   }
+  if (Object.hasOwn(s.typeWords, e.role)) return s.typeWords[e.role] ?? DEFAULT_TYPE_WORDS[e.role];
   return DEFAULT_TYPE_WORDS[e.role] ?? e.domain;
 }
 
@@ -399,7 +417,8 @@ export function analyzeArea(area: AreaNode, h: Hierarchy, s: NamingSettings, cod
     const namePart = aggregateMotion ? "all" : tokens.join("_");
     // A helper-specific suffix is more specific than the general naming
     // pattern; keep explicitly configured canonical helper IDs coherent.
-    const patternId = aggregateMotion && s.helperNames.motion ? `${code}_${s.helperNames.motion}` : fill(s.idPattern, { area: code, type, name: namePart });
+    const motionSuffix = s.aggregationMarkers !== undefined ? sharedHelperSuffix(s, "motion") : s.helperNames.motion;
+    const patternId = aggregateMotion && motionSuffix ? `${code}_${motionSuffix}` : fill(s.idPattern, { area: code, type, name: namePart });
     const wanted = slug(patternId).replace(/_+/g, "_");
     let full = conflictingContactName ? e.entityId : `${e.domain}.${wanted}`;
     for (let n = 2; full !== e.entityId && (taken.has(full) || proposed.has(full)); n++) full = `${e.domain}.${wanted}_${n}`;

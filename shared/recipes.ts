@@ -1,7 +1,7 @@
 import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeKey, type RecipeKey } from "./blueprints.ts";
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
 import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID, kindRunsIn, type Season } from "./climate.ts";
-import { RECIPE_HELPER_SUFFIX, areaCodeConflicts, canonicalId, effectiveSuffixes, helperExclusions } from "./helpers.ts";
+import { RECIPE_HELPER_SUFFIX, areaCodeConflicts, canonicalId, helperSuffixes, helperExclusions } from "./helpers.ts";
 import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import { entryLights, resolve, resolveAll, resolveIn, withSeconds, type ParameterSettings } from "./parameters.ts";
@@ -277,7 +277,7 @@ export function planRecipes(
   const codes = areaCodes(h, naming);
   const conflicts = areaCodeConflicts(h, naming);
   const exclusions = helperExclusions(h, naming);
-  const suffix = effectiveSuffixes(naming.helperNames);
+  const suffix = helperSuffixes(naming);
   const out: RecipeCell[] = [];
 
   for (const area of Object.values(h.areas)) {
@@ -1100,7 +1100,7 @@ export const areaThermostats = (h: Hierarchy): string[] =>
 // lights a recipe controls, and the ones to ask what else controls them.
 export function canonicalLightGroups(h: Hierarchy, naming: NamingSettings): string[] {
   const codes = areaCodes(h, naming);
-  const suffix = effectiveSuffixes(naming.helperNames).lights;
+  const suffix = helperSuffixes(naming).lights;
   return Object.values(h.areas)
     .map((a) => canonicalId("light", codes[a.id].code, suffix))
     .filter((id) => h.entities[id]?.platform === "group");

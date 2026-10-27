@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { canonicalId, effectiveSuffixes } from "../../shared/helpers.ts";
+import { canonicalId, helperSuffixes } from "../../shared/helpers.ts";
 import { analyzeArea, areaCodes, duplicateCodes, floorCodeAdvice, floorCodes, slug, type NamingSettings } from "../../shared/naming.ts";
 import { sortRows } from "../../shared/sort.ts";
 import type { AreaNode, Hierarchy } from "../../shared/types.ts";
@@ -54,7 +54,7 @@ function AreaCodesForm({ h, go, naming }: { h: Hierarchy; go: (route: Route) => 
 export function AreaCodesTable({ h, go, draft, onChange }: { h: Hierarchy; go: (route: Route) => void; draft: NamingSettings; onChange: (codes: CodeOverrides) => void }) {
   const codes = useMemo(() => areaCodes(h, draft), [h, draft]);
   const floorCodeMap = useMemo(() => floorCodes(h, draft), [h, draft]);
-  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
+  const suffixes = useMemo(() => helperSuffixes(draft), [draft]);
   const floorClashes = useMemo(() => {
     const out = new Map<string, string[]>();
     for (const ids of duplicateCodes(floorCodeMap).values()) for (const id of ids) out.set(id, ids.filter(other => other !== id).map(other => h.floors.find(f => f.id === other)?.name ?? other));

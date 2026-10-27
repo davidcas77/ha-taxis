@@ -2,7 +2,7 @@ import { Check, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
-import { HELPERS, HELPER_SUFFIX_RE, canonicalId, effectiveSuffixes, helperNameErrors } from "../../shared/helpers.ts";
+import { HELPERS, HELPER_SUFFIX_RE, canonicalId, helperSuffixes, helperNamingErrors, sharedHelperNaming, defaultAggregationMarker } from "../../shared/helpers.ts";
 import {
   DEFAULT_HOUSE_GROUP,
   DEFAULT_NAMING,
@@ -35,6 +35,8 @@ const STATUS: Record<NamingStatus, { label: string; tone: string }> = {
   "no-area": { label: "No area in the id", tone: "text-muted" },
 };
 
+const TYPE_WORD_FIELDS = ROLE_ORDER.flatMap<{ role: keyof NamingSettings["typeWords"]; label: string }>(row => row.role === "opening" ? [{ role: "door" as const, label: "Door" }, { role: "window" as const, label: "Window" }] : [row]);
+
 export function SettingsPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
   const { naming, namingLoaded } = useTaxis();
   // The form starts from the saved settings; before they arrive, saving would
@@ -45,11 +47,11 @@ export function SettingsPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }
 
 function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void; naming: NamingSettings }) {
   const { saveNaming, notify } = useTaxis();
-  const [draft, setDraft] = useState<NamingSettings>(naming);
-  useEffect(() => setDraft(naming), [naming]);
+  const [draft, setDraft] = useState<NamingSettings>(() => sharedHelperNaming(naming));
+  useEffect(() => setDraft(sharedHelperNaming(naming)), [naming]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const draftGuard = useDraftGuard(JSON.stringify(draft) !== JSON.stringify(naming));
+  const draftGuard = useDraftGuard(JSON.stringify(draft) !== JSON.stringify(sharedHelperNaming(naming)));
   const codes = useMemo(() => areaCodes(h, draft), [h, draft]);
   const floorOrder = useMemo(() => [...h.floors.flatMap((f) => f.areaIds), ...h.looseAreaIds].map((id) => h.areas[id]), [h]);
   // Two areas with the same effective code (detected or set): area id -> the other areas' names.
@@ -62,9 +64,9 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
   const floorClashes = useMemo(() => duplicateCodes(floorCodes(h, draft)), [h, draft]);
   const houseGroup = draft.houseGroup || DEFAULT_HOUSE_GROUP;
   const houseGroupError = HELPER_SUFFIX_RE.test(houseGroup) ? null : "Use a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled.";
-  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
+  const suffixes = useMemo(() => helperSuffixes(draft), [draft]);
   // Helper names: live problems, and an example id from the first area.
-  const helperErrors = useMemo(() => helperNameErrors(draft.helperNames), [draft.helperNames]);
+  const helperErrors = useMemo(() => helperNamingErrors(draft), [draft]);
   const firstArea = floorOrder[0];
   const sample = h.entities[Object.keys(h.entities).find((id) => h.entities[id].areaId && h.entities[id].role === "light") ?? ""];
   const preview = useMemo(() => {
@@ -147,18 +149,18 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
             <p className="text-xs text-muted">The {"{type}"} part of an entity id, for each kind of entity.</p>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-            {ROLE_ORDER.map((r) => (
+            {TYPE_WORD_FIELDS.map((r) => (
               <label key={r.role} className="flex items-center gap-2 text-[13px]">
                 <span className="w-28 shrink-0 truncate text-muted">{r.label}</span>
                 <input
                   aria-label={`Word for ${r.label}`}
                   className={`${inputClass} font-mono`}
                   value={draft.typeWords[r.role] ?? ""}
-                  placeholder={DEFAULT_TYPE_WORDS[r.role as EntityRole] || "(none)"}
+                  placeholder={DEFAULT_TYPE_WORDS[r.role] || "(none)"}
                   onChange={(e) => {
                     const words = { ...draft.typeWords };
-                    if (e.target.value.trim()) words[r.role as EntityRole] = e.target.value;
-                    else delete words[r.role as EntityRole];
+                    if (e.target.value.trim()) words[r.role] = e.target.value;
+                    else delete words[r.role];
                     setDraft({ ...draft, typeWords: words });
                   }}
                 />
@@ -169,54 +171,40 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
 
         <section className="flex flex-col gap-3">
           <div className="flex flex-wrap items-baseline gap-2">
-            <h2 className="text-sm font-semibold">Helper names</h2>
+            <h2 className="text-sm font-semibold">Aggregation markers</h2>
             <p className="text-xs text-muted">
-              The end of the entity id of each canonical helper: <code className="font-mono">{"<domain>.<area code>_<name>"}</code>. Each name is used once.
+              Built from <code className="font-mono">{"<domain>.<area code>_<capability word>_<aggregation marker>"}</code>. Empty parts are omitted. Each combined name is used once.
             </p>
           </div>
           <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
             {HELPERS.map((s) => {
               const error = helperErrors[s.key];
               return (
-                <div key={s.key} className="flex flex-col gap-1">
-                  <label htmlFor={`helper-name-${s.key}`} className="text-xs font-medium text-muted">
-                    {s.label}
-                  </label>
-                  <input
-                    id={`helper-name-${s.key}`}
-                    className={`${inputClass} font-mono ${error ? "border-danger text-danger" : ""}`}
-                    value={draft.helperNames[s.key] ?? ""}
-                    placeholder={s.suffix}
-                    spellCheck={false}
-                    aria-invalid={error ? true : undefined}
-                    onChange={(e) => {
-                      const names = { ...draft.helperNames };
-                      if (e.target.value) names[s.key] = e.target.value;
-                      else delete names[s.key];
-                      setDraft({ ...draft, helperNames: names });
-                    }}
-                  />
+                <div key={s.key} className="flex min-w-0 flex-col gap-1">
+                  <label className="text-xs font-medium text-muted" htmlFor={`aggregation-${s.key}`}>{s.label}</label>
+                  <input id={`aggregation-${s.key}`} aria-label={`Aggregation marker for ${s.label}`} className={`${inputClass} font-mono ${error ? "border-danger text-danger" : ""}`} value={draft.aggregationMarkers?.[s.key] ?? defaultAggregationMarker(s.key)} spellCheck={false} aria-invalid={error ? true : undefined} onChange={e => setDraft(current => ({ ...current, aggregationMarkers: { ...current.aggregationMarkers, [s.key]: e.target.value } }))} />
                   {error ? (
                     <p role="alert" className="text-[11px] text-danger">
                       {error}
                     </p>
                   ) : (
-                    firstArea && <p className="font-mono text-[11px] text-muted">{canonicalId(s.domain, codes[firstArea.id].code, suffixes[s.key])}</p>
+                    firstArea && <p className="break-all font-mono text-[11px] text-muted">{canonicalId(s.domain, codes[firstArea.id].code, suffixes[s.key])}</p>
                   )}
                 </div>
               );
             })}
           </div>
+          <p className="text-xs text-muted">Capability names come from Type words above. These markers name the helpers; they do not change group logic or averaging. Saving adopts these generated helper names in Taxis; existing HA entities stay unchanged until you review and apply changes.</p>
         </section>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
           <Button tone="primary" disabled={saving || clashes.size > 0 || floorClashes.size > 0 || Object.keys(helperErrors).length > 0 || houseGroupError !== null} onClick={() => void save()}>
             Save settings
           </Button>
-          <Button tone="ghost" onClick={() => setDraft(naming)}>
+          <Button tone="ghost" onClick={() => setDraft(sharedHelperNaming(naming))}>
             Undo changes
           </Button>
-          <Button tone="ghost" onClick={() => setDraft({ ...structuredClone(DEFAULT_NAMING), areaCodes: draft.areaCodes, floorCodes: draft.floorCodes })}>
+          <Button tone="ghost" onClick={() => setDraft({ ...sharedHelperNaming(structuredClone(DEFAULT_NAMING)), areaCodes: draft.areaCodes, floorCodes: draft.floorCodes })}>
             Back to defaults
           </Button>
           {clashes.size > 0 && (

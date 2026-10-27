@@ -12,6 +12,11 @@ import {
   helperExclusions,
   helperKeyFor,
   helperNameErrors,
+  helperNameParts,
+  helperSuffix,
+  helperSuffixes,
+  helperNamingErrors,
+  sharedHelperNaming,
   planHelpers,
   type HelperRow,
 } from "./helpers.ts";
@@ -46,6 +51,46 @@ function house(specs: Spec[], areas: Partial<Record<string, { temperature?: stri
 
 const naming: NamingSettings = { ...DEFAULT_NAMING, areaCodes: { living_room: "living", kitchen: "kitchen" } };
 const plan = (specs: Spec[], inv: InventorySettings = EMPTY_INVENTORY, n: NamingSettings = naming, areas = {}) => planHelpers(house(specs, areas), inv, n);
+
+describe("separate helper naming parts", () => {
+  it("splits known legacy markers without changing any generated suffix", () => {
+    const old = { lights: "all", motion: "motion_all", door: "doors", temperature: "temperature_avg", media: "custom_media_name" };
+    expect(helperNameParts(old, "lights")).toEqual({ capability: "", aggregation: "all" });
+    expect(helperNameParts(old, "motion")).toEqual({ capability: "motion", aggregation: "all" });
+    expect(helperNameParts(old, "door")).toEqual({ capability: "doors", aggregation: "" });
+    expect(helperNameParts(old, "temperature")).toEqual({ capability: "temperature", aggregation: "avg" });
+    expect(helperNameParts(old, "media")).toEqual({ capability: "custom_media_name", aggregation: "" });
+    for (const spec of HELPERS) expect(helperSuffix(helperNameParts(old, spec.key))).toBe(effectiveSuffixes(old)[spec.key]);
+  });
+
+  it("shares aggregation markers while keeping capability words independent", () => {
+    const n = { ...DEFAULT_NAMING, typeWords: { door: "entry", window: "window", temperature: "temperature" }, aggregationMarkers: { motion: "all", door: "all", window: "all", temperature: "avg" } };
+    expect(helperNamingErrors(n)).toEqual({});
+    expect(helperSuffixes(n)).toMatchObject({ motion: "motion_all", door: "entry_all", window: "window_all", temperature: "temperature_avg" });
+    expect(helperNamingErrors({ ...n, aggregationMarkers: { door: "two words" } }).door).toBeTruthy();
+    expect(helperNamingErrors({ ...n, typeWords: { door: "occupied" }, aggregationMarkers: { door: "" } }).door).toBeTruthy();
+  });
+
+  it("leaves legacy planning unchanged until shared words are explicitly adopted", () => {
+    const h = buildHierarchy(buildMockRegistry(), "now");
+    const legacy = { ...DEFAULT_NAMING, helperNames: { lights: "lamps", motion: "motion_all", temperature: "temperature_mean" } };
+    const before = planHelpers(h, EMPTY_INVENTORY, legacy);
+    const form = sharedHelperNaming(legacy);
+    expect(planHelpers(h, EMPTY_INVENTORY, legacy)).toEqual(before);
+    expect(helperSuffixes(legacy).lights).toBe("lamps");
+    expect(helperSuffixes(form)).toMatchObject({ lights: "light_all", motion: "motion_all", temperature: "temp_mean" });
+  });
+
+  it("uses the same type word for helper identity and exclusions", () => {
+    const n = { ...naming, typeWords: { motion: "movement" }, aggregationMarkers: { motion: "all" } };
+    const h = house([
+      { id: "binary_sensor.living_pir", dc: "motion" },
+      { id: "binary_sensor.living_movement_all", dc: "motion", platform: "group", members: ["binary_sensor.living_pir"], entry: "fixture" },
+    ]);
+    expect(helperExclusions(h, n)("living_room").has("binary_sensor.living_movement_all")).toBe(true);
+    expect(planHelpers(h, EMPTY_INVENTORY, n).find(row => row.key === "motion")).toMatchObject({ canonicalId: "binary_sensor.living_movement_all", status: "in-place", sources: ["binary_sensor.living_pir"] });
+  });
+});
 const row = (rows: HelperRow[], key: string, area = "living_room") => rows.find((r) => r.key === key && r.areaId === area);
 
 const lights = [{ id: "light.living_spots" }, { id: "light.living_lamp" }];

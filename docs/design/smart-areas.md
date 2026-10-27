@@ -101,30 +101,29 @@ Implemented: the **aggregate** helpers below. The timers and the occupied, dark
 and profile helpers wait for stage 4, where the recipes that use them are
 (see [Helpers that come with the recipes](#helpers-that-come-with-the-recipes-stage-4)).
 
-`<code>` is the area code from Settings (unique, falls back to the area id).
+`<code>` is the area code from Parameters → Area codes (unique, falls back to the area id).
 Sources are the entities that **count** in the area's inventory (stage 2), so
 excluding a sensor there changes the helper. The area's own canonical helpers
 are not listed as its sensors.
 
 | Key | Entity | Native helper | Sources | Created when |
 |---|---|---|---|---|
-| lights | `light.<code>_all` | Group, light | counted lights | ≥ 1 |
-| motion | `binary_sensor.<code>_motions` | Group, binary_sensor, any on | counted motion (starts and holds) | ≥ 1 |
-| presence | `binary_sensor.<code>_presences` | Group, binary_sensor, any on | counted presence | ≥ 1 |
-| door | `binary_sensor.<code>_doors` | Group, binary_sensor, any on | counted doors | ≥ 1 |
-| window | `binary_sensor.<code>_windows` | Group, binary_sensor, any on | counted windows | ≥ 1 |
-| temperature | `sensor.<code>_temperature` | Min/max, mean | counted temperature | ≥ 1 |
-| humidity | `sensor.<code>_humidity` | Min/max, mean | counted humidity | ≥ 1 |
-| illuminance | `sensor.<code>_illuminance` | Min/max, mean | counted light level | ≥ 1 |
-| media | `media_player.<code>_media` | Group, media_player | counted speakers and TVs | ≥ 2 |
+| lights | `light.<code>_light_all` | Group, light | counted lights | ≥ 1 |
+| motion | `binary_sensor.<code>_motion_all` | Group, binary_sensor, any on | counted motion (starts and holds) | ≥ 1 |
+| presence | `binary_sensor.<code>_presence_all` | Group, binary_sensor, any on | counted presence | ≥ 1 |
+| door | `binary_sensor.<code>_door_all` | Group, binary_sensor, any on | counted doors | ≥ 1 |
+| window | `binary_sensor.<code>_window_all` | Group, binary_sensor, any on | counted windows | ≥ 1 |
+| temperature | `sensor.<code>_temp_avg` | Min/max, mean | counted temperature | ≥ 1 |
+| humidity | `sensor.<code>_hum_avg` | Min/max, mean | counted humidity | ≥ 1 |
+| illuminance | `sensor.<code>_lux_avg` | Min/max, mean | counted light level | ≥ 1 |
+| media | `media_player.<code>_media_all` | Group, media_player | counted speakers and TVs | ≥ 2 |
 
-The end of each id (the suffix) is a setting, **Settings → Helper names**,
-stored with the naming settings: lower-case letters, digits and `_`, 1 to 30
-characters, no `_` at either end or doubled, and no two keys with the same
-suffix (defaults count). The defaults are chosen so they rarely collide with a
-single real sensor named after the room (`sensor.kitchen_motion` stays a
-sensor; the group is `binary_sensor.kitchen_motions`). A new helper is named
-"<Area name> <word>": "Kitchen motions".
+These examples use the shared **Settings → Type words** and separate
+**Aggregation markers** defaults. The combined suffix uses lower-case letters,
+digits and `_`, 1 to 30 characters, no `_` at either end or doubled, and no two
+keys with the same suffix (defaults count). Legacy complete helper suffixes
+retain their exact IDs until this shared naming is saved. A new helper's display
+name stays "<Area name> <word>": "Kitchen motions".
 
 Also set on the area itself: its temperature and humidity entity, pointed at
 the canonical sensors. That is part of the same plan: carried by the helper's
@@ -1189,3 +1188,37 @@ id (recipes are checked against real entity ids before writing).
 4. When purpose-specific area triggers (`motion.detected` with an area target)
    leave Labs, recipes could use them directly; canonical groups stay because
    they respect exclusions.
+
+
+### Shared type words, aggregation markers and helper coverage
+
+Settings uses one set of Type words for physical entity naming and canonical
+helper capability names. Door and Window have independent fields. A stored legacy
+`opening` override remains readable as the fallback for either contact until its
+specific word is set. Other role groupings remain unchanged.
+
+A separate Aggregation markers section configures each capability's marker. IDs
+join the shared type word and marker after the area code, omitting empty parts:
+`binary_sensor.kitchen_door_all`, `sensor.kitchen_temp_avg`. The marker names the
+helper only; it does not change group logic or the numeric calculation. Groups
+default to `all`; numeric aggregates default to `avg`.
+
+`aggregationMarkers` in the naming settings selects this new model. Legacy
+`helperNames` complete suffixes remain readable with their exact IDs until shared
+naming is saved. Opening Settings prepares the new form without saving, queuing
+changes or changing the planner's saved targets. Saving adopts shared words and
+markers in Taxis; it can change planned helper IDs, which still require normal
+review and Apply before any Home Assistant write. Keys, area/floor codes and other
+settings are retained. Combined names remain unique, bounded and protected against
+reserved recipe IDs. All helper planners, exclusions, recipe targets, preflight
+checks and floor light-group previews use the same resolver.
+
+Parameters → Helpers has Overview and Details views. Overview shows every area
+and capability with its expected configured helper ID and the shared planner
+status: Present, Create, Adopt, Update members, Conflict, In changes or Not needed.
+Speakers and TVs share the media helper; capabilities without a Taxis aggregate
+planner are marked explicitly. Queued helpers are not claimed as present. Unchecked
+membership, disabled state and unavailability are identified. Expanding a cell
+shows the existing detailed status and sources. The Area column stays visible
+during horizontal scrolling. Details retains the proposal tables and floor/house
+light-group controls.

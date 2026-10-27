@@ -20,7 +20,7 @@ import {
 } from "../shared/ai.ts";
 import { checkBaseUrl } from "../shared/ai-url.ts";
 import { GROUP_ID, GROUP_LISTS, MAX_GROUPS, MAX_ITEMS, MAX_NAME, type GroupSettings } from "../shared/groups.ts";
-import { HELPERS, HELPER_SUFFIX_RE, effectiveSuffixes, helperNameErrors, isHelperKey, type HelperNames } from "../shared/helpers.ts";
+import { HELPERS, HELPER_SUFFIX_RE, effectiveSuffixes, helperNamingErrors, isHelperKey, type HelperNames } from "../shared/helpers.ts";
 import {
   AREA_TYPES,
   EMPTY_INVENTORY,
@@ -49,7 +49,7 @@ import {
 } from "../shared/parameters.ts";
 import { EMPTY_NAMING_IGNORES, readNamingIgnores, type NamingIgnores } from "../shared/naming-ignores.ts";
 import { DEFAULT_HOUSE_GROUP, DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, floorCodes, slug, type NamingSettings } from "../shared/naming.ts";
-import type { EntityRole, Hierarchy } from "../shared/types.ts";
+import type { Hierarchy } from "../shared/types.ts";
 
 // App settings, one JSON value per key in SQLite: naming, the naming
 // suggestions the user ignored, groups, the capability inventory, the recipe parameters and the optional AI.
@@ -215,13 +215,13 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>, fl
   // The end of the house group's id: a helper name, kept only when it isn't "all".
   const house = (s.houseGroup ?? "").trim() || DEFAULT_HOUSE_GROUP;
   if (!HELPER_SUFFIX_RE.test(house)) return { ok: false, error: "The name of the house light group uses a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled." };
-  const words: Partial<Record<EntityRole, string>> = {};
+  const words: NamingSettings["typeWords"] = {};
   for (const [role, word] of Object.entries(s.typeWords ?? {})) {
     if (!Object.hasOwn(DEFAULT_TYPE_WORDS, role) || typeof word !== "string") continue;
     if (word.length > 40) return { ok: false, error: `The word for ${role} is longer than 40 characters.` };
     const clean = slug(word);
     if (word.trim() && !clean) return { ok: false, error: `The word for ${role} has no letters or digits.` };
-    words[role as EntityRole] = clean;
+    words[role as keyof NamingSettings["typeWords"]] = clean;
   }
   // Helper names: only real keys, only what differs from the default, each a
   // valid slug and no two the same.
@@ -231,11 +231,21 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>, fl
     if (typeof v !== "string") return { ok: false, error: `The helper name for ${key} wasn't readable.` };
     helperNames[key] = v;
   }
-  const bad = Object.entries(helperNameErrors(helperNames))[0];
+  let aggregationMarkers: NamingSettings["aggregationMarkers"];
+  if (s.aggregationMarkers !== undefined) {
+    if (!isRecord(s.aggregationMarkers)) return { ok: false, error: "The aggregation markers weren't readable." };
+    aggregationMarkers = {};
+    for (const [key, marker] of Object.entries(s.aggregationMarkers)) {
+      if (!isHelperKey(key)) continue;
+      if (typeof marker !== "string") return { ok: false, error: `The aggregation marker for ${key} wasn't readable.` };
+      aggregationMarkers[key] = marker;
+    }
+  }
+  const bad = Object.entries(helperNamingErrors({ helperNames, typeWords: words, aggregationMarkers }))[0];
   if (bad) return { ok: false, error: `The helper name for ${HELPERS.find((x) => x.key === bad[0])!.label.toLowerCase()}: ${bad[1]}` };
   const defaults = effectiveSuffixes({});
   for (const key of Object.keys(helperNames) as (keyof HelperNames)[]) if (helperNames[key] === defaults[key]) delete helperNames[key];
-  return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, floorCodes: floors, houseGroup: house, typeWords: words, helperNames } };
+  return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, floorCodes: floors, houseGroup: house, typeWords: words, helperNames, ...(aggregationMarkers !== undefined ? { aggregationMarkers } : {}) } };
 }
 
 // Null when no two areas end up with the same code. Runs against the live

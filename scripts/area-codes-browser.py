@@ -39,6 +39,7 @@ class AreaCodesRegression(unittest.TestCase):
         self.page.set_default_timeout(15000)
         self.fixture = copy.deepcopy(self.naming)
         self.fixture.update({"idPattern": "{area}_{name}_{type}", "namePattern": "{Name} in {Area}", "areaCodes": {"kitchen": "kitchen_custom"}, "floorCodes": {"ground": "ground_custom"}, "houseGroup": "whole_home", "typeWords": {"light": "lamp"}, "helperNames": {"lights": "lighting"}})
+        self.fixture["aggregationMarkers"] = {key: ("avg" if key in ["temperature", "humidity", "illuminance"] else "all") for key in ["lights", "motion", "presence", "door", "window", "temperature", "humidity", "illuminance", "media"]}
         self.current = copy.deepcopy(self.fixture)
         self.body = copy.deepcopy(self.hierarchy)
         self.puts = []
@@ -73,7 +74,8 @@ class AreaCodesRegression(unittest.TestCase):
 
     def open(self, fragment="#parameters/area-codes"):
         self.page.goto(BASE + "/" + fragment, wait_until="networkidle")
-        self.page.get_by_role("heading", name="Area codes" if fragment == "#parameters/area-codes" else "Settings", exact=True).wait_for()
+        heading = "Area codes" if fragment == "#parameters/area-codes" else "Parameters" if fragment == "#parameters/helpers" else "Settings"
+        self.page.get_by_role("heading", name=heading, exact=True).wait_for()
 
     def kitchen_code(self):
         return self.page.get_by_role("textbox", name="Code for Kitchen", exact=True)
@@ -90,7 +92,7 @@ class AreaCodesRegression(unittest.TestCase):
         self.assertEqual(self.current, self.fixture)
         self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Settings", exact=True).click()
         self.assertEqual(self.page.get_by_role("heading", name="Area codes", exact=True).count(), 0)
-        for heading in ("Patterns", "House light group", "Type words", "Helper names"):
+        for heading in ("Patterns", "House light group", "Type words", "Aggregation markers"):
             self.page.get_by_role("heading", name=heading, exact=True).wait_for()
         self.assertEqual(self.page.get_by_role("heading", name="Floor codes", exact=True).count(), 0)
         self.assertEqual(self.page.get_by_role("textbox", name="Code for floor Ground floor", exact=True).count(), 0)
@@ -174,6 +176,139 @@ class AreaCodesRegression(unittest.TestCase):
         expected = {**self.fixture, "namePattern": "{Name} ({Area})", "houseGroup": "home_lights"}
         self.assertEqual(self.puts[0]["body"], expected)
 
+    def test_legacy_helper_names_are_not_adopted_or_saved_on_open(self):
+        self.fixture.pop("aggregationMarkers")
+        self.current = copy.deepcopy(self.fixture)
+        self.open("#settings")
+        self.assertEqual(self.page.get_by_label("Word for Lights", exact=True).input_value(), "lamp")
+        self.assertEqual(self.page.get_by_label("Aggregation marker for Lights", exact=True).input_value(), "all")
+        self.assertEqual(self.page.get_by_label("Aggregation marker for Temperature", exact=True).input_value(), "avg")
+        self.assertEqual(self.page.get_by_label("Word for Door", exact=True).get_attribute("placeholder"), "door")
+        self.assertEqual(self.page.get_by_label("Word for Window", exact=True).get_attribute("placeholder"), "window")
+        self.page.goto(BASE + "/#parameters/helpers", wait_until="networkidle")
+        self.assertEqual(self.puts, [])
+        self.assertEqual(self.current, self.fixture)
+
+    def test_shared_type_words_and_markers_save_independently_and_reload(self):
+        self.open("#settings")
+        self.assertEqual(self.page.get_by_label("Word for Doors and windows", exact=True).count(), 0)
+        self.page.get_by_label("Word for Door", exact=True).fill("entry")
+        self.page.get_by_label("Word for Window", exact=True).fill("glazing")
+        self.page.get_by_label("Aggregation marker for Doors", exact=True).fill("all")
+        self.page.get_by_label("Word for Temperature", exact=True).fill("temperature")
+        self.page.get_by_label("Aggregation marker for Temperature", exact=True).fill("mean")
+        first_area = self.body["hierarchy"]["floors"][0]["areaIds"][0]
+        self.page.get_by_text("binary_sensor." + first_area + "_entry_all", exact=True).wait_for()
+        self.page.get_by_text("binary_sensor." + first_area + "_glazing_all", exact=True).wait_for()
+        self.page.get_by_text("sensor." + first_area + "_temperature_mean", exact=True).wait_for()
+        self.page.get_by_role("button", name="Save settings", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="Saved in Taxis").wait_for()
+        expected = {**self.fixture, "typeWords": {**self.fixture["typeWords"], "door": "entry", "window": "glazing", "temperature": "temperature"}, "aggregationMarkers": {**self.fixture["aggregationMarkers"], "temperature": "mean"}}
+        self.assertEqual(self.puts[0]["body"], expected)
+        self.page.reload(wait_until="networkidle")
+        self.assertEqual(self.page.get_by_label("Word for Door", exact=True).input_value(), "entry")
+        self.assertEqual(self.page.get_by_label("Word for Window", exact=True).input_value(), "glazing")
+        self.assertEqual(self.page.get_by_label("Aggregation marker for Temperature", exact=True).input_value(), "mean")
+        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output.mkdir(parents=True, exist_ok=True)
+        self.page.get_by_role("heading", name="Aggregation markers", exact=True).scroll_into_view_if_needed()
+        self.page.screenshot(path=str(output / "separate-helper-names.png"))
+
+    def test_duplicate_or_invalid_shared_names_block_save_and_undo_restores_values(self):
+        self.open("#settings")
+        self.page.get_by_label("Word for Door", exact=True).fill("motion")
+        save = self.page.get_by_role("button", name="Save settings", exact=True)
+        self.assertTrue(save.is_disabled())
+        self.page.get_by_label("Word for Door", exact=True).fill("entry")
+        self.page.get_by_label("Aggregation marker for Doors", exact=True).fill("all_")
+        self.assertTrue(save.is_disabled())
+        self.page.get_by_role("button", name="Undo changes", exact=True).first.click()
+        self.assertEqual(self.page.get_by_label("Word for Door", exact=True).input_value(), "")
+        self.assertEqual(self.page.get_by_label("Aggregation marker for Doors", exact=True).input_value(), "all")
+        self.assertTrue(save.is_enabled())
+        self.assertEqual(self.puts, [])
+
+    def helper_coverage_fixture(self):
+        h = self.body["hierarchy"]
+        base = copy.deepcopy(next(iter(h["entities"].values())))
+        h["entities"], h["devices"] = {}, {}
+        for area in h["areas"].values():
+            area["entityIds"], area["deviceIds"] = [], []
+        for entity_id, role, device_class, platform, members in [
+            ("light.living_bulb", "light", None, "demo", []),
+            ("light.living_lamp_all", "light", None, "group", ["light.living_bulb"]),
+            ("binary_sensor.living_pir", "motion", "motion", "demo", []),
+            ("binary_sensor.living_door", "opening", "door", "demo", []),
+            ("binary_sensor.living_door_all", "opening", "door", "demo", []),
+            ("binary_sensor.living_presence", "presence", "occupancy", "demo", []),
+            ("binary_sensor.living_presence_all", "presence", "occupancy", "group", ["binary_sensor.missing_member"]),
+            ("binary_sensor.living_window", "opening", "window", "demo", []),
+            ("binary_sensor.living_old_windows", "opening", "window", "group", ["binary_sensor.living_window"]),
+        ]:
+            h["entities"][entity_id] = {**copy.deepcopy(base), "entityId": entity_id, "name": entity_id, "domain": entity_id.split(".")[0], "role": role, "deviceClass": device_class, "deviceClassOverride": None, "platform": platform, "members": members, "categoryScope": None, "areaId": "living_room", "ownAreaId": "living_room", "deviceId": None, "configEntryId": "fixture_" + entity_id if platform == "group" else None, "state": "off", "disabled": False, "hidden": False, "maintenance": False, "labels": [], "inRegistry": True}
+        h["areas"]["living_room"]["entityIds"] = list(h["entities"])
+        self.fixture["areaCodes"]["living_room"] = "living"
+        self.current = copy.deepcopy(self.fixture)
+
+    def coverage_row(self):
+        table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
+        return table.locator("tbody tr").filter(has=self.page.get_by_role("button", name="Living room", exact=True))
+
+    def test_helper_overview_shows_all_areas_and_distinguishes_actual_plan_states(self):
+        self.helper_coverage_fixture()
+        self.open("#parameters/helpers")
+        table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
+        self.assertEqual(table.locator("tbody tr").count(), len(self.body["hierarchy"]["areas"]))
+        row = self.coverage_row()
+        for capability, expected_id, status in [
+            ("Lights", "light.living_lamp_all", "Present"),
+            ("Motion", "binary_sensor.living_motion_all", "Create"),
+            ("Doors", "binary_sensor.living_door_all", "Conflict"),
+            ("Presence", "binary_sensor.living_presence_all", "Update members"),
+            ("Windows", "binary_sensor.living_window_all", "Adopt"),
+        ]:
+            details = row.get_by_label("Living room " + capability + " helper details", exact=True)
+            self.assertIn(expected_id, details.inner_text())
+            self.assertIn(status, details.inner_text())
+        self.assertIn("Not needed", row.locator("td").nth(7).inner_text())
+        self.assertIn("No helper in Taxis", row.locator("td").nth(10).inner_text())
+        row.get_by_label("Living room Windows helper details", exact=True).click()
+        row.get_by_text("binary_sensor.living_old_windows", exact=True).wait_for()
+        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output.mkdir(parents=True, exist_ok=True)
+        self.page.screenshot(path=str(output / "helpers-coverage.png"))
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+        self.assertEqual(self.puts, [])
+
+    def test_helper_overview_shows_queued_as_queued_and_keeps_the_detailed_table(self):
+        self.helper_coverage_fixture()
+        pending = {"id": 999, "kind": "helper", "op": "create", "targetId": "binary_sensor.living_motion_all", "scope": "group", "before": None, "after": {"entity_id": "binary_sensor.living_motion_all", "entities": ["binary_sensor.living_pir"]}, "createdAt": "2026-10-27T00:00:00Z"}
+        self.page.route("**/api/changes", lambda route: route.fulfill(json={"ok": True, "changes": [pending], "version": "fixture"}))
+        self.open("#parameters/helpers")
+        motion = self.coverage_row().get_by_label("Living room Motion helper details", exact=True)
+        self.assertIn("In changes", motion.inner_text())
+        self.assertNotIn("Present", motion.inner_text())
+        self.page.get_by_role("tablist", name="Helper view", exact=True).get_by_role("tab", name="Details", exact=True).click()
+        self.page.get_by_role("region", name="Floors and house", exact=True).wait_for()
+        self.assertGreater(self.page.get_by_role("checkbox").count(), 0)
+        self.page.get_by_role("tablist", name="Helper view", exact=True).get_by_role("tab", name="Overview", exact=True).click()
+        self.page.get_by_role("table", name="Area helper coverage", exact=True).wait_for()
+        self.assertEqual(self.puts, [])
+
+    def test_helper_overview_uses_the_saved_capability_word_and_marker(self):
+        self.helper_coverage_fixture()
+        self.open("#settings")
+        self.page.get_by_label("Word for Door", exact=True).fill("entry")
+        self.page.get_by_label("Aggregation marker for Doors", exact=True).fill("all")
+        self.page.get_by_role("button", name="Save settings", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="Saved in Taxis").wait_for()
+        self.page.goto(BASE + "/#parameters/helpers", wait_until="networkidle")
+        door = self.coverage_row().get_by_label("Living room Doors helper details", exact=True)
+        self.assertIn("binary_sensor.living_entry_all", door.inner_text())
+        self.assertIn("Create", door.inner_text())
+        self.assertEqual(len(self.puts), 1)
+
     def floor_code(self):
         return self.page.get_by_role("textbox", name="Code for floor Ground floor", exact=True)
 
@@ -212,11 +347,11 @@ class AreaCodesRegression(unittest.TestCase):
         self.open()
         self.assertEqual(self.floor_code().input_value(), "ground_custom")
         self.assertEqual(self.floor_code().get_attribute("placeholder"), "ground")
-        self.page.get_by_text("light.ground_custom_lighting", exact=True).wait_for()
+        self.page.get_by_text("light.ground_custom_lamp_all", exact=True).wait_for()
         self.floor_code().fill("Ground Changed")
         self.kitchen_code().fill("kitchen_changed")
         self.assertEqual(self.floor_code().input_value(), "ground_changed")
-        self.page.get_by_text("light.ground_changed_lighting", exact=True).wait_for()
+        self.page.get_by_text("light.ground_changed_lamp_all", exact=True).wait_for()
         self.page.get_by_role("button", name="Save codes", exact=True).click()
         self.page.get_by_role("status").filter(has_text="Saved in Taxis").wait_for()
         expected = {**self.fixture, "areaCodes": {"kitchen": "kitchen_changed"}, "floorCodes": {"ground": "ground_changed"}}

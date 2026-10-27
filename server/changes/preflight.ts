@@ -1,4 +1,4 @@
-import { areaCodeConflicts, canonicalId, effectiveSuffixes } from "../../shared/helpers.ts";
+import { areaCodeConflicts, canonicalId, helperSuffixes } from "../../shared/helpers.ts";
 import { areaCodes, floorCodes, houseGroupId, type NamingSettings } from "../../shared/naming.ts";
 import type { Change } from "../../shared/types.ts";
 import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
@@ -16,7 +16,7 @@ export function applyPreflight(raw: RawRegistry, pending: Change[], naming: Nami
   const codes = areaCodes(h, naming);
   const unsafeCodes = new Set([...conflicts.keys()].map(id => codes[id].code));
   const floors = floorCodes(h, naming);
-  const suffix = effectiveSuffixes(naming.helperNames);
+  const suffix = helperSuffixes(naming);
   const aggregates = new Set(h.floors.filter(f => f.areaIds.some(id => conflicts.has(id))).map(f => canonicalId("light", floors[f.id].code, suffix.lights)));
   aggregates.add(houseGroupId(naming));
   const mentionsUnsafe = (value: unknown): boolean => {

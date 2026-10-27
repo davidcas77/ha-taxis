@@ -1,6 +1,7 @@
 import { ENTITY_ID_RE } from "./changes.ts";
 import { isSilentGroup } from "./entity-diagnosis.ts";
-import { areaCodes, duplicateCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
+import { defaultAggregationMarker, sharedHelperSuffix, areaCodes, duplicateCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
+export { defaultAggregationMarker } from "./naming.ts";
 import { areaInventory, type AreaInventory, type Capability, type InventorySettings } from "./inventory.ts";
 import type { AreaNode, Change, ChangeInput, EntityItem, Hierarchy } from "./types.ts";
 
@@ -66,11 +67,52 @@ export function helperKeyFor(capability: Capability): HelperKey | null {
 // Assistant would refuse in an entity id.
 export const HELPER_SUFFIX_RE = /^(?!_)(?!.*__)[a-z0-9_]{1,30}(?<!_)$/;
 
+export type HelperNameParts = { capability: string; aggregation: string };
+// Legacy complete suffixes remain readable until shared naming is adopted.
 export type HelperNames = Partial<Record<HelperKey, string>>;
+
+export function helperNameParts(names: HelperNames | undefined, key: HelperKey): HelperNameParts {
+  const value = names && Object.hasOwn(names, key) ? names[key] : undefined;
+  const suffix = value || HELPER_SPEC[key].suffix;
+  // Only known terminal markers can be split safely. A custom legacy suffix
+  // stays intact as its capability word until the user chooses its parts.
+  const match = /^(?:(.+)_)?(all|avg|mean)$/.exec(suffix);
+  return match ? { capability: match[1] ?? "", aggregation: match[2] } : { capability: suffix, aggregation: "" };
+}
+
+export const helperSuffix = (parts: HelperNameParts): string => [parts.capability, parts.aggregation].filter(Boolean).join("_");
 
 export function effectiveSuffixes(names: HelperNames | undefined): Record<HelperKey, string> {
   const out = {} as Record<HelperKey, string>;
-  for (const s of HELPERS) out[s.key] = (names && Object.hasOwn(names, s.key) ? names[s.key] : undefined) || s.suffix;
+  for (const s of HELPERS) out[s.key] = helperSuffix(helperNameParts(names, s.key));
+  return out;
+}
+
+type HelperNaming = Pick<NamingSettings, "helperNames" | "typeWords" | "aggregationMarkers">;
+
+export function helperSuffixes(naming: HelperNaming): Record<HelperKey, string> {
+  if (naming.aggregationMarkers === undefined) return effectiveSuffixes(naming.helperNames);
+  return Object.fromEntries(HELPERS.map(spec => [spec.key, sharedHelperSuffix(naming, spec.key)])) as Record<HelperKey, string>;
+}
+
+// The Settings form presents shared words and markers. Reading the old settings
+// does not adopt this format in the planner; saving the form does.
+export function sharedHelperNaming(naming: NamingSettings): NamingSettings {
+  const typeWords = { ...naming.typeWords };
+  if (Object.hasOwn(typeWords, "opening")) {
+    if (!Object.hasOwn(typeWords, "door")) typeWords.door = typeWords.opening;
+    if (!Object.hasOwn(typeWords, "window")) typeWords.window = typeWords.opening;
+  }
+  return { ...naming, typeWords, aggregationMarkers: naming.aggregationMarkers ?? Object.fromEntries(HELPERS.map(spec => [spec.key, helperNameParts(naming.helperNames, spec.key).aggregation || defaultAggregationMarker(spec.key)])) };
+}
+
+export function helperNamingErrors(naming: HelperNaming): Partial<Record<HelperKey, string>> {
+  if (naming.aggregationMarkers === undefined) return helperNameErrors(naming.helperNames);
+  const out = helperNameErrors(helperSuffixes(naming));
+  for (const spec of HELPERS) {
+    const marker = naming.aggregationMarkers[spec.key] ?? defaultAggregationMarker(spec.key);
+    if (marker !== "" && !HELPER_SUFFIX_RE.test(marker)) out[spec.key] = "Use a–z, 0–9 and _, with no leading, trailing or doubled _.";
+  }
   return out;
 }
 
@@ -80,7 +122,8 @@ export function helperNameErrors(names: HelperNames | undefined): Partial<Record
   const out: Partial<Record<HelperKey, string>> = {};
   const eff = effectiveSuffixes(names);
   for (const s of HELPERS) {
-    if (!HELPER_SUFFIX_RE.test(eff[s.key])) out[s.key] = "Use a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled.";
+    const parts = helperNameParts(names, s.key);
+    if (Object.values(parts).some(part => part !== "" && !HELPER_SUFFIX_RE.test(part)) || !HELPER_SUFFIX_RE.test(eff[s.key])) out[s.key] = "Use a–z, 0–9 and _. The combined word and marker must fit in 30 characters, with no leading, trailing or doubled _.";
     // The occupied sensor of the recipes sits on this id.
     else if (s.domain === "binary_sensor" && eff[s.key] === RECIPE_HELPER_SUFFIX.occupied) out[s.key] = "Taxis uses this name for the occupied sensor of the recipes.";
     // The humidity rate sensor of the Bathroom fan recipe sits on this id.
@@ -116,7 +159,7 @@ export const helperName = (areaName: string, spec: HelperSpec) => `${areaName} $
 // show, not a helper.
 export function helperExclusions(h: Hierarchy, naming: NamingSettings): (areaId: string) => ReadonlySet<string> {
   const codes = areaCodes(h, naming);
-  const suffix = effectiveSuffixes(naming.helperNames);
+  const suffix = helperSuffixes(naming);
   const cache = new Map<string, ReadonlySet<string>>();
   return (areaId) => {
     let out = cache.get(areaId);
@@ -231,7 +274,7 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
   const codes = areaCodes(h, naming);
   const conflicts = areaCodeConflicts(h, naming);
   const floors = floorCodes(h, naming);
-  const suffix = effectiveSuffixes(naming.helperNames);
+  const suffix = helperSuffixes(naming);
   const exclusions = helperExclusions(h, naming);
   const lightSpec = HELPER_SPEC.lights;
   const houseId = houseGroupId(naming);
