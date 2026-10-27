@@ -2,8 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import { buildMockRegistry } from "../scripts/mock-ha-core.ts";
 import { buildHierarchy } from "../server/model/hierarchy.ts";
-import { DEFAULT_HOUSE_GROUP, DEFAULT_NAMING, analyzeArea, areaCodes, detectAreaCode, duplicateCodes, duplicateCodesMessage, duplicateIds, floorCodeAdvice, floorCodes, houseGroupId, slug } from "./naming.ts";
+import { DEFAULT_HOUSE_GROUP, DEFAULT_NAMING, analyzeArea, areaCodes, detectAreaCode, duplicateCodes, duplicateCodesMessage, duplicateIds, floorCodeAdvice, floorCodes, houseGroupId, slug, typeWord } from "./naming.ts";
 import type { Hierarchy } from "./types.ts";
+
+describe("independent door and window type words", () => {
+  it("uses each configured word only for its contact type", () => {
+    const base = Object.values(buildHierarchy(buildMockRegistry(), "now").entities)[0];
+    const contact = { ...base, domain: "binary_sensor", role: "opening" as const, entityId: "binary_sensor.kitchen_side" };
+    const naming = { ...DEFAULT_NAMING, typeWords: { door: "entry", window: "glazing" } };
+    expect(typeWord({ ...contact, deviceClass: "door" }, naming)).toBe("entry");
+    expect(typeWord({ ...contact, deviceClass: "window" }, naming)).toBe("glazing");
+    expect(typeWord({ ...contact, deviceClass: "garage_door" }, naming)).toBe("garage");
+    expect(typeWord({ ...contact, deviceClass: null }, naming, "window_side")).toBe("glazing");
+  });
+
+  it("retains a legacy opening word until a specific door or window word overrides it", () => {
+    const base = Object.values(buildHierarchy(buildMockRegistry(), "now").entities)[0];
+    const contact = { ...base, domain: "binary_sensor", role: "opening" as const };
+    const naming = { ...DEFAULT_NAMING, typeWords: { opening: "contact", door: "entry" } };
+    expect(typeWord({ ...contact, deviceClass: "door" }, naming)).toBe("entry");
+    expect(typeWord({ ...contact, deviceClass: "window" }, naming)).toBe("contact");
+  });
+});
 
 // A house shaped like a real one: areas renamed after their ids were set, old
 // prefixes, integration-made ids, and a switch named after another room.
@@ -356,6 +376,12 @@ describe("semantic motion aggregates and windows", () => {
     expect(analyze({ ...DEFAULT_NAMING, idPattern: "{area}_{name}_{type}", typeWords: { motion: "pir" } }).find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).toBe("binary_sensor.serenity_all_pir");
     expect(analyze({ ...DEFAULT_NAMING, helperNames: { motion: "motions" } }).find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).toBeNull();
     expect(analyze({ ...DEFAULT_NAMING, helperNames: { motion: "all_motion" } }).find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).toBe("binary_sensor.serenity_all_motion");
+  });
+
+  it("uses shared type words and aggregation markers for a verified motion aggregate", () => {
+    const { analyze } = serenity();
+    const rows = analyze({ ...DEFAULT_NAMING, typeWords: { motion: "pir" }, helperNames: { motion: "old_legacy" }, aggregationMarkers: { motion: "combined" } });
+    expect(rows.find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).toBe("binary_sensor.serenity_pir_combined");
   });
 
   it("does not infer all from a plural individual name or a group containing only some motion sensors", () => {

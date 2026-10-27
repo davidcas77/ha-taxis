@@ -65,6 +65,77 @@ class TableLayoutRegression(unittest.TestCase):
         self.assertGreater(result["lines"], 1, result)
         self.assertTrue(all(rect["left"] >= result["left"] - 1 and rect["right"] <= result["right"] + 1 for rect in result["rects"]), result)
 
+    def test_default_columns_fit_headers_and_values_without_filling_the_page(self):
+        area = next(iter(self.body["hierarchy"]["areas"]))
+        self.open("#area/" + area)
+        table = self.page.get_by_role("table", name="Area capabilities", exact=True)
+        self.page.wait_for_function("document.querySelector('table[aria-label=\"Area capabilities\"]')?.dataset.contentSized === 'true'")
+        result = table.evaluate("""table => {
+          const columns = [...table.tHead.rows[0].cells].map((header, index) => {
+            const cells = [header, ...[...table.tBodies[0].rows].map(row => row.cells[index])];
+            const natural = Math.max(...cells.map(cell => {
+              const range = document.createRange(), walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+              const rects = [];
+              while (walker.nextNode()) {
+                const node = walker.currentNode;
+                if (!node.textContent.trim() || node.parentElement.closest('.sr-only,[role="separator"]')) continue;
+                range.selectNodeContents(node);
+                rects.push(...[...range.getClientRects()].filter(rect => rect.width > 0));
+              }
+              const left = Math.min(...rects.map(rect => rect.left));
+              const right = Math.max(...rects.map(rect => rect.right));
+              const style = getComputedStyle(cell);
+              return right - left + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+            }));
+            return {width:header.getBoundingClientRect().width, natural};
+          });
+          return {columns, width:table.getBoundingClientRect().width, border:table.parentElement.getBoundingClientRect().width, viewport:innerWidth};
+        }""")
+        self.assertLess(result["width"], result["viewport"] / 2, result)
+        self.assertAlmostEqual(result["border"], result["width"] + 2, delta=2)
+        for column in result["columns"]:
+            self.assertGreaterEqual(column["width"], column["natural"], result)
+            self.assertLessEqual(column["width"], column["natural"] + 12, result)
+        original = table.locator("th").first.bounding_box()["width"]
+        self.page.set_viewport_size({"width": 2000, "height": 1100})
+        self.assertAlmostEqual(table.locator("th").first.bounding_box()["width"], original, delta=1)
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertTrue(table.evaluate("t=>t.parentElement.getBoundingClientRect().right<=innerWidth+1"))
+        self.assertEqual(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"), True)
+
+    def test_saved_explicit_columns_survive_and_reset_returns_to_content_widths(self):
+        self.page.add_init_script("localStorage.setItem('taxis:records:columns:automations', JSON.stringify({name: 360}))")
+        self.open("#organize/automations")
+        table = self.page.locator("table").first
+        self.page.wait_for_function("document.querySelector('table')?.dataset.contentSized === 'true'")
+        self.assertAlmostEqual(table.locator("th").first.bounding_box()["width"], 360, delta=1)
+        handle = self.page.get_by_role("separator", name="Resize Name column", exact=True)
+        handle.focus()
+        self.page.keyboard.press("ArrowRight")
+        self.assertAlmostEqual(table.locator("th").first.bounding_box()["width"], 380, delta=1)
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.wait_for_function("document.querySelector('table')?.dataset.contentSized === 'true'")
+        self.assertAlmostEqual(table.locator("th").first.bounding_box()["width"], 380, delta=1)
+        self.page.get_by_role("button", name="Reset layout", exact=True).click()
+        self.page.wait_for_function("document.querySelector('table th').getBoundingClientRect().width < 360")
+        reset_width = table.locator("th").first.bounding_box()["width"]
+        self.assertGreater(reset_width, 64)
+
+    def test_view_changes_keep_resize_controls_in_sync_with_their_columns(self):
+        self.page.add_init_script("localStorage.setItem('taxis:organize-view:devices', 'table')")
+        self.open("#organize/devices")
+        modes = self.page.get_by_role("group", name="Entity view", exact=True)
+        for mode in ["Devices", "Entities", "Devices", "Entities"]:
+            modes.get_by_role("button", name=mode, exact=True).click()
+            self.page.wait_for_function("document.querySelector('table')?.dataset.contentSized === 'true'")
+            handle = self.page.get_by_role("separator", name="Resize name column", exact=True)
+            header = handle.locator("..")
+            self.assertAlmostEqual(float(handle.get_attribute("aria-valuenow")), header.bounding_box()["width"], delta=1)
+            original = header.bounding_box()["width"]
+            handle.focus()
+            self.page.keyboard.press("ArrowRight")
+            self.assertAlmostEqual(header.bounding_box()["width"], original + 20, delta=1)
+
     def test_category_entity_id_wraps_after_resize_and_reload(self):
         body = copy.deepcopy(self.body)
         h = body["hierarchy"]
@@ -100,7 +171,7 @@ class TableLayoutRegression(unittest.TestCase):
         device = next(iter(h["devices"]))
         category = h["categories"]["automation"][0]["id"]
         label = next(iter(h["labels"]))
-        routes = ["#", "#settings", "#health", "#unassigned", "#organize/entities", "#organize/devices/"+device,
+        routes = ["#", "#health", "#unassigned", "#organize/entities", "#organize/devices/"+device,
                   "#organize/category-automation/"+category, "#organize/labels/"+label,
                   "#organize/blueprints", "#recipes", "#parameters/capabilities", "#parameters/helpers", "#parameters/area-codes",
                   "#area/"+area, "#area/"+area+"/capabilities", "#area/"+area+"/naming", "#parameters/house"]
@@ -135,7 +206,7 @@ class TableLayoutRegression(unittest.TestCase):
 
     def test_resized_editors_and_headers_stay_inside_their_columns(self):
         area = next(iter(self.body["hierarchy"]["areas"]))
-        routes = ["#settings", "#organize/devices", "#area/"+area+"/naming", "#parameters/house", "#parameters/climate", "#recipes"]
+        routes = ["#parameters/area-codes", "#organize/devices", "#area/"+area+"/naming", "#parameters/house", "#parameters/climate", "#recipes"]
         for route in routes:
             self.open(route)
             if route == "#organize/devices":

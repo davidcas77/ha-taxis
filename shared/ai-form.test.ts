@@ -8,7 +8,7 @@ const saved: AiSettings = {
   enabled: true,
   provider: "openai-compatible",
   baseUrl: "http://192.168.1.20:11434/v1",
-  models: { quick: "qwen2.5:7b", ask: "llama3.2:3b" },
+  models: { low: "qwen2.5:7b", medium: "llama3.2:3b", strong: "" },
   prices: { "qwen2.5:7b": { inputPerMTok: 0, outputPerMTok: 0 }, "gpt-5": { inputPerMTok: 1.25, outputPerMTok: 10 } },
 };
 
@@ -28,7 +28,7 @@ describe("settingsOf", () => {
 
   it("notices a change, however small, and ignores the order of prices", () => {
     expect(formDiffers({ ...formOf(saved), cap: "5.5" }, saved)).toBe(true);
-    expect(formDiffers({ ...formOf(saved), models: { quick: "other", ask: "llama3.2:3b" } }, saved)).toBe(true);
+    expect(formDiffers({ ...formOf(saved), models: { low: "other", medium: "llama3.2:3b", strong: "" } }, saved)).toBe(true);
     const f = formOf(saved);
     expect(formDiffers({ ...f, prices: [...f.prices].reverse() }, saved)).toBe(false);
     expect(canonical({ b: 1, a: { d: 1, c: 2 } })).toBe(canonical({ a: { c: 2, d: 1 }, b: 1 }));
@@ -36,8 +36,8 @@ describe("settingsOf", () => {
 
   it("trims model names and skips empty price rows", () => {
     const f = formOf(saved);
-    const read = settingsOf({ ...f, models: { quick: " m1 ", ask: "" }, prices: [...f.prices, { model: " ", input: "", output: " " }] }) as AiSettings;
-    expect(read.models).toEqual({ quick: "m1", ask: "" });
+    const read = settingsOf({ ...f, models: { low: " m1 ", medium: "", strong: "" }, prices: [...f.prices, { model: " ", input: "", output: " " }] }) as AiSettings;
+    expect(read.models).toEqual({ low: "m1", medium: "", strong: "" });
     expect(Object.keys(read.prices)).toEqual(["qwen2.5:7b", "gpt-5"]);
   });
 

@@ -331,6 +331,28 @@ describe("validateNaming: floor codes and the house group", () => {
 });
 
 describe("validateNaming: helper names", () => {
+  it("saves shared type words and independent aggregation markers", () => {
+    const markers = { motion: "all", door: "all", temperature: "avg" };
+    const words = { door: "entry", window: "window" };
+    const result = validateNaming({ ...base, typeWords: words, aggregationMarkers: markers });
+    expect(result).toMatchObject({ ok: true, value: { typeWords: words, aggregationMarkers: markers } });
+    if (!result.ok) throw new Error(result.error);
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const settings = settingsStore(db);
+    settings.saveNaming(result.value);
+    expect(settings.naming()).toMatchObject({ typeWords: words, aggregationMarkers: markers });
+    db.close();
+  });
+
+  it("validates markers and their combination with shared type words", () => {
+    for (const value of [3, "two words", "_all", "all_", "a__b", "x".repeat(31)]) {
+      expect(validateNaming({ ...base, aggregationMarkers: { door: value } }), JSON.stringify(value)).toMatchObject({ ok: false });
+    }
+    expect(validateNaming({ ...base, typeWords: { door: "motion" }, aggregationMarkers: {} })).toMatchObject({ ok: false });
+    expect(validateNaming({ ...base, typeWords: { door: "x".repeat(28) }, aggregationMarkers: {} })).toMatchObject({ ok: false });
+  });
+
   it("keeps only the names that differ from the default, for real helpers", () => {
     const r = validateNaming({ ...base, helperNames: { lights: "lamps", motion: "motions", media: "", bogus: "x", constructor: "y" } });
     expect(r).toMatchObject({ ok: true, value: { helperNames: { lights: "lamps" } } });

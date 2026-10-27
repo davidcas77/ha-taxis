@@ -200,18 +200,36 @@ describe("POST /api/ai/test", () => {
     const res = await s.req("POST", "/api/ai/test", {});
     const body = await res.json();
     expect(res.status).toBe(200);
-    expect(body.test).toMatchObject({ reply: "ready", model: "claude-haiku-5-5", inputTokens: 20, outputTokens: 5, job: "quick", stop: "end" });
+    expect(body.test).toMatchObject({ reply: "ready", model: "claude-haiku-5-5", inputTokens: 20, outputTokens: 5, tier: "low", stop: "end" });
     expect(body.test.costUsd).toBeCloseTo(0.0000045, 9);
     expect(JSON.stringify(body)).not.toContain(TEST_KEY);
     expect((await (await s.req("GET", "/api/ai/usage")).json()).usage).toMatchObject({ calls: 1, inputTokens: 20, outputTokens: 5 });
   });
 
-  it("can test the Ask model", async () => {
+  it("accepts the legacy Ask test request from an older browser tab", async () => {
     const s = setup({ body: anthropicMessage() });
     await s.save({ key: TEST_KEY });
     await s.req("POST", "/api/ai/test", { job: "ask" });
     expect(s.calls[0].body).toMatchObject({ model: "claude-sonnet-5-5" });
     expect((await s.req("POST", "/api/ai/test", { job: "nope" })).status).toBe(400);
+  });
+
+  it.each(["low", "medium", "strong"] as const)("tests the saved %s tier", async tier => {
+    const model = `${tier}-selected`;
+    const s = setup({ body: anthropicMessage({ model }) });
+    await s.save({ key: TEST_KEY, models: { low: "low-selected", medium: "medium-selected", strong: "strong-selected" } });
+    const response = await s.req("POST", "/api/ai/test", { tier });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, test: { tier, model } });
+    expect(s.calls[0].body).toMatchObject({ model });
+  });
+
+  it("rejects an unknown tier without calling the provider", async () => {
+    const s = setup({ body: anthropicMessage() });
+    await s.save({ key: TEST_KEY });
+    expect((await s.req("POST", "/api/ai/test", { tier: "ultimate" })).status).toBe(400);
+    expect((await s.req("POST", "/api/ai/test", { tier: "strong" })).status).toBe(409);
+    expect(s.calls).toHaveLength(0);
   });
 
   it("says why it can't: off, no key, over the cap", async () => {

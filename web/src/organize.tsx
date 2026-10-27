@@ -392,7 +392,7 @@ function ItemsTable({ h, type, id, select, query, areas, showDisabled }: { h: Hi
   const { cols, rows: all } = useMemo(() => rowsFor(h, type), [h, type]);
   const q = query.trim().toLowerCase();
   const rows = useMemo(() => all.filter(r => (!q || r.search.toLowerCase().includes(q)) && ((type !== "devices" && !isOrganizeEntityType(type)) || !areas.size || areas.has(r.areaId ?? "")) && (type !== "devices" || showDisabled || !h.devices[r.id]?.disabled)), [all, q, areas, type, showDisabled, h]);
-  const { widths, setWidth } = useWidths(`taxis:records:columns:${type}`, Object.fromEntries(cols.map(c => [c.key, c.key === "name" ? 180 : c.key === "area" ? 130 : 200])));
+  const { widths, setWidth, savedWidth } = useWidths(`taxis:records:columns:${type}`, Object.fromEntries(cols.map(c => [c.key, c.key === "name" ? 180 : c.key === "area" ? 130 : 200])));
   const getters = Object.fromEntries(cols.map((c) => [c.key, (r: Row) => r.v[c.key]]));
   const { rows: sorted, sort, toggle } = useSort(rows, getters, { key: "name", dir: "asc" });
   const paging = usePagination(sorted.length, JSON.stringify([q, [...areas], sort, type]));
@@ -408,7 +408,7 @@ function ItemsTable({ h, type, id, select, query, areas, showDisabled }: { h: Hi
           <thead className="sticky top-0 bg-sunken text-left text-xs text-muted">
             <tr>
               {cols.map((c) => (
-                <SortHeader key={c.key} label={c.label} k={c.key} sort={sort} onToggle={toggle} className="px-3 py-1.5" resize={<ResizeHandle label={`Resize ${c.label} column`} value={widths[c.key]} onChange={width => setWidth(c.key, width)} />} />
+                <SortHeader key={c.key} label={c.label} k={c.key} sort={sort} onToggle={toggle} className="px-3 py-1.5" resize={<ResizeHandle label={`Resize ${c.label} column`} value={widths[c.key]} savedWidth={savedWidth(c.key)} onChange={width => setWidth(c.key, width)} />} />
               ))}
             </tr>
           </thead>

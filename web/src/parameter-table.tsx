@@ -308,7 +308,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   const defs = paramsOf(tab).filter(def => tab !== "climate" || group.keys.includes(def.key));
   const [editing, setEditing] = useState<string | null>(null);
   const ready = inventoryLoaded && parametersLoaded;
-  const { widths, setWidth } = useWidths("taxis:parameters:lighting:columns:v2", { name: 200, ...Object.fromEntries(paramsOf("lighting").map(def => [def.key, def.kind === "entities" ? 240 : 88])) });
+  const { widths, setWidth, savedWidth } = useWidths("taxis:parameters:lighting:columns:v2", { name: 200, ...Object.fromEntries(paramsOf("lighting").map(def => [def.key, def.kind === "entities" ? 240 : 88])) });
   const { fixed, rest, floors } = useMemo(() => paramRows(h, inventory), [h, inventory]);
   const relevant = useMemo(() => {
     if (tab !== "fan" || showAllFanAreas) return rest;
@@ -392,9 +392,9 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
           {tab === "lighting" && <colgroup><col style={{ width: widths.name }} />{defs.map(def => <col key={def.key} style={{ width: widths[def.key] }} />)}</colgroup>}
           <thead className="bg-sunken text-left text-xs text-muted">
             <tr>
-              <SortHeader className="sticky left-0 z-20 bg-sunken px-3 py-2 text-left" label="Level" help="Choose a house default, area-type default or room override." k="name" sort={sort} onToggle={toggle} resize={tab === "lighting" ? <ResizeHandle label="Resize Lighting Level column" value={widths.name} onChange={width => setWidth("name", width)} /> : undefined} />
+              <SortHeader className="sticky left-0 z-20 bg-sunken px-3 py-2 text-left" label="Level" help="Choose a house default, area-type default or room override." k="name" sort={sort} onToggle={toggle} resize={tab === "lighting" ? <ResizeHandle label="Resize Lighting Level column" value={widths.name} savedWidth={savedWidth("name")} onChange={width => setWidth("name", width)} /> : undefined} />
               {defs.map((d) => (
-                <SortHeader key={d.key} label={header(d)} help={PARAM_HELP[d.key]} k={d.key} sort={sort} onToggle={toggle} resize={tab === "lighting" ? <ResizeHandle label={`Resize Lighting ${d.label} column`} value={widths[d.key]} onChange={width => setWidth(d.key, width)} /> : undefined} className={`px-3 py-2 ${d.kind === "number" || d.kind === "time" ? "text-center" : "text-left"}`} />
+                <SortHeader key={d.key} label={header(d)} help={PARAM_HELP[d.key]} k={d.key} sort={sort} onToggle={toggle} resize={tab === "lighting" ? <ResizeHandle label={`Resize Lighting ${d.label} column`} value={widths[d.key]} savedWidth={savedWidth(d.key)} onChange={width => setWidth(d.key, width)} /> : undefined} className={`px-3 py-2 ${d.kind === "number" || d.kind === "time" ? "text-center" : "text-left"}`} />
               ))}
             </tr>
           </thead>

@@ -1,4 +1,4 @@
-import type { AiJob, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
+import type { AiTier, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { HealthOptions, HealthReportResponse } from "../../shared/health.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
@@ -56,7 +56,7 @@ export const api = {
   ai: () => call<AiSettingsResponse>("api/settings/ai"),
   saveAi: (ai: AiSaveRequest) => call<AiSettingsResponse>("api/settings/ai", { method: "PUT", body: JSON.stringify(ai) }),
   aiModels: (typed: AiModelsRequest) => call<AiModelsResponse>("api/ai/models", { method: "POST", body: JSON.stringify(typed) }),
-  aiTest: (job: AiJob) => call<AiTestResponse>("api/ai/test", { method: "POST", body: JSON.stringify({ job }) }),
+  aiTest: (tier: AiTier) => call<AiTestResponse>("api/ai/test", { method: "POST", body: JSON.stringify({ tier }) }),
   aiUsage: () => call<AiUsageResponse>("api/ai/usage"),
   // What Home Assistant holds that recipes need: blueprints, their automations, timers.
   recipesState: (refresh = false) => call<RecipesResponse>(`api/recipes/state${refresh ? "?refresh=1" : ""}`),

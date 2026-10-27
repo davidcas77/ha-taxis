@@ -1,4 +1,4 @@
-import type { AiEffort, AiJob, AiProviderId, AiSettings, AiSettingsView } from "./ai.ts";
+import type { AiEffort, AiTier, AiProviderId, AiSettings, AiSettingsView } from "./ai.ts";
 
 // The Settings form for AI, as plain functions so they can be tested: reading
 // the form's text fields into settings, and telling whether the form differs
@@ -10,7 +10,7 @@ export type AiForm = {
   enabled: boolean;
   provider: AiProviderId;
   baseUrl: string;
-  models: Record<AiJob, string>;
+  models: Record<AiTier, string>;
   effort: AiEffort;
   // Typed as text, so a half-typed number doesn't fight the user.
   cap: string;
@@ -52,7 +52,7 @@ export function settingsOf(f: AiForm): AiSettings | string {
     enabled: f.enabled,
     provider: f.provider,
     baseUrl: f.baseUrl,
-    models: { quick: f.models.quick.trim(), ask: f.models.ask.trim() },
+    models: { low: f.models.low.trim(), medium: f.models.medium.trim(), strong: f.models.strong.trim() },
     effort: f.effort,
     monthlyCapUsd,
     maxOutputTokens,

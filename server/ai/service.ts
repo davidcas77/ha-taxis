@@ -1,4 +1,4 @@
-import { JOB_LABEL, costUsd, formatUsd, priceFor, type AiJob, type AiProviderId, type AiTestResult, type LedgerJob, type ModelInfo } from "../../shared/ai.ts";
+import { AI_TASK_TIERS, TIER_LABEL, costUsd, formatUsd, priceFor, type AiTask, type AiTier, type AiProviderId, type AiTestResult, type LedgerJob, type ModelInfo } from "../../shared/ai.ts";
 import { checkBaseUrl } from "../../shared/ai-url.ts";
 import type { settingsStore } from "../settings.ts";
 import type { FetchLike } from "./http.ts";
@@ -12,7 +12,7 @@ import { AiError, type CompleteRequest, type CompleteResult } from "./types.ts";
 // a model only ever returns text and tool calls for the caller to look at.
 
 export type AiCall = Omit<CompleteRequest, "model" | "effort" | "maxOutputTokens"> & { maxOutputTokens?: number };
-export type AiAnswer = CompleteResult & { provider: AiProviderId; costUsd: number | null };
+export type AiAnswer = CompleteResult & { tier: AiTier; provider: AiProviderId; costUsd: number | null };
 
 export type AiServiceDeps = {
   settings: ReturnType<typeof settingsStore>;
@@ -28,12 +28,12 @@ export function aiService(deps: AiServiceDeps) {
   const make = deps.makeProvider ?? makeProvider;
   const now = deps.clock ?? Date.now;
 
-  // `job` is what the ledger records; `modelJob` picks the model.
-  async function complete(job: LedgerJob, modelJob: AiJob, call: AiCall): Promise<AiAnswer> {
+  // Only this function can select a model; tasks cannot bypass tier routing.
+  async function run(job: LedgerJob, tier: AiTier, call: AiCall): Promise<AiAnswer> {
     const s = deps.settings.ai();
     if (!s.enabled) throw new AiError("disabled", "AI is off. Turn it on in Settings first.");
-    const model = s.models[modelJob];
-    if (!model) throw new AiError("no-model", `Choose a model for the ${JOB_LABEL[modelJob]} job in Settings first.`);
+    const model = s.models[tier];
+    if (!model) throw new AiError("no-model", `Choose a model for the ${TIER_LABEL[tier]} tier in Settings first.`);
     const key = deps.settings.aiKey(s.provider);
     if (s.provider === "anthropic" && !key) throw new AiError("no-key", "Enter your Anthropic API key in Settings first.");
 
@@ -53,11 +53,14 @@ export function aiService(deps: AiServiceDeps) {
     const found = result.usage.missing ? null : priceFor(s, s.provider, model, result.usage.input);
     const cost = found ? costUsd(found.price, result.usage) : null;
     deps.ledger.record({ job, provider: s.provider, model, inputTokens: result.usage.input, outputTokens: result.usage.output, costUsd: cost });
-    return { ...result, provider: s.provider, costUsd: cost };
+    return { ...result, tier, provider: s.provider, costUsd: cost };
   }
 
   return {
-    complete,
+    async complete(task: AiTask, call: AiCall): Promise<AiAnswer> {
+      if (!Object.hasOwn(AI_TASK_TIERS, task)) throw new AiError("config", "Choose a supported AI task.");
+      return run(task, AI_TASK_TIERS[task], call);
+    },
 
     // The models a service offers. Uses the saved provider, address and key, or
     // what the user typed but hasn't saved. The saved key goes only to the saved
@@ -77,12 +80,12 @@ export function aiService(deps: AiServiceDeps) {
       return make({ provider, baseUrl, key, fetch: deps.fetch }).listModels();
     },
 
-    // Test connection: a tiny prompt to the Quick or the Ask model, with the
+    // Test connection: a tiny prompt to one explicitly selected tier, with the
     // saved settings. It is a real call, so it counts against the cap.
-    async test(modelJob: AiJob = "quick"): Promise<AiTestResult> {
+    async test(tier: AiTier = "low"): Promise<AiTestResult> {
       const s = deps.settings.ai();
       const started = now();
-      const answer = await complete("test", modelJob, {
+      const answer = await run("test", tier, {
         system: "You are checking that a connection works. Answer in one word.",
         messages: [{ role: "user", content: TEST_PROMPT }],
         // Enough for a model that thinks first, small enough to stay cheap.
@@ -90,9 +93,9 @@ export function aiService(deps: AiServiceDeps) {
       });
       return {
         reply: answer.text.trim(),
-        model: answer.model || s.models[modelJob],
+        model: answer.model || s.models[tier],
         provider: answer.provider,
-        job: modelJob,
+        tier,
         inputTokens: answer.usage.input,
         outputTokens: answer.usage.output,
         costUsd: answer.costUsd,

@@ -1,39 +1,52 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type PointerEvent } from "react";
 
+import { useColumnResize } from "./column-resize.tsx";
+
 import { useStoredSet } from "./storage.ts";
 
 // Browser preferences only: resizing never changes the house or its change list.
 export function useWidths(key: string, defaults: Record<string, number>) {
+  const savedWidths = useRef<Record<string, number>>({});
   const [widths, setWidths] = useState<Record<string, number>>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
+      savedWidths.current = Object.fromEntries(Object.entries(defaults).filter(([name]) => Number.isFinite(saved?.[name]) && saved[name] >= 64).map(([name]) => [name, saved[name]]));
       return Object.fromEntries(Object.entries(defaults).map(([name, width]) => [name, Number.isFinite(saved?.[name]) && saved[name] >= 64 ? saved[name] : width]));
     } catch { return defaults; }
   });
   useEffect(() => {
-    const resetWidths = () => { setWidths(defaults); try { localStorage.removeItem(key); } catch { /* Storage is optional. */ } };
+    const resetWidths = () => { savedWidths.current = {}; setWidths(defaults); try { localStorage.removeItem(key); } catch { /* Storage is optional. */ } };
     window.addEventListener("taxis:reset-layout", resetWidths);
     return () => window.removeEventListener("taxis:reset-layout", resetWidths);
   }, [key, JSON.stringify(defaults)]);
   const setWidth = (name: string, width: number) => setWidths(previous => {
     const next = { ...previous, [name]: width };
-    try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* Storage is optional. */ }
+    savedWidths.current = { ...savedWidths.current, [name]: width };
+    try { localStorage.setItem(key, JSON.stringify(savedWidths.current)); } catch { /* Storage is optional. */ }
     return next;
   });
   const reset = () => {
+    savedWidths.current = {};
     setWidths(defaults);
     try { localStorage.removeItem(key); } catch { /* Storage is optional. */ }
   };
-  return { widths, setWidth, reset };
+  return { widths, setWidth, reset, savedWidth: (name: string) => savedWidths.current[name] };
 }
 
-export function ResizeHandle({ label, value, onChange, min = 64, max = () => 2000, pane = false }: {
-  label: string; value: number; onChange: (width: number) => void; min?: number; max?: () => number; pane?: boolean;
+export function ResizeHandle({ label, value, onChange, min = 64, max = () => 2000, pane = false, savedWidth }: {
+  label: string; value: number; onChange: (width: number) => void; min?: number; max?: () => number; pane?: boolean; savedWidth?: number;
 }) {
+  const handle = useRef<HTMLDivElement>(null);
+  const column = useColumnResize(handle, !pane, savedWidth);
+  const current = column.width ?? value;
   const drag = useRef<{ x: number; width: number } | null>(null);
-  const change = (width: number) => onChange(Math.round(Math.max(min, Math.min(max(), width))));
+  const change = (width: number) => {
+    const next = Math.round(Math.max(min, Math.min(max(), width)));
+    if (!pane) column.resize(next);
+    onChange(next);
+  };
   const finish = () => { drag.current = null; };
-  return <div role="separator" aria-label={label} aria-orientation="vertical" aria-valuenow={Math.round(value)} aria-valuemin={min} tabIndex={0}
+  return <div ref={handle} role="separator" aria-label={label} aria-orientation="vertical" aria-valuenow={Math.round(current)} aria-valuemin={min} tabIndex={0}
     className={pane ? "records-divider hidden shrink-0 md:block" : "column-divider"}
     onPointerDown={(event: PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
@@ -47,7 +60,7 @@ export function ResizeHandle({ label, value, onChange, min = 64, max = () => 200
     onClick={event => event.stopPropagation()}
     onKeyDown={event => {
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-        event.preventDefault(); event.stopPropagation(); change(value + (event.key === "ArrowRight" ? 20 : -20));
+        event.preventDefault(); event.stopPropagation(); change(current + (event.key === "ArrowRight" ? 20 : -20));
       }
     }} />;
 }

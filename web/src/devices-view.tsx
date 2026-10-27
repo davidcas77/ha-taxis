@@ -100,7 +100,7 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, deviceLabelOk, 
   const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
   const { sort, toggle: toggleSort } = useSortState({ key: "name", dir: "asc" });
   const column = sort.key as TreeColumn;
-  const { widths, setWidth } = useWidths("taxis:table:columns:devices-entities", { name: 200, id: 210, type: 140, showAs: 100, state: 100, why: 240, area: 160 });
+  const { widths, setWidth, savedWidth } = useWidths("taxis:table:columns:devices-entities", { name: 200, id: 210, type: 140, showAs: 100, state: 100, why: 240, area: 160 });
 
   // A new area starts with every kind showing and nothing opened by hand.
   useEffect(() => {
@@ -194,13 +194,13 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, deviceLabelOk, 
               <thead className="bg-sunken text-left text-xs text-muted">
                 <tr>
                   <th className="w-8 px-3 py-2" />
-                  <SortHeader label="Name" k="name" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize name column" value={widths["name"]} onChange={width => setWidth("name", width)} />} />
-                  <SortHeader label={flat ? "Entity id" : "Model / entity id"} k="id" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize id column" value={widths["id"]} onChange={width => setWidth("id", width)} />} />
-                  <SortHeader label={flat ? "Type" : "Entities / type"} k="type" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize type column" value={widths["type"]} onChange={width => setWidth("type", width)} />} />
-                  <SortHeader label="Show as" k="showAs" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize showAs column" value={widths["showAs"]} onChange={width => setWidth("showAs", width)} />} />
-                  <SortHeader label="State" k="state" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize state column" value={widths["state"]} onChange={width => setWidth("state", width)} />} />
-                  <SortHeader label="Why" k="why" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize why column" value={widths["why"]} onChange={width => setWidth("why", width)} />} />
-                  <SortHeader label="Area" k="area" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize area column" value={widths["area"]} onChange={width => setWidth("area", width)} />} />
+                  <SortHeader label="Name" k="name" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize name column" value={widths["name"]} savedWidth={savedWidth("name")} onChange={width => setWidth("name", width)} />} />
+                  <SortHeader label={flat ? "Entity id" : "Model / entity id"} k="id" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize id column" value={widths["id"]} savedWidth={savedWidth("id")} onChange={width => setWidth("id", width)} />} />
+                  <SortHeader label={flat ? "Type" : "Entities / type"} k="type" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize type column" value={widths["type"]} savedWidth={savedWidth("type")} onChange={width => setWidth("type", width)} />} />
+                  <SortHeader label="Show as" k="showAs" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize showAs column" value={widths["showAs"]} savedWidth={savedWidth("showAs")} onChange={width => setWidth("showAs", width)} />} />
+                  <SortHeader label="State" k="state" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize state column" value={widths["state"]} savedWidth={savedWidth("state")} onChange={width => setWidth("state", width)} />} />
+                  <SortHeader label="Why" k="why" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize why column" value={widths["why"]} savedWidth={savedWidth("why")} onChange={width => setWidth("why", width)} />} />
+                  <SortHeader label="Area" k="area" sort={sort} onToggle={toggleSort} resize={<ResizeHandle label="Resize area column" value={widths["area"]} savedWidth={savedWidth("area")} onChange={width => setWidth("area", width)} />} />
                   <th className="w-16 px-1.5 py-2">
                     <span className="sr-only">Open</span>
                   </th>
