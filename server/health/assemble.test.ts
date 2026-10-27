@@ -55,6 +55,10 @@ describe("the demo house", () => {
         // 2: not reporting, grouped by device, and the Hall PIR used by an automation
         "unavailable:device:attic",
         "unavailable:device:hallway_1",
+        // 2b: groups whose members are gone (the Loft's own, and two on the balcony, one of which reports no members)
+        "groups:light.loft_all",
+        "groups:light.balcony_open",
+        "groups:light.balcony_all",
         // 3: activity
         "activity:automation.lights_on_at_sunset:stale",
         "activity:automation.weekend_guest_lights:never",

@@ -75,6 +75,28 @@ export type EntityItem = {
   configEntryId: string | null;
   // A thermostat's presets (the preset_modes attribute), empty for anything else.
   presetModes: string[];
+  // A thermostat's modes (the hvac_modes attribute): off, heat, cool, heat_cool,
+  // auto… Empty for anything else, and while a thermostat reports none.
+  hvacModes: string[];
+  // Home Assistant says its integration no longer provides it (a state restored
+  // from before a rename or removal).
+  restored: boolean;
+  // When its state last changed, and when it was last reported (ISO), if known.
+  lastChanged: string | null;
+  lastReported: string | null;
+};
+
+// An integration or helper set up in Home Assistant (a config entry), as far as
+// Taxis reads it: no settings and no secrets, only whether it works.
+export type ConfigEntryItem = {
+  id: string;
+  domain: string;
+  title: string;
+  // loaded, setup_error, setup_retry, not_loaded, failed_unload, migration_error…
+  state: string;
+  // Why it did not load, in Home Assistant's words, when it says.
+  reason: string | null;
+  disabledBy: string | null;
 };
 
 export type DeviceItem = {
@@ -126,6 +148,8 @@ export type Hierarchy = {
   areas: Record<string, AreaNode>;
   devices: Record<string, DeviceItem>;
   entities: Record<string, EntityItem>;
+  // Empty when Home Assistant's list of integrations could not be read.
+  configEntries: Record<string, ConfigEntryItem>;
   labels: Record<string, LabelItem>;
   categories: Record<CategoryScope, CategoryItem[]>;
   // Entities that end up in no area at all (neither their own nor their device's).

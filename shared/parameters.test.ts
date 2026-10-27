@@ -77,6 +77,10 @@ describe("the definitions", () => {
       "night_temp",
       "sleep_temp",
       "away_temp",
+      "cool_comfort_temp",
+      "cool_eco_temp",
+      "cool_night_temp",
+      "cool_away_temp",
       "frost_temp",
       "min_temp",
       "max_temp",
@@ -137,6 +141,7 @@ describe("the definitions", () => {
   it("has the climate defaults of the design", () => {
     const d = (k: (typeof PARAM_KEYS)[number]) => PARAM_DEF[k].default;
     expect([d("comfort_temp"), d("eco_temp"), d("night_temp"), d("sleep_temp"), d("away_temp"), d("frost_temp"), d("min_temp"), d("max_temp")]).toEqual([21, 19, 18, 17.5, 16, 7, 16, 24]);
+    expect([d("cool_comfort_temp"), d("cool_eco_temp"), d("cool_away_temp"), d("cool_night_temp")]).toEqual([24, 27, 29, 25]);
     expect([d("window_delay"), d("restore_delay"), d("eco_after_clear")]).toEqual([2, 1, 30]);
     expect([d("comfort_needs_occupancy"), d("auto_hvac_on"), d("doors_open_count"), d("season")]).toEqual([true, false, false, "heating"]);
     expect(d("comfort_periods")).toBe("Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00");
@@ -174,6 +179,12 @@ describe("checkValue: the climate kinds", () => {
     expect(checkValue(PARAM_DEF.sleep_temp, 17.5)).toBeNull();
     expect(checkValue(PARAM_DEF.sleep_temp, 17.3)).toMatch(/steps of 0.5/);
     expect(checkValue(PARAM_DEF.sleep_temp, 4.5)).toMatch(/between 5 and 35/);
+    // The cooling temperatures take the same range and step.
+    for (const k of ["cool_comfort_temp", "cool_eco_temp", "cool_night_temp", "cool_away_temp"] as const) {
+      expect(checkValue(PARAM_DEF[k], 26.5), k).toBeNull();
+      expect(checkValue(PARAM_DEF[k], 26.3), k).toMatch(/steps of 0.5/);
+      expect(checkValue(PARAM_DEF[k], 36), k).toMatch(/between 5 and 35/);
+    }
     expect(checkValue(PARAM_DEF.frost_temp, 0)).toBeNull();
     expect(checkValue(PARAM_DEF.window_delay, 0)).toBeNull();
     expect(checkValue(PARAM_DEF.eco_after_clear, 0)).not.toBeNull();
@@ -227,27 +238,34 @@ describe("inheritance", () => {
     expect(resolve(EMPTY_PARAMETERS, h, inv, "kitchen", "hold_timeout")).toEqual({ value: 5, source: { level: "default", id: null } });
   });
 
-  it("walks house, then interior or exterior, then floor, then area; the most specific wins", () => {
+  it("walks house, then interior or exterior, then area; the most specific wins", () => {
     const p = withP({
       house: { hold_timeout: 10, night_start: "22:00" },
       types: { exterior: { hold_timeout: 3 } },
-      floors: { ground: { hold_timeout: 7 }, first: { night_start: "21:00" } },
-      areas: { kitchen: { hold_timeout: 2 } },
+      areas: { kitchen: { hold_timeout: 2 }, bedroom: { night_start: "21:00" } },
     });
     const at = (area: string, key: "hold_timeout" | "night_start") => resolve(p, h, inv, area, key);
     // The area itself.
     expect(at("kitchen", "hold_timeout")).toEqual({ value: 2, source: { level: "area", id: "kitchen" } });
-    // Its floor, over the house.
-    expect(at("living_room", "hold_timeout")).toEqual({ value: 7, source: { level: "floor", id: "ground" } });
-    // A floor beats the type: the garden is exterior but on the ground floor.
-    expect(at("garden", "hold_timeout")).toEqual({ value: 7, source: { level: "floor", id: "ground" } });
-    // No floor: the type, then the house.
+    // Not set on the area: the house; the floor an area is on plays no part.
+    expect(at("living_room", "hold_timeout")).toEqual({ value: 10, source: { level: "house", id: null } });
+    // The garden is exterior: its type, over the house.
+    expect(at("garden", "hold_timeout")).toEqual({ value: 3, source: { level: "type", id: "exterior" } });
     expect(at("shed", "hold_timeout")).toEqual({ value: 10, source: { level: "house", id: null } });
     expect(resolve(withP({ house: { hold_timeout: 10 }, types: { interior: { hold_timeout: 4 } } }), h, inv, "shed", "hold_timeout").source).toEqual({ level: "type", id: "interior" });
     expect(resolve(withP({ house: { hold_timeout: 10 }, types: { exterior: { hold_timeout: 3 } } }), h, inv, "garden", "hold_timeout")).toEqual({ value: 3, source: { level: "type", id: "exterior" } });
     // Each key inherits on its own.
-    expect(at("bedroom", "night_start")).toEqual({ value: "21:00", source: { level: "floor", id: "first" } });
+    expect(at("bedroom", "night_start")).toEqual({ value: "21:00", source: { level: "area", id: "bedroom" } });
     expect(at("bedroom", "hold_timeout")).toEqual({ value: 10, source: { level: "house", id: null } });
+  });
+
+  it("ignores values stored for a floor by an older version", () => {
+    // The type has no `floors` any more; a settings object read from old storage may still carry one.
+    const stored = { house: { hold_timeout: 10 }, types: {}, areas: {}, floors: { ground: { hold_timeout: 7 } } } as unknown as ParameterSettings;
+    expect(resolve(stored, h, inv, "living_room", "hold_timeout")).toEqual({ value: 10, source: { level: "house", id: null } });
+    expect(resolveAll(stored, h, inv, "garden").hold_timeout).toBe(10);
+    // A floor scope isn't one any more: asked for, it is skipped.
+    expect(resolveIn(stored, [{ level: "floor", id: "ground" } as never, { level: "house" }], "hold_timeout").source.level).toBe("house");
   });
 
   it("uses the area type from the inventory", () => {
@@ -264,8 +282,8 @@ describe("inheritance", () => {
   });
 
   it("the new occupancy, lighting and media values inherit like the others", () => {
-    const p = withP({ house: { extended_after: 45, tv_off_after: 60 }, types: { exterior: { media_off_after: 5 } }, floors: { first: { sleep_hold: 90 } }, areas: { kitchen: { override_duration: 20 } } });
-    expect(resolve(p, h, inv, "bedroom", "sleep_hold")).toEqual({ value: 90, source: { level: "floor", id: "first" } });
+    const p = withP({ house: { extended_after: 45, tv_off_after: 60 }, types: { exterior: { media_off_after: 5 } }, areas: { kitchen: { override_duration: 20 }, bedroom: { sleep_hold: 90 } } });
+    expect(resolve(p, h, inv, "bedroom", "sleep_hold")).toEqual({ value: 90, source: { level: "area", id: "bedroom" } });
     expect(resolve(p, h, inv, "kitchen", "override_duration")).toEqual({ value: 20, source: { level: "area", id: "kitchen" } });
     expect(resolve(p, h, inv, "living_room", "override_duration")).toEqual({ value: 0, source: { level: "default", id: null } });
     expect(resolve(p, h, inv, "shed", "extended_after")).toEqual({ value: 45, source: { level: "house", id: null } });
@@ -276,12 +294,11 @@ describe("inheritance", () => {
   it("does not mistake an area called 'constructor' for something Object has", () => {
     const odd = buildHierarchy({ config: {}, floors: [], areas: [{ area_id: "constructor", name: "Odd" }, { area_id: "__proto__", name: "Worse" }], devices: [], entities: [], labels: [], states: [] }, "now");
     expect(resolve(EMPTY_PARAMETERS, odd, EMPTY_INVENTORY, "constructor", "hold_timeout").source.level).toBe("default");
-    expect(resolveIn(EMPTY_PARAMETERS, [{ level: "area", id: "__proto__" }, { level: "floor", id: "toString" }], "hold_timeout").source.level).toBe("default");
+    expect(resolveIn(EMPTY_PARAMETERS, [{ level: "area", id: "__proto__" }, { level: "type", id: "toString" as never }], "hold_timeout").source.level).toBe("default");
   });
 
   it("names the source in words", () => {
     expect(sourceName(h, { level: "area", id: "kitchen" })).toBe("Kitchen");
-    expect(sourceName(h, { level: "floor", id: "ground" })).toBe("Ground floor");
     expect(sourceName(h, { level: "type", id: "exterior" })).toBe("exterior areas");
     expect(sourceName(h, { level: "type", id: "interior" })).toBe("interior areas");
     expect(sourceName(h, { level: "house", id: null })).toBe("the house default");
@@ -303,17 +320,17 @@ describe("edits", () => {
   });
 
   it("returns the same object when nothing changes", () => {
-    const p = setParameter(EMPTY_PARAMETERS, { level: "floor", id: "ground" }, "transition", 2);
-    expect(setParameter(p, { level: "floor", id: "ground" }, "transition", 2)).toBe(p);
-    expect(setParameter(p, { level: "floor", id: "first" }, "transition", null)).toBe(p);
+    const p = setParameter(EMPTY_PARAMETERS, { level: "type", id: "interior" }, "transition", 2);
+    expect(setParameter(p, { level: "type", id: "interior" }, "transition", 2)).toBe(p);
+    expect(setParameter(p, { level: "type", id: "exterior" }, "transition", null)).toBe(p);
     expect(setParameter(EMPTY_PARAMETERS, { level: "house" }, "transition", null)).toBe(EMPTY_PARAMETERS);
   });
 
-  it("edits the house, interior and exterior, and floors", () => {
+  it("edits the house, interior and exterior, and areas", () => {
     let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "night_start", "22:30");
     p = setParameter(p, { level: "type", id: "exterior" }, "hold_timeout", 2);
-    p = setParameter(p, { level: "floor", id: "first" }, "day_kelvin", 3500);
-    expect(p).toEqual({ house: { night_start: "22:30" }, types: { exterior: { hold_timeout: 2 } }, floors: { first: { day_kelvin: 3500 } }, areas: {} });
+    p = setParameter(p, { level: "area", id: "bedroom" }, "day_kelvin", 3500);
+    expect(p).toEqual({ house: { night_start: "22:30" }, types: { exterior: { hold_timeout: 2 } }, areas: { bedroom: { day_kelvin: 3500 } } });
     p = setParameter(p, { level: "type", id: "exterior" }, "hold_timeout", null);
     expect(p.types).toEqual({});
     p = setParameter(p, { level: "house" }, "night_start", null);
@@ -322,20 +339,23 @@ describe("edits", () => {
 });
 
 describe("the rows of a table", () => {
-  it("lists the house, interior and exterior, then each floor with its areas, then areas without a floor", () => {
+  it("lists the house, interior and exterior, then the areas floor by floor, then areas without a floor", () => {
     const { fixed, rest } = paramRows(h, inv);
     expect(fixed.map((r) => r.label)).toEqual(["House default", "Interior", "Exterior"]);
-    expect(rest.map((r) => `${r.scope.level}:${r.label}`)).toEqual([
-      "floor:Ground floor",
-      "area:Garden",
-      "area:Kitchen",
-      "area:Living room",
-      "floor:First floor",
-      "area:Bedroom",
-      "area:Shed",
+    expect(rest.map((r) => `${r.scope.level}:${r.label}`)).toEqual(["area:Garden", "area:Kitchen", "area:Living room", "area:Bedroom", "area:Shed"]);
+    expect(rest.map((r) => r.order)).toEqual([0, 1, 2, 3, 4]);
+    expect(rest.map((r) => r.floorName)).toEqual(["Ground floor", "Ground floor", "Ground floor", "First floor", null]);
+  });
+
+  it("keeps the floors apart as headings: no row with values, none for a floor without areas", () => {
+    const { rest, floors } = paramRows(h, inv);
+    expect(floors).toEqual([
+      { floorId: "ground", name: "Ground floor" },
+      { floorId: "first", name: "First floor" },
     ]);
-    expect(rest.map((r) => r.order)).toEqual([0, 1, 2, 3, 4, 5, 6]);
-    expect(rest.find((r) => r.label === "Shed")!.floorName).toBeNull();
+    expect(rest.some((r) => (r.scope.level as string) === "floor")).toBe(false);
+    const empty = buildHierarchy({ config: {}, floors: [{ floor_id: "attic", name: "Attic", level: 2 }], areas: [], devices: [], entities: [], labels: [], states: [] }, "now");
+    expect(paramRows(empty, inv).floors).toEqual([]);
   });
 
   it("gives each row the levels it inherits from, most specific first", () => {
@@ -343,8 +363,7 @@ describe("the rows of a table", () => {
     const chain = (label: string) => [...fixed, ...rest].find((r) => r.label === label)!.chain.map((s) => (s.level === "house" ? "house" : `${s.level}:${s.id}`));
     expect(chain("House default")).toEqual(["house"]);
     expect(chain("Exterior")).toEqual(["type:exterior", "house"]);
-    expect(chain("Ground floor")).toEqual(["floor:ground", "house"]);
-    expect(chain("Garden")).toEqual(["area:garden", "floor:ground", "type:exterior", "house"]);
+    expect(chain("Garden")).toEqual(["area:garden", "type:exterior", "house"]);
     expect(chain("Shed")).toEqual(["area:shed", "type:interior", "house"]);
   });
 });
@@ -366,14 +385,14 @@ describe("entry lights", () => {
     }
   });
 
-  it("is not inherited: the house, interior, exterior and floors can't set it, and an area doesn't take theirs", () => {
+  it("is not inherited: the house, interior and exterior can't set it, and an area doesn't take theirs", () => {
     const area = setParameter(EMPTY_PARAMETERS, kitchen, "entry_lights", ["light.kitchen_main"]);
     expect(area.areas).toEqual({ kitchen: { entry_lights: ["light.kitchen_main"] } });
-    for (const scope of [{ level: "house" }, { level: "type", id: "interior" }, { level: "floor", id: "ground" }] as const) {
+    for (const scope of [{ level: "house" }, { level: "type", id: "interior" }] as const) {
       expect(setParameter(EMPTY_PARAMETERS, scope, "entry_lights", ["light.kitchen_main"]), scope.level).toBe(EMPTY_PARAMETERS);
     }
     // Even a stored value at a higher level (hand-edited) is ignored.
-    const stray: ParameterSettings = { ...EMPTY_PARAMETERS, house: { entry_lights: ["light.x"] }, floors: { ground: { entry_lights: ["light.y"] } } };
+    const stray: ParameterSettings = { ...EMPTY_PARAMETERS, house: { entry_lights: ["light.x"] } };
     expect(resolve(stray, h, EMPTY_INVENTORY, "kitchen", "entry_lights")).toEqual({ value: [], source: { level: "default", id: null } });
     expect(resolve(area, h, EMPTY_INVENTORY, "kitchen", "entry_lights")).toEqual({ value: ["light.kitchen_main"], source: { level: "area", id: "kitchen" } });
     expect(resolve(area, h, EMPTY_INVENTORY, "living_room", "entry_lights").source.level).toBe("default");
@@ -439,7 +458,7 @@ describe("parameters of the house only", () => {
 
   it("are read from the house wherever they are asked, and ignore any other level", () => {
     const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "announce_volume", 25);
-    for (const scope of [{ level: "area", id: "kitchen" }, { level: "floor", id: "ground" }, { level: "type", id: "exterior" }] as const) {
+    for (const scope of [{ level: "area", id: "kitchen" }, { level: "type", id: "exterior" }] as const) {
       // An edit at another level changes nothing...
       expect(setParameter(p, scope, "announce_volume", 90)).toBe(p);
       expect(setParameter(p, scope, "notify_targets", ["notify.a"])).toBe(p);

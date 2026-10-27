@@ -52,6 +52,10 @@ export const READ_COMMANDS = new Set([
   // Whether a dashboard is stored ("storage") or written in YAML ("yaml"); with
   // no url_path, the default dashboard.
   "lovelace/info",
+  // The integrations and helpers set up in Home Assistant and whether each works
+  // (domain, title, state, reason, disabled_by); only those fields are kept
+  // (server/model/hierarchy.ts). Never an entry's settings: the list has none.
+  "config_entries/get",
 ]);
 
 export function assertReadCommand(type: string): void {

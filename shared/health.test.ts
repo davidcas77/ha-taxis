@@ -1148,3 +1148,56 @@ describe("9: device-based triggers, conditions and actions", () => {
     expect(ids(r, "devices")).toEqual([]);
   });
 });
+
+describe("groups that point at entities that don't exist", () => {
+  const group = (id: string, members: string[] | undefined, o: Partial<E> = {}): E => ({ id: `light.${id}`, platform: "group", entry: "e1", members, state: "on", ...o });
+
+  it("is quiet when every member is there", () => {
+    const r = check([light("lamp"), group("all", ["light.lamp"])]);
+    expect(ids(r, "groups")).toEqual([]);
+  });
+
+  it("names the members that don't exist, as a warning, with a link to the helpers", () => {
+    const r = check([light("lamp"), group("balcony_open", ["light.balcony_open_a", "light.balcony_open_b"], { state: "unavailable" })]);
+    const f = one(r, "groups:light.balcony_open");
+    expect(f).toMatchObject({ check: "groups", severity: "warning", area: "living_room", entity: "light.balcony_open", title: "balcony open points at 2 entities that don't exist" });
+    expect(f.entities).toEqual(["light.balcony_open", "light.balcony_open_a", "light.balcony_open_b"]);
+    expect(f.detail).toMatch(/light\.balcony_open_a and light\.balcony_open_b are not in Home Assistant, so nothing in the group works/);
+    expect(f.fix).toEqual({ kind: "link", label: "Fix in Taxis", to: { page: "parameters", tab: "helpers" } });
+  });
+
+  it("says one missing member in the singular, and that the group still follows the others", () => {
+    const f = one(check([light("lamp"), group("pair", ["light.lamp", "light.gone"])]), "groups:light.pair");
+    expect(f.title).toBe("pair points at 1 entity that doesn't exist");
+    expect(f.detail).toMatch(/light\.gone is not in Home Assistant, so the group follows 1 entity only/);
+  });
+
+  it("offers the area's own group the lights the area counts", () => {
+    const r = check([light("lamp"), light("spots"), group("living_all", ["light.lamp", "light.gone"])]);
+    const f = one(r, "groups:light.living_all");
+    expect(f.fix).toMatchObject({ kind: "changes", inputs: [{ kind: "helper", op: "update", targetId: "light.living_all", fields: { entities: ["light.lamp", "light.spots"] } }] });
+    expect(f.detail).toMatch(/Taxis can give it the 2 entities the area counts now/);
+  });
+
+  it("leaves it out once that fix is in the change list", () => {
+    const pending: Change = { id: 1, kind: "helper", op: "update", targetId: "light.living_all", scope: null, before: { entities: ["light.lamp", "light.gone"] }, after: { entities: ["light.lamp", "light.spots"] }, createdAt: "now" };
+    expect(ids(check([light("lamp"), light("spots"), group("living_all", ["light.lamp", "light.gone"])], { changes: [pending] }), "groups")).toEqual([]);
+  });
+
+  it("tells a group that is unavailable and reports no members, as Home Assistant does", () => {
+    const r = check([light("lamp"), group("balcony_all", undefined, { state: "unavailable" })]);
+    const f = one(r, "groups:light.balcony_all");
+    expect(f.title).toBe("balcony all is unavailable and its members can't be read");
+    expect(f.entities).toEqual(["light.balcony_all"]);
+    expect(f.detail).toMatch(/probably all gone/);
+  });
+
+  it("is not raised for a group that works though it reports no members, or for one that is disabled", () => {
+    expect(ids(check([group("quiet", undefined, { state: "on" })]), "groups")).toEqual([]);
+    expect(ids(check([group("off", ["light.gone"], { disabled: true })]), "groups")).toEqual([]);
+  });
+
+  it("is raised for a group of any platform that lists members that are gone", () => {
+    expect(ids(check([{ id: "light.hue_room", platform: "hue", members: ["light.gone"] }]), "groups")).toEqual(["groups:light.hue_room"]);
+  });
+});

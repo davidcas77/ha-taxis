@@ -3,6 +3,7 @@ import {
   type AreaNode,
   type CategoryItem,
   type CategoryScope,
+  type ConfigEntryItem,
   type DeviceItem,
   type EntityItem,
   type FloorNode,
@@ -59,6 +60,8 @@ export type RawEntity = {
   device_class?: string | null;
   original_device_class?: string | null;
 };
+// An integration or helper as config_entries/get lists it. Only these fields are read.
+export type RawConfigEntry = { entry_id: string; domain?: string; title?: string; state?: string; reason?: string | null; error_reason_translation_key?: string | null; disabled_by?: string | null };
 export type RawLabel = { label_id: string; name: string; color?: string | null; icon?: string | null; description?: string | null };
 export type RawCategory = { category_id: string; name: string; icon?: string | null };
 export type RawState = {
@@ -66,6 +69,8 @@ export type RawState = {
   state: string;
   // When the state last changed (ISO), which the health checks read.
   last_changed?: string;
+  // When Home Assistant last heard from the entity, even if the state stayed.
+  last_reported?: string;
   // id: an automation's id. duration: a timer's, written "0:05:00".
   // last_triggered: an automation's last run. restored: the entity is no longer
   // provided by its integration.
@@ -80,6 +85,7 @@ export type RawState = {
     restored?: unknown;
     // A thermostat's: the presets it offers.
     preset_modes?: unknown;
+    hvac_modes?: unknown;
   };
 };
 export type RawConfig = { location_name?: string; version?: string };
@@ -93,6 +99,8 @@ export type RawRegistry = {
   labels: RawLabel[];
   // One list per scope. Optional so snapshots taken before 0.2 still load.
   categories?: Partial<Record<CategoryScope, RawCategory[]>>;
+  // Optional so older snapshots still load, and when the list could not be read.
+  integrations?: RawConfigEntry[];
   states: RawState[];
 };
 
@@ -200,6 +208,10 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
       platform,
       configEntryId: text(reg?.config_entry_id),
       presetModes: domain === "climate" && Array.isArray(st?.attributes?.preset_modes) ? st.attributes.preset_modes.filter((m): m is string => typeof m === "string") : [],
+      hvacModes: domain === "climate" && Array.isArray(st?.attributes?.hvac_modes) ? st.attributes.hvac_modes.filter((m): m is string => typeof m === "string") : [],
+      restored: st?.attributes?.restored === true,
+      lastChanged: text(st?.last_changed),
+      lastReported: text(st?.last_reported),
     };
     if (device) device.entityIds.push(entityId);
     if (areaId) areas[areaId].entityIds.push(entityId);
@@ -246,6 +258,21 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
     areas,
     devices,
     entities,
+    configEntries: Object.fromEntries(
+      (raw.integrations ?? [])
+        .filter((e) => text(e.entry_id))
+        .map((e): [string, ConfigEntryItem] => [
+          e.entry_id,
+          {
+            id: e.entry_id,
+            domain: text(e.domain) ?? "",
+            title: text(e.title) ?? text(e.domain) ?? e.entry_id,
+            state: text(e.state) ?? "loaded",
+            reason: text(e.reason) ?? text(e.error_reason_translation_key),
+            disabledBy: text(e.disabled_by),
+          },
+        ]),
+    ),
     labels,
     categories,
     unassignedEntityIds: unassigned,

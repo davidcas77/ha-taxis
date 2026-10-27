@@ -6,9 +6,11 @@ import type { CategoryScope, EntityItem, FloorNode, Hierarchy } from "../../shar
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { GroupedList } from "./groups.tsx";
 import { CategoryDetail, LabelDetail, NewForm, categoryUsage, labelUsage } from "./labels.tsx";
+import { OrganizeTable } from "./lists.tsx";
 import { AreaCodeField } from "./naming.tsx";
 import { ROLE_LABEL } from "./spaces.tsx";
 import { useTaxis, type OrganizeType, type Route } from "./state.tsx";
+import { useStoredChoice } from "./storage.ts";
 import { SortHeader, useSort, type SortValue } from "./table.tsx";
 import { Button, EditedDot, Panel, labelColor } from "./ui.tsx";
 
@@ -54,6 +56,30 @@ function typeCount(h: Hierarchy, t: OrganizeType): number {
 
 type Step = "types" | "items" | "props";
 
+// Devices and Entities can be shown as a table that fills the page (devices with
+// their entities under them, filters, grouping, sorting and edits in place), or as
+// the list with the selected item's properties beside it. Each remembers which.
+const VIEWS = ["table", "records"] as const;
+type View = (typeof VIEWS)[number];
+
+function ViewSwitch({ view, onChange }: { view: View; onChange: (v: View) => void }) {
+  return (
+    <div role="group" aria-label="View" className="flex w-fit gap-1 text-xs">
+      {VIEWS.map((v) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={view === v}
+          onClick={() => onChange(v)}
+          className={`rounded-md border px-2 py-1 ${view === v ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}
+        >
+          {v === "table" ? "Table" : "Records"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: OrganizeType; id: string | null; go: (r: Route) => void }) {
   // On narrow screens only one pane shows; wide screens show all three.
   const [step, setStep] = useState<Step>(id ? "props" : "items");
@@ -66,6 +92,21 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
     setStep(next ? "props" : "items");
   };
   const show = (s: Step) => (step === s ? "flex" : "hidden");
+  const [devicesView, setDevicesView] = useStoredChoice<View>("taxis:organize-view:devices", VIEWS, "table");
+  const [entitiesView, setEntitiesView] = useStoredChoice<View>("taxis:organize-view:entities", VIEWS, "records");
+  const tabular = type === "devices" || type === "entities";
+  // A link to one item (an old bookmark, a link from Health) opens the list with it selected.
+  const view: View = tabular && id === null ? (type === "devices" ? devicesView : entitiesView) : "records";
+  const choose = (v: View) => {
+    (type === "devices" ? setDevicesView : setEntitiesView)(v);
+    // The table shows no one item: leave the one selected.
+    if (v === "table" && id !== null) select(null);
+  };
+  // The table's way to the list: that item, selected.
+  const showRecord = (item: string) => {
+    (type === "devices" ? setDevicesView : setEntitiesView)("records");
+    select(item);
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -86,19 +127,36 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
           </button>
         ))}
       </nav>
-      <section
-        aria-label={TYPE_NAME[type]}
-        className={`${show("items")} min-h-0 min-w-0 flex-1 flex-col border-b border-line md:flex md:w-64 md:flex-none md:border-r md:border-b-0 lg:w-80 xl:w-[26rem]`}
-      >
-        <BackBar label="Types" onBack={() => setStep("types")} />
-        <ItemsPane key={type} h={h} type={type} id={id} select={select} />
-      </section>
-      <section aria-label="Properties" className={`${show("props")} min-h-0 min-w-0 flex-1 flex-col overflow-y-auto md:flex`}>
-        <BackBar label={TYPE_NAME[type]} onBack={() => select(null)} />
-        <div className="p-4">
-          <Properties h={h} type={type} id={id} go={go} clear={() => select(null)} />
-        </div>
-      </section>
+      {view === "table" && (type === "devices" || type === "entities") ? (
+        <section aria-label={TYPE_NAME[type]} className={`${step === "types" ? "hidden" : "flex"} min-h-0 min-w-0 flex-1 flex-col md:flex`}>
+          <BackBar label="Types" onBack={() => setStep("types")} />
+          <div className="border-b border-line px-4 py-2">
+            <ViewSwitch view={view} onChange={choose} />
+          </div>
+          <OrganizeTable key={type} h={h} section={type} onRecord={showRecord} />
+        </section>
+      ) : (
+        <>
+          <section
+            aria-label={TYPE_NAME[type]}
+            className={`${show("items")} min-h-0 min-w-0 flex-1 flex-col border-b border-line md:flex md:w-64 md:flex-none md:border-r md:border-b-0 lg:w-80 xl:w-[26rem]`}
+          >
+            <BackBar label="Types" onBack={() => setStep("types")} />
+            {tabular && (
+              <div className="border-b border-line px-2.5 py-2">
+                <ViewSwitch view={view} onChange={choose} />
+              </div>
+            )}
+            <ItemsPane key={type} h={h} type={type} id={id} select={select} />
+          </section>
+          <section aria-label="Properties" className={`${show("props")} min-h-0 min-w-0 flex-1 flex-col overflow-y-auto md:flex`}>
+            <BackBar label={TYPE_NAME[type]} onBack={() => select(null)} />
+            <div className="p-4">
+              <Properties h={h} type={type} id={id} go={go} clear={() => select(null)} />
+            </div>
+          </section>
+        </>
+      )}
     </div>
   );
 }

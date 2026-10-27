@@ -6,7 +6,6 @@ import {
   Camera,
   ChevronDown,
   ChevronRight,
-  Cpu,
   DoorOpen,
   Droplets,
   Gauge,
@@ -29,23 +28,26 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { ROLE_ORDER } from "../../shared/roles.ts";
+import { ROLE_ORDER, displayRole } from "../../shared/roles.ts";
 import { arrangeGroups, membershipIndex, summarizeRoom, type BinarySummary, type NumericSummary } from "../../shared/rooms.ts";
 import type { AreaNode, ChangeInput, EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
+import { diagnosisText } from "../../shared/entity-diagnosis.ts";
+import { areaHealth, floorListed, healthBadges, listedAreas, type AreaHealth as Health, type HealthBadge } from "../../shared/area-health.ts";
 import { analyzeArea } from "../../shared/naming.ts";
-import { namingFit, splitIgnored, type NamingIgnores } from "../../shared/naming-ignores.ts";
+import { namingFit } from "../../shared/naming-ignores.ts";
 import { AssignTool, rolesSuggestedBy } from "./assign.tsx";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { AreaCapabilitiesTab } from "./capabilities.tsx";
-import { AreaFindings, useAreaFindings } from "./health.tsx";
-import { AreaEntities } from "./entities-view.tsx";
+import { AreaFindings, useAreaFindings, useHealth } from "./health.tsx";
+import { DevicesEntities } from "./devices-view.tsx";
 import { AreaNamingTab } from "./naming.tsx";
 import { useStoredSet } from "./storage.ts";
 import { SortHeader, useSort } from "./table.tsx";
 import { useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
 import { AreaSelect, Button, ConfirmAction, EditedDot, LabelChip, inputClass } from "./ui.tsx";
+import { WhyIcon, useWhy } from "./why.tsx";
 
 export const ROLE_ICONS: Record<EntityRole, LucideIcon> = {
   light: Lightbulb,
@@ -99,9 +101,11 @@ function groupByRole(ids: string[], h: Hierarchy, f: Filters) {
   for (const id of ids) {
     const e = h.entities[id];
     if (!e || !visible(e, f)) continue;
-    const list = groups.get(e.role) ?? [];
+    // A helper or a group is listed as one, not under what it mirrors (a light group is no light).
+    const role = displayRole(e);
+    const list = groups.get(role) ?? [];
     list.push(e);
-    groups.set(e.role, list);
+    groups.set(role, list);
   }
   return ROLE_ORDER.filter((r) => groups.has(r.role)).map((r) => ({ ...r, entities: groups.get(r.role)! }));
 }
@@ -110,11 +114,13 @@ function groupByRole(ids: string[], h: Hierarchy, f: Filters) {
 // Left: the tree of spaces.
 // ---------------------------------------------------------------------------
 
-function TreeRow({ depth, icon: Icon, label, count, active, muted, edited, expanded, onClick }: {
+function TreeRow({ depth, icon: Icon, label, count, health, active, muted, edited, expanded, onClick }: {
   depth: number;
   icon: LucideIcon;
   label: string;
   count?: number;
+  // What needs a look in an area (its Health tab): a small dot, red for an error.
+  health?: HealthBadge;
   active: boolean;
   muted?: boolean;
   edited?: boolean;
@@ -138,13 +144,25 @@ function TreeRow({ depth, icon: Icon, label, count, active, muted, edited, expan
       <Icon className="size-4 shrink-0" aria-hidden />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {edited && <EditedDot />}
+      {health && (
+        <span
+          role="img"
+          aria-label={`${health.total} health ${health.total === 1 ? "issue" : "issues"}`}
+          title={`${health.total} health ${health.total === 1 ? "issue" : "issues"}`}
+          className={`size-2 shrink-0 rounded-full ${health.severity === "error" ? "bg-danger" : "bg-warn"}`}
+        />
+      )}
       {count !== undefined && <span className="shrink-0 text-xs tabular-nums text-muted">{count}</span>}
     </button>
   );
 }
 
-export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; sel: Selection; select: (s: Selection) => void; filters: Filters; query: string }) {
-  const { edited } = useTaxis();
+export function SpaceTree({ h, sel, select, filters, query, showEmpty = true }: { h: Hierarchy; sel: Selection; select: (s: Selection) => void; filters: Filters; query: string; showEmpty?: boolean }) {
+  const { edited, naming, namingIgnores } = useTaxis();
+  // The health report is read once for the whole home; an area's badge is the
+  // number on its Health tab (its own lists and the report's findings about it).
+  const { report } = useHealth();
+  const badges = useMemo(() => healthBadges(h, naming, namingIgnores, report?.findings ?? null), [h, naming, namingIgnores, report]);
   const q = query.trim().toLowerCase();
   const matches = (a: AreaNode) => !q || a.name.toLowerCase().includes(q);
   // Floors folded away, per viewer: "floor:<id>", or "loose" for areas on no floor.
@@ -158,6 +176,9 @@ export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; se
   // A search shows every match, folded or not.
   const isOpen = (group: string) => Boolean(q) || !collapsed.has(group);
   const fold = (group: string) => changeCollapsed((s) => void (s.delete(group) || s.add(group)));
+  // Without the empty areas (no entities under the filters), the selected one apart.
+  const selectedAreaId = sel.kind === "area" ? sel.id : null;
+  const listed = (ids: readonly string[]) => listedAreas(ids.filter((id) => matches(h.areas[id])), (id) => countVisible(h.areas[id].entityIds, h, filters), showEmpty, selectedAreaId);
   const areaRow = (a: AreaNode) => (
     <TreeRow
       key={a.id}
@@ -165,6 +186,7 @@ export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; se
       icon={MapPin}
       label={a.name}
       count={countVisible(a.entityIds, h, filters)}
+      health={badges.get(a.id)}
       active={sel.kind === "area" && sel.id === a.id}
       edited={edited.has(`area:${a.id}`)}
       onClick={() => select({ kind: "area", id: a.id })}
@@ -174,8 +196,10 @@ export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; se
     <nav aria-label="Spaces" className="min-h-0 flex-1 overflow-y-auto p-1.5">
       <TreeRow depth={0} icon={Home} label={h.home.name} active={sel.kind === "home"} onClick={() => select({ kind: "home" })} />
       {h.floors.map((f) => {
-        const areas = f.areaIds.map((id) => h.areas[id]).filter(matches);
+        const { ids, hidden } = listed(f.areaIds);
+        const areas = ids.map((id) => h.areas[id]);
         if (q && areas.length === 0) return null;
+        if (!floorListed(f.areaIds.length, hidden, sel.kind === "floor" && sel.id === f.id)) return null;
         return (
           <div key={f.id}>
             <TreeRow
@@ -194,7 +218,7 @@ export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; se
           </div>
         );
       })}
-      {h.looseAreaIds.length > 0 && (
+      {h.looseAreaIds.length > 0 && floorListed(h.looseAreaIds.filter((id) => matches(h.areas[id])).length, listed(h.looseAreaIds).hidden, sel.kind === "loose") && (
         <div>
           <TreeRow
             depth={1}
@@ -208,7 +232,7 @@ export function SpaceTree({ h, sel, select, filters, query }: { h: Hierarchy; se
               select({ kind: "loose" });
             }}
           />
-          {isOpen("loose") && h.looseAreaIds.map((id) => h.areas[id]).filter(matches).map(areaRow)}
+          {isOpen("loose") && listed(h.looseAreaIds).ids.map((id) => areaRow(h.areas[id]))}
         </div>
       )}
       <TreeRow
@@ -340,20 +364,22 @@ function Heading({ title, subtitle, children, action }: { title: string; subtitl
   );
 }
 
-function Stat({ label, value, note, onClick }: { label: string; value: number; note?: string; onClick?: () => void }) {
+// dense: the smaller card of an area's Overview, under the live status.
+function Stat({ label, value, note, onClick, dense }: { label: string; value: number; note?: string; onClick?: () => void; dense?: boolean }) {
   const body = (
     <>
-      <span className="text-2xl font-semibold tabular-nums">{value.toLocaleString()}</span>
-      <span className="text-xs text-muted">{label}</span>
+      <span className={`font-semibold tabular-nums ${dense ? "text-lg leading-tight" : "text-2xl"}`}>{value.toLocaleString()}</span>
+      <span className={`text-muted ${dense ? "text-[11px]" : "text-xs"}`}>{label}</span>
       {note && <span className="mt-0.5 text-[11px] text-muted">{note}</span>}
     </>
   );
+  const box = `rounded-lg border border-line bg-surface ${dense ? "px-2.5 py-1.5" : "px-3.5 py-3"}`;
   return onClick ? (
-    <button type="button" onClick={onClick} className="flex flex-col items-start rounded-lg border border-line bg-surface px-3.5 py-3 text-left hover:bg-sunken">
+    <button type="button" onClick={onClick} className={`flex flex-col items-start text-left hover:bg-sunken ${box}`}>
       {body}
     </button>
   ) : (
-    <div className="flex flex-col rounded-lg border border-line bg-surface px-3.5 py-3">{body}</div>
+    <div className={`flex flex-col ${box}`}>{body}</div>
   );
 }
 
@@ -532,20 +558,20 @@ function SummaryChips({ s, h, compact }: { s: ReturnType<typeof summarizeRoom>; 
   ].filter((c): c is NonNullable<typeof c> => Boolean(c));
   if (chips.length === 0) return compact ? null : <p className="text-[13px] text-muted">No temperature, presence, motion or light entities in this area.</p>;
   return (
-    <ul aria-label="Room summary" className="flex flex-wrap gap-1.5">
+    <ul aria-label="Room summary" className={compact ? "flex flex-wrap gap-1.5" : "flex flex-wrap gap-2.5"}>
       {chips.map((c) => {
         const Icon = c.icon;
         return (
           <li
             key={c.label}
             title={c.title}
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${
+            className={`inline-flex items-center rounded-md border ${compact ? "gap-1.5 px-2 py-1 text-xs" : "gap-2.5 px-4 py-3 text-sm bg-surface"} ${
               c.tone === "on" ? "border-on/40 text-on" : c.tone === "warn" ? "border-warn/40 text-warn" : "border-line text-fg"
-            } ${compact ? "" : "bg-surface"}`}
+            }`}
           >
-            <Icon className="size-3.5" aria-hidden />
-            {!compact && <span className="text-muted">{c.label}</span>}
-            <span className="font-medium tabular-nums">{c.text}</span>
+            <Icon className={compact ? "size-3.5" : "size-5"} aria-hidden />
+            {!compact && <span className="text-[13px] text-muted">{c.label}</span>}
+            <span className={`font-medium tabular-nums ${compact ? "" : "text-2xl leading-none"}`}>{c.text}</span>
             {c.group && <span className="rounded bg-sunken px-1 text-[10px] text-muted">group</span>}
           </li>
         );
@@ -582,11 +608,12 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
   // What the health checks (shared/health.ts) found about this area, on top of the lists in the tab.
   const checks = useAreaFindings(area.id).findings.length;
   const named = fit.total;
+  // The entities of this area that pass the page's filters (config and diagnostic, disabled and hidden).
+  const entityOk = useCallback((e: EntityItem) => visible(e, filters), [filters]);
   const tabs: { key: AreaTab; label: string; count?: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "capabilities", label: "Capabilities" },
-    { key: "entities", label: "Entities", count: String(countVisible(area.entityIds, h, filters)) },
-    { key: "devices", label: "Devices", count: String(area.deviceIds.length) },
+    { key: "devices-entities", label: "Devices & entities", count: `${area.deviceIds.length} · ${countVisible(area.entityIds, h, filters)}` },
     { key: "naming", label: "Naming", count: named ? `${fit.fits}/${named}` : undefined },
     { key: "labels", label: "Labels" },
     { key: "health", label: "Health", count: health.total + checks ? String(health.total + checks) : undefined },
@@ -642,50 +669,29 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
         {tab === "overview" && (
           <div className="flex flex-col gap-5">
             <SummaryChips s={summary} h={h} />
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <Stat label="Devices" value={area.deviceIds.length} onClick={() => onTab("devices")} />
-              <Stat label="Entities" value={countVisible(area.entityIds, h, filters)} onClick={() => onTab("entities")} />
-              <Stat label="Ids that fit the naming" value={fit.fits} note={named ? `of ${named}` : undefined} onClick={() => onTab("naming")} />
-              <Stat label="Things to look at" value={health.total + checks} onClick={() => onTab("health")} />
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
+              <Stat dense label="Devices" value={area.deviceIds.length} onClick={() => onTab("devices-entities")} />
+              <Stat dense label="Entities" value={countVisible(area.entityIds, h, filters)} onClick={() => onTab("devices-entities")} />
+              <Stat dense label="Ids that fit the naming" value={fit.fits} note={named ? `of ${named}` : undefined} onClick={() => onTab("naming")} />
+              <Stat dense label="Things to look at" value={health.total + checks} onClick={() => onTab("health")} />
             </div>
           </div>
         )}
         {tab === "capabilities" && <AreaCapabilitiesTab h={h} area={area} go={go} />}
-        {tab === "entities" && (
-          <AreaEntities
+        {tab === "devices-entities" && (
+          <DevicesEntities
             key={area.id}
             h={h}
             areaId={area.id}
-            entities={area.entityIds.map((id) => h.entities[id]).filter((e): e is EntityItem => Boolean(e) && visible(e, filters))}
+            place="area"
+            entityOk={entityOk}
             picked={rows.picked}
             toggle={rows.toggle}
-            onOpen={rows.edit}
+            onOpenEntity={rows.edit}
+            onOpenDevice={onEditDevice}
             groups={(ids) => <RoleSections h={h} ids={ids} filters={filters} rows={rows} />}
           />
         )}
-        {tab === "devices" &&
-          (area.deviceIds.length === 0 ? (
-            <p className="text-[13px] text-muted">No devices are assigned to this area.</p>
-          ) : (
-            <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
-              {area.deviceIds.map((id) => {
-                const d = h.devices[id];
-                const via = d.viaDeviceId ? h.devices[d.viaDeviceId] : undefined;
-                return (
-                  <li key={id}>
-                    <button type="button" onClick={() => onEditDevice(id)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2 text-left text-[13px] hover:bg-sunken">
-                      <Cpu className="size-4 text-muted" aria-hidden />
-                      <span className="font-medium">{d.name}</span>
-                      {edited.has(`device:${id}`) && <EditedDot />}
-                      <span className="text-muted">{[d.manufacturer, d.model].filter(Boolean).join(" · ") || "Unknown model"}</span>
-                      {via && <span className="text-xs text-muted">via {via.name}</span>}
-                      <span className="ml-auto text-xs tabular-nums text-muted">{d.entityIds.length} entities</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ))}
         {tab === "naming" && <AreaNamingTab h={h} area={area} go={go} />}
         {tab === "labels" && <AreaLabelsTab h={h} area={area} />}
         {tab === "health" && <AreaHealthTab h={h} areaId={area.id} health={health} rows={rows} go={go} />}
@@ -694,32 +700,8 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
   );
 }
 
-// What needs a look in an area.
-type Health = {
-  unavailable: EntityItem[];
-  brokenGroups: { group: EntityItem; missing: string[] }[];
-  namedElsewhere: { entity: EntityItem; area: string }[];
-  total: number;
-};
-
-function areaHealth(area: AreaNode, h: Hierarchy, nameCheck: ReturnType<typeof analyzeArea>, ignores: NamingIgnores): Health {
-  const inRoom = area.entityIds.map((id) => h.entities[id]).filter((e): e is EntityItem => Boolean(e) && !e.disabled);
-  const unavailable = inRoom.filter((e) => !e.maintenance && (e.state === "unavailable" || e.state === "unknown") && !["button", "event", "scene"].includes(e.domain));
-  const brokenGroups = inRoom
-    .filter((e) => e.members.length > 0)
-    .map((group) => ({ group, missing: group.members.filter((m) => !h.entities[m]) }))
-    .filter((g) => g.missing.length > 0);
-  // An id the user said is fine as it is (its suggestion ignored) isn't worth a look.
-  const ignored = new Set(splitIgnored(nameCheck.rows, ignores).ignored.map((r) => r.entityId));
-  const namedElsewhere = nameCheck.rows
-    .filter((r) => !ignored.has(r.entityId))
-    .filter((r) => r.status === "other-area" && r.otherAreaId)
-    .map((r) => ({ entity: h.entities[r.entityId], area: h.areas[r.otherAreaId!]?.name ?? r.otherAreaId! }))
-    .filter((x) => Boolean(x.entity));
-  return { unavailable, brokenGroups, namedElsewhere, total: unavailable.length + brokenGroups.length + namedElsewhere.length };
-}
-
 function AreaHealthTab({ h, areaId, health, rows, go }: { h: Hierarchy; areaId: string; health: Health; rows: Rows; go: (r: Route) => void }) {
+  const why = useWhy();
   return (
     <div className="flex flex-col gap-5">
       {health.total === 0 && <p className="text-[13px] text-muted">Every entity reports, groups are complete, and no id names another area.</p>}
@@ -729,7 +711,7 @@ function AreaHealthTab({ h, areaId, health, rows, go }: { h: Hierarchy; areaId: 
           <p className="text-xs text-muted">Unavailable or unknown right now. A device that's off or out of battery, or one that's gone.</p>
           <ul className="flex flex-col rounded-lg border border-line bg-surface py-1">
             {health.unavailable.map((e) => (
-              <EntityRow key={e.entityId} e={e} rows={rows} device={e.deviceId ? h.devices[e.deviceId]?.name : undefined} />
+              <EntityRow key={e.entityId} e={e} rows={rows} device={e.deviceId ? h.devices[e.deviceId]?.name : undefined} note={why.entity(e)?.reason} />
             ))}
           </ul>
         </section>
@@ -796,7 +778,7 @@ function AreaLabelsTab({ h, area }: { h: Hierarchy; area: AreaNode }) {
         <label htmlFor="area-label-pick" className="text-[13px] text-muted">
           Work with the label
         </label>
-        <select id="area-label-pick" className={`${inputClass} w-56`} value={labelId} onChange={(e) => setLabelId(e.target.value)}>
+        <select id="area-label-pick" className={`${inputClass} w-56!`} value={labelId} onChange={(e) => setLabelId(e.target.value)}>
           {labels.map((l) => (
             <option key={l.id} value={l.id}>
               {l.name}
@@ -841,7 +823,7 @@ function RoleSections({ h, ids, filters, rows, showDevice }: { h: Hierarchy; ids
                 <GroupBlock key={gv.group.entityId} h={h} group={gv.group} members={gv.members} rows={rows} memberOf={memberOf} />
               ))}
               {loose.map((e) => (
-                <EntityRow key={e.entityId} e={e} rows={rows} device={showDevice && e.deviceId ? h.devices[e.deviceId]?.name : undefined} />
+                <EntityRow key={e.entityId} e={e} rows={rows} device={showDevice && e.deviceId ? h.devices[e.deviceId]?.name : undefined} badge={e.platform === "group" && e.members.length === 0 ? "group" : undefined} />
               ))}
             </ul>
           </section>
@@ -866,7 +848,7 @@ function GroupBlock({ h, group, members, rows, memberOf }: {
           {open ? <ChevronDown className="size-3.5" aria-hidden /> : <ChevronRight className="size-3.5" aria-hidden />}
         </button>
         <ul className="min-w-0 flex-1">
-          <EntityRow e={group} rows={rows} badge={`group of ${members.length}`} />
+          <EntityRow e={group} rows={rows} badge={`group of ${members.length}${members.some((m) => !m.entity) ? ` · ${members.filter((m) => !m.entity).length} missing` : ""}`} />
         </ul>
       </div>
       {open && (
@@ -892,6 +874,7 @@ function GroupBlock({ h, group, members, rows, memberOf }: {
 
 function EntityRow({ e, rows, device, badge, note }: { e: EntityItem; rows: Rows; device?: string; badge?: string; note?: string }) {
   const { edited } = useTaxis();
+  const why = useWhy().entity(e);
   const tone = stateTone(e);
   const id = `pick-${e.entityId}`;
   return (
@@ -911,7 +894,10 @@ function EntityRow({ e, rows, device, badge, note }: { e: EntityItem; rows: Rows
         </span>
         {note && <span className="truncate text-[11px] text-muted">{note}</span>}
       </button>
-      <span className={`max-w-[9rem] shrink-0 truncate tabular-nums ${tone === "warn" ? "text-warn" : "text-muted"}`}>{stateText(e)}</span>
+      <span title={why ? diagnosisText(why) : undefined} className={`flex max-w-[11rem] shrink-0 items-center gap-1 tabular-nums ${tone === "warn" ? "text-warn" : "text-muted"}`}>
+        <span className="truncate">{stateText(e)}</span>
+        <WhyIcon why={why} />
+      </span>
     </li>
   );
 }
@@ -960,7 +946,7 @@ export function BulkBar({ h, ids, onDone }: { h: Hierarchy; ids: string[]; onDon
         </Button>
       </div>
       <div className="flex items-end gap-1.5">
-        <select aria-label="Label" className={`${inputClass} w-40`} value={label} onChange={(ev) => setLabel(ev.target.value)}>
+        <select aria-label="Label" className={`${inputClass} w-40!`} value={label} onChange={(ev) => setLabel(ev.target.value)}>
           <option value="">Choose a label…</option>
           {labels.map((l) => (
             <option key={l.id} value={l.id}>

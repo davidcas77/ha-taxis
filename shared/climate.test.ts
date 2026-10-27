@@ -6,6 +6,7 @@ import {
   flagsOf,
   goalFor,
   inNight,
+  kindRunsIn,
   planThermostat,
   presetName,
   targetTemperature,
@@ -16,7 +17,7 @@ import {
 } from "./climate.ts";
 
 // The defaults of the design: 21 / 19 / 18 / 17.5 / 16, frost 7, clamp 16 to 24,
-// window 2 min, restore 1 min, eco after 30 min clear.
+// window 2 min, restore 1 min, eco after 30 min clear; cooling 24 / 27 / 25 / 29.
 const params: ClimateParams = {
   season: "heating",
   comfortTemp: 21,
@@ -24,6 +25,10 @@ const params: ClimateParams = {
   nightTemp: 18,
   sleepTemp: 17.5,
   awayTemp: 16,
+  coolComfortTemp: 24,
+  coolEcoTemp: 27,
+  coolNightTemp: 25,
+  coolAwayTemp: 29,
   frostTemp: 7,
   minTemp: 16,
   maxTemp: 24,
@@ -120,7 +125,27 @@ describe("the target", () => {
     expect(targetTemperature("comfort", { ...params, comfortTemp: 26 })).toBe(24);
   });
 
+  it("is the cooling temperatures in the cooling season, sleep with the night one", () => {
+    const cooling = { ...params, season: "cooling" as const };
+    expect(targetTemperature("comfort", cooling)).toBe(24);
+    expect(targetTemperature("eco", cooling)).toBe(27);
+    expect(targetTemperature("night", cooling)).toBe(25);
+    expect(targetTemperature("sleep", cooling)).toBe(25);
+    expect(targetTemperature("away", cooling)).toBe(29);
+    // The heating temperatures play no part in it.
+    expect(targetTemperature("comfort", { ...cooling, comfortTemp: 30 })).toBe(24);
+  });
+
+  it("does not clamp the cooling temperatures to the heating lowest and highest", () => {
+    // The default highest is 24, and the default cool eco and away are above it.
+    const cooling = { ...params, season: "cooling" as const };
+    expect(cooling.maxTemp).toBe(24);
+    expect(targetTemperature("eco", cooling)).toBe(27);
+    expect(targetTemperature("away", { ...cooling, minTemp: 30, maxTemp: 31 })).toBe(29);
+  });
+
   it("is nothing for a decision that sets none: frost protection is not clamped", () => {
+    for (const d of ["idle", "hold", "window"] as const) expect(targetTemperature(d, { ...params, season: "cooling" }), d).toBeNull();
     for (const d of ["idle", "hold", "window"] as const) expect(targetTemperature(d, params), d).toBeNull();
   });
 
@@ -200,8 +225,10 @@ describe("one thermostat", () => {
     expect(planThermostat(off, "comfort", allowed, 21)).toEqual([]);
     expect(planThermostat(off, "comfort", allowed, 19.5)).toHaveLength(2);
     const cool = { ...off, hvacModes: ["off", "cool"] };
-    expect(planThermostat(cool, "comfort", { ...allowed, season: "cooling" }, 20)).toEqual([]);
-    expect(planThermostat(cool, "comfort", { ...allowed, season: "cooling" }, 23)).toHaveLength(2);
+    // The cooling comfort temperature is 24.
+    expect(planThermostat(cool, "comfort", { ...allowed, season: "cooling" }, 22)).toEqual([]);
+    expect(planThermostat(cool, "comfort", { ...allowed, season: "cooling" }, 24)).toEqual([]);
+    expect(planThermostat(cool, "comfort", { ...allowed, season: "cooling" }, 26)).toEqual([{ service: "set_hvac_mode", mode: "cool" }, { service: "set_temperature", temperature: 24 }]);
     // No reference: it is switched on without looking.
     expect(planThermostat(off, "comfort", allowed, null)).toHaveLength(2);
   });
@@ -230,5 +257,32 @@ describe("one thermostat", () => {
       expect(planThermostat({ ...valve, hvacModes: ["cool"], state: "cool" }, "window", { ...params, season: "cooling" }, null)).toEqual([]);
       expect(planThermostat({ ...valve, hvacModes: ["off", "cool"], state: "cool" }, "window", { ...params, season: "cooling", autoHvacOn: true }, null)).toEqual([{ service: "set_hvac_mode", mode: "off" }]);
     });
+  });
+});
+
+describe("which kinds of climate entity run in a season", () => {
+  it("runs an AC in both seasons, and heating and valves in heating only", () => {
+    expect((["ac", "heating", "valve"] as const).map((k) => kindRunsIn(k, "heating"))).toEqual([true, true, true]);
+    expect((["ac", "heating", "valve"] as const).map((k) => kindRunsIn(k, "cooling"))).toEqual([true, false, false]);
+  });
+
+  it("leaves everything in a season that does nothing, so a change of season is the only thing that moves the list", () => {
+    expect((["ac", "heating", "valve"] as const).map((k) => kindRunsIn(k, "off"))).toEqual([true, true, true]);
+  });
+});
+
+describe("an AC in the cooling season", () => {
+  const ac: Thermostat = { state: "cool", hvacModes: ["off", "cool", "heat", "auto"], presetModes: ["eco", "comfort", "sleep"], preset: null, temperature: 26, minTemp: 16, maxTemp: 30, step: 1 };
+  const cooling = { ...params, season: "cooling" as const, presets: { comfort: "comfort", eco: "eco", away: "", sleep: "sleep" } };
+
+  it("gets its own preset where one is mapped, and the cooling temperature where not", () => {
+    expect(planThermostat(ac, "comfort", cooling, null)).toEqual([{ service: "set_preset_mode", preset: "comfort" }]);
+    expect(planThermostat(ac, "away", cooling, null)).toEqual([{ service: "set_temperature", temperature: 29 }]);
+    expect(planThermostat(ac, "night", cooling, null)).toEqual([{ service: "set_preset_mode", preset: "sleep" }]);
+  });
+
+  it("is sent the cooling temperature on its step, inside its limits", () => {
+    expect(planThermostat({ ...ac, presetModes: [] }, "eco", cooling, null)).toEqual([{ service: "set_temperature", temperature: 27 }]);
+    expect(planThermostat({ ...ac, presetModes: [], maxTemp: 26, temperature: 24 }, "eco", cooling, null)).toEqual([{ service: "set_temperature", temperature: 26 }]);
   });
 });

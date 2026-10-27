@@ -31,8 +31,9 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 - **Spaces:** home → floors → areas, plus areas on no floor and entities that
   are in no area at all.
 - **Each area:** tabs for a summary (temperature, humidity, light level, presence,
-  motion, doors and windows, lights on), its entities grouped by role with live
-  states, groups shown with their members, and its devices.
+  motion, doors and windows, lights on), its devices with their entities under
+  them (or the entities grouped by role with live states, groups shown with their
+  members), each with a reason when it does not work.
 - **Editing:** entities (name, area, labels, category, icon, hidden, disabled),
   devices (name, area, labels, disabled), areas and floors (create, rename,
   move, delete), several entities at once.
@@ -40,7 +41,8 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   they're on, and add a label to many entities at once.
 - **Naming:** a code per area, patterns for ids and display names, and a check
   of each area against them, with display-name suggestions.
-- **Devices and Entities:** everything in one list each, with filters.
+- **Devices and Entities** (in Organize, as a table or as records): every
+  device with its entities under it, with filters, grouping and editing in place.
 - **Health:** rule-based checks (no AI) for what is broken or forgotten:
   references to entities that are gone, devices that stopped reporting,
   automations that never fire, conditions that can never pass, switches only

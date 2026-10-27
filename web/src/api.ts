@@ -67,6 +67,7 @@ export const api = {
   clearChanges: () => call<ChangesResponse>("api/changes", { method: "DELETE" }),
   // The version of the list the user saw and confirmed: the server refuses if
   // the list has changed since.
-  apply: (version: string, allowWithoutBackup = false) =>
-    call<ApplyResponse>("api/apply", { method: "POST", body: JSON.stringify({ version, allowWithoutBackup }) }),
+  // `only`: the ids of the changes to apply; the server adds the ones they need.
+  apply: (version: string, allowWithoutBackup = false, only?: number[]) =>
+    call<ApplyResponse>("api/apply", { method: "POST", body: JSON.stringify({ version, allowWithoutBackup, ...(only ? { only } : {}) }) }),
 };

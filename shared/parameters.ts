@@ -85,6 +85,10 @@ export const PARAM_KEYS = [
   "night_temp",
   "sleep_temp",
   "away_temp",
+  "cool_comfort_temp",
+  "cool_eco_temp",
+  "cool_night_temp",
+  "cool_away_temp",
   "frost_temp",
   "min_temp",
   "max_temp",
@@ -161,6 +165,11 @@ export const PARAMS: readonly ParamDef[] = [
   { key: "night_temp", tab: "climate", label: "Night", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 18 },
   { key: "sleep_temp", tab: "climate", label: "Sleep", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 17.5 },
   { key: "away_temp", tab: "climate", label: "Away", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 16 },
+  // The cooling season's temperatures. Sleep uses the night one; the lowest and highest don't limit them.
+  { key: "cool_comfort_temp", tab: "climate", label: "Cool: comfort", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 24 },
+  { key: "cool_eco_temp", tab: "climate", label: "Cool: eco", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 27 },
+  { key: "cool_night_temp", tab: "climate", label: "Cool: night and sleep", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 25 },
+  { key: "cool_away_temp", tab: "climate", label: "Cool: away", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 29 },
   { key: "frost_temp", tab: "climate", label: "Frost protection", unit: "°", kind: "number", min: 0, max: 15, step: 0.5, default: 7 },
   { key: "min_temp", tab: "climate", label: "Lowest", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 16 },
   { key: "max_temp", tab: "climate", label: "Highest", unit: "°", kind: "number", min: 5, max: 35, step: 0.5, default: 24 },
@@ -268,18 +277,18 @@ export type ParamValues = Partial<Record<ParamKey, ParamValue>>;
 export type ParameterSettings = {
   house: ParamValues;
   types: Partial<Record<AreaType, ParamValues>>;
-  floors: Record<string, ParamValues>;
   areas: Record<string, ParamValues>;
 };
 
-export const EMPTY_PARAMETERS: ParameterSettings = { house: {}, types: {}, floors: {}, areas: {} };
+export const EMPTY_PARAMETERS: ParameterSettings = { house: {}, types: {}, areas: {} };
 
-export const MAX_PARAMETER_FLOORS = 200;
 export const MAX_PARAMETER_AREAS = 500;
-export const PARAMETER_FLOOR_ID = INVENTORY_AREA_ID;
 export const PARAMETER_AREA_ID = INVENTORY_AREA_ID;
 
-export type ParamScope = { level: "house" } | { level: "type"; id: AreaType } | { level: "floor"; id: string } | { level: "area"; id: string };
+// A floor has no values of its own: an area inherits from its type, then the house.
+// Settings saved by an older version may hold some for floors; they are ignored on
+// the way in and gone with the next save (server/settings.ts).
+export type ParamScope = { level: "house" } | { level: "type"; id: AreaType } | { level: "area"; id: string };
 
 // Own keys only: an area called "constructor" mustn't find Object's.
 function valuesOf(p: ParameterSettings, scope: ParamScope): ParamValues | undefined {
@@ -288,8 +297,6 @@ function valuesOf(p: ParameterSettings, scope: ParamScope): ParamValues | undefi
       return p.house;
     case "type":
       return Object.hasOwn(p.types, scope.id) ? p.types[scope.id] : undefined;
-    case "floor":
-      return Object.hasOwn(p.floors, scope.id) ? p.floors[scope.id] : undefined;
     case "area":
       return Object.hasOwn(p.areas, scope.id) ? p.areas[scope.id] : undefined;
   }
@@ -299,10 +306,10 @@ function valuesOf(p: ParameterSettings, scope: ParamScope): ParamValues | undefi
 export const ownValue = (p: ParameterSettings, scope: ParamScope, key: ParamKey): ParamValue | undefined => valuesOf(p, scope)?.[key];
 
 // ---------------------------------------------------------------------------
-// Inheritance: house default → interior / exterior → floor → area.
+// Inheritance: house default → interior / exterior → area.
 // ---------------------------------------------------------------------------
 
-export type ParamSource = { level: "area" | "floor" | "type" | "house"; id: string | null } | { level: "default"; id: null };
+export type ParamSource = { level: "area" | "type" | "house"; id: string | null } | { level: "default"; id: null };
 
 export type Resolved = { value: ParamValue; source: ParamSource };
 
@@ -323,15 +330,9 @@ export function resolveIn(p: ParameterSettings, scopes: readonly ParamScope[], k
   return { value: PARAM_DEF[key].default, source: { level: "default", id: null } };
 }
 
-// Most specific first: the area, its floor, its type, the house.
-export function scopesForArea(h: Hierarchy, inventory: InventorySettings, areaId: string): ParamScope[] {
-  const floorId = h.areas[areaId]?.floorId;
-  return [
-    { level: "area", id: areaId },
-    ...(floorId ? [{ level: "floor", id: floorId } as const] : []),
-    { level: "type", id: areaChoice(inventory, areaId).type },
-    { level: "house" },
-  ];
+// Most specific first: the area, its type, the house.
+export function scopesForArea(_h: Hierarchy, inventory: InventorySettings, areaId: string): ParamScope[] {
+  return [{ level: "area", id: areaId }, { level: "type", id: areaChoice(inventory, areaId).type }, { level: "house" }];
 }
 
 export const resolve = (p: ParameterSettings, h: Hierarchy, inventory: InventorySettings, areaId: string, key: ParamKey): Resolved =>
@@ -342,7 +343,7 @@ export function resolveAll(p: ParameterSettings, h: Hierarchy, inventory: Invent
   return Object.fromEntries(PARAM_KEYS.map((k) => [k, resolveIn(p, scopes, k).value])) as Record<ParamKey, ParamValue>;
 }
 
-// Where a value comes from, for a tooltip: "Interior areas", "First floor"…
+// Where a value comes from, for a tooltip: "interior areas", "Kitchen"…
 export function sourceName(h: Hierarchy, s: ParamSource): string {
   switch (s.level) {
     case "default":
@@ -351,8 +352,6 @@ export function sourceName(h: Hierarchy, s: ParamSource): string {
       return "the house default";
     case "type":
       return s.id === "exterior" ? "exterior areas" : "interior areas";
-    case "floor":
-      return h.floors.find((f) => f.id === s.id)?.name ?? s.id!;
     case "area":
       return h.areas[s.id!]?.name ?? s.id!;
   }
@@ -390,20 +389,19 @@ export function setParameter(p: ParameterSettings, scope: ParamScope, key: Param
       else types[scope.id] = next;
       return { ...p, types };
     }
-    case "floor":
     case "area": {
-      const field = scope.level === "floor" ? "floors" : "areas";
-      const map = { ...p[field] };
-      if (empty) delete map[scope.id];
-      else map[scope.id] = next;
-      return { ...p, [field]: map };
+      const areas = { ...p.areas };
+      if (empty) delete areas[scope.id];
+      else areas[scope.id] = next;
+      return { ...p, areas };
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// The rows of a parameters table: the house, interior and exterior, then each
-// floor with its areas.
+// The rows of a parameters table: the house, interior and exterior, then the
+// areas, grouped under the floor they are on. A floor has no values: it is only a
+// heading.
 // ---------------------------------------------------------------------------
 
 export type ParamRow = {
@@ -411,14 +409,17 @@ export type ParamRow = {
   label: string;
   // The scopes it inherits from, most specific first, starting with its own.
   chain: ParamScope[];
-  // Floors and areas: the floor an area is on (null: none), for grouping.
+  // Areas: the floor an area is on (null: none), for grouping.
   floorId: string | null;
   floorName: string | null;
   // Position in the default order: floors by level, their areas by name.
   order: number;
 };
 
-export function paramRows(h: Hierarchy, inventory: InventorySettings): { fixed: ParamRow[]; rest: ParamRow[] } {
+// A floor in the table: a heading over its areas, with nothing to set.
+export type FloorHeading = { floorId: string; name: string };
+
+export function paramRows(h: Hierarchy, inventory: InventorySettings): { fixed: ParamRow[]; rest: ParamRow[]; floors: FloorHeading[] } {
   const house: ParamScope = { level: "house" };
   const fixed: ParamRow[] = [
     { scope: house, label: "House default", chain: [house], floorId: null, floorName: null, order: 0 },
@@ -435,13 +436,9 @@ export function paramRows(h: Hierarchy, inventory: InventorySettings): { fixed: 
       rest.push({ scope: { level: "area", id }, label: h.areas[id].name, chain: scopesForArea(h, inventory, id), floorId, floorName, order: order++ });
     }
   };
-  for (const f of h.floors) {
-    const scope: ParamScope = { level: "floor", id: f.id };
-    rest.push({ scope, label: f.name, chain: [scope, house], floorId: f.id, floorName: f.name, order: order++ });
-    addAreas(f.areaIds, f.id, f.name);
-  }
+  for (const f of h.floors) addAreas(f.areaIds, f.id, f.name);
   addAreas(h.looseAreaIds, null, null);
-  return { fixed, rest };
+  return { fixed, rest, floors: h.floors.filter((f) => f.areaIds.length > 0).map((f) => ({ floorId: f.id, name: f.name })) };
 }
 
 // ---------------------------------------------------------------------------

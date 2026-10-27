@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { buildMockRegistry, containsEntityId, handleMock, handleMockRest, withSmartDemo } from "./mock-ha-core.ts";
+import { buildHierarchy, type RawConfigEntry } from "../server/model/hierarchy.ts";
+import { diagnose } from "../shared/entity-diagnosis.ts";
+import { planHelpers } from "../shared/helpers.ts";
+import { EMPTY_INVENTORY } from "../shared/inventory.ts";
+import { DEFAULT_NAMING } from "../shared/naming.ts";
 
 type Home = ReturnType<typeof buildMockRegistry>;
 
@@ -449,5 +454,42 @@ describe("the smart demo house", () => {
     // No entity id twice.
     const ids = demo.entities.map((e) => e.entity_id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("the demo house explains what does not work", () => {
+  const home = withSmartDemo(buildMockRegistry());
+  const raw = () => ({ ...home, integrations: ok<RawConfigEntry[]>(home, "config_entries/get") });
+  const h = buildHierarchy(raw(), "now");
+  const now = Date.now();
+  const why = (id: string) => diagnose(h.entities[id], { h, now });
+
+  it("lists the integrations, the helpers set up in the UI and the one that fails, with no settings", () => {
+    const entries = ok<Record<string, unknown>[]>(home, "config_entries/get");
+    expect(entries.find((e) => e.entry_id === "01JBROKENBRIDGE")).toMatchObject({ domain: "mqtt", title: "Cellar MQTT bridge", state: "setup_retry", reason: "Connection refused" });
+    expect(entries.find((e) => e.entry_id === "01JHELPERDOWNSTAIRS")).toMatchObject({ domain: "group", state: "loaded" });
+    for (const e of entries) expect(Object.keys(e).every((k) => ["entry_id", "domain", "title", "state", "source", "disabled_by", "reason"].includes(k)), String(e.entry_id)).toBe(true);
+  });
+
+  it("has a disabled entity, a leftover, an entity of an integration that fails, an offline device and a flat battery", () => {
+    expect(why("sensor.zigbee_hub_linkquality")).toMatchObject({ rule: "disabled", reason: "Disabled by the integration" });
+    expect(why("sensor.old_porch_power")?.rule).toBe("orphan");
+    expect(why("sensor.cellar_bridge_temperature")).toMatchObject({ rule: "integration", reason: "Integration “Cellar MQTT bridge” is not reachable and keeps retrying: Connection refused" });
+    expect(why("sensor.loft_temperature")?.rule).toBe("device-offline");
+    expect(why("sensor.loft_humidity")?.rule).toBe("device-offline");
+    expect(why("binary_sensor.cellar_leak")).toMatchObject({ rule: "battery", reason: "Battery at 4%" });
+    expect(why("light.living_lamp")).toBeNull();
+  });
+
+  it("has groups with members that are gone, one of which reports no members because it is unavailable", () => {
+    expect(why("light.loft_all")).toMatchObject({ rule: "group", reason: "Its member light.loft_old_lamp doesn't exist" });
+    expect(why("light.balcony_open")).toMatchObject({ rule: "group", reason: "Its members light.balcony_open_a, light.balcony_open_b don't exist" });
+    expect(h.entities["light.balcony_all"].members).toEqual([]);
+    expect(why("light.balcony_all")?.reason).toMatch(/probably all gone/);
+  });
+
+  it("proposes the Loft's own group the lights the area counts, taking out the one that is gone", () => {
+    const row = planHelpers(h, EMPTY_INVENTORY, { ...DEFAULT_NAMING }).find((r) => r.canonicalId === "light.loft_all");
+    expect(row).toMatchObject({ status: "update-members", added: [], removed: ["light.loft_old_lamp"], missing: ["light.loft_old_lamp"] });
   });
 });

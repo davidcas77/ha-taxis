@@ -79,6 +79,8 @@ const house: Spec[] = [
       { name: "Kitchen climate", model: "AS008", entities: [["sensor.kitchen_temperature", "22.4", "temperature", "°C"]] },
       // A media player that says nothing about being a TV is a speaker.
       { name: "Kitchen speaker", model: "HomePod mini", entities: [["media_player.kitchen_speaker", "idle"]] },
+      // A valve that can only heat: Taxis reads it as heating, and you can switch it to a valve.
+      { name: "Kitchen radiator", model: "TRV-1", entities: [["climate.kitchen_valve", "heat"]] },
     ],
   },
   {
@@ -109,6 +111,8 @@ const house: Spec[] = [
       { name: "Desk mmWave", model: "LD2410", entities: [["binary_sensor.study_presence", "off", "occupancy"]] },
       { name: "Study window", model: "AS006", entities: [["binary_sensor.study_window", "on", "window"]] },
       { name: "Study climate", model: "AS008", entities: [["sensor.study_climate_temperature", "20.8", "temperature", "°C"]] },
+      // An air conditioner: it can cool, so it is an AC, and it has presets of its own.
+      { name: "Air conditioner", model: "Split AC", entities: [["climate.study_ac", "cool"]] },
       // "opening" is a window until the user says it is a door.
       { name: "Skylight sensor", model: "AS006", entities: [["binary_sensor.study_skylight", "off", "opening"]] },
     ],
@@ -118,12 +122,22 @@ const house: Spec[] = [
   {
     area: "Loft",
     floor: "floor_2",
-    devices: [{ name: "Loft lamp", model: "IKEA E27", entities: [["light.loft_lamp", "off"]] }],
+    devices: [
+      { name: "Loft lamp", model: "IKEA E27", entities: [["light.loft_lamp", "off"]] },
+      // Every entity of the device is unavailable: Why says the device is offline.
+      { name: "Loft thermometer", model: "WSDCGQ", entities: [["sensor.loft_temperature", "unavailable", "temperature", "°C"], ["sensor.loft_humidity", "unavailable", "humidity", "%"]] },
+    ],
   },
   {
     area: "Cellar",
     floor: "level_1",
-    devices: [{ name: "Cellar bulb", model: "Hue White", entities: [["light.cellar_bulb", "off"]] }],
+    devices: [
+      { name: "Cellar bulb", model: "Hue White", entities: [["light.cellar_bulb", "off"]] },
+      // The integration behind it failed to start (see integrations below): Why says so.
+      { name: "Cellar bridge sensor", model: "ZB-T1", entities: [["sensor.cellar_bridge_temperature", "unavailable", "temperature", "°C"]] },
+      // Unavailable with a flat battery (its temperature still answers): Why says the battery is at 4%.
+      { name: "Cellar leak sensor", model: "SJCGQ11LM", entities: [["binary_sensor.cellar_leak", "unavailable", "moisture"], ["sensor.cellar_leak_temperature", "12.5", "temperature", "°C"], ["sensor.cellar_leak_battery", "4", "battery", "%"]] },
+    ],
   },
   // On no floor.
   {
@@ -204,6 +218,24 @@ export function buildMockRegistry(): MockHome {
     min_temp: 5,
     max_temp: 25,
     target_temp_step: 0.5,
+  });
+  // A heating-only valve (no presets), like the living room's.
+  Object.assign(reg.states.find((s) => s.entity_id === "climate.kitchen_valve")!.attributes!, {
+    hvac_modes: ["off", "heat"],
+    temperature: 19,
+    min_temp: 5,
+    max_temp: 30,
+    target_temp_step: 0.5,
+  });
+  // An AC that cools and heats, with presets of its own (not the same names as the Tado's).
+  Object.assign(reg.states.find((s) => s.entity_id === "climate.study_ac")!.attributes!, {
+    hvac_modes: ["off", "cool", "heat", "dry", "fan_only", "auto"],
+    preset_modes: ["eco", "comfort", "sleep", "boost"],
+    preset_mode: "comfort",
+    temperature: 24,
+    min_temp: 16,
+    max_temp: 30,
+    target_temp_step: 1,
   });
   // The living room's main temperature sensor, set on the area as HA does.
   reg.areas.find((a) => a.area_id === "living_room")!.temperature_entity_id = "sensor.living_temperature";
@@ -328,6 +360,29 @@ export function buildMockRegistry(): MockHome {
     reg.configEntries.push({ entry_id: entryId, domain: "group", title, entities: [...members], hide_members: false, all: false });
   }
 
+  // Groups whose members were renamed or removed. The Loft's own group lists one
+  // light that is gone: Taxis proposes the lights the area counts. The balcony ones
+  // (not the Living room's own group) have no member left; Home Assistant leaves the
+  // members out of an unavailable group's state, as balcony_all shows.
+  group("light.loft_all", "loft", "on", ["light.loft_old_lamp", "light.loft_lamp"]);
+  group("light.balcony_all", "living_room", "unavailable", ["light.balcony_left", "light.balcony_middle", "light.balcony_right"]);
+  delete reg.states.find((s) => s.entity_id === "light.balcony_all")!.attributes!.entity_id;
+  group("light.balcony_open", "living_room", "unavailable", ["light.balcony_open_a", "light.balcony_open_b"]);
+  for (const [entityId, entryId, title, members] of [
+    ["light.loft_all", "01JHELPERLOFTALL", "Loft all", ["light.loft_old_lamp", "light.loft_lamp"]],
+    ["light.balcony_all", "01JHELPERBALCONYALL", "Balcony all", ["light.balcony_left", "light.balcony_middle", "light.balcony_right"]],
+    ["light.balcony_open", "01JHELPERBALCONYOPEN", "Balcony open", ["light.balcony_open_a", "light.balcony_open_b"]],
+  ] as const) {
+    Object.assign(reg.entities.find((e) => e.entity_id === entityId)!, { config_entry_id: entryId, original_name: title });
+    reg.configEntries.push({ entry_id: entryId, domain: "group", title, entities: [...members], hide_members: false, all: false });
+  }
+  // A leftover: Home Assistant restored the state of an entity its integration no longer provides.
+  reg.entities.push({ entity_id: "sensor.old_porch_power", platform: "demo", area_id: "hallway", original_name: "Old porch power" });
+  reg.states.push({ entity_id: "sensor.old_porch_power", state: "unavailable", attributes: { friendly_name: "Old porch power", restored: true, supported_features: 0 } } as RawState);
+  // Integrations that do not work, as config_entries/get lists them.
+  reg.integrations = [{ entry_id: "01JBROKENBRIDGE", domain: "mqtt", title: "Cellar MQTT bridge", state: "setup_retry", reason: "Connection refused", disabled_by: null }];
+  Object.assign(reg.entities.find((e) => e.entity_id === "sensor.cellar_bridge_temperature")!, { config_entry_id: "01JBROKENBRIDGE" });
+
   // Lights with no area, on devices that have none either. The stair lamp has a name of
   // its own; the porch lamp is its device's main entity with none, so Home Assistant
   // wants it named before it can have an area of its own.
@@ -408,6 +463,12 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
       return ok(reg.config);
     case "get_states":
       return ok(reg.states);
+    case "config_entries/get":
+      // What Home Assistant lists: no options, no data. The helpers set up in the UI, then the integrations the demo has.
+      return ok([
+        ...((reg as MockHome).configEntries ?? []).map((e) => ({ entry_id: e.entry_id, domain: e.domain, title: e.title, state: "loaded", source: "user", disabled_by: null, reason: null })),
+        ...(reg.integrations ?? []),
+      ]);
     case "config/floor_registry/list":
       return ok(reg.floors);
     case "config/area_registry/list":
@@ -1236,6 +1297,10 @@ export function withHealthDemo(reg: MockHome, now = Date.now()): MockHome {
           night_temp: 18,
           sleep_temp: 17.5,
           away_temp: 16,
+          cool_comfort_temp: 24,
+          cool_eco_temp: 27,
+          cool_night_temp: 25,
+          cool_away_temp: 29,
           frost_temp: 7,
           min_temp: 16,
           max_temp: 24,
@@ -1255,6 +1320,18 @@ export function withHealthDemo(reg: MockHome, now = Date.now()): MockHome {
     { triggered: H },
   );
   touch("climate.living_valve", { state: "unavailable", ago: 3 * H });
+  // Entities with something to explain (the Why column): see the demo house above.
+  for (const [id, hours] of [
+    ["sensor.cellar_bridge_temperature", 50],
+    ["binary_sensor.cellar_leak", 30],
+    ["sensor.loft_temperature", 5],
+    ["sensor.loft_humidity", 5],
+    ["light.balcony_all", 96],
+    ["light.balcony_open", 96],
+    ["sensor.old_porch_power", 216],
+  ] as const) {
+    touch(id, { ago: hours * H });
+  }
   return reg;
 }
 // ---------------------------------------------------------------------------

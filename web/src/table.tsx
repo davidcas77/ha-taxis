@@ -2,38 +2,26 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight } from "luci
 import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { sectionsByRole } from "../../shared/roles.ts";
+import { sortRows, type Dir, type Sort, type SortValue } from "../../shared/sort.ts";
 import type { EntityRole } from "../../shared/types.ts";
 
 // Click-to-sort column headers shared by the entity lists, and the optional
 // grouping of their rows by type.
 
-export type SortValue = string | number | null | undefined;
-export type Dir = "asc" | "desc";
-export type Sort = { key: string; dir: Dir };
+export type { Dir, Sort, SortValue };
 
-const empty = (v: SortValue) => v === null || v === undefined || v === "";
-
-// Numeric and case-insensitive, so "light 2" sorts before "light 10".
-function compare(a: SortValue, b: SortValue) {
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+// The sort state of a table: the column and the way, and what a click on a header does.
+export function useSortState(initial: Sort) {
+  const [sort, setSort] = useState<Sort>(initial);
+  const toggle = useCallback((key: string) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" })), []);
+  return { sort, toggle };
 }
 
 export function useSort<T>(rows: T[], columns: Record<string, (row: T) => SortValue>, initial: Sort) {
-  const [sort, setSort] = useState<Sort>(initial);
-  const toggle = useCallback((key: string) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" })), []);
+  const { sort, toggle } = useSortState(initial);
   const sorted = useMemo(() => {
     const get = columns[sort.key];
-    if (!get) return rows;
-    const sign = sort.dir === "asc" ? 1 : -1;
-    return rows
-      .map((row) => ({ row, v: get(row) }))
-      .sort((x, y) => {
-        // Blanks go last whichever way it sorts, so they never bury real values.
-        if (empty(x.v) || empty(y.v)) return empty(x.v) === empty(y.v) ? 0 : empty(x.v) ? 1 : -1;
-        return sign * compare(x.v, y.v);
-      })
-      .map((x) => x.row);
+    return get ? sortRows(rows, get, sort.dir) : rows;
     // columns is a new object every render; re-sorting on rows/sort alone is enough.
   }, [rows, sort]);
   return { rows: sorted, sort, toggle };

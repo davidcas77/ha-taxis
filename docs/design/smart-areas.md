@@ -33,8 +33,9 @@ Home Assistant UI and keeps working if Taxis is stopped or uninstalled.
 6. **Deterministic recipes.** Automations are created from Taxis-owned
    blueprints filled with the area's parameters. Same input, same output,
    testable. AI is optional and only suggests (see [AI](#ai-optional)).
-7. **Parameters inherit.** House default → group (floor, interior, exterior) →
-   area. An area overrides only where it differs; "none" opts an area out.
+7. **Parameters inherit.** House default → interior or exterior (by the area's
+   type) → area. An area overrides only where it differs; "none" opts an area out.
+   A floor has no values of its own: it only groups the areas in a table.
 8. **Every option is in the UI.** No setting that can only be reached by
    editing stored data.
 
@@ -269,9 +270,11 @@ and sleep hold timeout (Occupancy tab); dark threshold, day and night brightness
 and colour temperature, transition, dim before off, dim level and manual
 override duration and entry lights (Lighting tab; the entry lights are for one area only, see [Entry lights](#entry-lights)); speakers off when clear for and TVs off when
 clear for (Media tab); the Climate tab (Area climate, below) and, on the House tab, the away and sleep mode switches. The kinds a parameter can have are number, time, enum, bool, text (a preset name), entity (an `input_boolean`), entities (a list of entities of one domain) and periods (comfort periods, `shared/periods.ts`). The Parameters page has a table per tab: a row for the
-house default, interior, exterior, each floor and each area; a cell shows its own
-value or the inherited one in grey ("from <source>"); click to set, clear to
-inherit.
+house default, interior, exterior and each area (the areas under a heading for
+their floor, which has no values); a cell shows its own value or the inherited one
+in grey ("from <source>"); click to set, clear to inherit. Settings saved by an
+older version may hold values for floors: `validateParameters` ignores them and
+the next save drops them.
 
 **Recipes** (`shared/recipes.ts`, `shared/blueprints.ts`). Four recipes, one
 blueprint each, written by Taxis at `taxis/occupancy.yaml` (version 4),
@@ -365,7 +368,7 @@ lights lit them all at the door. Now it is the *entry lights*, a Lighting parame
 
 - **Area level only.** `ParamDef.areaOnly`: `resolveIn` looks at the area's own scope
   and nothing above it, `setParameter` ignores the other scopes, and
-  `validateParameters` refuses it at the house, interior or exterior, or floor level.
+  `validateParameters` refuses it at the house, interior or exterior level.
   The Lighting table shows a dash on those rows.
 - **Default** (nothing set): the only counted light of the area, whatever its role; else
   its counted main-role lights; else none. `entryLights()` (`shared/parameters.ts`)

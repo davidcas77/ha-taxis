@@ -1,4 +1,5 @@
 import { ENTITY_ID_RE } from "./changes.ts";
+import { isSilentGroup } from "./entity-diagnosis.ts";
 import { areaCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
 import { areaInventory, type AreaInventory, type Capability, type InventorySettings } from "./inventory.ts";
 import type { AreaNode, Change, ChangeInput, EntityItem, Hierarchy } from "./types.ts";
@@ -171,6 +172,11 @@ export type HelperRow = {
   // update-members, and adopt with membersDiffer: how the members change.
   added: string[];
   removed: string[];
+  // update-members: members of the group that are not in Home Assistant any more
+  // (they are among `removed`), and, for a group that is unavailable and reports
+  // no members, that they could not be read, so `removed` is not known.
+  missing?: string[];
+  membersUnreadable?: boolean;
   // adopt: the group that is renamed to the canonical id.
   adoptFrom?: string;
   adoptFromName?: string;
@@ -244,6 +250,11 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
         Object.assign(row, { status: "conflict", conflict: "taken", heldBy: id, heldByName: held.name, actionable: false });
       } else if (spec.helper === "min_max") {
         Object.assign(row, { status: "in-place", membersUnknown: true, actionable: false });
+      } else if (isSilentGroup(held) && held.configEntryId) {
+        // A group helper that is unavailable reports no members (Home Assistant leaves
+        // them out while it is). It is unavailable because none of its members is
+        // there, so it is given the area's counted entities.
+        Object.assign(row, { status: "update-members", added: sources, removed: [], membersUnreadable: true });
       } else if (held.members.length === 0) {
         // A group that reports no members: nothing to compare.
         Object.assign(row, { status: "in-place", membersUnknown: true, actionable: false });
@@ -253,7 +264,7 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
         if (added.length === 0 && removed.length === 0) Object.assign(row, { status: "in-place", actionable: false });
         // Members can only be changed on a helper set up in the UI.
         else if (!held.configEntryId) Object.assign(row, { status: "conflict", conflict: "not-editable", heldBy: id, heldByName: held.name, actionable: false });
-        else Object.assign(row, { status: "update-members", added, removed });
+        else Object.assign(row, { status: "update-members", added, removed, missing: held.members.filter((m) => !h.entities[m]) });
       }
     } else if (spec.helper === "group") {
       const free = taken();

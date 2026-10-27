@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ROLE_ORDER, roleCounts, sectionsByRole } from "./roles.ts";
+import { ROLE_ORDER, displayRole, isHelperEntity, roleCounts, sectionsByRole } from "./roles.ts";
 import type { EntityRole } from "./types.ts";
 
 const item = (id: string, role: EntityRole) => ({ id, role });
@@ -41,5 +41,35 @@ describe("roleCounts", () => {
       { role: "other", label: "Other", count: 2 },
     ]);
     expect(roleCounts([])).toEqual([]);
+  });
+});
+
+describe("helpers and groups", () => {
+  const e = (domain: string, platform: string, members: string[] = [], role: EntityRole = "other") => ({ domain, platform, members, role });
+
+  it("tells a helper by its domain, its platform or the members it reports", () => {
+    expect(isHelperEntity(e("input_boolean", "input_boolean"))).toBe(true);
+    expect(isHelperEntity(e("counter", "counter"))).toBe(true);
+    expect(isHelperEntity(e("sensor", "min_max"))).toBe(true);
+    expect(isHelperEntity(e("sensor", "template"))).toBe(true);
+    expect(isHelperEntity(e("light", "group"))).toBe(true);
+    expect(isHelperEntity(e("light", "hue", ["light.a"]))).toBe(true);
+  });
+
+  it("tells a group that is unavailable, and reports no members, by its platform", () => {
+    expect(isHelperEntity(e("light", "group", []))).toBe(true);
+  });
+
+  it("does not take a real light, a sensor or a light made from a switch for a helper", () => {
+    expect(isHelperEntity(e("light", "hue"))).toBe(false);
+    expect(isHelperEntity(e("sensor", "zigbee"))).toBe(false);
+    expect(isHelperEntity(e("light", "switch_as_x"))).toBe(false);
+    expect(isHelperEntity(e("automation", "automation"))).toBe(false);
+  });
+
+  it("lists a helper under Helpers, whatever it mirrors", () => {
+    expect(displayRole(e("light", "group", ["light.a"], "light"))).toBe("helper");
+    expect(displayRole(e("light", "hue", [], "light"))).toBe("light");
+    expect(displayRole(e("input_boolean", "input_boolean", [], "helper"))).toBe("helper");
   });
 });

@@ -3,6 +3,8 @@ import { useMemo, useState, type ReactNode } from "react";
 import {
   AREA_TYPES,
   CAPABILITIES,
+  CLIMATE_KINDS,
+  CLIMATE_KIND_LABEL,
   LIGHT_ROLES,
   areaChoice,
   areaInventory,
@@ -12,6 +14,7 @@ import {
   setAreaType,
   setBed,
   setBedroom,
+  setClimateKind,
   setCounts,
   setKind,
   setLightRole,
@@ -278,6 +281,7 @@ const FLAGS: Record<InventoryFlag, { label: string; hint: string; tone: string }
 const ROLE_HINT = "Starts: turns the room occupied. Holds: keeps an occupied room occupied, but doesn't start it.";
 
 const FAN_HINT = "A fan counts by default. A switch is listed too but doesn't count: tick Counts on the ones that run a fan, so the Bathroom fan recipe can switch them.";
+const CLIMATE_HINT = "AC, Heating or Valve, read from the modes each one offers: one that can cool is an AC, one that only heats is Heating. Switch a radiator valve to Valve. Area climate runs an AC in both seasons, and heating and valves only in the heating season.";
 const APPLIANCE_HINT = "Tick Appliance on the power sensors of machines (a washer, an oven): Appliance done tells you when one has finished. The levels are in watts.";
 
 const SWITCHABLE: Partial<Record<Capability, [Capability, Capability]>> = {
@@ -456,7 +460,7 @@ function CapabilitySection({
       name: (r: InventoryRow) => r.name,
       state: (r: InventoryRow) => stateText(h, r),
       type: (r: InventoryRow) => r.flags.map((f) => FLAGS[f].label).join(", "),
-      role: (r: InventoryRow) => (r.capability === "lights" ? r.light : r.capability === "motion" || r.capability === "presence" ? r.role : SWITCHABLE[r.capability] ? r.capability : null),
+      role: (r: InventoryRow) => (r.capability === "lights" ? r.light : r.capability === "motion" || r.capability === "presence" ? r.role : r.capability === "thermostat" ? r.climate : SWITCHABLE[r.capability] ? r.capability : null),
     }),
     [h],
   );
@@ -469,6 +473,7 @@ function CapabilitySection({
       {(capability === "motion" || capability === "presence") && <p className="text-xs text-muted">{ROLE_HINT}</p>}
       {capability === "fan" && <p className="text-xs text-muted">{FAN_HINT}</p>}
       {capability === "power" && <p className="text-xs text-muted">{APPLIANCE_HINT}</p>}
+      {capability === "thermostat" && <p className="text-xs text-muted">{CLIMATE_HINT}</p>}
       {capability === "lights" && <EntryLightPicker area={area} rows={rows} />}
       <div className="overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-[13px]">
@@ -564,6 +569,15 @@ function CapabilityRow({ h, row, locked, run }: { h: Hierarchy; row: InventoryRo
               ariaLabel={(l) => `${l}: ${row.name}`}
               disabled={locked}
               onPick={(v) => void run((s) => setKind(h, s, row.entityId, v))}
+            />
+          )}
+          {row.capability === "thermostat" && (
+            <Chips
+              options={CLIMATE_KINDS.map((k) => ({ value: k, label: CLIMATE_KIND_LABEL[k] }))}
+              value={row.climate ?? "heating"}
+              ariaLabel={(l) => `${l}: ${row.name}`}
+              disabled={locked}
+              onPick={(v) => void run((s) => setClimateKind(h, s, row.entityId, v))}
             />
           )}
           {row.capability === "lights" && (

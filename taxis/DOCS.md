@@ -5,22 +5,36 @@ the areas on each floor, and every device and entity in them, and lets you
 organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
-The pages along the top: **Areas**, **Devices**, **Entities**, **Organize**,
-**Parameters**, **Health**, **Changes** and **Settings**.
+The pages along the top: **Areas**, **Organize**, **Parameters**, **Health**,
+**Changes** and **Settings**. Devices and entities are in Organize, and in a tab
+of each area. Old links to the Devices and Entities pages (`#devices`,
+`#entities`, `#entities/<id>`) open the same section of Organize.
 
 ## Areas
 
 - The tree on the left: home, floors, areas, areas on no floor, and entities in
-  no area at all.
+  no area at all. An area with something to look at (what its Health tab counts)
+  has a small dot beside its entity count: amber, or red when a check found an
+  error in it; hover for "N health issues". Under the tree, **Show config and
+  diagnostic entities**, **Show disabled and hidden entities** and **Show empty
+  areas** (on to begin with) are remembered in this browser. With empty areas
+  off, an area with no entities under the current filters is left out, and so is
+  a floor that had only such areas; the area you are on stays.
 - Each area starts with a summary: temperature, humidity, light level,
-  presence, motion, doors and windows, and how many lights are on. Where Home
-  Assistant has a main temperature or humidity sensor set for the area, that one
-  is used.
+  presence, motion, doors and windows, and how many lights are on, in large
+  figures, with the counts of devices, entities, ids that fit the naming and
+  things to look at in smaller cards below. Where Home Assistant has a main
+  temperature or humidity sensor set for the area, that one is used; humidity is
+  worked out the way temperature is, and is left out when the area has no
+  humidity sensor.
 - Entities are grouped by what they do. A group (a light group, a group of
   motion sensors…) shows its members under it; a member that's in several
-  groups appears under each, marked "also in…".
+  groups appears under each, marked "also in…". A helper or a group (a light
+  group, a min/max sensor, a toggle, a timer…) is listed under **Helpers**, not
+  under what it mirrors, with a "group of N" badge, and "M missing" when some of
+  its members aren't in Home Assistant.
 - Each area has tabs: **Overview** (the summary), **Capabilities** (below),
-  **Entities**, **Devices**, **Naming** (below), **Labels** (the labels on this
+  **Devices & entities** (below), **Naming** (below), **Labels** (the labels on this
   area's entities, and a tool to add or take off a label for many of them at
   once) and **Health** (entities not reporting, groups with missing members,
   ids that name another area, and what the [Health](#health) checks found about
@@ -33,7 +47,7 @@ The pages along the top: **Areas**, **Devices**, **Entities**, **Organize**,
 
 What this area has, and what counts. Taxis reads it from Home Assistant: each
 entity's area, domain and device class (never its name). It lists lights,
-motion, presence, door, window, temperature, humidity, light level, thermostat,
+motion, presence, door, window, temperature, humidity, light level, climate (thermostat),
 speaker, TV, cover, fan and power entities, and leaves out disabled entities and
 config or diagnostic ones.
 
@@ -67,6 +81,17 @@ config or diagnostic ones.
 - **Switching a kind.** An "opening" sensor is listed as a window; change it to
   a door if it is one. A media player is a TV when Home Assistant says so, a
   speaker otherwise; switch it if that's wrong.
+- **Climate.** Thermostats, air conditioners and radiator valves are in one
+  section, **Climate**. Each is an **AC**, **Heating** or **Valve**, read from the
+  modes it offers: one that can cool (`cool` or `heat_cool`) is an AC, one that
+  only heats is Heating. Switch a radiator valve to Valve with the chips. Area
+  climate runs an AC in both seasons, and Heating and Valve in the heating season
+  only.
+- **Light groups.** A light group (a group helper, or any light that reports
+  members) is listed, marked **Helper**, but never counts as a light, whatever you
+  tick: it can be the area's combined lights helper, and counting it would count
+  the same lights twice. A group helper that is unavailable reports no members, and
+  is told by what it is.
 - **Type and bedroom.** Mark the area **Interior** or **Exterior**, and tick
   **Bedroom**.
 
@@ -74,10 +99,44 @@ A mark and **Reset** appear on any entity that differs from what Taxis
 detected. Choices are stored in Taxis only and save as soon as you change them;
 nothing changes in Home Assistant and nothing goes in the list of changes.
 
-## Devices and Entities
+## Devices & entities
 
-Every device and every entity in one list each, with search and filters for
-area, role, manufacturer and label.
+The same table is in two places: the **Devices & entities** tab of an area (the
+devices in the area, and the entities in the area whose device is elsewhere), and
+Organize's **Table** view of Devices and of Entities (the whole home).
+
+- **A tree of devices.** Each device is a row: name, manufacturer and model, how
+  many entities it has, a summary of their states ("2 on", "1 unavailable"), its
+  area and why it doesn't work, if it doesn't. Open it with its chevron to see its
+  entities under it, with the same columns: name, entity id, type, **Show as**,
+  state, **Why**, area and Open. Entities with no device are under **No device**.
+  In an area, an entity in the area whose device is elsewhere is under its device,
+  marked "device in <area>" (or "device has no area").
+- **Show entities** opens or folds every device at once, and is remembered in this
+  browser (an area's tab starts open, the whole home folded; Organize's Entities
+  starts open). A chevron you click decides for its device from then on, until you
+  use Show entities again. A search opens the devices that have matching entities.
+- **Edit in place.** The name and the area of a device, and the name, entity id,
+  **Show as** and area of an entity, change in the table. Every edit goes in the
+  list of changes (a device's name and area as the changes the device's editor
+  makes; an entity's area is its own, and a device's main entity with no name of
+  its own is given the name it shows when it gets an area). The checkbox of an
+  entity selects it for the bar that moves, labels or hides many at once. **Open**
+  opens the editor of the device or the entity.
+- **Kind chips** across the top list the kinds of entity there are (with how many
+  of each); choose some and only the devices with an entity of those kinds are
+  left, with only those entities. A helper or a group counts under **Helpers**.
+  The **search** finds a device by name, model or manufacturer, and an entity by
+  name or id. The headers sort the devices, and the entities under each by the same
+  column. Organize's table also filters by area, manufacturer and label, and can
+  include disabled, hidden and diagnostic entities.
+- **Group by type** switches to a flat table of the entities, in sections by
+  kind, each of which folds. A tree of devices and sections by kind don't mix, so
+  with it on there are no device rows. An area's tab also has **Groups**, the
+  cards by kind with a group's members under it.
+- **Why.** An entity that is disabled, left over, unavailable or unknown, a group
+  with members that are gone, or a device that is offline says why; see
+  [Why an entity doesn't work](#why-an-entity-doesnt-work).
 
 ## Organize
 
@@ -86,6 +145,14 @@ category lists, zones, devices, entities), its items in the middle, and the
 selected item's properties on the right. Floors and areas show as a tree: drag
 an area onto another floor, and add floors and areas in
 place. An area's properties include its entity id code.
+
+**Devices and Entities** have a switch at the top of the middle pane, **Table**
+or **Records**. Records is the three panes above. Table is the table of
+[Devices & entities](#devices--entities) across the middle and right panes, with no
+properties pane; the button beside Open on a row shows that item in Records. The
+choice is remembered per section in this browser (Devices starts as a table,
+Entities as records). A link to one item, such as `#organize/entities/light.desk`,
+opens Records with it selected.
 
 ### Labels and Categories
 
@@ -111,7 +178,7 @@ page has a bar of tabs: **Capabilities**, **Helpers**, **House**, **Occupancy**,
 **Recipes**.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
-doors, windows, temperature, humidity, light level, thermostats, speakers, TVs,
+doors, windows, temperature, humidity, light level, climate, speakers, TVs,
 covers, fans and power. A cell shows how many entities count; when some are listed
 but left out, the rest show beside it in grey (`2 +1`). Hover a column header
 for its full name, and click a header to sort. Click an area or a cell to open
@@ -209,17 +276,20 @@ is a **Conflict**, and so is the second of two floors with one code.
 The numbers and times the recipes are filled in with: House, Occupancy, Lighting,
 Media, Climate, Bathroom fan, Exterior and Safety. Each tab is a table with a
 row for the **House default**, one for **Interior** and one for **Exterior**
-areas, one for each floor and one for each area, and a column per parameter.
+areas, and one for each area, and a column per parameter. Floors have no values:
+they are only a heading over their areas.
 
 A value can be set at any of those levels. The most specific one wins: the
-area, then its floor, then interior or exterior (chosen per area on its
-Capabilities tab), then the house default, then the built-in default. A cell
-shows the value set at that level, or the one it takes from above in grey; hover
-to see where from. Click a cell to set it, press Enter to save or Escape to
-cancel. A yes/no flips when you click it, and a choice (the season) is picked from
-a list. Empty the box, or click the cross next to a value, to inherit again.
-Values are saved at once, in Taxis only. Click a header to sort the floors and
-areas by it.
+area, then interior or exterior (chosen per area on its Capabilities tab), then
+the house default, then the built-in default. A cell shows the value set at that
+level, or the one it takes from above in grey; hover to see where from. **Click a
+value to change it**: a cell shows a box and a small pencil when you point at it.
+Press Enter to save or Escape to cancel. A yes/no flips when you click it, and a
+choice (the season) is picked from a list. Empty the box, or click the cross next
+to a value, to inherit again. Values are saved at once, in Taxis only. Click a
+header to sort the areas by it (the floor headings are shown in the default
+order). Values saved for a floor by an older version are ignored, and gone with
+the next change you make.
 
 | Tab | Parameter | Built-in default | Allowed |
 |---|---|---|---|
@@ -244,8 +314,9 @@ areas by it.
 | Media | TVs off when clear for | 30 min | 1 to 720 |
 | Media | Announcement volume | 40 % | 0 to 100 (0: leave the volume as it is); **house only** |
 | Climate | Comfort, Eco, Night, Sleep, Away | 21, 19, 18, 17.5, 16 | 5 to 35, in steps of 0.5 |
+| Climate | Cool: comfort, Cool: eco, Cool: night and sleep, Cool: away | 24, 27, 25, 29 | 5 to 35, in steps of 0.5; used in the cooling season instead of the five above (the night one also for sleep) |
 | Climate | Frost protection | 7 | 0 to 15, in steps of 0.5 |
-| Climate | Lowest, Highest | 16, 24 | 5 to 35, in steps of 0.5; the target never leaves them |
+| Climate | Lowest, Highest | 16, 24 | 5 to 35, in steps of 0.5; the heating target never leaves them (the cooling temperatures are not limited by them) |
 | Climate | Window open for | 2 min | 0 to 60 |
 | Climate | Restore after close | 1 min | 0 to 60 |
 | Climate | Eco when clear for | 30 min | 1 to 720 |
@@ -276,8 +347,8 @@ announcement volume have one value for the whole house: only the House default r
 takes them, and every other row shows a dash.
 
 **Entry lights** are the lights that come on by day when the area becomes occupied.
-They are set for one area and never inherited: the house, interior, exterior and
-floor rows show a dash. Left empty, the cell shows the suggestion in grey with
+They are set for one area and never inherited: the house, interior and exterior
+rows show a dash. Left empty, the cell shows the suggestion in grey with
 "suggested": the area's only counted light (whatever its role), or else its main
 lights, or nothing when the area has several lights and none is a main light. A
 chosen light that stops counting in the area (excluded, or gone) is left out, and
@@ -435,9 +506,24 @@ input changes, and the first rule that fits wins:
    the *Comfort* temperature.
 6. **Eco.** Anything else: the *Eco* temperature.
 
-The target stays between *Lowest* and *Highest*. Frost protection is the one
-value that doesn't. The *Season* is heating, cooling (the thermostat is put in
-cool instead of heat, with the same temperatures) or off (the recipe does nothing).
+In the heating season the target stays between *Lowest* and *Highest*. Frost
+protection is the one value that doesn't. The *Season* is heating, cooling or off
+(the recipe does nothing). In the **cooling** season the thermostat is put in cool
+instead of heat and the target comes from the four *Cool* temperatures instead
+(*Cool: eco*, *Cool: away*, *Cool: comfort*, and *Cool: night and sleep*, which sleep
+shares); *Lowest* and *Highest* don't limit them, since cooling temperatures lie
+above the heating ones. The device's own limits and step still apply.
+
+**Which climate entities run.** An **AC** runs in both seasons. **Heating** and
+**Valve** (set on the Capabilities tab) run in the heating season only: while the
+season is cooling they are left out, the Recipes cell says which, and the recipe
+needs an AC that counts. A change of season changes the thermostats the automation
+controls, so the cell says **Out of date**. The preset boxes on the Climate tab
+suggest what the area's thermostats report, an AC's own presets included.
+
+The Area climate blueprint is now **version 2**: an installed Area climate shows as
+out of date until it is updated (the blueprint version, and the four new cooling
+temperature inputs).
 
 **Presets or temperatures.** Where you map a preset on the Climate tab (comfort,
 eco, away, sleep; night uses the sleep one) and the thermostat offers it, the
@@ -605,6 +691,38 @@ things together however many speakers it has. It is a script blueprint saved at
 script (`config/script/config/taxis_announce`). When a speaker, an area's Occupancy
 or the setting changes, the cell says **Out of date** and what changed.
 
+## Why an entity doesn't work
+
+An entity that is disabled, left over, unavailable, unknown or otherwise not what
+it should be says why, in the first of these that fits (the others that fit are
+added as extra detail):
+
+1. **Disabled** by you, the integration, its device or its integration entry.
+2. **Its device is disabled.**
+3. **Left over:** Home Assistant restored its state, or it is in the registry with
+   no state, and its integration no longer provides it (after a rename or removal).
+4. **The integration doesn't work:** its entry failed to start, keeps retrying,
+   isn't loaded, failed to stop or to update, or is disabled, with the reason Home
+   Assistant gives.
+5. **A group** with members that don't exist, or all of whose members are
+   unavailable. A group helper that is unavailable reports no members at all (Home
+   Assistant leaves them out), so it is told by what it is.
+6. **The device is offline:** every entity of its device that counts, diagnostic
+   ones aside, is unavailable.
+7. **Low battery:** a battery sensor of its device under 10%, or a battery binary
+   sensor on.
+8. **Stale:** a sensor or binary sensor with a device that Home Assistant hasn't
+   heard from for more than 24 hours.
+9. **Unknown:** no value since Home Assistant started.
+10. **Unavailable,** with no known reason.
+
+It is shown as a small (i) beside the state in the lists of an area, as the
+**Why** column of the table (cut short, with the whole in a tooltip, sortable),
+under each entity of the Health tab's **Not reporting** list, and on device rows
+(offline, or its integration failed). To know which integrations work, Taxis reads
+Home Assistant's list of them (`config_entries/get`, a read) and keeps only the
+domain, title, state, the reason it gives and whether it is disabled.
+
 ## Health
 
 The **Health** page runs rule-based checks over your home to find what is
@@ -639,6 +757,13 @@ The checks, and the exact rules:
   services (`light.turn_on`), aliases and descriptions are not read. An id built
   by a template is not seen. The recipes' own automations are left to *Taxis
   setup*.
+- **Broken groups.** A group whose members include entities Home Assistant
+  doesn't have (renamed or removed), or a group helper that is unavailable and so
+  reports no members. Warning. The detail names the missing ids. An area's own
+  group (`light.<code>_all`) can be fixed in one change that gives it the
+  entities the area counts; any other group has a link to the Helpers tab. The
+  Helpers tab shows the same group as **Update members**, noting the members that
+  don't exist.
 - **Not reporting.** Entities that are `unavailable` or `unknown` and whose
   state has not changed for 24 hours (set it on the page, 1 to 720 hours),
   grouped by device so a dead battery sensor is one row. Disabled entities,
@@ -756,22 +881,39 @@ Under **Settings → Naming**:
 
 Each area's **Naming** tab checks its entities against these: which ids start
 with the area's code, which use an older code, which name another area, and
-which say no area at all. It suggests a display name for each; tick the ones
-you want and add them to the list of changes. It also suggests entity ids,
-which can be added as renames the same way.
+which say no area at all. It suggests a display name and an entity id for each.
+Inside each suggested field, at the right, a green tick **accepts** the suggestion
+(the field turns green) and a red cross **ignores** it (the field is greyed out and
+no longer counted). Both stay clickable: the cross on an ignored field brings it
+back, and the tick on one accepts it. A suggestion can be edited while it is
+neither ignored nor accepted, or accepted. **Accept every name suggestion** and
+**Accept every id suggestion** accept all those shown, and **Add N to changes**
+adds what is accepted, a name and an id of the same entity as one change. An
+ignore is kept in Taxis for that field of that entity; an ignore from an older
+version counts for both. The **Ignored** filter lists the entities with something
+ignored. Accepted suggestions are not kept: they wait on the page until you add
+them.
 
 ## Renaming entity ids
 
 Change an entity's id in its editor, or from the Naming tab. On the
 **Changes** page each rename shows what uses the old id:
 
+The card of a rename says so before you apply it: "This changes the entity id.
+Home Assistant does not rewrite what uses the old one", and where it is used.
+
 - **Updated by Taxis:** automations, scripts and scenes made in Home
   Assistant's UI, and dashboards Home Assistant stores. The old id is replaced
-  wherever it appears, templates included. Each one is rewritten only if it
-  hasn't changed since Taxis read it, and read back afterwards.
-- **Needs a hand:** automations, scripts and dashboards written in YAML, YAML
-  groups, and helpers that hold the entity in their options. Taxis lists each
-  one with what to do; it never edits YAML files.
+  wherever it appears, templates included, matching the whole id only
+  (`light.foo` is not found in `light.foo_2`). Each one is rewritten only if it
+  hasn't changed since Taxis read it, and read back afterwards: the old id must be
+  gone. These are writes to the same configs the Automations, Scripts, Scenes and
+  Dashboards pages write; no service is called.
+- **Update these by hand:** automations, scripts and dashboards written in YAML,
+  YAML groups, and helpers that hold the entity in their options. Taxis lists each
+  one with what to do; it never edits YAML files. The card has an **I understand**
+  box, and neither its **Apply** nor Apply all is enabled until it is ticked (also
+  when Taxis couldn't look for what uses the id).
 
 Home Assistant moves the entity's history to the new id itself.
 
@@ -780,6 +922,16 @@ Home Assistant moves the entity's history to the new id itself.
 Every edit goes into the list of changes first. Taxis shows the house as if the
 changes were done, but Home Assistant doesn't change until you apply them on
 the **Changes** page. Apply:
+
+**Apply one change.** Each change on the page has its own **Apply** beside
+Remove. It does the same as Apply all, backup, apply, check, for that change only.
+If it needs another change in the list first (an area it moves something into, the
+helper a recipe uses, the blueprint of a recipe, a rename whose new id a group
+lists), the button says **Apply with N more** and the card lists them ("Also
+applies: …"): those are applied with it, in the same order Apply all uses, and
+nothing else. A change that others depend on can be applied alone.
+
+Apply all:
 
 1. makes a backup of Home Assistant (if the backup fails, nothing is changed);
 2. applies the changes: first the registries (names, ids, areas, floors,

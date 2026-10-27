@@ -600,9 +600,13 @@ describe("area climate", () => {
     );
   });
 
-  it("clamps the target to lowest and highest, and gives frost protection no clamp", () => {
-    expect(text("target_temp")).toBe("{{ ([[base_temp | float(0), min_temp | float(0)] | max, max_temp | float(0)] | min) if base_temp is not none else none }}");
-    expect(text("base_temp")).toMatch(/^\{\{ \{'comfort': comfort_temp, 'eco': eco_temp, 'night': night_temp, 'sleep': sleep_temp, 'away': away_temp\}\[decision\]/);
+  it("clamps the heating target to lowest and highest, and gives frost protection and the cooling target no clamp", () => {
+    expect(text("target_temp")).toBe(
+      "{{ none if base_temp is none else (base_temp | float(0) if season == 'cooling' else ([[base_temp | float(0), min_temp | float(0)] | max, max_temp | float(0)] | min)) }}",
+    );
+    // Cooling: the cooling temperatures, sleep with the night one. Heating: the heating ones.
+    expect(text("base_temp")).toMatch(/^\{\{ \(\{'comfort': cool_comfort_temp, 'eco': cool_eco_temp, 'night': cool_night_temp, 'sleep': cool_night_temp, 'away': cool_away_temp\} if season == 'cooling' else /);
+    expect(text("base_temp")).toMatch(/else \{'comfort': comfort_temp, 'eco': eco_temp, 'night': night_temp, 'sleep': sleep_temp, 'away': away_temp\}\)\[decision\]/);
     // A window and the others that set no temperature have none.
     expect(text("base_temp")).toMatch(/if decision in \['comfort', 'eco', 'night', 'sleep', 'away'\] else none \}\}$/);
     // Night uses the sleep preset.

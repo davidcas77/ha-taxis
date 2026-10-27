@@ -107,6 +107,8 @@ function StatusCell({ line, go }: { line: Line; go: (r: Route) => void }) {
   }
   const notes: string[] = [];
   if (!line.pending && row.status === "in-place" && row.membersUnknown) notes.push("members not checked");
+  if (!line.pending && row.status === "update-members" && row.membersUnreadable) notes.push("unavailable, so Home Assistant reports no members: they are probably all gone");
+  else if (!line.pending && row.status === "update-members" && row.missing && row.missing.length > 0) notes.push(`members that don't exist: ${row.missing.join(", ")}`);
   if (row.areaSensor) notes.push(`Area ${row.key} sensor: ${row.areaSensor.current ?? "not set"} → ${row.canonicalId}`);
   return (
     <div className="flex flex-col gap-0.5">

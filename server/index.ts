@@ -47,6 +47,7 @@ import { addLogSecret, log, setLogSecret } from "./log.ts";
 import { buildHierarchy, type RawRegistry } from "./model/hierarchy.ts";
 import { findReferences, searchRelated, type Related } from "./references/find.ts";
 import { mapLimit, snapshot, type Snapshot } from "./references/snapshot.ts";
+import { closureFor } from "../shared/apply-plan.ts";
 
 try {
   process.loadEnvFile(".env");
@@ -410,12 +411,18 @@ app.post("/api/apply", async (c) => {
   }
   if (applying) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
   // The body is read before the lock is taken; check the lock again after it.
-  const body = (await c.req.json().catch(() => ({}))) as { allowWithoutBackup?: boolean; version?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { allowWithoutBackup?: boolean; version?: unknown; only?: unknown };
   if (applying) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
   // Apply exactly the list the user confirmed: if anything in it changed since
   // (another tab, another device, an edit folded into a change), they must look
   // again.
-  const pending = changes.list();
+  // With `only`, just those changes and the ones they need (shared/apply-plan.ts),
+  // through the same steps and in the same order as the whole list.
+  const everything = changes.list();
+  if (body.only !== undefined && (!Array.isArray(body.only) || body.only.length === 0 || body.only.length > 500 || !body.only.every((n) => Number.isInteger(n)))) {
+    return c.json<ApplyResponse>({ ok: false, error: "The changes to apply weren't readable." }, 400);
+  }
+  const pending = body.only === undefined ? everything : closureFor(everything, body.only as number[]);
   if (pending.length === 0) return c.json<ApplyResponse>({ ok: false, error: "There are no changes to apply." }, 400);
   if (body.version !== changes.version()) {
     return c.json<ApplyResponse>({ ok: false, error: "The list of changes changed since you looked at it. Check it again, then apply." }, 409);

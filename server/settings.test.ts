@@ -134,6 +134,9 @@ describe("validateInventory", () => {
     expect(one({ kind: "motion" })).toMatchObject({ ok: false });
     expect(one({ kind: 3 })).toMatchObject({ ok: false });
     for (const kind of ["door", "window", "speaker", "tv"]) expect(one({ kind })).toMatchObject({ ok: true });
+    // The kind of a climate entity is its own choice.
+    for (const climate of ["ac", "heating", "valve"]) expect(one({ climate })).toMatchObject({ ok: true, value: { entities: { "light.a": { climate } } } });
+    for (const climate of ["boiler", "door", 3, null]) expect(one({ climate }), String(climate)).toMatchObject({ ok: false });
     const area = (choice: object) => validateInventory({ areas: { garden: choice } });
     expect(area({ type: "outdoor" })).toMatchObject({ ok: false });
     expect(area({ bedroom: "no" })).toMatchObject({ ok: false });
@@ -182,20 +185,49 @@ describe("settingsStore inventory", () => {
 });
 
 describe("validateNamingIgnores", () => {
-  it("accepts entity ids, sorted and once", () => {
-    expect(validateNamingIgnores({ entities: ["sensor.b", "light.a", "light.a"] })).toEqual({ ok: true, value: { entities: ["light.a", "sensor.b"] } });
-    expect(validateNamingIgnores({})).toEqual({ ok: true, value: { entities: [] } });
+  it("accepts ignored fields per entity, sorted, and leaves out an entity with nothing ignored", () => {
+    expect(validateNamingIgnores({ entities: { "sensor.b": { id: true }, "light.a": { name: true, id: true }, "light.c": { name: false } } })).toEqual({
+      ok: true,
+      value: { entities: { "light.a": { name: true, id: true }, "sensor.b": { id: true } } },
+    });
+    expect(validateNamingIgnores({})).toEqual({ ok: true, value: { entities: {} } });
   });
 
-  it("refuses shapes that aren't a list of entity ids", () => {
-    for (const bad of [null, [], "x", 3, { entities: "light.a" }, { entities: {} }, { entities: [1] }, { entities: ["Light.a"] }, { entities: ["light"] }, { entities: ["light.a b"] }, { entities: [["light.a"]] }]) {
-      expect(validateNamingIgnores(bad)).toMatchObject({ ok: false });
-    }
+  it("reads the older list of entity ids as both fields ignored, sorted and once", () => {
+    expect(validateNamingIgnores({ entities: ["sensor.b", "light.a", "light.a"] })).toEqual({
+      ok: true,
+      value: { entities: { "light.a": { name: true, id: true }, "sensor.b": { name: true, id: true } } },
+    });
+    expect(validateNamingIgnores({ entities: [] })).toEqual({ ok: true, value: { entities: {} } });
   });
 
-  it("refuses unknown keys, saying which, and too long a list", () => {
+  it("refuses shapes it can't read", () => {
+    const bad = [
+      null,
+      [],
+      "x",
+      3,
+      { entities: "light.a" },
+      { entities: 4 },
+      { entities: [1] },
+      { entities: ["Light.a"] },
+      { entities: ["light"] },
+      { entities: ["light.a b"] },
+      { entities: [["light.a"]] },
+      { entities: { "Light.a": { name: true } } },
+      { entities: { "light.a": true } },
+      { entities: { "light.a": [] } },
+      { entities: { "light.a": { name: "yes" } } },
+      { entities: { "light.a": { icon: true } } },
+    ];
+    for (const b of bad) expect(validateNamingIgnores(b), JSON.stringify(b)).toMatchObject({ ok: false });
+  });
+
+  it("refuses unknown keys, saying which, and too many entities", () => {
     expect(validateNamingIgnores({ names: [] })).toMatchObject({ ok: false, error: expect.stringContaining("names") });
+    expect(validateNamingIgnores({ entities: { "light.a": { size: true } } })).toMatchObject({ ok: false, error: expect.stringContaining("size") });
     expect(validateNamingIgnores({ entities: Array.from({ length: 5001 }, (_, i) => `light.l${i}`) })).toMatchObject({ ok: false });
+    expect(validateNamingIgnores({ entities: Object.fromEntries(Array.from({ length: 5001 }, (_, i) => [`light.l${i}`, { name: true }])) })).toMatchObject({ ok: false });
   });
 });
 
@@ -204,9 +236,17 @@ describe("settingsStore namingIgnores", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const s = settingsStore(db);
-    expect(s.namingIgnores()).toEqual({ entities: [] });
-    s.saveNamingIgnores({ entities: ["light.lamp"] });
-    expect(s.namingIgnores()).toEqual({ entities: ["light.lamp"] });
+    expect(s.namingIgnores()).toEqual({ entities: {} });
+    s.saveNamingIgnores({ entities: { "light.lamp": { name: true } } });
+    expect(s.namingIgnores()).toEqual({ entities: { "light.lamp": { name: true } } });
+  });
+
+  it("reads a list saved by an older version as both fields ignored", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const s = settingsStore(db);
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("namingIgnores", '{"entities": ["light.lamp"]}');
+    expect(s.namingIgnores()).toEqual({ entities: { "light.lamp": { name: true, id: true } } });
   });
 
   it("falls back to empty when the stored value was edited into nonsense", () => {
@@ -214,9 +254,9 @@ describe("settingsStore namingIgnores", () => {
     db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const s = settingsStore(db);
     db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("namingIgnores", '{"entities": [3]}');
-    expect(s.namingIgnores()).toEqual({ entities: [] });
+    expect(s.namingIgnores()).toEqual({ entities: {} });
     db.prepare("UPDATE settings SET value = ? WHERE key = ?").run("{not json", "namingIgnores");
-    expect(s.namingIgnores()).toEqual({ entities: [] });
+    expect(s.namingIgnores()).toEqual({ entities: {} });
   });
 });
 
@@ -325,14 +365,13 @@ describe("validateNaming: helper names", () => {
 });
 
 describe("validateParameters", () => {
-  const ok = { house: { night_start: "22:00", hold_timeout: 8 }, types: { exterior: { hold_timeout: 2 } }, floors: { ground: { dim_level: 40 } }, areas: { kitchen: { day_kelvin: 3500, transition: 0 } } };
+  const ok = { house: { night_start: "22:00", hold_timeout: 8 }, types: { exterior: { hold_timeout: 2 } }, areas: { kitchen: { day_kelvin: 3500, transition: 0 } } };
 
   it("takes entry lights for an area only", () => {
     const entry = { entry_lights: ["light.kitchen_main", "light.kitchen_spots"] };
-    expect(validateParameters({ areas: { kitchen: entry } })).toEqual({ ok: true, value: { house: {}, types: {}, floors: {}, areas: { kitchen: entry } } });
+    expect(validateParameters({ areas: { kitchen: entry } })).toEqual({ ok: true, value: { house: {}, types: {}, areas: { kitchen: entry } } });
     expect(validateParameters({ house: entry })).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for one area (the house)") });
     expect(validateParameters({ types: { interior: entry } })).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for one area") });
-    expect(validateParameters({ floors: { ground: entry } })).toMatchObject({ ok: false, error: expect.stringContaining("(floor ground)") });
     for (const bad of [[], "light.a", ["switch.a"], ["light.a", "light.a"], [1]]) {
       expect(validateParameters({ areas: { kitchen: { entry_lights: bad } } }), JSON.stringify(bad)).toMatchObject({ ok: false, error: expect.stringContaining("Entry lights must be a list") });
     }
@@ -340,7 +379,7 @@ describe("validateParameters", () => {
 
   it("accepts what the editor produces, and empty settings", () => {
     expect(validateParameters(ok)).toEqual({ ok: true, value: ok });
-    expect(validateParameters({})).toEqual({ ok: true, value: { house: {}, types: {}, floors: {}, areas: {} } });
+    expect(validateParameters({})).toEqual({ ok: true, value: { house: {}, types: {}, areas: {} } });
   });
 
   it("refuses anything that is not a known parameter, with a message", () => {
@@ -355,7 +394,6 @@ describe("validateParameters", () => {
     expect(validateParameters({ house: { hold_timeout: 0 } })).toMatchObject({ ok: false });
     expect(validateParameters({ house: { hold_timeout: "5" } })).toMatchObject({ ok: false });
     expect(validateParameters({ house: { hold_timeout: null } })).toMatchObject({ ok: false });
-    expect(validateParameters({ floors: { ground: { day_kelvin: 2710 } } })).toMatchObject({ ok: false, error: expect.stringContaining("floor ground") });
     expect(validateParameters({ house: { night_start: "25:00" } })).toMatchObject({ ok: false });
     expect(validateParameters({ house: { night_start: 2300 } })).toMatchObject({ ok: false });
     expect(validateParameters({ house: { hold_timeout: 1 } })).toMatchObject({ ok: true });
@@ -364,7 +402,7 @@ describe("validateParameters", () => {
 
   it("takes the extended, sleep, override and media values, held to their ranges", () => {
     const good = { house: { extended_after: 45, extended_hold: 20, sleep_hold: 90, override_duration: 0, media_off_after: 10, tv_off_after: 60 } };
-    expect(validateParameters(good)).toEqual({ ok: true, value: { ...good, types: {}, floors: {}, areas: {} } });
+    expect(validateParameters(good)).toEqual({ ok: true, value: { ...good, types: {}, areas: {} } });
     // 0 is a value for the override (until the area clears) and for nothing else here.
     expect(validateParameters({ house: { override_duration: 240 } })).toMatchObject({ ok: true });
     expect(validateParameters({ house: { override_duration: 241 } })).toMatchObject({ ok: false });
@@ -390,7 +428,7 @@ describe("validateParameters", () => {
       },
       areas: { bedroom: { comfort_needs_occupancy: true, sleep_temp: 17 } },
     };
-    expect(validateParameters(good)).toEqual({ ok: true, value: { types: {}, floors: {}, ...good } });
+    expect(validateParameters(good)).toEqual({ ok: true, value: { types: {}, ...good } });
     // Booleans stay booleans through the check.
     const checked = validateParameters(good);
     expect(checked.ok && checked.value.house.auto_hvac_on).toBe(true);
@@ -418,14 +456,13 @@ describe("validateParameters", () => {
 
   it("allows only interior and exterior as types, and ids as the editor writes them", () => {
     expect(validateParameters({ types: { basement: { hold_timeout: 3 } } })).toMatchObject({ ok: false });
-    expect(validateParameters({ floors: { "Ground Floor": {} } })).toMatchObject({ ok: false });
     expect(validateParameters({ areas: { "../x": {} } })).toMatchObject({ ok: false });
     expect(validateParameters({ areas: { ["a".repeat(81)]: {} } })).toMatchObject({ ok: false });
     expect(validateParameters({ areas: { ["a".repeat(80)]: { hold_timeout: 3 } } })).toMatchObject({ ok: true });
   });
 
   it("refuses shapes it cannot read", () => {
-    for (const bad of [null, "x", 5, [], { house: [] }, { house: "x" }, { types: [] }, { floors: "x" }, { areas: [1] }, { areas: { kitchen: 5 } }, { areas: { kitchen: [] } }]) {
+    for (const bad of [null, "x", 5, [], { house: [] }, { house: "x" }, { types: [] }, { areas: [1] }, { areas: { kitchen: 5 } }, { areas: { kitchen: [] } }]) {
       expect(validateParameters(bad), JSON.stringify(bad)).toMatchObject({ ok: false });
     }
   });
@@ -437,17 +474,23 @@ describe("validateParameters", () => {
       expect(Object.keys(r.value.areas)).toEqual(["__proto__"]);
       expect(Object.getPrototypeOf(r.value.areas)).toBe(Object.prototype);
       expect(Object.hasOwn(r.value.areas, "__proto__")).toBe(true);
-      expect(r.value.floors).toEqual({});
+      expect("floors" in r.value).toBe(false);
       expect(r.value.types).toEqual({});
     }
   });
 
-  it("limits floors and areas", () => {
+  it("limits areas", () => {
     const many = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`a${i}`, { hold_timeout: 3 }]));
     expect(validateParameters({ areas: many(500) })).toMatchObject({ ok: true });
     expect(validateParameters({ areas: many(501) })).toMatchObject({ ok: false });
-    expect(validateParameters({ floors: many(200) })).toMatchObject({ ok: true });
-    expect(validateParameters({ floors: many(201) })).toMatchObject({ ok: false });
+  });
+
+  it("ignores values saved for floors by an older version, whatever they hold, and leaves them out of what it returns", () => {
+    const old = { house: { hold_timeout: 8 }, floors: { ground: { hold_timeout: 7, bogus: 1 }, "Not An Id": 5 }, areas: { kitchen: { hold_timeout: 2 } } };
+    const r = validateParameters(old);
+    expect(r).toEqual({ ok: true, value: { house: { hold_timeout: 8 }, types: {}, areas: { kitchen: { hold_timeout: 2 } } } });
+    expect(validateParameters({ floors: "x" })).toEqual({ ok: true, value: { house: {}, types: {}, areas: {} } });
+    expect(validateParameters({ floors: null })).toEqual({ ok: true, value: { house: {}, types: {}, areas: {} } });
   });
 });
 
@@ -456,8 +499,8 @@ describe("settingsStore parameters", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const s = settingsStore(db);
-    expect(s.parameters()).toEqual({ house: {}, types: {}, floors: {}, areas: {} });
-    const value = { house: { night_start: "22:00" }, types: {}, floors: {}, areas: { kitchen: { hold_timeout: 8 } } };
+    expect(s.parameters()).toEqual({ house: {}, types: {}, areas: {} });
+    const value = { house: { night_start: "22:00" }, types: {}, areas: { kitchen: { hold_timeout: 8 } } };
     s.saveParameters(value);
     expect(s.parameters()).toEqual(value);
   });
@@ -467,9 +510,20 @@ describe("settingsStore parameters", () => {
     db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const s = settingsStore(db);
     db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("parameters", '{"house": {"hold_timeout": 9999}}');
-    expect(s.parameters()).toEqual({ house: {}, types: {}, floors: {}, areas: {} });
+    expect(s.parameters()).toEqual({ house: {}, types: {}, areas: {} });
     db.prepare("UPDATE settings SET value = ? WHERE key = ?").run("{not json", "parameters");
-    expect(s.parameters()).toEqual({ house: {}, types: {}, floors: {}, areas: {} });
+    expect(s.parameters()).toEqual({ house: {}, types: {}, areas: {} });
+  });
+
+  it("reads a floor's values saved by an older version as nothing, and a save leaves them out", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const s = settingsStore(db);
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("parameters", '{"house": {"hold_timeout": 8}, "floors": {"ground": {"hold_timeout": 7}}, "areas": {}}');
+    const read = s.parameters();
+    expect(read).toEqual({ house: { hold_timeout: 8 }, types: {}, areas: {} });
+    s.saveParameters(read);
+    expect(JSON.parse((db.prepare("SELECT value FROM settings WHERE key = ?").get("parameters") as { value: string }).value)).not.toHaveProperty("floors");
   });
 });
 
@@ -484,11 +538,10 @@ describe("validateInventory: appliances", () => {
 describe("validateParameters: the house-only values and the later recipes", () => {
   it("takes the notify services, the text-to-speech entity and the volume for the house only", () => {
     const house = { notify_targets: ["notify.mobile_app_phone"], tts_entity: "tts.cloud", announce_volume: 30 };
-    expect(validateParameters({ house })).toEqual({ ok: true, value: { house, types: {}, floors: {}, areas: {} } });
+    expect(validateParameters({ house })).toEqual({ ok: true, value: { house, types: {}, areas: {} } });
     for (const key of Object.keys(house)) {
       const value = house[key as keyof typeof house];
       expect(validateParameters({ types: { exterior: { [key]: value } } }), key).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for the house (exterior areas)") });
-      expect(validateParameters({ floors: { ground: { [key]: value } } }), key).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for the house (floor ground)") });
       expect(validateParameters({ areas: { kitchen: { [key]: value } } }), key).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for the house (area kitchen)") });
     }
   });
@@ -501,7 +554,7 @@ describe("validateParameters: the house-only values and the later recipes", () =
 
   it("takes the fan, exterior and safety values for every level", () => {
     const values = { fan_rate_on: 0.05, fan_reference: "sensor.house_humidity", fan_suppress_in_sleep: true, exterior_sunset_offset: -30, exterior_clock: 90, door_open_after: 5, left_open_repeat: 10, appliance_run_watts: 20, humidity_hold_rate: 0.02 };
-    const ok = { house: {}, types: { exterior: { exterior_sunset_offset: -30 } }, floors: { ground: { door_open_after: 5 } }, areas: { bathroom: values } };
+    const ok = { house: {}, types: { exterior: { exterior_sunset_offset: -30 } }, areas: { bathroom: values } };
     expect(validateParameters(ok)).toEqual({ ok: true, value: ok });
     expect(validateParameters({ areas: { bathroom: { fan_rate_on: 0.0005 } } })).toMatchObject({ ok: false, error: expect.stringMatching(/between 0.001 and 1.*area bathroom/) });
     expect(validateParameters({ house: { exterior_sunset_offset: 3 } })).toMatchObject({ ok: false });

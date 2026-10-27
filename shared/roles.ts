@@ -91,6 +91,19 @@ export const ROLE_ORDER: { role: EntityRole; label: string }[] = [
 const HELPER_DOMAINS = new Set(["input_boolean", "input_number", "input_select", "input_text", "input_datetime", "input_button", "counter", "timer", "schedule"]);
 const HELPER_PLATFORMS = new Set(["template", "group", "min_max", "derivative", "utility_meter", "threshold", "trend", "integration", "statistics", "switch_as_x", "tod", "filter", "history_stats", "random", "mold_indicator"]);
 
+// An entity that combines or derives from others, or that the user made as a
+// helper: shown as a helper or a group, never as the device it mirrors. A real
+// switch an integration shows as a light (switch_as_x) is not one. A group is
+// told by its platform, or by the members it reports; a group that is
+// unavailable reports none, and is still told by its platform.
+export function isHelperEntity(e: { domain: string; platform: string; members: readonly unknown[] }): boolean {
+  return HELPER_DOMAINS.has(e.domain) || (HELPER_PLATFORMS.has(e.platform) && e.platform !== "switch_as_x") || e.members.length > 0;
+}
+
+// The role an entity is listed under: a helper or a group is a Helper, whatever
+// its domain says (a light group is not a light).
+export const displayRole = (e: { domain: string; platform: string; members: readonly unknown[]; role: EntityRole }): EntityRole => (isHelperEntity(e) ? "helper" : e.role);
+
 // Which of Home Assistant's category lists an entity can be filed in, if any.
 export function categoryScopeFor(domain: string, platform: string): CategoryScope | null {
   if (domain === "automation") return "automation";

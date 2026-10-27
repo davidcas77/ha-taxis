@@ -860,6 +860,10 @@ actions:
 // that permission also decides how a window turns heating down: off (it comes
 // back by itself) when allowed, else the frost protection setpoint. Taxis calls
 // no service itself; these run inside Home Assistant.
+//
+// The target: the heating temperature of the decision, kept between the lowest and
+// highest, in the heating season; the cooling one, not limited by them, in the
+// cooling season (sleep uses the cooling night temperature).
 // ---------------------------------------------------------------------------
 
 const AREA_CLIMATE_YAML = `blueprint:
@@ -868,7 +872,7 @@ const AREA_CLIMATE_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Sets the thermostats of an area by fixed rules, worked out again whenever an input changes, first match wins. A window open for the window delay turns the heating down to frost protection, or off when switching is allowed; for the restore delay after it closes nothing is changed. Then the away switch, then sleep (a bedroom with a bed sensor on or the house sleep switch on), then the night window, then comfort while the area schedule is on and the area is occupied (or was clear for less than the eco delay, or occupancy is not needed), and eco otherwise. The target stays between the lowest and highest temperature. A thermostat with a mapped preset it offers gets the preset, the others a temperature, and only what differs from what the thermostat shows is sent. A thermostat that is off is left alone unless switching on and off is allowed. Does nothing while the pause switch is on or the season is off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  description: "Sets the thermostats of an area by fixed rules, worked out again whenever an input changes, first match wins. A window open for the window delay turns the heating down to frost protection, or off when switching is allowed; for the restore delay after it closes nothing is changed. Then the away switch, then sleep (a bedroom with a bed sensor on or the house sleep switch on), then the night window, then comfort while the area schedule is on and the area is occupied (or was clear for less than the eco delay, or occupancy is not needed), and eco otherwise. The target is the heating temperature for the decision, kept between the lowest and highest temperature, or, in the cooling season, the cooling temperature (the night one also for sleep), which the lowest and highest do not limit. A thermostat with a mapped preset it offers gets the preset, the others a temperature, and only what differs from what the thermostat shows is sent. A thermostat that is off is left alone unless switching on and off is allowed. Does nothing while the pause switch is on or the season is off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 2."
   input:
     climate_entities:
       name: Thermostats
@@ -1014,6 +1018,46 @@ const AREA_CLIMATE_YAML = `blueprint:
           max: 35
           step: 0.5
           mode: box
+    cool_comfort_temp:
+      name: Cooling comfort temperature
+      description: Used in the cooling season, instead of the comfort temperature.
+      default: 24
+      selector:
+        number:
+          min: 5
+          max: 35
+          step: 0.5
+          mode: box
+    cool_eco_temp:
+      name: Cooling eco temperature
+      description: Used in the cooling season, instead of the eco temperature.
+      default: 27
+      selector:
+        number:
+          min: 5
+          max: 35
+          step: 0.5
+          mode: box
+    cool_night_temp:
+      name: Cooling night temperature
+      description: Used in the cooling season, instead of the night temperature, and for sleep.
+      default: 25
+      selector:
+        number:
+          min: 5
+          max: 35
+          step: 0.5
+          mode: box
+    cool_away_temp:
+      name: Cooling away temperature
+      description: Used in the cooling season, instead of the away temperature.
+      default: 29
+      selector:
+        number:
+          min: 5
+          max: 35
+          step: 0.5
+          mode: box
     frost_temp:
       name: Frost protection temperature
       description: Used when a window is open and the thermostat is not switched off.
@@ -1026,7 +1070,7 @@ const AREA_CLIMATE_YAML = `blueprint:
           mode: box
     min_temp:
       name: Lowest temperature
-      description: The target is never set below this (frost protection is the exception).
+      description: In the heating season the target is never set below this (frost protection is the exception). The cooling temperatures are not limited by it.
       default: 16
       selector:
         number:
@@ -1134,6 +1178,10 @@ variables:
   night_temp: !input night_temp
   sleep_temp: !input sleep_temp
   away_temp: !input away_temp
+  cool_comfort_temp: !input cool_comfort_temp
+  cool_eco_temp: !input cool_eco_temp
+  cool_night_temp: !input cool_night_temp
+  cool_away_temp: !input cool_away_temp
   frost_temp: !input frost_temp
   min_temp: !input min_temp
   max_temp: !input max_temp
@@ -1226,8 +1274,8 @@ actions:
       occupied_ok: "{{ occupied_entity == '' or not is_state(occupied_entity, 'off') or (now() - states[occupied_entity].last_changed).total_seconds() < (eco_after_clear | float(0)) * 60 }}"
       comfort_now: "{{ is_state(schedule_entity, 'on') and ((not needs_occupancy) or occupied_ok) }}"
       decision: "{% if season_off %}idle{% elif window_rule %}window{% elif window_pending %}hold{% elif away %}away{% elif sleeping %}sleep{% elif in_night %}night{% elif comfort_now %}comfort{% else %}eco{% endif %}"
-      base_temp: "{{ {'comfort': comfort_temp, 'eco': eco_temp, 'night': night_temp, 'sleep': sleep_temp, 'away': away_temp}[decision] if decision in ['comfort', 'eco', 'night', 'sleep', 'away'] else none }}"
-      target_temp: "{{ ([[base_temp | float(0), min_temp | float(0)] | max, max_temp | float(0)] | min) if base_temp is not none else none }}"
+      base_temp: "{{ ({'comfort': cool_comfort_temp, 'eco': cool_eco_temp, 'night': cool_night_temp, 'sleep': cool_night_temp, 'away': cool_away_temp} if season == 'cooling' else {'comfort': comfort_temp, 'eco': eco_temp, 'night': night_temp, 'sleep': sleep_temp, 'away': away_temp})[decision] if decision in ['comfort', 'eco', 'night', 'sleep', 'away'] else none }}"
+      target_temp: "{{ none if base_temp is none else (base_temp | float(0) if season == 'cooling' else ([[base_temp | float(0), min_temp | float(0)] | max, max_temp | float(0)] | min)) }}"
       preset_name: "{{ {'comfort': preset_comfort, 'eco': preset_eco, 'away': preset_away, 'sleep': preset_sleep, 'night': preset_sleep}[decision] if decision in ['comfort', 'eco', 'night', 'sleep', 'away'] else '' }}"
       mode_wanted: "{{ 'cool' if season == 'cooling' else 'heat' }}"
   - if:
@@ -2190,7 +2238,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/area_climate.yaml",
     recipe: "area_climate",
     domain: "automation",
-    version: 1,
+    version: 2,
     yaml: AREA_CLIMATE_YAML,
     inputs: {
       climate_entities: { kind: "entities", required: true, domain: "climate" },
@@ -2211,6 +2259,10 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
       night_temp: { kind: "number", required: false },
       sleep_temp: { kind: "number", required: false },
       away_temp: { kind: "number", required: false },
+      cool_comfort_temp: { kind: "number", required: false },
+      cool_eco_temp: { kind: "number", required: false },
+      cool_night_temp: { kind: "number", required: false },
+      cool_away_temp: { kind: "number", required: false },
       frost_temp: { kind: "number", required: false },
       min_temp: { kind: "number", required: false },
       max_temp: { kind: "number", required: false },

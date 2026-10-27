@@ -1,8 +1,8 @@
 import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeKey, type RecipeKey } from "./blueprints.ts";
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
-import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID } from "./climate.ts";
+import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID, kindRunsIn, type Season } from "./climate.ts";
 import { RECIPE_HELPER_SUFFIX, canonicalId, effectiveSuffixes, helperExclusions } from "./helpers.ts";
-import { areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
+import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import { entryLights, resolve, resolveAll, resolveIn, withSeconds, type ParameterSettings } from "./parameters.ts";
 import { canonicalPeriods, DEFAULT_COMFORT_PERIODS } from "./periods.ts";
@@ -198,6 +198,10 @@ const INPUT_LABEL: Record<string, string> = {
   night_temp: "Night temperature",
   sleep_temp: "Sleep temperature",
   away_temp: "Away temperature",
+  cool_comfort_temp: "Cooling comfort temperature",
+  cool_eco_temp: "Cooling eco temperature",
+  cool_night_temp: "Cooling night temperature",
+  cool_away_temp: "Cooling away temperature",
   frost_temp: "Frost protection temperature",
   min_temp: "Lowest temperature",
   max_temp: "Highest temperature",
@@ -568,7 +572,11 @@ export function planRecipes(
 
     // ---- Area climate -----------------------------------------------------
     const climateId = automationIdFor("area_climate", code);
-    const thermostats = inv.thermostat.filter((r) => r.counts).map((r) => r.entityId).sort();
+    // An AC runs in both seasons, heating and radiator valves in the heating season only.
+    const season = values.season as Season;
+    const climateCounted = inv.thermostat.filter((r) => r.counts);
+    const thermostats = climateCounted.filter((r) => kindRunsIn(r.climate ?? "heating", season)).map((r) => r.entityId).sort();
+    const climateSkipped = climateCounted.filter((r) => !thermostats.includes(r.entityId));
     const bedroom = areaChoice(inventory, area.id).bedroom;
     const text = (k: "away_mode_entity" | "sleep_mode_entity" | "preset_comfort" | "preset_eco" | "preset_away" | "preset_sleep") => String(values[k] ?? "");
     // The house switches: the ones the user picked, else the two Taxis makes.
@@ -638,6 +646,10 @@ export function planRecipes(
       night_temp: values.night_temp,
       sleep_temp: values.sleep_temp,
       away_temp: values.away_temp,
+      cool_comfort_temp: values.cool_comfort_temp,
+      cool_eco_temp: values.cool_eco_temp,
+      cool_night_temp: values.cool_night_temp,
+      cool_away_temp: values.cool_away_temp,
       frost_temp: values.frost_temp,
       min_temp: values.min_temp,
       max_temp: values.max_temp,
@@ -653,7 +665,13 @@ export function planRecipes(
       pause_switch: ids.switch,
     };
 
-    if (thermostats.length === 0) climateMissing.push("A thermostat that counts (Capabilities)");
+    if (thermostats.length === 0) {
+      climateMissing.push(
+        climateSkipped.length > 0
+          ? "An air conditioner that counts: heating and radiator valves are not run in the cooling season (Capabilities)"
+          : "A thermostat that counts (Capabilities)",
+      );
+    }
     if (!usable) climateMissing.push("An area code that makes valid entity ids (Settings)");
     else for (const m of [taken(ids.switch, toggle), taken(ids.schedule, schedule)]) if (m) climateMissing.push(m);
     if ((values.min_temp as number) > (values.max_temp as number)) climateMissing.push("The lowest temperature is above the highest (Parameters, Climate)");
@@ -700,6 +718,7 @@ export function planRecipes(
       const unknown = mapped.filter(([, p]) => p !== "" && !offered.includes(p));
       if (offered.length > 0 && unknown.length > 0) climateNotes.push(`${h.entities[id]?.name ?? id} doesn't offer ${unknown.map(([k, p]) => `“${p}” (${k})`).join(", ")}; it gets temperatures for ${unknown.length === 1 ? "that" : "those"}`);
     }
+    if (climateSkipped.length > 0) climateNotes.push(`Not run while cooling: ${climateSkipped.map((r) => `${r.name} (${CLIMATE_KIND_LABEL[r.climate ?? "heating"].toLowerCase()})`).join(", ")}`);
     if (values.season === "off") climateNotes.push("The season is off, so the recipe does nothing");
     if (!occupiedThere) climateNotes.push("No Occupancy yet, so comfort follows the schedule alone");
     if (bedroom && needsResolved.source.level === "default") climateNotes.push("A bedroom: comfort doesn't need anyone in the room unless you set it to");

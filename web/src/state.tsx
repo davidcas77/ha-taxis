@@ -5,6 +5,7 @@ import { EMPTY_INVENTORY, type InventorySettings } from "../../shared/inventory.
 import { DEFAULT_NAMING, type NamingSettings } from "../../shared/naming.ts";
 import { EMPTY_NAMING_IGNORES, type NamingIgnores } from "../../shared/naming-ignores.ts";
 import { EMPTY_PARAMETERS, type ParameterSettings } from "../../shared/parameters.ts";
+import { DEVICES_ENTITIES, normalizeLegacyHash } from "../../shared/route-hash.ts";
 import type { Change, ChangeInput, Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 
@@ -363,7 +364,7 @@ export function useTaxis(): TaxisState {
 }
 
 // The selected screen, kept in the URL hash so a reload or bookmark opens it.
-export const AREA_TABS = ["overview", "capabilities", "entities", "devices", "naming", "labels", "health"] as const;
+export const AREA_TABS = ["overview", "capabilities", DEVICES_ENTITIES, "naming", "labels", "health"] as const;
 export type AreaTab = (typeof AREA_TABS)[number];
 
 // What the Organize page lists. In "spaces" an id reads "floor:<id>" or "area:<id>".
@@ -379,8 +380,6 @@ export type ParameterTab = (typeof PARAMETER_TABS)[number];
 
 export type Route =
   | { page: "areas"; sel: Selection; tab: AreaTab }
-  | { page: "devices" }
-  | { page: "entities" }
   | { page: "organize"; type: OrganizeType; id: string | null }
   | { page: "parameters"; tab: ParameterTab }
   | { page: "health" }
@@ -397,7 +396,8 @@ export type Selection =
 const HOME: Route = { page: "areas", sel: { kind: "home" }, tab: "overview" };
 
 export function parseHash(hash: string): Route {
-  const parts = hash.replace(/^#/, "").split("/");
+  // #devices, #entities and the area tabs of those names are the one page and tab now.
+  const parts = normalizeLegacyHash(hash).replace(/^#/, "").split("/");
   let dec: string[];
   try {
     dec = parts.map(decodeURIComponent);
@@ -415,10 +415,6 @@ export function parseHash(hash: string): Route {
       return { page: "changes" };
     case "settings":
       return { page: "settings" };
-    case "devices":
-      return { page: "devices" };
-    case "entities":
-      return { page: "entities" };
     case "organize":
       // Floors and areas used to be two types; their links still open the tree.
       if (a === "floors" || a === "areas") return { page: "organize", type: "spaces", id: b ? `${a === "floors" ? "floor" : "area"}:${b}` : null };
@@ -449,8 +445,6 @@ export function toHash(r: Route): string {
     case "health":
     case "changes":
     case "settings":
-    case "devices":
-    case "entities":
       return `#${r.page}`;
     case "parameters":
       return `#parameters/${r.tab}`;
@@ -468,7 +462,13 @@ export function toHash(r: Route): string {
 export function useRoute(): [Route, (r: Route) => void] {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash));
   useEffect(() => {
-    const on = () => setRoute(parseHash(window.location.hash));
+    const on = () => {
+      // An old link is shown as the new one in the address bar too.
+      const fixed = normalizeLegacyHash(window.location.hash);
+      if (fixed !== window.location.hash) window.history.replaceState(null, "", fixed);
+      setRoute(parseHash(window.location.hash));
+    };
+    on();
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);

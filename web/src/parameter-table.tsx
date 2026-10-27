@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { helperExclusions } from "../../shared/helpers.ts";
@@ -40,7 +40,7 @@ const NOTES: Record<ParamTab, string> = {
     "How the lights come on and go off. Brightness, colour, light level and timing. Manual override: how long the automation leaves an area alone after a light is changed by hand; 0 is until the area next clears. Entry lights: the lights that come on by day when the area becomes occupied. They are set for one area only and never inherited; left empty, the area's only light, or else its main lights, is used (shown in grey as suggested).",
   media: "How long an area is clear before its speakers and its TVs are turned off. The announcement volume is what Announce speaks at when it is not given one (0 leaves the volume as it is); it is set for the house only.",
   climate:
-    "Area climate sets an area's thermostats by fixed rules, first match wins: a window open for a while (frost protection, or off), away mode, sleep, the night window, comfort while the comfort periods are on and the area is occupied, eco otherwise. Temperatures are in the unit Home Assistant uses and stay between lowest and highest. Comfort periods are days, then times, like Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00 (the end can be 23:59 at the latest). Presets are the thermostat's own names, offered from what each thermostat reports; a thermostat that has one gets the preset, the others a temperature. Switch on and off itself lets Area climate switch a thermostat on, and a window switch it off; otherwise a thermostat that is off is left alone. A bedroom needs no one in the room for comfort unless you set it. Cooling uses the same temperatures.",
+    "Area climate sets an area's thermostats by fixed rules, first match wins: a window open for a while (frost protection, or off), away mode, sleep, the night window, comfort while the comfort periods are on and the area is occupied, eco otherwise. Temperatures are in the unit Home Assistant uses. In the heating season the target stays between lowest and highest; in the cooling season the Cool temperatures are used instead (night and sleep share one) and lowest and highest do not limit them. Comfort periods are days, then times, like Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00 (the end can be 23:59 at the latest). The Season picks what runs: an AC (see the Climate section of Capabilities) in both seasons, heating and radiator valves in the heating season only. Presets are the thermostat's own names, offered from what each thermostat reports, an AC's included; a thermostat that has one gets the preset, the others a temperature. Switch on and off itself lets Area climate switch a thermostat on, and a window switch it off; otherwise a thermostat that is off is left alone. A bedroom needs no one in the room for comfort unless you set it.",
   fan:
     "The Bathroom fan starts when the humidity rises at least this fast, is this far above the reference sensor, or reaches this level, and stops when it is back within this of the reference (without a reference sensor, of where it started), when the rate has been flat for this long, or after at most this long. The reference is another area's humidity sensor or a house average, picked here; left empty, only the rise rate and the humidity level start the fan. Rates are in % of humidity per second.",
   exterior:
@@ -50,7 +50,13 @@ const NOTES: Record<ParamTab, string> = {
 };
 
 const SCOPE_NOTE =
-  "Set a value at the level that fits: the house, interior or exterior areas, a floor or one area. An empty cell takes the value of the level above it (area, then floor, then interior or exterior, then the house). Saved here at once; nothing is written to Home Assistant until you install a recipe.";
+  "Set a value at the level that fits: the house, interior or exterior areas, or one area. An empty cell takes the value of the level above it (area, then interior or exterior, then the house). Floors only group the areas and have no values of their own. Saved here at once; nothing is written to Home Assistant until you install a recipe.";
+
+// A value in a table cell is a button that opens the field: it shows a box on hover
+// and on focus, and a small pencil, so it reads as something to click.
+const EDITABLE =
+  "group inline-flex items-center gap-1 rounded border border-transparent px-1.5 py-0.5 text-left hover:border-line hover:bg-sunken focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:opacity-60";
+const PENCIL = "size-3 shrink-0 text-muted opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60";
 
 const header = (d: ParamDef) => (d.unit ? `${d.label} (${d.unit})` : d.label);
 
@@ -80,8 +86,7 @@ function presetNames(h: Hierarchy, row: ParamRow): string[] {
   const names = new Set<string>();
   for (const e of Object.values(h.entities)) {
     if (e.domain !== "climate" || e.presetModes.length === 0) continue;
-    const inRow =
-      row.scope.level === "area" ? e.areaId === row.scope.id : row.scope.level === "floor" ? Boolean(e.areaId && h.areas[e.areaId]?.floorId === row.scope.id) : true;
+    const inRow = row.scope.level === "area" ? e.areaId === row.scope.id : true;
     if (inRow) for (const m of e.presetModes) names.add(m);
   }
   return [...names].sort();
@@ -202,9 +207,10 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
         onClick={() => (def.kind === "bool" ? void save(!shown.value) : onEdit(true))}
         title={`${def.kind === "periods" ? `${describePeriods(String(shown.value))}. ` : ""}${own === undefined ? `From ${sourceName(h, shown.source)}. Click to set it here.` : "Set here. Click to change it."}`}
         aria-label={`${def.label} for ${row.label}: ${show(def, shown.value)}${def.unit && def.kind === "number" ? ` ${def.unit}` : ""}, ${own === undefined ? `from ${sourceName(h, shown.source)}` : "set here"}`}
-        className={`min-w-[3rem] rounded px-1.5 py-0.5 text-left hover:bg-sunken disabled:opacity-60 ${def.kind === "periods" ? "max-w-[20rem]" : "tabular-nums"} ${own === undefined ? "text-muted" : "font-medium"}`}
+        className={`${EDITABLE} min-w-[3rem] ${def.kind === "periods" ? "max-w-[20rem]" : "tabular-nums"} ${own === undefined ? "text-muted" : "font-medium"}`}
       >
         {show(def, shown.value)}
+        <Pencil className={PENCIL} aria-hidden />
       </button>
       {own !== undefined && (
         <button type="button" disabled={parametersSaving} onClick={() => void save(null)} aria-label={`Clear ${def.label} for ${row.label}`} title="Clear, so it inherits again" className="rounded p-0.5 text-muted hover:text-fg disabled:opacity-60">
@@ -269,10 +275,11 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
         onClick={() => onEdit(true)}
         title={own ? "Set here. Click to change it." : resolved.lights.length === 0 ? "Nothing to suggest: the area has several lights and none is a main light. Click to choose." : "Suggested: the only light of the area, or its main lights. Click to choose."}
         aria-label={`${def.label} for ${row.label}: ${text}, ${own ? "set here" : resolved.lights.length === 0 ? "none" : "suggested"}`}
-        className={`max-w-[16rem] rounded px-1.5 py-0.5 text-left hover:bg-sunken disabled:opacity-60 ${own ? "font-medium" : "text-muted"}`}
+        className={`${EDITABLE} max-w-[16rem] ${own ? "font-medium" : "text-muted"}`}
       >
         {text}
         {!own && resolved.lights.length > 0 && <span className="ml-1.5 rounded-full border border-line px-1.5 py-px text-[11px]">suggested</span>}
+        <Pencil className={PENCIL} aria-hidden />
       </button>
       {resolved.set && (
         <button type="button" disabled={parametersSaving} onClick={() => void save(null)} aria-label={`Clear ${def.label} for ${row.label}`} title="Clear, so the suggestion is used again" className="rounded p-0.5 text-muted hover:text-fg disabled:opacity-60">
@@ -288,10 +295,11 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   const defs = paramsOf(tab);
   const [editing, setEditing] = useState<string | null>(null);
   const ready = inventoryLoaded && parametersLoaded;
-  const { fixed, rest } = useMemo(() => paramRows(h, inventory), [h, inventory]);
+  const { fixed, rest, floors } = useMemo(() => paramRows(h, inventory), [h, inventory]);
 
-  // Sorting covers the floors and areas; the house, interior and exterior rows
-  // stay on top. The default order groups each floor's areas under the floor.
+  // Sorting covers the areas; the house, interior and exterior rows stay on top.
+  // The default order groups each floor's areas under a heading with the floor's
+  // name (a floor has no values); sorted by anything else, the headings go.
   const columns = useMemo(
     () => ({
       order: (r: ParamRow) => r.order,
@@ -312,12 +320,20 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
 
   if (!ready) return <p className="text-[13px] text-muted">Loading the settings…</p>;
 
-  const line = (r: ParamRow, kind: "fixed" | "floor" | "area") => (
+  const grouped = sort.key === "order";
+  const heading = (f: { floorId: string; name: string }) => (
+    <tr key={`floor:${f.floorId}`} className="border-t border-line bg-sunken/50">
+      <th scope="rowgroup" colSpan={defs.length + 1} className="px-3 py-1.5 text-left font-normal text-muted">
+        {f.name}
+        <span className="ml-2 text-[11px]">floor</span>
+      </th>
+    </tr>
+  );
+  const line = (r: ParamRow, kind: "fixed" | "area") => (
     <tr key={rowKey(r)} className="border-t border-line">
-      <th scope="row" className={`px-3 py-1.5 text-left font-normal ${kind === "fixed" || kind === "floor" ? "font-medium" : ""}`}>
-        <span className={kind === "area" ? "pl-3" : ""}>{r.label}</span>
-        {kind === "floor" && <span className="ml-2 text-[11px] text-muted">floor</span>}
-        {kind === "area" && sort.key !== "order" && r.floorName && <span className="ml-2 text-[11px] text-muted">{r.floorName}</span>}
+      <th scope="row" className={`px-3 py-1.5 text-left font-normal ${kind === "fixed" ? "font-medium" : ""}`}>
+        <span className={kind === "area" && grouped && r.floorId ? "pl-3" : ""}>{r.label}</span>
+        {kind === "area" && !grouped && r.floorName && <span className="ml-2 text-[11px] text-muted">{r.floorName}</span>}
       </th>
       {defs.map((d) => (
         <td key={d.key} className="px-3 py-1.5">
@@ -337,6 +353,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
     <div className="flex flex-col gap-3">
       <p className="max-w-[68ch] text-[13px] text-muted">{NOTES[tab]}</p>
       <p className="max-w-[68ch] text-[13px] text-muted">{SCOPE_NOTE}</p>
+      <p className="text-[13px] font-medium">Click a value to change it.</p>
       <div className="overflow-x-auto rounded-lg border border-line bg-surface">
         <table aria-label={PARAM_TAB_LABEL[tab]} className="w-full text-[13px]">
           <thead className="bg-sunken text-left text-xs text-muted">
@@ -349,7 +366,11 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
           </thead>
           <tbody>
             {fixed.map((r) => line(r, "fixed"))}
-            {rows.map((r) => line(r, r.scope.level === "floor" ? "floor" : "area"))}
+            {rows.map((r, i) => {
+              // A floor's heading goes in front of its first area, when the areas are in their default order.
+              const head = grouped && r.floorId && rows[i - 1]?.floorId !== r.floorId ? floors.find((f) => f.floorId === r.floorId) : undefined;
+              return [head && heading(head), line(r, "area")];
+            })}
           </tbody>
         </table>
       </div>

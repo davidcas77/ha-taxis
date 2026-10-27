@@ -361,7 +361,7 @@ export function NewItemForm({ kind, floorId, onDone }: { kind: "area" | "floor";
       </Field>
       {kind === "floor" && (
         <Field label="Level" htmlFor="new-floor-level">
-          <input id="new-floor-level" className={`${inputClass} w-20`} inputMode="numeric" value={level} placeholder="-1" onChange={(e) => setLevel(e.target.value)} />
+          <input id="new-floor-level" className={`${inputClass} w-20!`} inputMode="numeric" value={level} placeholder="-1" onChange={(e) => setLevel(e.target.value)} />
         </Field>
       )}
       <Button type="submit" disabled={saving}>

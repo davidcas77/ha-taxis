@@ -4,7 +4,8 @@ import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { BLUEPRINTS, blueprintForRecipe } from "./blueprints.ts";
 import { sameValue, validateInput } from "./changes.ts";
 import { RECIPE_HELPER_SUFFIX, helperExclusions, helperNameErrors } from "./helpers.ts";
-import { EMPTY_INVENTORY, resetEntity, setAppliance, setAreaType, setBed, setBedroom, setCounts, setKind, setLightRole, setRole, type InventorySettings } from "./inventory.ts";
+import { EMPTY_INVENTORY, resetEntity, setAppliance, setAreaType, setBed, setBedroom, setClimateKind, setCounts, setKind, setLightRole, setRole, type InventorySettings } from "./inventory.ts";
+import { closureFor } from "./apply-plan.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "./naming.ts";
 import { EMPTY_PARAMETERS, PARAM_DEF, setParameter, type ParameterSettings } from "./parameters.ts";
 import {
@@ -218,7 +219,7 @@ describe("occupancy: ready", () => {
   it("passes the extended and sleep times from the parameters, with the occupied sensor the extended time is read from", () => {
     let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "extended_after", 45);
     p = setParameter(p, { level: "area", id: "living_room" }, "sleep_hold", 90);
-    p = setParameter(p, { level: "floor", id: "ground" }, "extended_hold", 20);
+    p = setParameter(p, { level: "type", id: "interior" }, "extended_hold", 20);
     expect(autoInput(cell(plan([motion, spots], { params: p }), "occupancy"))).toMatchObject({
       occupied_entity: "binary_sensor.living_occupied",
       extended_after: 45,
@@ -453,7 +454,7 @@ describe("motion lights", () => {
   it("uses the parameters, with the night window written as the blueprint takes it", () => {
     let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "night_start", "22:30");
     p = setParameter(p, { level: "area", id: "living_room" }, "night_brightness", 5);
-    p = setParameter(p, { level: "floor", id: "ground" }, "dim_before_off", 0);
+    p = setParameter(p, { level: "type", id: "interior" }, "dim_before_off", 0);
     p = setParameter(p, { level: "type", id: "interior" }, "day_kelvin", 3500);
     const input = (cell(plan([motion, spots, lights, ...runtime], { installed: occupancyThere, params: p }), "motion_lights").inputs[0].fields!.use_blueprint as { input: Record<string, unknown> }).input;
     expect(input).toMatchObject({ night_start: "22:30:00", night_brightness: 5, dim_before_off: 0, day_kelvin: 3500, night_end: "07:00:00" });
@@ -828,6 +829,9 @@ describe("area climate", () => {
   const climate = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { ...o, installed: { blueprints: BLUEPRINTS_THERE, ...o.installed } }), "area_climate");
   const kinds = (c: RecipeCell) => c.inputs.map((i) => `${i.kind}:${i.op}:${i.fields?.helper ?? i.fields?.path ?? i.fields?.automation_id ?? i.targetId}`);
 
+  // An air conditioner: it can cool, so it is an AC, and it has presets of its own.
+  const ac = { id: "climate.living_ac", state: "cool", name: "Living AC", attrs: { hvac_modes: ["off", "cool", "heat", "auto"], preset_modes: ["eco", "comfort", "boost"], temperature: 24 } };
+
   // What Taxis writes for the living room with the defaults and one valve.
   const defaults = {
     climate_entities: ["climate.living_valve"],
@@ -847,6 +851,10 @@ describe("area climate", () => {
     night_temp: 18,
     sleep_temp: 17.5,
     away_temp: 16,
+    cool_comfort_temp: 24,
+    cool_eco_temp: 27,
+    cool_night_temp: 25,
+    cool_away_temp: 29,
     frost_temp: 7,
     min_temp: 16,
     max_temp: 24,
@@ -967,6 +975,26 @@ describe("area climate", () => {
       expect(climate([valve], { changes: withAutomation })).toMatchObject({ status: "in-changes", actionable: false, inputs: [] });
     });
 
+    it("makes changes that depend on each other so the automation can be applied with only what it needs", () => {
+      const c = climate([valve], { installed: { blueprints: {} } });
+      const list: Change[] = c.inputs.map((i, n) => ({
+        id: n + 1,
+        kind: i.kind,
+        op: i.op,
+        targetId: i.targetId ?? `new:${i.kind}:${n + 1}`,
+        scope: null,
+        before: {},
+        after: i.fields ?? {},
+        createdAt: "now",
+      }));
+      const automation = list.find((x) => x.kind === "automation")!;
+      // The blueprint, the three helpers (two house switches, the pause switch) and the schedule.
+      expect(closureFor(list, [automation.id]).map((x) => `${x.kind}:${x.op}`)).toEqual(list.map((x) => `${x.kind}:${x.op}`));
+      // A helper alone needs nothing.
+      const away = list.find((x) => x.after.entity_id === "input_boolean.taxis_away")!;
+      expect(closureFor(list, [away.id]).map((x) => x.id)).toEqual([away.id]);
+    });
+
     it("a user's own schedule is used as it is, and Taxis says nothing is written into it", () => {
       const c = climate([valve, schedule, away, sleep, toggle]);
       expect(kinds(c)).toEqual(["automation:create:taxis_area_climate_living"]);
@@ -1082,15 +1110,21 @@ describe("area climate", () => {
     it("uses the parameters: temperatures, delays, season, switching, presets and the night window", () => {
       let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_temp", 22);
       p = setParameter(p, { level: "area", id: "living_room" }, "eco_temp", 17.5);
-      p = setParameter(p, { level: "floor", id: "ground" }, "window_delay", 5);
+      p = setParameter(p, { level: "type", id: "interior" }, "window_delay", 5);
       p = setParameter(p, { level: "type", id: "interior" }, "restore_delay", 3);
       p = setParameter(p, { level: "house" }, "night_start", "22:30");
       p = setParameter(p, { level: "house" }, "season", "cooling");
       p = setParameter(p, { level: "house" }, "auto_hvac_on", true);
       p = setParameter(p, { level: "house" }, "preset_eco", "Eco");
       p = setParameter(p, { level: "house" }, "eco_after_clear", 45);
-      expect(autoInput(climate(inPlace, { params: p }))).toEqual({
+      p = setParameter(p, { level: "house" }, "cool_comfort_temp", 23.5);
+      p = setParameter(p, { level: "area", id: "living_room" }, "cool_away_temp", 30);
+      // Cooling runs the AC; the valve is left out.
+      expect(autoInput(climate([ac, ...inPlace], { params: p }))).toEqual({
         ...defaults,
+        climate_entities: ["climate.living_ac"],
+        cool_comfort_temp: 23.5,
+        cool_away_temp: 30,
         comfort_periods: "",
         comfort_temp: 22,
         eco_temp: 17.5,
@@ -1104,11 +1138,83 @@ describe("area climate", () => {
       });
     });
 
+    it("fills the cooling temperatures with their own defaults", () => {
+      const c = autoInput(climate([ac, schedule, away, sleep, toggle]));
+      expect([c.cool_comfort_temp, c.cool_eco_temp, c.cool_night_temp, c.cool_away_temp]).toEqual([24, 27, 25, 29]);
+      expect(validateInput(climate([ac, schedule, away, sleep, toggle]).inputs[0])).toBeNull();
+    });
+
     it("writes the comfort periods in one spelling", () => {
       const p = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "comfort_periods", "sat-sun 08:00-23:00;  mon-fri 17:00-22:00");
       expect(autoInput(climate(inPlace.filter((s) => s !== schedule), { params: p })).comfort_periods).toBe("Mon-Fri 17:00-22:00; Sat-Sun 08:00-23:00");
       const create = climate([valve], { params: p }).inputs.find((i) => i.fields?.helper === "schedule")!;
       expect(create.fields!.periods).toBe("Mon-Fri 17:00-22:00; Sat-Sun 08:00-23:00");
+    });
+  });
+
+  describe("the kinds of climate entity", () => {
+    const cooling = setParameter(EMPTY_PARAMETERS, { level: "house" }, "season", "cooling");
+    const everything = [ac, valve, tado, schedule, away, sleep, toggle];
+
+    it("runs every kind that counts in the heating season", () => {
+      const c = climate(everything);
+      expect(autoInput(c).climate_entities).toEqual(["climate.living_ac", "climate.living_tado", "climate.living_valve"]);
+      expect(c.notes.join(" ")).not.toMatch(/Not run while cooling/);
+    });
+
+    it("runs only the AC in the cooling season, and says what it left out", () => {
+      const c = climate(everything, { params: cooling });
+      expect(c.status).toBe("ready");
+      expect(autoInput(c).climate_entities).toEqual(["climate.living_ac"]);
+      expect(c.notes).toContain("Not run while cooling: Radiator valve (heating), Tado (heating)");
+      // Every note about a thermostat is about one that is run.
+      expect(c.notes.join(" ")).not.toMatch(/^Tado:/m);
+    });
+
+    it("reads a valve as a valve, and leaves it out of the cooling season as well", () => {
+      const h = house(everything);
+      const inv = setClimateKind(h, EMPTY_INVENTORY, "climate.living_valve", "valve");
+      const c = climate(everything, { params: cooling, inv });
+      expect(c.notes).toContain("Not run while cooling: Radiator valve (valve), Tado (heating)");
+      expect(autoInput(climate(everything, { inv })).climate_entities).toContain("climate.living_valve");
+    });
+
+    it("runs an AC set to heating no more in the cooling season, and a heater set to AC again", () => {
+      const h = house(everything);
+      let inv = setClimateKind(h, EMPTY_INVENTORY, "climate.living_ac", "heating");
+      expect(climate(everything, { params: cooling, inv }).missing).toEqual(["An air conditioner that counts: heating and radiator valves are not run in the cooling season (Capabilities)"]);
+      inv = setClimateKind(h, setClimateKind(h, EMPTY_INVENTORY, "climate.living_valve", "ac"), "climate.living_ac", "heating");
+      expect(autoInput(climate(everything, { params: cooling, inv })).climate_entities).toEqual(["climate.living_valve"]);
+    });
+
+    it("says an air conditioner is missing when only heating counts in the cooling season", () => {
+      const c = climate([valve, schedule, away, sleep, toggle], { params: cooling });
+      expect(c).toMatchObject({ status: "missing", actionable: false, inputs: [] });
+      expect(c.missing).toEqual(["An air conditioner that counts: heating and radiator valves are not run in the cooling season (Capabilities)"]);
+    });
+
+    it("leaves a thermostat that doesn't count out of both, and does not call it skipped", () => {
+      const h = house(everything);
+      const inv = setCounts(h, EMPTY_INVENTORY, "climate.living_valve", false);
+      const c = climate(everything, { params: cooling, inv });
+      expect(c.notes).toContain("Not run while cooling: Tado (heating)");
+    });
+
+    it("sees a change of season as a change of the thermostats it controls", () => {
+      const installed = {
+        blueprints: BLUEPRINTS_THERE,
+        automations: { taxis_area_climate_living: { alias: "Living room – Area climate (Taxis)", path: CLIMATE.path, input: { ...defaults, climate_entities: ["climate.living_ac", "climate.living_valve"] } } },
+      };
+      const c = climate([ac, valve, schedule, away, sleep, toggle], { installed, params: cooling });
+      expect(c.status).toBe("out-of-date");
+      expect(c.reasons.join(" ")).toMatch(/Thermostats: climate.living_ac, climate.living_valve → climate.living_ac/);
+    });
+
+    it("offers presets of the AC itself", () => {
+      const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "season", "cooling"), { level: "house" }, "preset_comfort", "comfort");
+      const c = climate([ac, schedule, away, sleep, toggle], { params: p });
+      expect(c.notes).toContain("Living AC: presets for comfort, temperatures for the rest");
+      expect(autoInput(c).preset_comfort).toBe("comfort");
     });
   });
 
@@ -1601,7 +1707,7 @@ describe("bathroom fan", () => {
     it("takes the parameters, the most specific first, and the reference when one is chosen", () => {
       let p = setHouse(EMPTY_PARAMETERS, "fan_rate_on", 0.05);
       p = setParameter(p, { level: "area", id: "living_room" }, "fan_delta_on", 12);
-      p = setParameter(p, { level: "floor", id: "ground" }, "fan_abs_on", 75);
+      p = setParameter(p, { level: "type", id: "interior" }, "fan_abs_on", 75);
       p = setHouse(p, "fan_delta_off", 2);
       p = setHouse(p, "fan_flat_minutes", 15);
       p = setHouse(p, "fan_max_minutes", 45);

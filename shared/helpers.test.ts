@@ -562,3 +562,40 @@ describe("the mock house", () => {
     expect(h.floors.map((f) => f.id)).toEqual(expect.arrayContaining(["floor_2", "level_1"]));
   });
 });
+
+describe("a group whose members are gone", () => {
+  const spots = { id: "light.living_spots" };
+  const lamp = { id: "light.living_lamp" };
+
+  it("is updated with the lights the area counts, and says which members don't exist", () => {
+    const rows = plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", members: ["light.living_spots", "light.living_old"] }]);
+    const lights = row(rows, "lights")!;
+    expect(lights).toMatchObject({ status: "update-members", added: ["light.living_lamp"], removed: ["light.living_old"], missing: ["light.living_old"], actionable: true });
+    expect(lights.membersUnreadable).toBeUndefined();
+    expect(helperChangeInputs(lights)).toEqual([{ kind: "helper", op: "update", targetId: "light.living_all", fields: { entities: ["light.living_lamp", "light.living_spots"] } }]);
+  });
+
+  it("lists no missing members for a group that is only short of some", () => {
+    const rows = plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", members: ["light.living_spots"] }]);
+    expect(row(rows, "lights")).toMatchObject({ status: "update-members", added: ["light.living_lamp"], removed: [], missing: [] });
+  });
+
+  it("is updated even when it is unavailable and reports no members at all", () => {
+    const rows = plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", state: "unavailable" }]);
+    const lights = row(rows, "lights")!;
+    expect(lights).toMatchObject({ status: "update-members", added: ["light.living_lamp", "light.living_spots"], removed: [], membersUnreadable: true, actionable: true });
+    expect(helperChangeInputs(lights)).toEqual([{ kind: "helper", op: "update", targetId: "light.living_all", fields: { entities: ["light.living_lamp", "light.living_spots"] } }]);
+    expect(validateInput(helperChangeInputs(lights)[0])).toBeNull();
+  });
+
+  it("leaves a group that is up but reports no members alone, and one in YAML that can't be edited", () => {
+    expect(row(plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", state: "on" }]), "lights")).toMatchObject({ status: "in-place", membersUnknown: true, actionable: false });
+    expect(row(plan([spots, lamp, { id: "light.living_all", platform: "group", state: "unavailable" }]), "lights")).toMatchObject({ status: "in-place", membersUnknown: true, actionable: false });
+  });
+
+  it("is in place once its members are the lights the area counts", () => {
+    const rows = plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", members: ["light.living_spots", "light.living_lamp"] }]);
+    expect(row(rows, "lights")).toMatchObject({ status: "in-place", actionable: false });
+    expect(row(rows, "lights")!.missing).toBeUndefined();
+  });
+});

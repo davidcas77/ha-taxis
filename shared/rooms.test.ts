@@ -32,6 +32,10 @@ function entity(entityId: string, role: EntityItem["role"], state: string | null
     inRegistry: true,
     configEntryId: null,
     presetModes: [],
+    hvacModes: [],
+    restored: false,
+    lastChanged: null,
+    lastReported: null,
     platform: "x",
     ...extra,
   };

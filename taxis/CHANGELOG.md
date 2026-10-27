@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+- **Devices & entities.** One table of devices with their entities under them
+  replaces the separate Devices and Entities pages and the two tabs of an area. A
+  device is a row (name, manufacturer and model, number of entities, a summary of
+  their states, area, why it doesn't work) with a chevron; opened, its entities are
+  rows under it with the columns the entities table had (name, entity id, type,
+  Show as, state, area, Open). Entities with no device are under **No device**.
+  **Show entities** opens or folds all (remembered in this browser), chevrons
+  override it, and a search opens the devices that match. The kind chips filter
+  devices by their entities, the headers sort devices and the entities under each,
+  and a device's name and area change in place (as the changes the device editor
+  makes). **Group by type** switches to the flat table of entities in sections, as
+  before. An area's tab shows the devices in the area and, under their device
+  (marked "device in <area>"), the entities in the area whose device is elsewhere.
+- **Navigation.** Devices and Entities leave the top bar: they are
+  **Organize > Devices** and **Organize > Entities**, each with a **Table | Records**
+  switch (the table above across the page, or the list with properties beside it;
+  remembered per section). Old links (`#devices`, `#entities`, `#entities/<id>`,
+  and an area's Devices or Entities tab) are rewritten to the new ones. The entities
+  page's checkboxes, bulk bar, filters (area, manufacturer, label, disabled, hidden
+  and diagnostic) and the 400-device limit are all in the table.
+- **Climate kinds.** The capability **Thermostats** is now **Climate**. Each climate
+  entity is an **AC**, **Heating** or **Valve**: Taxis reads AC from the modes it
+  offers (`cool` or `heat_cool`) and Heating from one that only heats, and you can
+  switch any to another, kept in Taxis like the door/window choice. Area climate
+  runs an AC in both seasons, and Heating and Valve in the heating season only; the
+  Recipes cell says which it left out.
+- **Cooling temperatures.** New Climate parameters *Cool: comfort / eco / night and
+  sleep / away* (24, 27, 25, 29). In the cooling season the recipe uses them instead
+  of the heating ones, and *Lowest* and *Highest* no longer limit the target (they
+  would cap 27 at 24). The Area climate blueprint is now **version 2**: an installed
+  one shows as out of date until it is updated.
+- **Parameters.** Floors have no values: a value comes from the area, interior or
+  exterior, or the house. Floors are headings over their areas. What an older
+  version saved for floors is ignored and dropped on the next save. Values in the
+  tables now show a box, a pencil and a pointer, with "Click a value to change it."
+  above them (buttons everywhere show the pointer cursor).
+- **Naming.** Suggested names and ids each have a tick (accept) and a cross
+  (ignore) inside the field. Accepted fields turn green, ignored ones grey, and both
+  can be undone. **Accept every name suggestion**, **Accept every id suggestion**
+  and **Add N to changes** (one change per entity with both fields). Ignoring is per
+  field now; an older ignore counts for both.
+- **Changes.** **Apply** on a change applies just it (**Apply with N more** and "Also
+  applies: …" when it needs others, in the order Apply all uses). A rename's card
+  warns "This changes the entity id" and lists where it is used, what Taxis
+  rewrites and what to update by hand; the last needs **I understand** before Apply.
+- **Why.** Entities that are disabled, left over, unavailable or unknown say why
+  (an (i) beside the state, a **Why** column, the Health tab's list, device rows):
+  disabled, device disabled, left over, integration failed, group with missing
+  members, device offline, low battery, stale, unknown. It reads Home Assistant's
+  list of integrations with `config_entries/get`, a read added to what Taxis may send
+  (domain, title, state, reason and whether it is disabled are kept).
+- **Groups.** A light group is never counted as a light, and a helper or group is
+  listed under Helpers, with a "group of N" badge and the number of members missing.
+  A group helper that is unavailable reports no members (Home Assistant leaves them
+  out), and is told by its platform. The Helpers tab updates a group with members
+  that are gone to the lights the area counts, and Health has a **Broken groups**
+  check (warning).
+- **Tree and Overview.** An area with things to look at has a small amber or red dot
+  in the tree; **Show empty areas** (on to begin with) joins the other two toggles,
+  and all three are remembered. The Overview's live status is bigger (humidity was
+  already among them) and the cards under it denser.
+- **Mock demo.** An air conditioner with presets (Study), a heating-only valve
+  (Kitchen), groups with missing members (the Loft's own, two on the balcony), a
+  leftover entity, an integration that fails, an offline thermometer and a flat
+  battery.
+
 - **Recipe: Bathroom fan.** The fan of an area runs while the room is steamed up.
   It goes on when the humidity rises at least 0.03 %/s, is 10 % above a
   reference humidity sensor, or reaches 80 %; it goes off when the humidity is back

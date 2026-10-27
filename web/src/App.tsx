@@ -1,13 +1,13 @@
-import { AlertTriangle, CheckCircle2, Cpu, FolderTree, HeartPulse, Layers, List, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
-import { useCallback, useState, type ReactNode } from "react";
+import { AlertTriangle, CheckCircle2, FolderTree, HeartPulse, Layers, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { ChangesPage } from "./changes.tsx";
 import { HealthPage, HealthProvider, useHealthCounts } from "./health.tsx";
-import { DevicesPage, EntitiesPage } from "./lists.tsx";
 import { SettingsPage } from "./naming.tsx";
 import { OrganizePage } from "./organize.tsx";
 import { ParametersPage } from "./parameters.tsx";
 import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx";
+import { useStoredFlag } from "./storage.ts";
 import { TaxisProvider, useRoute, useTaxis, type Selection } from "./state.tsx";
 
 export function App() {
@@ -32,7 +32,11 @@ function Shell() {
   const health = useHealthCounts();
   const [route, go] = useRoute();
   const [query, setQuery] = useState("");
-  const [filters, setFilters] = useState<Filters>({ maintenance: false, disabled: false });
+  // Kept in this browser, like the folded floors.
+  const [maintenance, setMaintenance] = useStoredFlag("taxis:tree:show-maintenance");
+  const [disabled, setDisabled] = useStoredFlag("taxis:tree:show-disabled");
+  const [showEmpty, setShowEmpty] = useStoredFlag("taxis:tree:show-empty", true);
+  const filters = useMemo<Filters>(() => ({ maintenance, disabled }), [maintenance, disabled]);
 
   // Picking a space ends a search, so the right pane shows what was picked.
   const select = useCallback(
@@ -53,12 +57,6 @@ function Shell() {
         <nav aria-label="Pages" className="flex flex-wrap gap-1">
           <Tab active={route.page === "areas"} onClick={() => go(route.page === "areas" ? route : { page: "areas", sel: { kind: "home" }, tab: "overview" })} icon={<MapPin className="size-4" aria-hidden />}>
             Areas
-          </Tab>
-          <Tab active={route.page === "devices"} onClick={() => go({ page: "devices" })} icon={<Cpu className="size-4" aria-hidden />}>
-            Devices
-          </Tab>
-          <Tab active={route.page === "entities"} onClick={() => go({ page: "entities" })} icon={<List className="size-4" aria-hidden />}>
-            Entities
           </Tab>
           <Tab active={route.page === "organize"} onClick={() => go(route.page === "organize" ? route : { page: "organize", type: "labels", id: null })} icon={<FolderTree className="size-4" aria-hidden />}>
             Organize
@@ -144,10 +142,6 @@ function Shell() {
         <ParametersPage h={hierarchy} tab={route.tab} go={go} />
       ) : route.page === "health" ? (
         <HealthPage h={hierarchy} go={go} />
-      ) : route.page === "devices" ? (
-        <DevicesPage h={hierarchy} />
-      ) : route.page === "entities" ? (
-        <EntitiesPage h={hierarchy} />
       ) : route.page === "settings" ? (
         <SettingsPage h={hierarchy} go={go} />
       ) : route.page === "changes" ? (
@@ -168,13 +162,16 @@ function Shell() {
                 />
               </label>
             </div>
-            <SpaceTree h={hierarchy} sel={route.sel} select={select} filters={filters} query={query} />
+            <SpaceTree h={hierarchy} sel={route.sel} select={select} filters={filters} query={query} showEmpty={showEmpty} />
             <div className="flex flex-col gap-1 border-t border-line p-2.5 text-[12px] text-muted">
-              <Toggle id="show-maintenance" checked={filters.maintenance} onChange={(v) => setFilters((f) => ({ ...f, maintenance: v }))}>
+              <Toggle id="show-maintenance" checked={maintenance} onChange={setMaintenance}>
                 Show config and diagnostic entities
               </Toggle>
-              <Toggle id="show-disabled" checked={filters.disabled} onChange={(v) => setFilters((f) => ({ ...f, disabled: v }))}>
+              <Toggle id="show-disabled" checked={disabled} onChange={setDisabled}>
                 Show disabled and hidden entities
+              </Toggle>
+              <Toggle id="show-empty" checked={showEmpty} onChange={setShowEmpty}>
+                Show empty areas
               </Toggle>
             </div>
           </aside>

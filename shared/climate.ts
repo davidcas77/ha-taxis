@@ -20,9 +20,15 @@
 //            clear for less than eco-after-clear), or occupancy isn't needed
 //   eco      anything else
 //
-// The target is the decision's temperature, kept between the lowest and highest
-// allowed; frost protection (the window rule) isn't, it is below the lowest on
-// purpose. Then each thermostat is sent only what differs from what it shows now.
+// The target is the decision's temperature: in the heating season the heating one
+// (comfort, eco, night, sleep, away), kept between the lowest and highest
+// allowed; in the cooling season the cooling one (cool comfort, cool eco, cool
+// night, and cool away), which the lowest and highest don't limit, since the
+// cooling temperatures lie above the highest heating one. Sleep uses the cool
+// night temperature when cooling. Frost protection (the window rule) is neither:
+// it is below the lowest on purpose. Then each thermostat is sent only what
+// differs from what it shows now. Which thermostats the recipe runs depends on the
+// season (kindRunsIn): an AC in both, heating and radiator valves in heating only.
 
 // The house-level switches Taxis makes when the install has none to pick
 // (input booleans with no area), and the ends of the area ids the recipe adds.
@@ -48,6 +54,10 @@ export const PRECEDENCE: readonly (readonly [ClimateFlag, ClimateDecision])[] = 
 
 export type Season = "heating" | "cooling" | "off";
 
+// What kind of climate entity (shared/inventory.ts) the recipe runs in a season.
+// "off" runs everything, and does nothing.
+export const kindRunsIn = (kind: "ac" | "heating" | "valve", season: Season): boolean => kind === "ac" || season !== "cooling";
+
 export type ClimateParams = {
   season: Season;
   comfortTemp: number;
@@ -55,6 +65,11 @@ export type ClimateParams = {
   nightTemp: number;
   sleepTemp: number;
   awayTemp: number;
+  // The cooling season's: comfort, eco, night (also sleep) and away.
+  coolComfortTemp: number;
+  coolEcoTemp: number;
+  coolNightTemp: number;
+  coolAwayTemp: number;
   frostTemp: number;
   minTemp: number;
   maxTemp: number;
@@ -115,10 +130,12 @@ export function decide(f: ClimateFacts, p: ClimateParams): ClimateDecision {
 
 const NORMAL: readonly ClimateDecision[] = ["comfort", "eco", "night", "sleep", "away"];
 
-// The decision's temperature, kept between the lowest and the highest allowed;
-// null for a decision that sets none (idle, hold; window uses frost protection).
+// The decision's temperature for the season; when heating, kept between the lowest
+// and the highest allowed. Null for a decision that sets none (idle, hold; window
+// uses frost protection).
 export function targetTemperature(d: ClimateDecision, p: ClimateParams): number | null {
   if (!NORMAL.includes(d)) return null;
+  if (p.season === "cooling") return { comfort: p.coolComfortTemp, eco: p.coolEcoTemp, night: p.coolNightTemp, sleep: p.coolNightTemp, away: p.coolAwayTemp }[d as "comfort"];
   const base = { comfort: p.comfortTemp, eco: p.ecoTemp, night: p.nightTemp, sleep: p.sleepTemp, away: p.awayTemp }[d as "comfort"];
   return Math.min(Math.max(base, p.minTemp), p.maxTemp);
 }

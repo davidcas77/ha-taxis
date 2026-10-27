@@ -56,6 +56,15 @@ describe("read-only guard", () => {
     }
   });
 
+  it("reads the list of integrations, and no other command for config entries", () => {
+    expect(READ_COMMANDS.has("config_entries/get")).toBe(true);
+    for (const t of ["config_entries/delete", "config_entries/disable", "config_entries/update", "config_entries/reload", "config_entries/flow/progress", "config_entries/subentries/list"]) {
+      expect(READ_COMMANDS.has(t), t).toBe(false);
+      expect(() => assertReadCommand(t), t).toThrow(/isn.t a read/);
+      expect(WRITE_COMMANDS.has(t), t).toBe(false);
+    }
+  });
+
   it("write() sends only registry edits: no services, no removing devices or entities", async () => {
     const ha = fakeHa();
     const client = new HaSocket("ws://x", "good", ha.factory);
