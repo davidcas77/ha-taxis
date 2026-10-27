@@ -18,6 +18,7 @@ import type {
   Hierarchy,
   HierarchyResponse,
   InventoryResponse,
+  NamingIgnoresResponse,
   NamingResponse,
   ParametersResponse,
   ReferencesResponse,
@@ -33,7 +34,7 @@ import { changeStore } from "./changes/store.ts";
 import { aiLedger } from "./ai/ledger.ts";
 import { aiRoutes } from "./ai/routes.ts";
 import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
-import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateParameters } from "./settings.ts";
+import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateNamingIgnores, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { readRegistry } from "./ha/registry.ts";
@@ -46,6 +47,7 @@ import { addLogSecret, log, setLogSecret } from "./log.ts";
 import { buildHierarchy, type RawRegistry } from "./model/hierarchy.ts";
 import { findReferences, searchRelated, type Related } from "./references/find.ts";
 import { mapLimit, snapshot, type Snapshot } from "./references/snapshot.ts";
+import { closureFor } from "../shared/apply-plan.ts";
 
 try {
   process.loadEnvFile(".env");
@@ -256,6 +258,18 @@ app.put("/api/settings/groups", bodyLimit({ maxSize: 64 * 1024, onError: (c) => 
   return c.json<GroupsResponse>({ ok: true, groups: value });
 });
 
+// The naming suggestions the user ignored. Taxis only; Home Assistant doesn't
+// know about them.
+app.get("/api/settings/naming-ignores", (c) => c.json<NamingIgnoresResponse>({ ok: true, ignores: settings.namingIgnores() }));
+
+app.put("/api/settings/naming-ignores", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json<NamingIgnoresResponse>({ ok: false, error: "The ignored suggestions are too large." }, 413) }), async (c) => {
+  const checked = validateNamingIgnores(await c.req.json().catch(() => null));
+  if (!checked.ok) return c.json<NamingIgnoresResponse>({ ok: false, error: checked.error }, 400);
+  settings.saveNamingIgnores(checked.value);
+  log.info("Saved ignored naming suggestions");
+  return c.json<NamingIgnoresResponse>({ ok: true, ignores: checked.value });
+});
+
 // The capability inventory: what each area has, and the user's choices on top
 // of it. Taxis only; nothing in Home Assistant changes when they do.
 app.get("/api/settings/inventory", (c) => c.json<InventoryResponse>({ ok: true, inventory: settings.inventory() }));
@@ -397,12 +411,18 @@ app.post("/api/apply", async (c) => {
   }
   if (applying) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
   // The body is read before the lock is taken; check the lock again after it.
-  const body = (await c.req.json().catch(() => ({}))) as { allowWithoutBackup?: boolean; version?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { allowWithoutBackup?: boolean; version?: unknown; only?: unknown };
   if (applying) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
   // Apply exactly the list the user confirmed: if anything in it changed since
   // (another tab, another device, an edit folded into a change), they must look
   // again.
-  const pending = changes.list();
+  // With `only`, just those changes and the ones they need (shared/apply-plan.ts),
+  // through the same steps and in the same order as the whole list.
+  const everything = changes.list();
+  if (body.only !== undefined && (!Array.isArray(body.only) || body.only.length === 0 || body.only.length > 500 || !body.only.every((n) => Number.isInteger(n)))) {
+    return c.json<ApplyResponse>({ ok: false, error: "The changes to apply weren't readable." }, 400);
+  }
+  const pending = body.only === undefined ? everything : closureFor(everything, body.only as number[]);
   if (pending.length === 0) return c.json<ApplyResponse>({ ok: false, error: "There are no changes to apply." }, 400);
   if (body.version !== changes.version()) {
     return c.json<ApplyResponse>({ ok: false, error: "The list of changes changed since you looked at it. Check it again, then apply." }, 409);

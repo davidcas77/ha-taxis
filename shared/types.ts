@@ -37,6 +37,8 @@ export type EntityItem = {
   domain: string;
   role: EntityRole;
   deviceClass: string | null;
+  // The class the user chose in the registry (null: the integration's own).
+  deviceClassOverride: string | null;
   state: string | null;
   unit: string | null;
   icon: string | null;
@@ -73,6 +75,28 @@ export type EntityItem = {
   configEntryId: string | null;
   // A thermostat's presets (the preset_modes attribute), empty for anything else.
   presetModes: string[];
+  // A thermostat's modes (the hvac_modes attribute): off, heat, cool, heat_cool,
+  // auto… Empty for anything else, and while a thermostat reports none.
+  hvacModes: string[];
+  // Home Assistant says its integration no longer provides it (a state restored
+  // from before a rename or removal).
+  restored: boolean;
+  // When its state last changed, and when it was last reported (ISO), if known.
+  lastChanged: string | null;
+  lastReported: string | null;
+};
+
+// An integration or helper set up in Home Assistant (a config entry), as far as
+// Taxis reads it: no settings and no secrets, only whether it works.
+export type ConfigEntryItem = {
+  id: string;
+  domain: string;
+  title: string;
+  // loaded, setup_error, setup_retry, not_loaded, failed_unload, migration_error…
+  state: string;
+  // Why it did not load, in Home Assistant's words, when it says.
+  reason: string | null;
+  disabledBy: string | null;
 };
 
 export type DeviceItem = {
@@ -124,6 +148,8 @@ export type Hierarchy = {
   areas: Record<string, AreaNode>;
   devices: Record<string, DeviceItem>;
   entities: Record<string, EntityItem>;
+  // Empty when Home Assistant's list of integrations could not be read.
+  configEntries: Record<string, ConfigEntryItem>;
   labels: Record<string, LabelItem>;
   categories: Record<CategoryScope, CategoryItem[]>;
   // Entities that end up in no area at all (neither their own nor their device's).
@@ -144,13 +170,13 @@ export type Hierarchy = {
 // Changes: edits collected in Taxis, applied to Home Assistant together.
 // ---------------------------------------------------------------------------
 
-export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category" | "helper" | "blueprint" | "automation";
+export type ChangeKind = "entity" | "device" | "area" | "floor" | "label" | "category" | "helper" | "blueprint" | "automation" | "script";
 export type ChangeOp = "create" | "update" | "delete";
 
 // The fields each kind of change may set, named as Home Assistant names them.
 export type ChangeFields = {
   // new_entity_id renames the entity; Apply also updates what uses the old id.
-  entity: { new_entity_id?: string; name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null };
+  entity: { new_entity_id?: string; name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null; device_class?: string | null };
   device: { name_by_user?: string | null; area_id?: string | null; labels?: string[]; disabled_by?: "user" | null };
   area: { name?: string; floor_id?: string | null; icon?: string | null; labels?: string[]; temperature_entity_id?: string | null; humidity_entity_id?: string | null };
   floor: { name?: string; level?: number | null; icon?: string | null };
@@ -162,9 +188,11 @@ export type ChangeFields = {
   // timer (with its duration), an input boolean, a template binary sensor and a
   // schedule (with its comfort periods); the house's away and sleep switches are
   // input booleans with no area.
+  // A derivative sensor (a humidity's rate of change) has the one sensor it derives
+  // from as its only member, and goes in the area of that sensor.
   // Updated: a group's members, a timer's duration or a schedule's periods. Never deleted.
   helper: {
-    helper?: "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule";
+    helper?: "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule" | "derivative";
     group_type?: "light" | "binary_sensor" | "media_player";
     name?: string;
     entity_id?: string;
@@ -185,8 +213,14 @@ export type ChangeFields = {
   // deleted.
   automation: {
     automation_id?: string;
-    recipe?: "occupancy" | "motion_lights" | "media_off" | "area_climate";
+    recipe?: "occupancy" | "motion_lights" | "media_off" | "area_climate" | "bathroom_fan" | "exterior_lights" | "left_open" | "appliance_done";
     area_id?: string;
+    alias?: string;
+    use_blueprint?: { path: string; input: Record<string, unknown> };
+  };
+  // The one script Taxis makes, taxis_announce, from its blueprint. Never deleted.
+  script: {
+    script_id?: string;
     alias?: string;
     use_blueprint?: { path: string; input: Record<string, unknown> };
   };
@@ -259,6 +293,8 @@ export type ChangesResponse = { ok: true; changes: Change[]; version: string } |
 export type NamingResponse = { ok: true; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
 
 export type GroupsResponse = { ok: true; groups: import("./groups.ts").GroupSettings } | { ok: false; error: string };
+
+export type NamingIgnoresResponse = { ok: true; ignores: import("./naming-ignores.ts").NamingIgnores } | { ok: false; error: string };
 
 export type InventoryResponse = { ok: true; inventory: import("./inventory.ts").InventorySettings } | { ok: false; error: string };
 

@@ -1,10 +1,12 @@
 import { HOUSE_HELPER_IDS } from "./climate.ts";
+import { isSilentGroup } from "./entity-diagnosis.ts";
 import { canonicalId, effectiveSuffixes, HELPERS, hasPendingChange, helperChangeInputs, helperExclusions, planHelpers } from "./helpers.ts";
 import { deviceUses, emptyRange, ENTITY_DOMAINS, entityIdsIn, gatingConditions, serviceCalls, stateConditions, type ServiceCall } from "./health-scan.ts";
 import { areaInventory, CAPABILITY_LABEL, type AreaInventory, type InventoryRow, type InventorySettings } from "./inventory.ts";
 import { areaCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
-import type { ParameterSettings } from "./parameters.ts";
-import { automationIdFor, planRecipes, RECIPE_LABEL, runtimeIds, type RecipeInstalled } from "./recipes.ts";
+import { ANNOUNCE_SCRIPT_ID } from "./blueprints.ts";
+import { resolveIn, type ParameterSettings } from "./parameters.ts";
+import { automationIdFor, planAnnounce, planRecipes, RECIPE_LABEL, runtimeIds, type RecipeInstalled } from "./recipes.ts";
 import type { Change, ChangeInput, EntityItem, Hierarchy, RefKind } from "./types.ts";
 
 // Health: rule-based checks over what Taxis already reads, to find what is broken
@@ -18,6 +20,7 @@ import type { Change, ChangeInput, EntityItem, Hierarchy, RefKind } from "./type
 export const HEALTH_CHECKS = [
   { key: "references", label: "Missing references" },
   { key: "unavailable", label: "Not reporting" },
+  { key: "groups", label: "Broken groups" },
   { key: "activity", label: "Automation activity" },
   { key: "conditions", label: "Conditions" },
   { key: "switches", label: "One-way switches" },
@@ -90,8 +93,8 @@ export type HealthInput = {
 
 // Where Taxis can take the user to deal with a finding.
 export type HealthTarget =
-  | { page: "area"; areaId: string; tab: "overview" | "capabilities" | "entities" | "health" }
-  | { page: "parameters"; tab: "capabilities" | "helpers" | "recipes" }
+  | { page: "area"; areaId: string; tab: "overview" | "capabilities" | "devices-entities" | "health" }
+  | { page: "parameters"; tab: "capabilities" | "helpers" | "recipes" | "house" }
   | { page: "settings" };
 
 export type HealthFix = { kind: "changes"; label: string; inputs: ChangeInput[] } | { kind: "link"; label: string; to: HealthTarget };
@@ -206,7 +209,8 @@ type Ctx = {
 };
 
 const isTaxisItem = (i: HealthItem): boolean => {
-  if (i.kind !== "automation" || !i.id.startsWith("taxis_") || !isObject(i.config)) return false;
+  // The automations of the recipes, and the announce script.
+  if ((i.kind !== "automation" && !(i.kind === "script" && i.id === ANNOUNCE_SCRIPT_ID)) || !i.id.startsWith("taxis_") || !isObject(i.config)) return false;
   const ub = i.config.use_blueprint;
   return isObject(ub) && typeof ub.path === "string" && ub.path.startsWith("taxis/");
 };
@@ -779,11 +783,16 @@ function climateChecks(c: Ctx): HealthFinding[] {
 function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[] {
   const out: HealthFinding[] = [];
   const areaName = (id: string) => c.h.areas[id]?.name ?? id;
+  const planned = new Map<RecipeInstalled, ReturnType<typeof planRecipes>>();
+  const cells = (from: RecipeInstalled) => {
+    let list = planned.get(from);
+    if (!list) planned.set(from, (list = planRecipes(c.h, c.inventory, c.naming, c.parameters, from, c.changes)));
+    return list;
+  };
 
   // Recipes whose installed automation no longer matches what Taxis would write.
   if (installed) {
-    const cells = planRecipes(c.h, c.inventory, c.naming, c.parameters, installed, c.changes);
-    for (const cell of cells) {
+    for (const cell of cells(installed)) {
       if (cell.status === "out-of-date") {
         out.push({
           id: `setup:recipe:${cell.areaId}:${cell.recipe}`,
@@ -820,6 +829,44 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
           });
         }
       }
+    }
+  }
+
+  // The announce script, which is for the house; and the recipes that notify, which
+  // do it through Home Assistant's own list when no notify service is set.
+  if (installed) {
+    const announce = planAnnounce(c.h, c.inventory, c.naming, c.parameters, installed, c.changes);
+    const scriptThere = Boolean(installed.scripts[ANNOUNCE_SCRIPT_ID]);
+    if (announce.status === "out-of-date") {
+      out.push({
+        id: "setup:announce",
+        check: "setup",
+        severity: "warning",
+        title: "Announce is out of date",
+        detail: `${announce.reasons.join(". ")}.`,
+        fix: announce.actionable ? { kind: "changes", label: "Update the script", inputs: announce.inputs } : { kind: "link", label: "Open Recipes", to: { page: "parameters", tab: "recipes" } },
+      });
+    } else if (announce.status === "missing" && scriptThere) {
+      out.push({
+        id: "setup:announce",
+        check: "setup",
+        severity: "warning",
+        title: "Announce cannot work as it is set up",
+        detail: `The script script.${ANNOUNCE_SCRIPT_ID} is in Home Assistant, but Taxis would not write it now. Missing: ${announce.missing.join("; ")}.`,
+        fix: { kind: "link", label: "Open Recipes", to: { page: "parameters", tab: "recipes" } },
+      });
+    }
+    const targets = resolveIn(c.parameters, [{ level: "house" }], "notify_targets").value;
+    const asking = cells(installed).filter((cell) => (cell.recipe === "left_open" || cell.recipe === "appliance_done") && installed.automations[automationIdFor(cell.recipe, c.codes[cell.areaId].code)]);
+    if (asking.length > 0 && Array.isArray(targets) && targets.length === 0) {
+      out.push({
+        id: "setup:notify",
+        check: "setup",
+        severity: "info",
+        title: "No notify service is set for the recipes that notify",
+        detail: `${names([...new Set(asking.map((cell) => `${RECIPE_LABEL[cell.recipe]} in ${areaName(cell.areaId)}`))])} installed, and no notify service is set (Parameters, House), so their messages appear only in Home Assistant's own notifications. Taxis can't tell whether a service you add exists.`,
+        fix: { kind: "link", label: "Set the notify services", to: { page: "parameters", tab: "house" } },
+      });
     }
   }
 
@@ -909,6 +956,43 @@ function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFinding[]
         fix: { kind: "changes", label: better ? `Use ${better}` : "Clear the setting", inputs: [{ kind: "area", op: "update", targetId: area.id, fields: { [field]: better } }] },
       });
     }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// 2b: groups that point at entities that don't exist.
+// ---------------------------------------------------------------------------
+
+// A group helper whose members were renamed or removed. A group that is
+// unavailable reports no members at all, so one of those is told by its platform:
+// its members can't be listed, and it is unavailable because none of them is
+// there. An area's own group (<code>_all) gets its members fixed in one change.
+function groupChecks(c: Ctx): HealthFinding[] {
+  const plan = new Map(planHelpers(c.h, c.inventory, c.naming, c.changes).filter((r) => r.status === "update-members").map((r) => [r.canonicalId, r]));
+  const out: HealthFinding[] = [];
+  for (const e of Object.values(c.h.entities)) {
+    if (e.disabled) continue;
+    const missing = e.members.filter((m) => !c.h.entities[m]);
+    const silent = isSilentGroup(e);
+    if (missing.length === 0 && !silent) continue;
+    const row = plan.get(e.entityId);
+    // The fix is already in the change list.
+    if (row && hasPendingChange(row, c.changes)) continue;
+    const all = missing.length === e.members.length;
+    out.push({
+      id: `groups:${e.entityId}`,
+      check: "groups",
+      severity: "warning",
+      area: e.areaId ?? undefined,
+      entity: e.entityId,
+      entities: [e.entityId, ...missing],
+      title: silent ? `${e.name} is unavailable and its members can't be read` : `${e.name} points at ${plural(missing.length, "entity", "entities")} that ${missing.length === 1 ? "doesn't" : "don't"} exist`,
+      detail: silent
+        ? `Home Assistant reports no members for a group while it is unavailable, and a group goes unavailable when none of its members is, so they are probably all gone (renamed or removed). Open the helper and pick the entities that exist now.`
+        : `${names(missing)} ${missing.length === 1 ? "is" : "are"} not in Home Assistant${all ? ", so nothing in the group works" : `, so the group follows ${plural(e.members.length - missing.length, "entity", "entities")} only`}. A member that was renamed has to be replaced in the group; Home Assistant does not do it.${row ? ` Taxis can give it the ${plural(row.sources.length, "entity", "entities")} the area counts now.` : ""}`,
+      fix: row ? { kind: "changes", label: "Fix in Taxis: use the area's current ones", inputs: helperChangeInputs(row) } : { kind: "link", label: "Fix in Taxis", to: { page: "parameters", tab: "helpers" } },
+    });
   }
   return out;
 }
@@ -1036,6 +1120,7 @@ export function runHealth(input: HealthInput): HealthReport {
   const findings = [
     ...referenceChecks(c, w),
     ...unavailableChecks(c),
+    ...groupChecks(c),
     ...activityChecks(c),
     ...switchChecks(c, w),
     ...lightChecks(c),

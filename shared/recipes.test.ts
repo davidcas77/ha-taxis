@@ -2,15 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { BLUEPRINTS, blueprintForRecipe } from "./blueprints.ts";
-import { validateInput } from "./changes.ts";
+import { sameValue, validateInput } from "./changes.ts";
 import { RECIPE_HELPER_SUFFIX, helperExclusions, helperNameErrors } from "./helpers.ts";
-import { EMPTY_INVENTORY, setBed, setBedroom, setCounts, setLightRole, setRole, type InventorySettings } from "./inventory.ts";
+import { EMPTY_INVENTORY, resetEntity, setAppliance, setAreaType, setBed, setBedroom, setClimateKind, setCounts, setKind, setLightRole, setRole, type InventorySettings } from "./inventory.ts";
+import { closureFor } from "./apply-plan.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "./naming.ts";
-import { EMPTY_PARAMETERS, setParameter, type ParameterSettings } from "./parameters.ts";
+import { EMPTY_PARAMETERS, PARAM_DEF, setParameter, type ParameterSettings } from "./parameters.ts";
 import {
+  ANNOUNCE_ALIAS,
   NOTHING_INSTALLED,
   automationAlias,
   automationIdFor,
+  planAnnounce,
   planRecipes,
   recipeChangeInputs,
   runtimeIds,
@@ -82,6 +85,8 @@ const occupancyInput = {
   starts_entities: ["binary_sensor.living_pir"],
   holds_entities: [],
   bed_entities: [],
+  rate_entities: [],
+  rate_hold: 0,
   occupied_entity: "binary_sensor.living_occupied",
   hold_timer: "timer.living_hold",
   hold_minutes: 5,
@@ -100,6 +105,7 @@ describe("names", () => {
       switch: "input_boolean.living_paused",
       override: "timer.living_override",
       schedule: "schedule.living_climate",
+      rate: "sensor.living_humidity_rate",
     });
     expect(automationIdFor("motion_lights", "living")).toBe("taxis_motion_lights_living");
     expect(automationIdFor("media_off", "living")).toBe("taxis_media_off_living");
@@ -145,10 +151,18 @@ describe("occupancy: what is missing", () => {
       "living_room:motion_lights",
       "living_room:media_off",
       "living_room:area_climate",
+      "living_room:bathroom_fan",
+      "living_room:exterior_lights",
+      "living_room:left_open",
+      "living_room:appliance_done",
       "kitchen:occupancy",
       "kitchen:motion_lights",
       "kitchen:media_off",
       "kitchen:area_climate",
+      "kitchen:bathroom_fan",
+      "kitchen:exterior_lights",
+      "kitchen:left_open",
+      "kitchen:appliance_done",
     ]);
     expect(cell(cells, "occupancy", "living_room").status).toBe("ready");
     expect(cell(cells, "occupancy", "kitchen").status).toBe("missing");
@@ -205,7 +219,7 @@ describe("occupancy: ready", () => {
   it("passes the extended and sleep times from the parameters, with the occupied sensor the extended time is read from", () => {
     let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "extended_after", 45);
     p = setParameter(p, { level: "area", id: "living_room" }, "sleep_hold", 90);
-    p = setParameter(p, { level: "floor", id: "ground" }, "extended_hold", 20);
+    p = setParameter(p, { level: "type", id: "interior" }, "extended_hold", 20);
     expect(autoInput(cell(plan([motion, spots], { params: p }), "occupancy"))).toMatchObject({
       occupied_entity: "binary_sensor.living_occupied",
       extended_after: 45,
@@ -277,7 +291,7 @@ describe("occupancy: installed and out of date", () => {
   });
 
   it("is out of date, and says which inputs, when the automation was made from an older blueprint", () => {
-    const { bed_entities: _a, occupied_entity: _b, extended_after: _c, extended_hold: _d, sleep_hold: _e, ...old } = occupancyInput;
+    const { bed_entities: _a, occupied_entity: _b, extended_after: _c, extended_hold: _d, sleep_hold: _e, rate_entities: _f, rate_hold: _g, ...old } = occupancyInput;
     const older = { ...installed, blueprints: { [OCC.path]: 2 }, automations: { taxis_occupancy_living: { ...installedOccupancy, input: old } } };
     const c = cell(plan(specs, { installed: older }), "occupancy");
     expect(c.status).toBe("out-of-date");
@@ -287,7 +301,8 @@ describe("occupancy: installed and out of date", () => {
       "Extended hold timeout (min): none → 15",
       "Sleep hold timeout (min): none → 60",
       "Occupied sensor: none → binary_sensor.living_occupied",
-      "The blueprint is version 2, Taxis has 3",
+      "Shower holds occupied at (%/s): none → 0",
+      `The blueprint is version 2, Taxis has ${OCC.version}`,
     ]);
     expect(c.inputs.map((i) => `${i.kind}:${i.op}`)).toEqual(["blueprint:update", "automation:update"]);
   });
@@ -439,7 +454,7 @@ describe("motion lights", () => {
   it("uses the parameters, with the night window written as the blueprint takes it", () => {
     let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "night_start", "22:30");
     p = setParameter(p, { level: "area", id: "living_room" }, "night_brightness", 5);
-    p = setParameter(p, { level: "floor", id: "ground" }, "dim_before_off", 0);
+    p = setParameter(p, { level: "type", id: "interior" }, "dim_before_off", 0);
     p = setParameter(p, { level: "type", id: "interior" }, "day_kelvin", 3500);
     const input = (cell(plan([motion, spots, lights, ...runtime], { installed: occupancyThere, params: p }), "motion_lights").inputs[0].fields!.use_blueprint as { input: Record<string, unknown> }).input;
     expect(input).toMatchObject({ night_start: "22:30:00", night_brightness: 5, dim_before_off: 0, day_kelvin: 3500, night_end: "07:00:00" });
@@ -814,6 +829,9 @@ describe("area climate", () => {
   const climate = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { ...o, installed: { blueprints: BLUEPRINTS_THERE, ...o.installed } }), "area_climate");
   const kinds = (c: RecipeCell) => c.inputs.map((i) => `${i.kind}:${i.op}:${i.fields?.helper ?? i.fields?.path ?? i.fields?.automation_id ?? i.targetId}`);
 
+  // An air conditioner: it can cool, so it is an AC, and it has presets of its own.
+  const ac = { id: "climate.living_ac", state: "cool", name: "Living AC", attrs: { hvac_modes: ["off", "cool", "heat", "auto"], preset_modes: ["eco", "comfort", "boost"], temperature: 24 } };
+
   // What Taxis writes for the living room with the defaults and one valve.
   const defaults = {
     climate_entities: ["climate.living_valve"],
@@ -833,6 +851,10 @@ describe("area climate", () => {
     night_temp: 18,
     sleep_temp: 17.5,
     away_temp: 16,
+    cool_comfort_temp: 24,
+    cool_eco_temp: 27,
+    cool_night_temp: 25,
+    cool_away_temp: 29,
     frost_temp: 7,
     min_temp: 16,
     max_temp: 24,
@@ -953,6 +975,26 @@ describe("area climate", () => {
       expect(climate([valve], { changes: withAutomation })).toMatchObject({ status: "in-changes", actionable: false, inputs: [] });
     });
 
+    it("makes changes that depend on each other so the automation can be applied with only what it needs", () => {
+      const c = climate([valve], { installed: { blueprints: {} } });
+      const list: Change[] = c.inputs.map((i, n) => ({
+        id: n + 1,
+        kind: i.kind,
+        op: i.op,
+        targetId: i.targetId ?? `new:${i.kind}:${n + 1}`,
+        scope: null,
+        before: {},
+        after: i.fields ?? {},
+        createdAt: "now",
+      }));
+      const automation = list.find((x) => x.kind === "automation")!;
+      // The blueprint, the three helpers (two house switches, the pause switch) and the schedule.
+      expect(closureFor(list, [automation.id]).map((x) => `${x.kind}:${x.op}`)).toEqual(list.map((x) => `${x.kind}:${x.op}`));
+      // A helper alone needs nothing.
+      const away = list.find((x) => x.after.entity_id === "input_boolean.taxis_away")!;
+      expect(closureFor(list, [away.id]).map((x) => x.id)).toEqual([away.id]);
+    });
+
     it("a user's own schedule is used as it is, and Taxis says nothing is written into it", () => {
       const c = climate([valve, schedule, away, sleep, toggle]);
       expect(kinds(c)).toEqual(["automation:create:taxis_area_climate_living"]);
@@ -1068,15 +1110,21 @@ describe("area climate", () => {
     it("uses the parameters: temperatures, delays, season, switching, presets and the night window", () => {
       let p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "comfort_temp", 22);
       p = setParameter(p, { level: "area", id: "living_room" }, "eco_temp", 17.5);
-      p = setParameter(p, { level: "floor", id: "ground" }, "window_delay", 5);
+      p = setParameter(p, { level: "type", id: "interior" }, "window_delay", 5);
       p = setParameter(p, { level: "type", id: "interior" }, "restore_delay", 3);
       p = setParameter(p, { level: "house" }, "night_start", "22:30");
       p = setParameter(p, { level: "house" }, "season", "cooling");
       p = setParameter(p, { level: "house" }, "auto_hvac_on", true);
       p = setParameter(p, { level: "house" }, "preset_eco", "Eco");
       p = setParameter(p, { level: "house" }, "eco_after_clear", 45);
-      expect(autoInput(climate(inPlace, { params: p }))).toEqual({
+      p = setParameter(p, { level: "house" }, "cool_comfort_temp", 23.5);
+      p = setParameter(p, { level: "area", id: "living_room" }, "cool_away_temp", 30);
+      // Cooling runs the AC; the valve is left out.
+      expect(autoInput(climate([ac, ...inPlace], { params: p }))).toEqual({
         ...defaults,
+        climate_entities: ["climate.living_ac"],
+        cool_comfort_temp: 23.5,
+        cool_away_temp: 30,
         comfort_periods: "",
         comfort_temp: 22,
         eco_temp: 17.5,
@@ -1090,11 +1138,83 @@ describe("area climate", () => {
       });
     });
 
+    it("fills the cooling temperatures with their own defaults", () => {
+      const c = autoInput(climate([ac, schedule, away, sleep, toggle]));
+      expect([c.cool_comfort_temp, c.cool_eco_temp, c.cool_night_temp, c.cool_away_temp]).toEqual([24, 27, 25, 29]);
+      expect(validateInput(climate([ac, schedule, away, sleep, toggle]).inputs[0])).toBeNull();
+    });
+
     it("writes the comfort periods in one spelling", () => {
       const p = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "comfort_periods", "sat-sun 08:00-23:00;  mon-fri 17:00-22:00");
       expect(autoInput(climate(inPlace.filter((s) => s !== schedule), { params: p })).comfort_periods).toBe("Mon-Fri 17:00-22:00; Sat-Sun 08:00-23:00");
       const create = climate([valve], { params: p }).inputs.find((i) => i.fields?.helper === "schedule")!;
       expect(create.fields!.periods).toBe("Mon-Fri 17:00-22:00; Sat-Sun 08:00-23:00");
+    });
+  });
+
+  describe("the kinds of climate entity", () => {
+    const cooling = setParameter(EMPTY_PARAMETERS, { level: "house" }, "season", "cooling");
+    const everything = [ac, valve, tado, schedule, away, sleep, toggle];
+
+    it("runs every kind that counts in the heating season", () => {
+      const c = climate(everything);
+      expect(autoInput(c).climate_entities).toEqual(["climate.living_ac", "climate.living_tado", "climate.living_valve"]);
+      expect(c.notes.join(" ")).not.toMatch(/Not run while cooling/);
+    });
+
+    it("runs only the AC in the cooling season, and says what it left out", () => {
+      const c = climate(everything, { params: cooling });
+      expect(c.status).toBe("ready");
+      expect(autoInput(c).climate_entities).toEqual(["climate.living_ac"]);
+      expect(c.notes).toContain("Not run while cooling: Radiator valve (heating), Tado (heating)");
+      // Every note about a thermostat is about one that is run.
+      expect(c.notes.join(" ")).not.toMatch(/^Tado:/m);
+    });
+
+    it("reads a valve as a valve, and leaves it out of the cooling season as well", () => {
+      const h = house(everything);
+      const inv = setClimateKind(h, EMPTY_INVENTORY, "climate.living_valve", "valve");
+      const c = climate(everything, { params: cooling, inv });
+      expect(c.notes).toContain("Not run while cooling: Radiator valve (valve), Tado (heating)");
+      expect(autoInput(climate(everything, { inv })).climate_entities).toContain("climate.living_valve");
+    });
+
+    it("runs an AC set to heating no more in the cooling season, and a heater set to AC again", () => {
+      const h = house(everything);
+      let inv = setClimateKind(h, EMPTY_INVENTORY, "climate.living_ac", "heating");
+      expect(climate(everything, { params: cooling, inv }).missing).toEqual(["An air conditioner that counts: heating and radiator valves are not run in the cooling season (Capabilities)"]);
+      inv = setClimateKind(h, setClimateKind(h, EMPTY_INVENTORY, "climate.living_valve", "ac"), "climate.living_ac", "heating");
+      expect(autoInput(climate(everything, { params: cooling, inv })).climate_entities).toEqual(["climate.living_valve"]);
+    });
+
+    it("says an air conditioner is missing when only heating counts in the cooling season", () => {
+      const c = climate([valve, schedule, away, sleep, toggle], { params: cooling });
+      expect(c).toMatchObject({ status: "missing", actionable: false, inputs: [] });
+      expect(c.missing).toEqual(["An air conditioner that counts: heating and radiator valves are not run in the cooling season (Capabilities)"]);
+    });
+
+    it("leaves a thermostat that doesn't count out of both, and does not call it skipped", () => {
+      const h = house(everything);
+      const inv = setCounts(h, EMPTY_INVENTORY, "climate.living_valve", false);
+      const c = climate(everything, { params: cooling, inv });
+      expect(c.notes).toContain("Not run while cooling: Tado (heating)");
+    });
+
+    it("sees a change of season as a change of the thermostats it controls", () => {
+      const installed = {
+        blueprints: BLUEPRINTS_THERE,
+        automations: { taxis_area_climate_living: { alias: "Living room – Area climate (Taxis)", path: CLIMATE.path, input: { ...defaults, climate_entities: ["climate.living_ac", "climate.living_valve"] } } },
+      };
+      const c = climate([ac, valve, schedule, away, sleep, toggle], { installed, params: cooling });
+      expect(c.status).toBe("out-of-date");
+      expect(c.reasons.join(" ")).toMatch(/Thermostats: climate.living_ac, climate.living_valve → climate.living_ac/);
+    });
+
+    it("offers presets of the AC itself", () => {
+      const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "season", "cooling"), { level: "house" }, "preset_comfort", "comfort");
+      const c = climate([ac, schedule, away, sleep, toggle], { params: p });
+      expect(c.notes).toContain("Living AC: presets for comfort, temperatures for the rest");
+      expect(autoInput(c).preset_comfort).toBe("comfort");
     });
   });
 
@@ -1439,5 +1559,607 @@ describe("what the change list accepts", () => {
     expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 480, entities: ["light.a"] } })).toMatch(/only change its members, a timer's duration or a schedule's periods/);
     expect(validateInput({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 5 } })).toMatch(/wouldn't accept/);
     expect(validateInput({ kind: "helper", op: "delete", targetId: "timer.living_hold" })).toMatch(/not deleted/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The recipes after Area climate: Bathroom fan, Exterior lights, Left open,
+// Appliance done, and Announce for the house.
+// ---------------------------------------------------------------------------
+
+const ALL_THERE = {
+  ...BLUEPRINTS_THERE,
+  ...Object.fromEntries(BLUEPRINTS.map((b) => [b.path, b.version])),
+};
+const kindsOf = (c: RecipeCell) => c.inputs.map((i) => `${i.kind}:${i.op}:${i.fields?.helper ?? i.fields?.path ?? i.fields?.automation_id ?? i.fields?.script_id ?? i.targetId}`);
+const setHouse = (p: ParameterSettings, key: Parameters<typeof setParameter>[2], value: Parameters<typeof setParameter>[3]) => setParameter(p, { level: "house" }, key, value);
+
+describe("the humidity rate sensor", () => {
+  it("has its own id, which no helper name may take", () => {
+    expect(runtimeIds("living").rate).toBe("sensor.living_humidity_rate");
+    expect(RECIPE_HELPER_SUFFIX.humidityRate).toBe("humidity_rate");
+    expect(helperNameErrors({ humidity: "humidity_rate" }).humidity).toMatch(/humidity rate sensor/);
+    expect(helperNameErrors({ humidity: "humid" })).toEqual({});
+    // A binary sensor group may use the word: its domain differs.
+    expect(helperNameErrors({ motion: "humidity_rate" })).toEqual({});
+  });
+});
+
+describe("bathroom fan", () => {
+  const hygro = { id: "sensor.living_hygro", dc: "humidity", state: "55", attrs: { unit_of_measurement: "%" } };
+  const humidityMean = { id: "sensor.living_humidity", platform: "min_max", dc: "humidity", state: "55", entry: "HUM1" };
+  const extractor = { id: "fan.living_extractor" };
+  const plug = { id: "switch.living_fan_plug" };
+  const rateSensor = { id: "sensor.living_humidity_rate", platform: "derivative", state: "0", entry: "RATE1" };
+  const sleepSwitch = { id: "input_boolean.taxis_sleep", platform: "input_boolean", area: "" };
+  const fan = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { ...o, installed: { blueprints: ALL_THERE, ...o.installed } }), "bathroom_fan");
+  // Everything in place, so only the automation is left.
+  const inPlace = [hygro, humidityMean, extractor, rateSensor, toggle];
+
+  const defaults = {
+    humidity_entity: "sensor.living_humidity",
+    rate_entity: "sensor.living_humidity_rate",
+    fan_entities: ["fan.living_extractor"],
+    rate_on: 0.03,
+    delta_on: 10,
+    abs_on: 80,
+    delta_off: 3,
+    flat_rate: 0.001,
+    flat_minutes: 20,
+    max_minutes: 60,
+    suppress_in_sleep: false,
+    pause_switch: "input_boolean.living_paused",
+  };
+  const installedWith = (input: Record<string, unknown>) => ({
+    automations: { taxis_bathroom_fan_living: { alias: "Living room – Bathroom fan (Taxis)", path: "taxis/bathroom_fan.yaml", input } },
+  });
+
+  it("is named like the others", () => {
+    expect(automationIdFor("bathroom_fan", "living")).toBe("taxis_bathroom_fan_living");
+    expect(automationAlias("Living room", "bathroom_fan")).toBe("Living room – Bathroom fan (Taxis)");
+    expect(RECIPE_LABEL.bathroom_fan).toBe("Bathroom fan");
+  });
+
+  describe("what is missing", () => {
+    it("needs a humidity sensor that counts, and a fan", () => {
+      expect(fan([spots])).toMatchObject({
+        status: "missing",
+        missing: ["A humidity sensor that counts (Capabilities)", "A fan, or a switch marked as a fan (Capabilities)"],
+        actionable: false,
+        inputs: [],
+      });
+      const h = house([hygro]);
+      expect(fan([hygro, extractor], { inv: setCounts(h, EMPTY_INVENTORY, hygro.id, false) }).missing).toEqual(["A humidity sensor that counts (Capabilities)"]);
+    });
+
+    it("needs the humidity helper to be there, or already in the change list", () => {
+      expect(fan([hygro, extractor]).missing).toEqual(["The humidity helper (Helpers tab)"]);
+      const pending = [change({ kind: "helper", targetId: "sensor.living_humidity", after: { helper: "min_max", entity_id: "sensor.living_humidity" } })];
+      expect(fan([hygro, extractor], { changes: pending }).status).toBe("ready");
+      // ...or a group renamed to that id.
+      const renamed = [change({ kind: "entity", op: "update", targetId: "sensor.old", after: { new_entity_id: "sensor.living_humidity" } })];
+      expect(fan([hygro, extractor], { changes: renamed }).status).toBe("ready");
+    });
+
+    it("counts a fan by default, and a switch only when it is marked", () => {
+      const h = house([hygro, humidityMean, plug]);
+      expect(fan([hygro, humidityMean, plug]).missing).toEqual(["A fan, or a switch marked as a fan (Capabilities)"]);
+      const marked = setCounts(h, EMPTY_INVENTORY, plug.id, true);
+      const c = fan([hygro, humidityMean, plug], { inv: marked });
+      expect(c.status).toBe("ready");
+      expect(autoInput(c).fan_entities).toEqual(["switch.living_fan_plug"]);
+      // Both: sorted.
+      expect(autoInput(fan([hygro, humidityMean, plug, extractor], { inv: marked })).fan_entities).toEqual(["fan.living_extractor", "switch.living_fan_plug"]);
+    });
+
+    it("names an id something else sits on, for the rate sensor and the pause switch", () => {
+      expect(fan([hygro, humidityMean, extractor, { id: "sensor.living_humidity_rate", platform: "demo", name: "Old rate" }]).missing).toEqual(["sensor.living_humidity_rate is already used by “Old rate”"]);
+      // A derivative helper made in YAML isn't ours to edit.
+      expect(fan([hygro, humidityMean, extractor, { ...rateSensor, entry: undefined }]).missing[0]).toMatch(/sensor.living_humidity_rate is already used/);
+      expect(fan([hygro, humidityMean, extractor, { id: "input_boolean.living_paused", platform: "demo" }]).missing[0]).toMatch(/input_boolean.living_paused is already used/);
+    });
+
+    it("needs the reference sensor to exist, when one is chosen", () => {
+      const p = setHouse(EMPTY_PARAMETERS, "fan_reference", "sensor.hall_humidity");
+      expect(fan(inPlace, { params: p }).missing).toEqual(["The reference humidity sensor “sensor.hall_humidity” isn't in Home Assistant (Parameters, Bathroom fan)"]);
+      expect(fan([...inPlace, { id: "sensor.hall_humidity", dc: "humidity", area: "kitchen" }], { params: p }).status).toBe("ready");
+    });
+  });
+
+  describe("ready", () => {
+    it("makes the pause switch, the rate sensor and the automation, after the blueprint, in this order", () => {
+      const c = fan([hygro, humidityMean, extractor], { installed: { blueprints: {} } });
+      expect(c.status).toBe("ready");
+      expect(kindsOf(c)).toEqual([
+        "blueprint:create:taxis/bathroom_fan.yaml",
+        "helper:create:input_boolean",
+        "helper:create:derivative",
+        "automation:create:taxis_bathroom_fan_living",
+      ]);
+      expect(c.inputs.find((i) => i.fields?.helper === "derivative")!.fields).toEqual({
+        helper: "derivative",
+        name: "Living room humidity rate",
+        entity_id: "sensor.living_humidity_rate",
+        entities: ["sensor.living_humidity"],
+        area_id: "living_room",
+      });
+      for (const input of c.inputs) expect(validateInput(input), JSON.stringify(input).slice(0, 80)).toBeNull();
+    });
+
+    it("writes the thresholds of the design as inputs, with no reference and the pause switch", () => {
+      const c = fan(inPlace);
+      expect(autoInput(c)).toEqual(defaults);
+      // No reference: the note says what that means.
+      expect(c.notes[0]).toMatch(/No reference humidity sensor.*back near where it started/);
+    });
+
+    it("skips what is in place or already in the list", () => {
+      expect(kindsOf(fan(inPlace))).toEqual(["automation:create:taxis_bathroom_fan_living"]);
+      const pending = [
+        change({ kind: "helper", targetId: "sensor.living_humidity_rate", after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" } }),
+        change({ kind: "helper", targetId: "input_boolean.living_paused", after: { helper: "input_boolean", entity_id: "input_boolean.living_paused" } }),
+        change({ kind: "blueprint", targetId: "taxis/bathroom_fan.yaml", after: { path: "taxis/bathroom_fan.yaml", version: 1 } }),
+      ];
+      expect(kindsOf(fan([hygro, humidityMean, extractor], { changes: pending, installed: { blueprints: {} } }))).toEqual(["automation:create:taxis_bathroom_fan_living"]);
+      expect(kindsOf(fan([hygro, humidityMean, extractor], { installed: { blueprints: {} } }))[0]).toBe("blueprint:create:taxis/bathroom_fan.yaml");
+    });
+
+    it("takes the parameters, the most specific first, and the reference when one is chosen", () => {
+      let p = setHouse(EMPTY_PARAMETERS, "fan_rate_on", 0.05);
+      p = setParameter(p, { level: "area", id: "living_room" }, "fan_delta_on", 12);
+      p = setParameter(p, { level: "type", id: "interior" }, "fan_abs_on", 75);
+      p = setHouse(p, "fan_delta_off", 2);
+      p = setHouse(p, "fan_flat_minutes", 15);
+      p = setHouse(p, "fan_max_minutes", 45);
+      p = setHouse(p, "fan_reference", "sensor.hall_humidity");
+      const c = fan([...inPlace, { id: "sensor.hall_humidity", dc: "humidity", area: "kitchen" }], { params: p });
+      expect(autoInput(c)).toEqual({ ...defaults, rate_on: 0.05, delta_on: 12, abs_on: 75, delta_off: 2, flat_minutes: 15, max_minutes: 45, reference_entity: "sensor.hall_humidity" });
+      expect(c.notes.some((n) => /No reference/.test(n))).toBe(false);
+    });
+
+    it("with the sleep option, gives the sleep switch, and makes the house one when there is none", () => {
+      const p = setHouse(EMPTY_PARAMETERS, "fan_suppress_in_sleep", true);
+      const c = fan(inPlace, { params: p });
+      expect(autoInput(c)).toMatchObject({ suppress_in_sleep: true, sleep_entity: "input_boolean.taxis_sleep" });
+      const made = c.inputs.find((i) => i.fields?.entity_id === "input_boolean.taxis_sleep")!;
+      expect(made.fields).toEqual({ helper: "input_boolean", name: "Taxis sleep mode", entity_id: "input_boolean.taxis_sleep", icon: "mdi:sleep" });
+      // ...which has no area, and is not made again once it is there.
+      expect(validateInput(made)).toBeNull();
+      expect(fan([...inPlace, sleepSwitch], { params: p }).inputs.some((i) => i.fields?.entity_id === "input_boolean.taxis_sleep")).toBe(false);
+      // The user's own switch is used as it is; one that isn't there stops it.
+      const own = setHouse(p, "sleep_mode_entity", "input_boolean.night");
+      const withOwn = fan([...inPlace, { id: "input_boolean.night", platform: "input_boolean", area: "" }], { params: own });
+      expect(withOwn.inputs.some((i) => i.fields?.helper === "input_boolean")).toBe(false);
+      expect(autoInput(withOwn).sleep_entity).toBe("input_boolean.night");
+      expect(fan(inPlace, { params: own }).missing).toEqual(["The sleep mode switch “input_boolean.night” isn't in Home Assistant (Parameters, House)"]);
+    });
+
+    it("shares the house switches with Area climate: they are made once", () => {
+      const p = setHouse(EMPTY_PARAMETERS, "fan_suppress_in_sleep", true);
+      const cells = plan([...inPlace, { id: "climate.living_valve", state: "heat" }], { params: p, installed: { blueprints: ALL_THERE } });
+      const chosen = [cell(cells, "area_climate"), cell(cells, "bathroom_fan")];
+      const creates = recipeChangeInputs(chosen).filter((i) => i.fields?.entity_id === "input_boolean.taxis_sleep");
+      expect(creates).toHaveLength(1);
+    });
+  });
+
+  describe("installed and out of date", () => {
+    it("is installed when the automation, the rate sensor and the blueprint all match", () => {
+      expect(fan(inPlace, { installed: installedWith(defaults) })).toMatchObject({ status: "installed", inputs: [], actionable: false });
+    });
+
+    it("sees a changed parameter, a new fan, a reference and the sleep option", () => {
+      const p = setHouse(EMPTY_PARAMETERS, "fan_rate_on", 0.05);
+      expect(fan(inPlace, { installed: installedWith(defaults), params: p }).reasons).toEqual(["Fan on: rise rate (%/s): 0.03 → 0.05"]);
+      expect(fan([...inPlace, plug], { installed: installedWith(defaults), inv: setCounts(house([...inPlace, plug]), EMPTY_INVENTORY, plug.id, true) }).reasons).toEqual([
+        "Fan: fan.living_extractor → fan.living_extractor, switch.living_fan_plug",
+      ]);
+      const q = setHouse(EMPTY_PARAMETERS, "fan_reference", "sensor.hall_humidity");
+      expect(fan([...inPlace, { id: "sensor.hall_humidity", dc: "humidity", area: "kitchen" }], { installed: installedWith(defaults), params: q }).reasons).toEqual(["Reference humidity sensor: none → sensor.hall_humidity"]);
+      const s = setHouse(EMPTY_PARAMETERS, "fan_suppress_in_sleep", true);
+      expect(fan([...inPlace, sleepSwitch], { installed: installedWith(defaults), params: s }).reasons).toEqual(["Not while the house sleeps: false → true", "Sleep switch: none → input_boolean.taxis_sleep"]);
+    });
+
+    it("says the rate sensor is gone, and offers to make it again", () => {
+      const c = fan([hygro, humidityMean, extractor, toggle], { installed: installedWith(defaults) });
+      expect(c.status).toBe("out-of-date");
+      expect(c.reasons).toEqual(["sensor.living_humidity_rate is missing"]);
+      expect(kindsOf(c)).toEqual(["helper:create:derivative", "automation:update:taxis_bathroom_fan_living"]);
+      // Once the list makes it, nothing is missing.
+      const pending = [change({ kind: "helper", targetId: "sensor.living_humidity_rate", after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" } })];
+      expect(fan([hygro, humidityMean, extractor, toggle], { installed: installedWith(defaults), changes: pending }).status).toBe("installed");
+    });
+
+    it("is out of date for an older blueprint, a missing pause switch and another name", () => {
+      expect(fan(inPlace, { installed: { ...installedWith(defaults), blueprints: { "taxis/bathroom_fan.yaml": 0 } } }).reasons).toEqual(["The blueprint is version 0, Taxis has 1"]);
+      expect(fan(inPlace.filter((e) => e !== toggle), { installed: installedWith(defaults) }).reasons).toEqual(["input_boolean.living_paused is missing"]);
+      expect(fan(inPlace, { installed: { automations: { taxis_bathroom_fan_living: { alias: "Lounge – Bathroom fan (Taxis)", path: "taxis/bathroom_fan.yaml", input: defaults } } } }).reasons).toEqual([
+        "Name: Lounge – Bathroom fan (Taxis) → Living room – Bathroom fan (Taxis)",
+      ]);
+    });
+  });
+});
+
+describe("occupancy with a humidity rate", () => {
+  const hygro = { id: "sensor.living_hygro", dc: "humidity", state: "55" };
+  const rateSensor = { id: "sensor.living_humidity_rate", platform: "derivative", state: "0", entry: "RATE1" };
+  const hold = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { ...o, installed: { blueprints: ALL_THERE, ...o.installed } }), "occupancy");
+
+  it("holds the area on a fast rise only when the rate sensor is there, and the rise is set", () => {
+    // Off by default: 0.
+    expect(autoInput(hold([motion, spots]))).toMatchObject({ rate_entities: [], rate_hold: 0 });
+    const p = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "humidity_hold_rate", 0.02);
+    expect(autoInput(hold([motion, spots], { params: p }))).toMatchObject({ rate_entities: [], rate_hold: 0.02 });
+    expect(autoInput(hold([motion, spots, hygro, rateSensor], { params: p }))).toMatchObject({ rate_entities: ["sensor.living_humidity_rate"], rate_hold: 0.02 });
+    // The rate sensor the list is about to make counts, so the two can be added together.
+    const pending = [change({ kind: "helper", targetId: "sensor.living_humidity_rate", after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" } })];
+    expect(autoInput(hold([motion, spots], { params: p, changes: pending })).rate_entities).toEqual(["sensor.living_humidity_rate"]);
+    // A sensor of that name that isn't a derivative helper is not used.
+    expect(autoInput(hold([motion, spots, { id: "sensor.living_humidity_rate", platform: "demo" }], { params: p })).rate_entities).toEqual([]);
+  });
+
+  it("is a parameter on the Occupancy tab of every level, 0 (off) at the start", () => {
+    expect(PARAM_DEF.humidity_hold_rate).toMatchObject({ tab: "occupancy", kind: "number", default: 0, unit: "%/s" });
+    expect(PARAM_DEF.humidity_hold_rate.areaOnly).toBeUndefined();
+  });
+
+  it("makes an installed Occupancy out of date when the rise or the sensor changes", () => {
+    const installedAuto = (input: Record<string, unknown>) => ({ automations: { taxis_occupancy_living: { ...installedOccupancy, input } } });
+    expect(hold([motion, spots, ...runtime], { installed: installedAuto(occupancyInput) }).status).toBe("installed");
+    const p = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "humidity_hold_rate", 0.02);
+    expect(hold([motion, spots, ...runtime], { installed: installedAuto(occupancyInput), params: p }).reasons).toEqual(["Shower holds occupied at (%/s): 0 → 0.02"]);
+    expect(hold([motion, spots, ...runtime, rateSensor], { installed: installedAuto(occupancyInput) }).reasons).toEqual(["Humidity rate sensor: none → sensor.living_humidity_rate"]);
+  });
+});
+
+describe("exterior lights", () => {
+  const exterior = setAreaType(EMPTY_INVENTORY, "living_room", "exterior");
+  const camera = { id: "binary_sensor.living_camera_motion", dc: "motion" };
+  const alex = { id: "person.alex", area: "" };
+  const sam = { id: "person.sam", area: "" };
+  const light = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { inv: exterior, ...o, installed: { blueprints: ALL_THERE, ...o.installed } }), "exterior_lights");
+  const defaults = {
+    light_target: "light.living_all",
+    motion_entities: [],
+    person_entities: [],
+    sunset_offset: 0,
+    clock_minutes: 120,
+    override_timer: "timer.living_override",
+    override_minutes: 0,
+    pause_switch: "input_boolean.living_paused",
+  };
+
+  it("is named like the others", () => {
+    expect(automationIdFor("exterior_lights", "living")).toBe("taxis_exterior_lights_living");
+    expect(RECIPE_LABEL.exterior_lights).toBe("Exterior lights");
+  });
+
+  it("is for areas whose type is exterior, and needs the light group", () => {
+    expect(cell(plan([lights, spots]), "exterior_lights")).toMatchObject({ status: "missing", missing: ["An exterior area (Capabilities, Type)"] });
+    expect(light([spots]).missing).toEqual(["A light group (make it on the Helpers tab)"]);
+    expect(light([lights, spots]).status).toBe("ready");
+    const pending = [change({ kind: "helper", targetId: "light.living_all", after: { helper: "group", entity_id: "light.living_all" } })];
+    expect(light([spots], { changes: pending }).status).toBe("ready");
+    expect(light([{ ...lights, platform: "demo" }]).missing[0]).toMatch(/light.living_all is already used/);
+    // Occupancy is not needed: an outdoor area has no occupied sensor of its own.
+    expect(light([lights, spots]).missing).toEqual([]);
+  });
+
+  it("makes the pause switch, the override timer and the automation, and takes the counted sensors and every person", () => {
+    const c = light([lights, spots, motion, camera, alex, sam]);
+    expect(kindsOf(c)).toEqual(["helper:create:input_boolean", "helper:create:timer", "automation:create:taxis_exterior_lights_living"]);
+    // Motion sensors and presence sensors that count, sorted; people are every person in the house.
+    expect(autoInput(c)).toEqual({ ...defaults, motion_entities: ["binary_sensor.living_camera_motion", "binary_sensor.living_pir"], person_entities: ["person.alex", "person.sam"] });
+    expect(kindsOf(light([lights, spots], { installed: { blueprints: {} } }))[0]).toBe("blueprint:create:taxis/exterior_lights.yaml");
+    expect(c.inputs.find((i) => i.fields?.helper === "timer")!.fields).toEqual({ helper: "timer", name: "Living room override", entity_id: "timer.living_override", area_id: "living_room", duration: 3600 });
+    // A camera's sensor the user doesn't want to count stays out.
+    const h = house([lights, spots, motion, camera]);
+    const uncounted = setCounts(h, exterior, camera.id, false);
+    expect(autoInput(light([lights, spots, motion, camera], { inv: uncounted })).motion_entities).toEqual(["binary_sensor.living_pir"]);
+    for (const input of c.inputs) expect(validateInput(input), JSON.stringify(input).slice(0, 80)).toBeNull();
+  });
+
+  it("gives the sunset offset in seconds and the clock, and the override time the other lights use", () => {
+    let p = setParameter(EMPTY_PARAMETERS, { level: "type", id: "exterior" }, "exterior_sunset_offset", -30);
+    p = setParameter(p, { level: "area", id: "living_room" }, "exterior_clock", 90);
+    p = setHouse(p, "override_duration", 20);
+    const c = light([lights, spots], { params: p });
+    expect(autoInput(c)).toMatchObject({ sunset_offset: -1800, clock_minutes: 90, override_minutes: 20 });
+    expect(c.inputs.find((i) => i.fields?.helper === "timer")!.fields!.duration).toBe(1200);
+  });
+
+  it("reuses the override timer and the pause switch that are there (Motion lights makes the same ones)", () => {
+    expect(kindsOf(light([lights, spots, toggle, overrideTimer], { installed: { timers: { "timer.living_override": 3600 } } }))).toEqual(["automation:create:taxis_exterior_lights_living"]);
+    // A timer that is not as long as the setting is brought to it.
+    const p = setHouse(EMPTY_PARAMETERS, "override_duration", 30);
+    expect(kindsOf(light([lights, spots, toggle, overrideTimer], { params: p, installed: { timers: { "timer.living_override": 3600 } } }))).toEqual(["helper:update:timer.living_override", "automation:create:taxis_exterior_lights_living"]);
+  });
+
+  it("notes when there is nothing to keep the lights on, and when Motion lights is installed too", () => {
+    expect(light([lights, spots]).notes).toEqual([
+      "No motion sensor counts here (a camera's counts when you say so), so only sunset and a person arriving keep the lights on",
+      "Home Assistant has no person, so arriving home turns nothing on",
+    ]);
+    const both = light([lights, spots, motion, alex], { installed: { automations: { taxis_motion_lights_living: { alias: "x", path: "taxis/motion_lights.yaml", input: {} } } } });
+    expect(both.notes).toEqual(["Motion lights is installed for this area too, and both switch its lights: one of them is enough"]);
+  });
+
+  it("lists the other automations that control the lights", () => {
+    const controllers = { "light.living_all": [{ entityId: "automation.sunset", name: "Sunset" }] };
+    expect(light([lights, spots], { installed: { controllers } }).controlledBy).toEqual([{ entityId: "automation.sunset", name: "Sunset" }]);
+  });
+
+  it("is installed when it matches, and out of date when a person, a sensor or the clock changes", () => {
+    const input = { ...defaults, motion_entities: ["binary_sensor.living_pir"], person_entities: ["person.alex"] };
+    const there = { automations: { taxis_exterior_lights_living: { alias: "Living room – Exterior lights (Taxis)", path: "taxis/exterior_lights.yaml", input } }, timers: { "timer.living_override": 3600 } };
+    const specs = [lights, spots, motion, alex, toggle, overrideTimer];
+    expect(light(specs, { installed: there })).toMatchObject({ status: "installed", inputs: [] });
+    expect(light([...specs, sam], { installed: there }).reasons).toEqual(["People: person.alex → person.alex, person.sam"]);
+    expect(light(specs, { installed: there, params: setHouse(EMPTY_PARAMETERS, "exterior_clock", 60) }).reasons).toEqual(["Stay on for (min): 120 → 60"]);
+    expect(light(specs, { installed: there, params: setHouse(EMPTY_PARAMETERS, "exterior_sunset_offset", 15) }).reasons).toEqual(["Sunset offset (s): 0 → 900"]);
+    expect(light(specs.filter((e) => e !== overrideTimer), { installed: { ...there, timers: {} } }).reasons).toEqual(["timer.living_override is missing"]);
+  });
+});
+
+describe("left open", () => {
+  const door = { id: "binary_sensor.living_front_door", dc: "door" };
+  const win = { id: "binary_sensor.living_window", dc: "window" };
+  const open = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { ...o, installed: { blueprints: ALL_THERE, ...o.installed } }), "left_open");
+  const defaults = {
+    door_entities: ["binary_sensor.living_front_door"],
+    window_entities: ["binary_sensor.living_window"],
+    door_minutes: 10,
+    window_minutes: 30,
+    repeat_minutes: 0,
+    notify_targets: [],
+    area_name: "Living room",
+    pause_switch: "input_boolean.living_paused",
+  };
+
+  it("needs a door or a window that counts", () => {
+    expect(open([spots])).toMatchObject({ status: "missing", missing: ["A door or window that counts (Capabilities)"] });
+    const h = house([door]);
+    expect(open([door], { inv: setCounts(h, EMPTY_INVENTORY, door.id, false) }).status).toBe("missing");
+    expect(open([door]).status).toBe("ready");
+    expect(open([win]).status).toBe("ready");
+  });
+
+  it("watches each sensor itself, doors and windows apart, and names the area", () => {
+    const c = open([door, win]);
+    expect(kindsOf(c)).toEqual(["helper:create:input_boolean", "automation:create:taxis_left_open_living"]);
+    expect(autoInput(c)).toEqual(defaults);
+    // An "opening" sensor is a window until the user says it is a door.
+    const opening = { id: "binary_sensor.living_skylight", dc: "opening" };
+    expect(autoInput(open([opening])).window_entities).toEqual(["binary_sensor.living_skylight"]);
+    expect(autoInput(open([opening], { inv: setKind(house([opening]), EMPTY_INVENTORY, opening.id, "door") })).door_entities).toEqual(["binary_sensor.living_skylight"]);
+    for (const input of c.inputs) expect(validateInput(input), JSON.stringify(input).slice(0, 80)).toBeNull();
+  });
+
+  it("takes the times, the repeat and the notify services from the parameters; the services are the house's", () => {
+    let p = setHouse(EMPTY_PARAMETERS, "door_open_after", 5);
+    p = setParameter(p, { level: "area", id: "living_room" }, "window_open_after", 45);
+    p = setHouse(p, "left_open_repeat", 15);
+    p = setHouse(p, "notify_targets", ["notify.mobile_app_phone", "notify.family"]);
+    const c = open([door, win], { params: p });
+    expect(autoInput(c)).toMatchObject({ door_minutes: 5, window_minutes: 45, repeat_minutes: 15, notify_targets: ["notify.mobile_app_phone", "notify.family"] });
+    expect(c.notes).toEqual([]);
+    // An area can't have services of its own: the house's are used.
+    const q = setParameter(setHouse(EMPTY_PARAMETERS, "notify_targets", ["notify.family"]), { level: "area", id: "living_room" }, "notify_targets", ["notify.other"]);
+    expect(autoInput(open([door], { params: q })).notify_targets).toEqual(["notify.family"]);
+  });
+
+  it("says where the message goes when no service is set", () => {
+    expect(open([door]).notes).toEqual(["No notify services are set (Parameters, House), so the message appears in Home Assistant's notifications"]);
+  });
+
+  it("is installed when it matches, and out of date when the services or a time change", () => {
+    const there = { automations: { taxis_left_open_living: { alias: "Living room – Left open (Taxis)", path: "taxis/left_open.yaml", input: defaults } } };
+    expect(open([door, win, toggle], { installed: there })).toMatchObject({ status: "installed", inputs: [] });
+    const p = setHouse(EMPTY_PARAMETERS, "notify_targets", ["notify.phone"]);
+    expect(open([door, win, toggle], { installed: there, params: p }).reasons).toEqual(["Notify services: none → notify.phone"]);
+    expect(open([door, win, toggle], { installed: there, params: setHouse(EMPTY_PARAMETERS, "left_open_repeat", 10) }).reasons).toEqual(["Repeat every (min): 0 → 10"]);
+    expect(open([door, toggle], { installed: there }).reasons).toEqual(["Windows: binary_sensor.living_window → none"]);
+  });
+});
+
+describe("appliance done", () => {
+  const washer = { id: "sensor.living_washer_power", dc: "power", state: "0.4", attrs: { unit_of_measurement: "W" } };
+  const dryer = { id: "sensor.living_dryer_power", dc: "power", state: "0.2", attrs: { unit_of_measurement: "W" } };
+  const done = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { ...o, installed: { blueprints: ALL_THERE, ...o.installed } }), "appliance_done");
+  const marked = (...ids: string[]) => ids.reduce((s, id) => setAppliance(s, id, true), EMPTY_INVENTORY);
+  const defaults = {
+    power_entities: ["sensor.living_washer_power"],
+    run_watts: 10,
+    run_minutes: 2,
+    idle_watts: 5,
+    idle_minutes: 3,
+    notify_targets: [],
+    area_name: "Living room",
+    pause_switch: "input_boolean.living_paused",
+  };
+
+  it("needs a power sensor that counts and is marked as an appliance", () => {
+    expect(done([washer])).toMatchObject({ status: "missing", missing: ["A power sensor that counts and is marked as an appliance (Capabilities)"] });
+    expect(done([washer], { inv: marked(washer.id) }).status).toBe("ready");
+    const h = house([washer]);
+    expect(done([washer], { inv: setCounts(h, marked(washer.id), washer.id, false) }).status).toBe("missing");
+    // The mark is kept in the inventory, per sensor, and goes when it is reset.
+    expect(resetEntity(marked(washer.id), washer.id)).toEqual(EMPTY_INVENTORY);
+  });
+
+  it("gives every appliance of the area to one automation, and the levels from the parameters", () => {
+    const c = done([washer, dryer], { inv: marked(washer.id, dryer.id) });
+    expect(kindsOf(c)).toEqual(["helper:create:input_boolean", "automation:create:taxis_appliance_done_living"]);
+    expect(autoInput(c)).toEqual({ ...defaults, power_entities: ["sensor.living_dryer_power", "sensor.living_washer_power"] });
+    let p = setHouse(EMPTY_PARAMETERS, "appliance_run_watts", 20);
+    p = setParameter(p, { level: "area", id: "living_room" }, "appliance_idle_watts", 2);
+    p = setHouse(p, "appliance_run_minutes", 5);
+    p = setHouse(p, "appliance_idle_minutes", 10);
+    p = setHouse(p, "notify_targets", ["notify.phone"]);
+    expect(autoInput(done([washer], { inv: marked(washer.id), params: p }))).toMatchObject({ run_watts: 20, idle_watts: 2, run_minutes: 5, idle_minutes: 10, notify_targets: ["notify.phone"] });
+    for (const input of c.inputs) expect(validateInput(input), JSON.stringify(input).slice(0, 80)).toBeNull();
+  });
+
+  it("refuses a running level that is not above the done level", () => {
+    const p = setHouse(setHouse(EMPTY_PARAMETERS, "appliance_run_watts", 5), "appliance_idle_watts", 5);
+    expect(done([washer], { inv: marked(washer.id), params: p }).missing).toEqual(["Running above is not higher than Done below (Parameters, Safety)"]);
+  });
+
+  it("notes a sensor in kW, and where the message goes", () => {
+    const kw = { ...washer, attrs: { unit_of_measurement: "kW" } };
+    expect(done([kw], { inv: marked(kw.id) }).notes).toEqual([
+      "No notify services are set (Parameters, House), so the message appears in Home Assistant's notifications",
+      "A sensor reports kW; the levels are in watts, so set them in kW or use a sensor in W",
+    ]);
+  });
+
+  it("is installed when it matches, and out of date when an appliance is added or the levels change", () => {
+    const there = { automations: { taxis_appliance_done_living: { alias: "Living room – Appliance done (Taxis)", path: "taxis/appliance_done.yaml", input: defaults } } };
+    expect(done([washer, toggle], { inv: marked(washer.id), installed: there })).toMatchObject({ status: "installed", inputs: [] });
+    expect(done([washer, dryer, toggle], { inv: marked(washer.id, dryer.id), installed: there }).reasons).toEqual(["Appliances: sensor.living_washer_power → sensor.living_dryer_power, sensor.living_washer_power"]);
+    expect(done([washer, toggle], { inv: marked(washer.id), installed: there, params: setHouse(EMPTY_PARAMETERS, "appliance_idle_minutes", 6) }).reasons).toEqual(["Done for (min): 3 → 6"]);
+  });
+});
+
+describe("announce", () => {
+  const kitchenSpeaker = { id: "media_player.kitchen_speaker", area: "kitchen", state: "idle" };
+  const livingSpeaker = { id: "media_player.living_speaker", state: "idle" };
+  const tts = { id: "tts.cloud", area: "", state: "unknown", platform: "tts" };
+  const occupancyFor = (code: string, area: string) => [
+    { id: `timer.${code}_hold`, platform: "timer", state: "idle", area },
+    { id: `input_boolean.${code}_paused`, platform: "input_boolean", state: "off", area },
+    { id: `binary_sensor.${code}_occupied`, platform: "template", dc: "occupancy", entry: `OCC_${code}`, area },
+  ];
+  const installedOcc = (...codes: string[]) => Object.fromEntries(codes.map((c) => [`taxis_occupancy_${c}`, { alias: "x", path: OCC.path, input: occupancyInput }]));
+  const tellMe = (specs: Spec[], o: Opts = {}) =>
+    planAnnounce(house(specs), o.inv ?? EMPTY_INVENTORY, o.naming ?? naming, o.params ?? EMPTY_PARAMETERS, { ...NOTHING_INSTALLED, blueprints: ALL_THERE, ...o.installed }, o.changes ?? []);
+  const ready = setHouse(EMPTY_PARAMETERS, "tts_entity", "tts.cloud");
+  const areas = [
+    { occupied: "binary_sensor.kitchen_occupied", paused: "input_boolean.kitchen_paused", bed: [], speakers: ["media_player.kitchen_speaker"] },
+    { occupied: "binary_sensor.living_occupied", paused: "input_boolean.living_paused", bed: [], speakers: ["media_player.living_speaker"] },
+  ];
+  const specs = [kitchenSpeaker, livingSpeaker, tts, ...occupancyFor("kitchen", "kitchen"), ...occupancyFor("living", "living_room")];
+  const scriptInput = (c: RecipeCell) => (c.inputs.find((i) => i.kind === "script")!.fields!.use_blueprint as { input: { areas: Record<string, unknown>[]; tts_entity: string; default_volume: number } }).input;
+
+  it("is one script for the house, planned apart from the areas", () => {
+    expect(RECIPE_LABEL.announce).toBe("Announce");
+    expect(ANNOUNCE_ALIAS).toBe("Announce (Taxis)");
+    const c = tellMe(specs, { params: ready, installed: { automations: installedOcc("kitchen", "living") } });
+    expect(c).toMatchObject({ areaId: "", areaName: "House", recipe: "announce", status: "ready", actionable: true, controlledBy: [] });
+    // Not among the cells of the areas.
+    expect(plan(specs).some((x) => (x.recipe as string) === "announce")).toBe(false);
+  });
+
+  it("needs a text-to-speech entity that exists, and a speaker in an area with Occupancy", () => {
+    expect(tellMe([livingSpeaker])).toMatchObject({
+      status: "missing",
+      missing: ["A text-to-speech entity (Parameters, House)", "A speaker that counts in an area that has Occupancy (Capabilities, Recipes)"],
+      inputs: [],
+    });
+    expect(tellMe([livingSpeaker], { params: ready }).missing).toEqual(["The text-to-speech entity “tts.cloud” isn't in Home Assistant (Parameters, House)", "A speaker that counts in an area that has Occupancy (Capabilities, Recipes)"]);
+    expect(tellMe(specs, { params: setHouse(EMPTY_PARAMETERS, "tts_entity", "tts.nope"), installed: { automations: installedOcc("living") } }).missing).toEqual([
+      "The text-to-speech entity “tts.nope” isn't in Home Assistant (Parameters, House)",
+    ]);
+  });
+
+  it("includes the areas with a counted speaker, the Occupancy automation, and its sensor and switch, and says who is left out", () => {
+    const c = tellMe(specs, { params: ready, installed: { automations: installedOcc("living") } });
+    expect(c.status).toBe("ready");
+    expect(c.notes).toEqual(["Kitchen has speakers but no Occupancy yet, so it is left out", "The volume is set before speaking and is not put back"]);
+    const script = c.inputs.find((i) => i.kind === "script")!;
+    expect(script.fields!.use_blueprint).toEqual({ path: "taxis/announce.yaml", input: { areas: [areas[1]], tts_entity: "tts.cloud", default_volume: 40 } });
+    // The occupancy about to be installed counts as there.
+    const pending = [
+      change({ kind: "automation", targetId: "taxis_occupancy_kitchen", after: { automation_id: "taxis_occupancy_kitchen" } }),
+      change({ kind: "helper", targetId: "binary_sensor.kitchen_occupied", after: { helper: "template", entity_id: "binary_sensor.kitchen_occupied" } }),
+      change({ kind: "helper", targetId: "input_boolean.kitchen_paused", after: { helper: "input_boolean", entity_id: "input_boolean.kitchen_paused" } }),
+    ];
+    const both = tellMe([kitchenSpeaker, livingSpeaker, tts, ...occupancyFor("living", "living_room")], { params: ready, installed: { automations: installedOcc("living") }, changes: pending });
+    expect(scriptInput(both).areas).toEqual(areas);
+  });
+
+  it("gives the bed sensors of a bedroom, and only the speakers that count (a TV is not a speaker)", () => {
+    const bed = { id: "binary_sensor.living_bed", dc: "occupancy" };
+    const tv = { id: "media_player.living_tv", dc: "tv" };
+    const inv = setBedroom(setBed(EMPTY_INVENTORY, bed.id, true), "living_room", true);
+    const c = tellMe([...specs, bed, tv], { params: ready, inv, installed: { automations: installedOcc("living") } });
+    expect(scriptInput(c).areas[0]).toMatchObject({ bed: ["binary_sensor.living_bed"], speakers: ["media_player.living_speaker"] });
+  });
+
+  it("writes the blueprint (a script blueprint) first, then the script, and passes the change list's checks", () => {
+    const c = tellMe(specs, { params: ready, installed: { blueprints: {}, automations: installedOcc("kitchen", "living") } });
+    expect(kindsOf(c)).toEqual(["blueprint:create:taxis/announce.yaml", "script:create:taxis_announce"]);
+    expect(c.inputs[1].fields).toMatchObject({ script_id: "taxis_announce", alias: "Announce (Taxis)" });
+    for (const input of c.inputs) expect(validateInput(input), JSON.stringify(input).slice(0, 80)).toBeNull();
+  });
+
+  it("uses the volume of the house, and ignores one set for an area", () => {
+    const p = setParameter(setHouse(ready, "announce_volume", 25), { level: "area", id: "living_room" }, "announce_volume", 90);
+    expect(scriptInput(tellMe(specs, { params: p, installed: { automations: installedOcc("living") } })).default_volume).toBe(25);
+  });
+
+  describe("installed and out of date", () => {
+    const stored = { alias: "Announce (Taxis)", path: "taxis/announce.yaml", input: { areas, tts_entity: "tts.cloud", default_volume: 40 } };
+    const there = { automations: installedOcc("kitchen", "living"), scripts: { taxis_announce: stored } };
+
+    it("is installed when it matches, in whatever order Home Assistant gives the areas' fields", () => {
+      expect(tellMe(specs, { params: ready, installed: there })).toMatchObject({ status: "installed", inputs: [], actionable: false });
+      const reordered = { ...stored, input: { ...stored.input, areas: areas.map((a) => ({ speakers: a.speakers, bed: a.bed, paused: a.paused, occupied: a.occupied })) } };
+      expect(tellMe(specs, { params: ready, installed: { ...there, scripts: { taxis_announce: reordered } } }).status).toBe("installed");
+    });
+
+    it("says which area was added or left out, what changed in one, and the speaker, the volume and the name", () => {
+      const fewer = { ...stored, input: { ...stored.input, areas: [areas[1]] } };
+      const c = tellMe(specs, { params: ready, installed: { ...there, scripts: { taxis_announce: fewer } } });
+      expect(c.status).toBe("out-of-date");
+      expect(c.reasons).toEqual(["Kitchen: not spoken to → spoken to"]);
+      expect(kindsOf(c)).toEqual(["script:update:taxis_announce"]);
+      const more = { ...stored, input: { ...stored.input, areas: [...areas, { occupied: "binary_sensor.gone_occupied", paused: "input_boolean.gone_paused", bed: [], speakers: ["media_player.gone"] }] } };
+      expect(tellMe(specs, { params: ready, installed: { ...there, scripts: { taxis_announce: more } } }).reasons).toEqual(["binary_sensor.gone_occupied: spoken to → not spoken to"]);
+      const twoSpeakers = [kitchenSpeaker, { ...kitchenSpeaker, id: "media_player.kitchen_hub" }, livingSpeaker, tts, ...occupancyFor("kitchen", "kitchen"), ...occupancyFor("living", "living_room")];
+      expect(tellMe(twoSpeakers, { params: ready, installed: there }).reasons).toEqual(["Kitchen: speakers or bed sensors changed"]);
+      expect(tellMe(specs, { params: setHouse(ready, "announce_volume", 60), installed: there }).reasons).toEqual(["Default volume (%): 40 → 60"]);
+      expect(tellMe(specs, { params: ready, installed: { ...there, scripts: { taxis_announce: { ...stored, alias: "Old" } } } }).reasons).toEqual(["Name: Old → Announce (Taxis)"]);
+    });
+
+    it("is out of date for an older or missing blueprint, or one it isn't made from", () => {
+      expect(tellMe(specs, { params: ready, installed: { ...there, blueprints: { "taxis/announce.yaml": 0 } } }).reasons).toEqual(["The blueprint is version 0, Taxis has 1"]);
+      expect(tellMe(specs, { params: ready, installed: { ...there, blueprints: {} } }).reasons).toEqual(["The blueprint is missing"]);
+      const other = { ...there, scripts: { taxis_announce: { ...stored, path: "other/x.yaml" } } };
+      expect(tellMe(specs, { params: ready, installed: other }).reasons).toEqual(["It isn't made from the Taxis blueprint"]);
+    });
+
+    it("is in the change list once it is added, and a script of that name Taxis didn't make is left alone", () => {
+      const pending = [change({ kind: "script", targetId: "taxis_announce", after: { script_id: "taxis_announce" } })];
+      expect(tellMe(specs, { params: ready, installed: { automations: installedOcc("living") }, changes: pending }).status).toBe("in-changes");
+      const held = [...specs, { id: "script.taxis_announce", platform: "script", area: "", name: "My script" }];
+      expect(tellMe(held, { params: ready, installed: { automations: installedOcc("living") } }).missing).toEqual(["script.taxis_announce is already used by “My script”, which Taxis didn't make or can't edit"]);
+    });
+  });
+});
+
+describe("the chosen cells of the later recipes", () => {
+  it("add one blueprint each, once", () => {
+    const hygro = { id: "sensor.living_hygro", dc: "humidity", state: "55" };
+    const humidityMean = { id: "sensor.living_humidity", platform: "min_max", dc: "humidity", entry: "HUM1" };
+    const door = { id: "binary_sensor.living_front_door", dc: "door" };
+    const door2 = { id: "binary_sensor.kitchen_door", dc: "door", area: "kitchen" };
+    const cells = plan([hygro, humidityMean, { id: "fan.living_extractor" }, door, door2], { installed: { blueprints: {} } });
+    const chosen = [cell(cells, "left_open", "living_room"), cell(cells, "left_open", "kitchen"), cell(cells, "bathroom_fan")];
+    const paths = recipeChangeInputs(chosen).filter((i) => i.kind === "blueprint").map((i) => i.fields!.path);
+    expect(paths).toEqual(["taxis/left_open.yaml", "taxis/bathroom_fan.yaml"]);
+  });
+});
+
+describe("a list of objects is compared in order, a list of values as a set", () => {
+  it("tells apart announce areas that differ, and not the same areas with their fields in another order", () => {
+    expect(sameValue([{ a: 1, b: ["x", "y"] }], [{ b: ["y", "x"], a: 1 }])).toBe(true);
+    expect(sameValue([{ a: 1 }], [{ a: 2 }])).toBe(false);
+    expect(sameValue([{ a: 1 }, { a: 2 }], [{ a: 1 }])).toBe(false);
+    expect(sameValue([{ a: 1 }, { a: 2 }], [{ a: 2 }, { a: 1 }])).toBe(false);
+    expect(sameValue(["b", "a"], ["a", "b"])).toBe(true);
+    expect(sameValue(["a"], ["a", "b"])).toBe(false);
+    expect(sameValue([], [])).toBe(true);
+    expect(sameValue([{ a: 1 }], ["a"])).toBe(false);
   });
 });

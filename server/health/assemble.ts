@@ -1,7 +1,8 @@
 import type { HealthItem, HealthSnapshot, HealthState } from "../../shared/health.ts";
-import { parseDuration, type InstalledAutomation, type RecipeInstalled } from "../../shared/recipes.ts";
+import { ANNOUNCE_SCRIPT_ID } from "../../shared/blueprints.ts";
+import { parseDuration, type RecipeInstalled } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
-import { blueprintVersions, type RecipeWs } from "../changes/recipes.ts";
+import { blueprintVersions, installedOf, type RecipeWs } from "../changes/recipes.ts";
 import type { RawRegistry, RawState } from "../model/hierarchy.ts";
 import type { Snapshot } from "../references/snapshot.ts";
 
@@ -39,20 +40,14 @@ export async function readBlueprints(ha: Pick<RecipeWs, "command">): Promise<Rec
 // is already in hand: the Taxis automations are among the stored configs, and
 // the timers' lengths are in the states.
 export function installedFrom(states: readonly RawState[], snap: Snapshot, blueprints: Record<string, number | null>): RecipeInstalled {
-  const out: RecipeInstalled = { blueprints, automations: {}, timers: {}, controllers: {} };
+  const out: RecipeInstalled = { blueprints, automations: {}, scripts: {}, timers: {}, controllers: {} };
   for (const s of states) {
     if (s.entity_id.startsWith("timer.")) out.timers[s.entity_id] = parseDuration(s.attributes?.duration);
   }
   for (const item of snap.items) {
-    if (item.kind !== "automation" || !item.id.startsWith("taxis_") || !item.config || typeof item.config !== "object") continue;
-    const config = item.config as Record<string, unknown>;
-    const ub = config.use_blueprint as { path?: unknown; input?: unknown } | undefined;
-    const installed: InstalledAutomation = {
-      alias: typeof config.alias === "string" ? config.alias : null,
-      path: typeof ub?.path === "string" ? ub.path : null,
-      input: ub?.input && typeof ub.input === "object" && !Array.isArray(ub.input) ? (ub.input as Record<string, unknown>) : {},
-    };
-    out.automations[item.id] = installed;
+    if (!item.id.startsWith("taxis_") || !item.config || typeof item.config !== "object") continue;
+    if (item.kind === "automation") out.automations[item.id] = installedOf(item.config as Record<string, unknown>);
+    else if (item.kind === "script" && item.id === ANNOUNCE_SCRIPT_ID) out.scripts[item.id] = installedOf(item.config as Record<string, unknown>);
   }
   return out;
 }

@@ -83,9 +83,9 @@ function withoutRename(c: Change, newId: string): Change {
 
 const LEFT_ALONE = "Not updated: automations, scripts, scenes and dashboards were left alone, because the rename wasn't confirmed. Check what uses the old id.";
 
-// Helpers, blueprints and automations are not registry items: they have steps
-// of their own (helpers.ts, recipes.ts), after this one.
-type RegistryKind = Exclude<ChangeKind, "helper" | "blueprint" | "automation">;
+// Helpers, blueprints, automations and scripts are not registry items: they have
+// steps of their own (helpers.ts, recipes.ts), after this one.
+type RegistryKind = Exclude<ChangeKind, "helper" | "blueprint" | "automation" | "script">;
 
 const ORDER: RegistryKind[] = ["floor", "label", "category", "area", "device", "entity"];
 const DELETE_ORDER: RegistryKind[] = ["area", "floor", "label", "category"];
@@ -120,6 +120,7 @@ const FIELD_NAMES: Record<string, string> = {
   new_entity_id: "entity id",
   hidden_by: "hidden setting",
   disabled_by: "disabled setting",
+  device_class: "device class",
   temperature_entity_id: "temperature sensor",
   humidity_entity_id: "humidity sensor",
 };
@@ -154,8 +155,8 @@ function namesOf(h: Hierarchy, kind: ChangeKind, scope: Change["scope"]): { id: 
 }
 
 export async function applyChanges(
-  // Helper, blueprint and automation changes in the list are left to their own
-  // steps and get no result here.
+  // Helper, blueprint, automation and script changes in the list are left to their
+  // own steps and get no result here.
   all: Change[],
   ha: Writer,
   readFresh: () => Promise<RawRegistry>,
@@ -546,6 +547,7 @@ function findRaw(fresh: RawRegistry, c: Change, id: string): Record<string, unkn
     case "helper":
     case "blueprint":
     case "automation":
+    case "script":
       return undefined;
   }
 }

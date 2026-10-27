@@ -1,14 +1,14 @@
-import { blueprintByPath, blueprintForRecipe, blueprintVersion, BLUEPRINTS, type RecipeKey } from "../../shared/blueprints.ts";
-import { ENTITY_ID_RE, sameValue } from "../../shared/changes.ts";
+import { ANNOUNCE_SCRIPT_ID, blueprintByPath, blueprintForRecipe, blueprintVersion, BLUEPRINTS, inputEntityIds, mapInputEntities, type RecipeKey } from "../../shared/blueprints.ts";
+import { sameValue } from "../../shared/changes.ts";
 import { parseDuration, type InstalledAutomation, type RecipeInstalled } from "../../shared/recipes.ts";
 import type { Change } from "../../shared/types.ts";
-import type { HaConfig, RestApi } from "../ha/rest.ts";
+import type { ConfigKind, HaConfig, RestApi } from "../ha/rest.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
 import { searchRelated } from "../references/find.ts";
 import { mapLimit } from "../references/snapshot.ts";
 import type { Outcome } from "./apply.ts";
 
-// Applying a recipe: its blueprint, and its automation.
+// Applying a recipe: its blueprint, and its automation (or the announce script).
 //
 //   blueprint   written once per blueprint, with the text Taxis holds for that
 //               path (shared/blueprints.ts), when Home Assistant has none or one
@@ -16,11 +16,13 @@ import type { Outcome } from "./apply.ts";
 //   automation  one per area and recipe, created or replaced through the REST
 //               config API as a use of the blueprint with its inputs. Run after
 //               the helpers, because its inputs name them.
+//   script      the same for taxis_announce, the one script Taxis makes.
 //
-// Both are checked against a fresh read: the blueprint has to be listed with the
-// version Taxis wrote, the automation's stored config has to be what was sent,
-// and an automation Home Assistant could not load (its state is unavailable)
-// is reported. Nothing here deletes anything.
+// All are checked against a fresh read: the blueprint has to be listed with the
+// version Taxis wrote, the automation's or script's stored config has to be what
+// was sent, and an automation Home Assistant could not load (its state is
+// unavailable) or a script it did not list is reported. Nothing here deletes
+// anything.
 
 // The WebSocket client, as far as this file uses it.
 export type RecipeWs = {
@@ -43,12 +45,15 @@ type BlueprintList = Record<string, { metadata?: { description?: unknown } } | {
 
 // Blueprint path -> the version it states, for the Taxis blueprints Home
 // Assistant has: null when it has none, 0 when it has one without a version line.
+// Automation blueprints and the script blueprint are listed apart, one read each.
 export async function blueprintVersions(ha: Pick<RecipeWs, "command">): Promise<Record<string, number | null>> {
-  const list = await ha.command<BlueprintList>("blueprint/list", { domain: "automation" });
   const out: Record<string, number | null> = {};
-  for (const b of BLUEPRINTS) {
-    const entry = list && typeof list === "object" && Object.hasOwn(list, b.path) ? list[b.path] : undefined;
-    out[b.path] = entry && "metadata" in entry && entry.metadata ? blueprintVersion(entry.metadata.description) ?? 0 : null;
+  for (const domain of ["automation", "script"] as const) {
+    const list = await ha.command<BlueprintList>("blueprint/list", { domain });
+    for (const b of BLUEPRINTS.filter((x) => x.domain === domain)) {
+      const entry = list && typeof list === "object" && Object.hasOwn(list, b.path) ? list[b.path] : undefined;
+      out[b.path] = entry && "metadata" in entry && entry.metadata ? blueprintVersion(entry.metadata.description) ?? 0 : null;
+    }
   }
   return out;
 }
@@ -85,7 +90,7 @@ export async function applyBlueprintChanges(all: Change[], io: RecipeIO): Promis
       continue;
     }
     try {
-      await io.ha.write("blueprint/save", { domain: "automation", path, yaml: info.yaml, allow_override: true });
+      await io.ha.write("blueprint/save", { domain: info.domain, path, yaml: info.yaml, allow_override: true });
       sent.push(c);
     } catch (e) {
       outcome.set(c.id, fail(c, `Home Assistant refused it: ${(e as Error).message}`));
@@ -117,7 +122,7 @@ export async function applyBlueprintChanges(all: Change[], io: RecipeIO): Promis
 }
 
 // ---------------------------------------------------------------------------
-// Automations.
+// Automations and the announce script.
 // ---------------------------------------------------------------------------
 
 type UseBlueprint = { path: string; input: Record<string, unknown> };
@@ -133,6 +138,17 @@ export function automationConfig(c: Change, input: Record<string, unknown>): HaC
   };
 }
 
+// The config of the announce script. A script's config has no id of its own: its key
+// in the URL is the id.
+export function scriptConfig(c: Change, input: Record<string, unknown>): HaConfig {
+  const path = (c.after.use_blueprint as UseBlueprint).path;
+  return {
+    alias: c.after.alias,
+    description: `Made by Taxis from the ${path} blueprint. Changes made here are overwritten when the recipe is installed again.`,
+    use_blueprint: { path, input },
+  };
+}
+
 // The parts of a stored config Taxis sets: what has to match to say it is the same.
 const sameConfig = (a: HaConfig | null, b: HaConfig): boolean => {
   if (!a) return false;
@@ -141,9 +157,20 @@ const sameConfig = (a: HaConfig | null, b: HaConfig): boolean => {
   return a.alias === b.alias && ua?.path === ub.path && sameValue(ua?.input ?? {}, ub.input);
 };
 
-export async function applyAutomationChanges(all: Change[], io: RecipeIO): Promise<Outcome[]> {
-  const changes = all.filter((c) => c.kind === "automation");
+export const applyAutomationChanges = (all: Change[], io: RecipeIO): Promise<Outcome[]> => applyConfigChanges(all, io, "automation");
+export const applyScriptChanges = (all: Change[], io: RecipeIO): Promise<Outcome[]> => applyConfigChanges(all, io, "script");
+
+// What differs between the two: where the stored config lives, what its state in
+// Home Assistant is, and the area an automation is for.
+const CONFIG: Record<"automation" | "script", { rest: ConfigKind; what: string; state: (s: RawRegistry["states"][number], id: string) => boolean; config: (c: Change, input: Record<string, unknown>) => HaConfig }> = {
+  automation: { rest: "automation", what: "automation", state: (s, id) => s.entity_id.startsWith("automation.") && (s.attributes as { id?: unknown } | undefined)?.id === id, config: automationConfig },
+  script: { rest: "script", what: "script", state: (s, id) => s.entity_id === `script.${id}`, config: scriptConfig },
+};
+
+async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation" | "script"): Promise<Outcome[]> {
+  const changes = all.filter((c) => c.kind === kind);
   if (changes.length === 0) return [];
+  const { rest: restKind, what, state: stateOf, config: configOf } = CONFIG[kind];
   const sleep = io.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   let fresh: RawRegistry;
@@ -157,7 +184,6 @@ export async function applyAutomationChanges(all: Change[], io: RecipeIO): Promi
   const known = new Set(fresh.entities.map((e) => e.entity_id));
   for (const s of fresh.states) known.add(s.entity_id);
   const current = (id: string) => (!known.has(id) && io.renamed?.has(id) && known.has(io.renamed.get(id)!) ? io.renamed.get(id)! : id);
-  const mapId = (v: unknown): unknown => (typeof v === "string" && ENTITY_ID_RE.test(v) ? current(v) : Array.isArray(v) ? v.map(mapId) : v);
 
   const outcome = new Map<number, Outcome>();
   const sent = new Map<number, HaConfig>();
@@ -169,31 +195,31 @@ export async function applyAutomationChanges(all: Change[], io: RecipeIO): Promi
       outcome.set(c.id, fail(c, "Taxis has no blueprint at that path any more."));
       continue;
     }
-    if (!fresh.areas.some((a) => a.area_id === c.after.area_id)) {
+    if (kind === "automation" && !fresh.areas.some((a) => a.area_id === c.after.area_id)) {
       outcome.set(c.id, fail(c, "The area it is for is no longer in Home Assistant."));
       continue;
     }
     // Inputs name entities, some made earlier in this same Apply: each has to be there now.
-    const input = Object.fromEntries(Object.entries(ub.input).map(([k, v]) => [k, mapId(v)]));
-    const wanted = Object.values(input).flat().filter((v): v is string => typeof v === "string" && ENTITY_ID_RE.test(v));
-    const gone = wanted.find((e) => !known.has(e));
+    // Notify services are not entities and are not looked for.
+    const input = mapInputEntities(ub.path, ub.input, current);
+    const gone = inputEntityIds(ub.path, input).find((e) => !known.has(e));
     if (gone) {
-      outcome.set(c.id, fail(c, `“${gone}” isn't in Home Assistant, so the automation would not work. Apply again once it is there.`));
+      outcome.set(c.id, fail(c, `“${gone}” isn't in Home Assistant, so the ${what} would not work. Apply again once it is there.`));
       continue;
     }
     if (versions[ub.path] !== info.version) {
-      outcome.set(c.id, fail(c, "Home Assistant doesn't have the current version of the blueprint, so the automation would not load. Apply again to write it."));
+      outcome.set(c.id, fail(c, `Home Assistant doesn't have the current version of the blueprint, so the ${what} would not load. Apply again to write it.`));
       continue;
     }
 
-    const config = automationConfig(c, input);
+    const config = configOf(c, input);
     try {
-      const existing = await io.rest.get("automation", id);
+      const existing = await io.rest.get(restKind, id);
       if (sameConfig(existing, config)) {
         outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied (it was already like this)." });
         continue;
       }
-      await io.rest.post("automation", id, config);
+      await io.rest.post(restKind, id, config);
       sent.set(c.id, config);
     } catch (e) {
       outcome.set(c.id, fail(c, (e as Error).message));
@@ -215,17 +241,17 @@ export async function applyAutomationChanges(all: Change[], io: RecipeIO): Promi
     for (const c of pending) {
       let stored: HaConfig | null;
       try {
-        stored = await io.rest.get("automation", c.targetId);
+        stored = await io.rest.get(restKind, c.targetId);
       } catch (e) {
         wrong.set(c.id, `Sent, but Taxis couldn't read it back to check it (${(e as Error).message}).`);
         continue;
       }
-      if (!stored) wrong.set(c.id, "Home Assistant doesn't have the automation after saving it.");
+      if (!stored) wrong.set(c.id, `Home Assistant doesn't have the ${what} after saving it.`);
       else if (!sameConfig(stored, sent.get(c.id)!)) wrong.set(c.id, "Home Assistant stored something different from what Taxis sent.");
       else {
-        const state = states.find((x) => (x.attributes as { id?: unknown } | undefined)?.id === c.targetId);
+        const state = states.find((x) => stateOf(x, c.targetId));
         if (state?.state === "unavailable") wrong.set(c.id, "Home Assistant saved it but couldn't load it (it shows as unavailable). Check the blueprint's inputs in Home Assistant.");
-        else outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied.", ...(state ? {} : { details: ["Home Assistant hasn't listed the automation yet; it may take a moment."] }) });
+        else outcome.set(c.id, { changeId: c.id, ok: true, message: "Applied.", ...(state ? {} : { details: [`Home Assistant hasn't listed the ${what} yet; it may take a moment.`] }) });
       }
     }
     pending = pending.filter((c) => wrong.has(c.id));
@@ -242,8 +268,18 @@ export async function applyAutomationChanges(all: Change[], io: RecipeIO): Promi
 // Taxis's own automations carry its id.
 const isTaxisAutomation = (s: RawRegistry["states"][number]) => s.entity_id.startsWith("automation.") && String((s.attributes as { id?: unknown } | undefined)?.id ?? "").startsWith("taxis_");
 
+// What a stored config says of the blueprint it uses.
+export function installedOf(config: HaConfig): InstalledAutomation {
+  const ub = config.use_blueprint as { path?: unknown; input?: unknown } | undefined;
+  return {
+    alias: typeof config.alias === "string" ? config.alias : null,
+    path: typeof ub?.path === "string" ? ub.path : null,
+    input: ub?.input && typeof ub.input === "object" && !Array.isArray(ub.input) ? (ub.input as Record<string, unknown>) : {},
+  };
+}
+
 export async function readInstalled(io: Pick<RecipeIO, "ha" | "rest">, raw: RawRegistry, lightGroups: readonly string[], thermostats: readonly string[] = []): Promise<RecipeInstalled> {
-  const out: RecipeInstalled = { blueprints: await blueprintVersions(io.ha), automations: {}, timers: {}, controllers: {} };
+  const out: RecipeInstalled = { blueprints: await blueprintVersions(io.ha), automations: {}, scripts: {}, timers: {}, controllers: {} };
 
   for (const s of raw.states) {
     if (s.entity_id.startsWith("timer.")) out.timers[s.entity_id] = parseDuration((s.attributes as { duration?: unknown } | undefined)?.duration);
@@ -256,14 +292,14 @@ export async function readInstalled(io: Pick<RecipeIO, "ha" | "rest">, raw: RawR
     if (!/^[A-Za-z0-9_-]{1,255}$/.test(id)) return;
     const config = await io.rest.get("automation", id);
     if (!config) return;
-    const ub = config.use_blueprint as { path?: unknown; input?: unknown } | undefined;
-    const installed: InstalledAutomation = {
-      alias: typeof config.alias === "string" ? config.alias : null,
-      path: typeof ub?.path === "string" ? ub.path : null,
-      input: ub?.input && typeof ub.input === "object" && !Array.isArray(ub.input) ? (ub.input as Record<string, unknown>) : {},
-    };
-    out.automations[id] = installed;
+    out.automations[id] = installedOf(config);
   });
+
+  // The announce script, when Home Assistant lists one under its id.
+  if (raw.states.some((s) => s.entity_id === `script.${ANNOUNCE_SCRIPT_ID}`)) {
+    const config = await io.rest.get("script", ANNOUNCE_SCRIPT_ID);
+    if (config) out.scripts[ANNOUNCE_SCRIPT_ID] = installedOf(config);
+  }
 
   // Other automations that already use an area's light group or a thermostat:
   // installing a recipe would make two things control the same lights or heating.

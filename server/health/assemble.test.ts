@@ -55,6 +55,10 @@ describe("the demo house", () => {
         // 2: not reporting, grouped by device, and the Hall PIR used by an automation
         "unavailable:device:attic",
         "unavailable:device:hallway_1",
+        // 2b: groups whose members are gone (the Loft's own, and two on the balcony, one of which reports no members)
+        "groups:light.loft_all",
+        "groups:light.balcony_open",
+        "groups:light.balcony_all",
         // 3: activity
         "activity:automation.lights_on_at_sunset:stale",
         "activity:automation.weekend_guest_lights:never",
@@ -159,5 +163,22 @@ describe("assembling the snapshot", () => {
     expect(installed.timers).toMatchObject({ "timer.kitchen_hold": 180, "timer.living_hold": 300 });
     expect(installed.blueprints["taxis/occupancy.yaml"]).toBe(blueprints!["taxis/occupancy.yaml"]);
     expect(installed.controllers).toEqual({});
+  });
+});
+
+describe("the announce script in the health snapshot", () => {
+  it("is among the scripts installedFrom reads, and no other script is", async () => {
+    const { raw, snap } = await run((t) => {
+      t.home.scripts.taxis_announce = { alias: "Announce (Taxis)", use_blueprint: { path: "taxis/announce.yaml", input: { areas: [] } } };
+      t.home.entities.push({ entity_id: "script.taxis_announce", platform: "script", unique_id: "taxis_announce" });
+      t.home.states.push({ entity_id: "script.taxis_announce", state: "off", attributes: { friendly_name: "Announce (Taxis)" } });
+      t.home.scripts.taxis_other = { alias: "Not ours", sequence: [] };
+      t.home.entities.push({ entity_id: "script.taxis_other", platform: "script", unique_id: "taxis_other" });
+      t.home.states.push({ entity_id: "script.taxis_other", state: "off", attributes: { friendly_name: "Not ours" } });
+    });
+    const installed = installedFrom(raw.states, await snapshot({ ha: fakeHa(raw).ha, rest: fakeHa(raw).api }, raw.states, raw.entities), {});
+    expect(installed.scripts).toEqual({ taxis_announce: { alias: "Announce (Taxis)", path: "taxis/announce.yaml", input: { areas: [] } } });
+    expect(Object.keys(installed.automations).every((id) => id.startsWith("taxis_"))).toBe(true);
+    expect(snap.items.some((i) => i.kind === "script" && i.id === "taxis_announce")).toBe(true);
   });
 });

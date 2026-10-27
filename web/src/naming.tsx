@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { Check, X } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { HELPERS, HELPER_SUFFIX_RE, canonicalId, effectiveSuffixes, helperNameErrors } from "../../shared/helpers.ts";
@@ -12,14 +13,17 @@ import {
   floorCodeAdvice,
   floorCodes,
   slug,
+  type NamingRow,
   type NamingSettings,
   type NamingStatus,
 } from "../../shared/naming.ts";
+import { allIgnored, anyIgnored, fieldIgnored, hasSuggestion, ignoreSuggestions, namingFit, restoreSuggestions, type NamingField } from "../../shared/naming-ignores.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
-import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
+import type { AreaNode, ChangeInput, EntityRole, FloorNode, Hierarchy } from "../../shared/types.ts";
 import { AiSection } from "./ai.tsx";
 import { useTaxis, type Route } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
+import { useStoredFlag } from "./storage.ts";
+import { GroupToggle, GroupedRows, SortHeader, useSort } from "./table.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
 
 // Naming: the Settings panel (a code per area, the patterns, the type words)
@@ -87,9 +91,20 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
     [codes, h, draft],
   );
   const { rows: areas, sort, toggle } = useSort(floorOrder, sortColumns, { key: "floor", dir: "asc" });
+  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
+  // Floors: also in the order Home Assistant gives them until a column is clicked.
+  const floorColumns = useMemo(
+    () => ({
+      floor: (f: FloorNode) => f.name,
+      id: (f: FloorNode) => f.id,
+      code: (f: FloorNode) => floorCodeMap[f.id].code,
+      group: (f: FloorNode) => canonicalId("light", floorCodeMap[f.id].code, suffixes.lights),
+    }),
+    [floorCodeMap, suffixes],
+  );
+  const { rows: floors, sort: floorSort, toggle: toggleFloor } = useSort(h.floors, floorColumns, { key: "order", dir: "asc" });
   // Helper names: live problems, and an example id from the first area.
   const helperErrors = useMemo(() => helperNameErrors(draft.helperNames), [draft.helperNames]);
-  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
   const firstArea = floorOrder[0];
   const sample = h.entities[Object.keys(h.entities).find((id) => h.entities[id].areaId && h.entities[id].role === "light") ?? ""];
   const preview = useMemo(() => {
@@ -177,7 +192,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                         <input
                           aria-label={`Code for ${a.name}`}
                           aria-invalid={also ? true : undefined}
-                          className={`${inputClass} w-40 font-mono ${also ? "border-danger text-danger" : ""}`}
+                          className={`${inputClass} w-40! font-mono ${also ? "border-danger text-danger" : ""}`}
                           value={draft.areaCodes[a.id] ?? ""}
                           placeholder={c.detected}
                           onChange={(e) => {
@@ -213,14 +228,14 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
               <table className="w-full text-[13px]">
                 <thead className="bg-sunken text-left text-xs text-muted">
                   <tr>
-                    <th className="px-3 py-2 font-medium">Floor</th>
-                    <th className="px-3 py-2 font-medium">Floor id</th>
-                    <th className="px-3 py-2 font-medium">Code</th>
-                    <th className="px-3 py-2 font-medium">Light group</th>
+                    <SortHeader label="Floor" k="floor" sort={floorSort} onToggle={toggleFloor} />
+                    <SortHeader label="Floor id" k="id" sort={floorSort} onToggle={toggleFloor} />
+                    <SortHeader label="Code" k="code" sort={floorSort} onToggle={toggleFloor} />
+                    <SortHeader label="Light group" k="group" sort={floorSort} onToggle={toggleFloor} />
                   </tr>
                 </thead>
                 <tbody>
-                  {h.floors.map((f) => {
+                  {floors.map((f) => {
                     const c = floorCodeMap[f.id];
                     const also = floorClashes.get(f.id);
                     const advice = floorCodeAdvice(f, c);
@@ -233,7 +248,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                           <input
                             aria-label={`Code for floor ${f.name}`}
                             aria-invalid={also ? true : undefined}
-                            className={`${inputClass} w-40 font-mono ${also ? "border-danger text-danger" : ""}`}
+                            className={`${inputClass} w-40! font-mono ${also ? "border-danger text-danger" : ""}`}
                             value={draft.floorCodes[f.id] ?? ""}
                             placeholder={c.detected}
                             spellCheck={false}
@@ -398,61 +413,260 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
   );
 }
 
+type FieldState = "neutral" | "accepted" | "ignored";
+
+// A suggested name or id, with a tick that accepts it and a cross that ignores
+// it at the right edge. An accepted field is green, an ignored one greyed out;
+// both buttons stay clickable, so either can be undone.
+function SuggestionField({
+  kind,
+  entity,
+  state,
+  value,
+  mono,
+  invalid,
+  locked,
+  onChange,
+  onAccept,
+  onIgnore,
+}: {
+  kind: "name" | "id";
+  entity: string;
+  state: FieldState;
+  value: string;
+  mono?: boolean;
+  invalid?: boolean;
+  // The ignore choices are saving: the tick and the cross wait.
+  locked: boolean;
+  onChange: (v: string) => void;
+  onAccept: () => void;
+  onIgnore: () => void;
+}) {
+  const button = "rounded p-0.5 disabled:cursor-not-allowed disabled:opacity-50";
+  return (
+    <div className="relative">
+      <input
+        aria-label={`New ${kind} for ${entity}`}
+        className={`${inputClass} pr-14 ${mono ? "font-mono" : ""} ${state === "accepted" ? "border-on! bg-ok-soft!" : ""} ${state === "ignored" ? "text-muted opacity-60" : ""}`}
+        value={value}
+        spellCheck={false}
+        disabled={state === "ignored"}
+        aria-invalid={invalid ? true : undefined}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span className="absolute inset-y-0 right-1.5 flex items-center gap-0.5">
+        <button
+          type="button"
+          aria-label={`Accept the suggested ${kind} for ${entity}`}
+          aria-pressed={state === "accepted"}
+          title={state === "accepted" ? "Accepted. Click to take it back." : state === "ignored" ? "Stop ignoring it and accept it" : "Accept the suggestion"}
+          disabled={locked}
+          onClick={onAccept}
+          className={`${button} text-on hover:bg-ok-soft ${state === "accepted" ? "bg-ok-soft" : ""}`}
+        >
+          <Check className="size-4" aria-hidden />
+        </button>
+        <button
+          type="button"
+          aria-label={`Ignore the suggested ${kind} for ${entity}`}
+          aria-pressed={state === "ignored"}
+          title={state === "ignored" ? "Ignored. Click to bring the suggestion back." : "Ignore the suggestion"}
+          disabled={locked}
+          onClick={onIgnore}
+          className={`${button} text-danger hover:bg-danger-soft ${state === "ignored" ? "bg-danger-soft" : ""}`}
+        >
+          <X className="size-4" aria-hidden />
+        </button>
+      </span>
+    </div>
+  );
+}
+
 export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
-  const { naming, propose, busy } = useTaxis();
+  const { naming, propose, busy, namingIgnores, namingIgnoresLoaded, namingIgnoresSaving, saveNamingIgnores, notify } = useTaxis();
   const analysis = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
-  const [filter, setFilter] = useState<NamingStatus | "all" | "suggested">("all");
+  const [filter, setFilter] = useState<NamingStatus | "all" | "suggested" | "ignored">("all");
   const [names, setNames] = useState<Record<string, string>>({});
   const [ids, setIds] = useState<Record<string, string>>({});
-  const [picked, setPicked] = useState<Set<string>>(new Set());
+  // The suggestions accepted so far. Local: nothing is kept until they are added
+  // to the changes.
+  const [accepted, setAccepted] = useState<Record<string, { name?: boolean; id?: boolean }>>({});
+  const [grouped, setGrouped] = useStoredFlag("taxis:group-by-type:naming");
   const total = analysis.rows.length;
-  const rows = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? Boolean(r.editable && (r.suggestedName || r.suggestedId)) : r.status === filter));
+  // A row whose every suggestion is ignored has nothing for Taxis to suggest: it
+  // is left out of the "with a suggestion" count and shown under Ignored, as is a
+  // row with only one of its two ignored.
+  const open = (r: NamingRow) => hasSuggestion(r) && !allIgnored(r, namingIgnores);
+  const ignoredRows = analysis.rows.filter((r) => anyIgnored(r, namingIgnores));
+  const fit = namingFit(analysis, namingIgnores);
+  const filtered = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? open(r) : filter === "ignored" ? anyIgnored(r, namingIgnores) : r.status === filter));
+  const sortColumns = useMemo(
+    () => ({
+      name: (r: NamingRow) => r.name,
+      id: (r: NamingRow) => r.entityId,
+      suggestedName: (r: NamingRow) => (fieldIgnored(r, namingIgnores, "name") ? null : r.suggestedName),
+      suggestedId: (r: NamingRow) => (fieldIgnored(r, namingIgnores, "id") ? null : r.suggestedId),
+    }),
+    [namingIgnores],
+  );
+  const { rows, sort, toggle: toggleSort } = useSort(filtered, sortColumns, { key: "name", dir: "asc" });
+  const roleOf = useCallback((r: NamingRow): EntityRole => h.entities[r.entityId]?.role ?? "other", [h]);
   const nameFor = (id: string, fallback: string | null) => names[id] ?? fallback ?? "";
   const idFor = (id: string, fallback: string | null) => ids[id] ?? fallback ?? "";
-  // Fields already added to the change list, per row. A row stays picked until
-  // neither of its suggestions (name, id) is left to add.
-  const [proposed, setProposed] = useState<Record<string, { name?: boolean; id?: boolean }>>({});
-  // Everything below acts on the visible rows only, so a hidden pick is never added.
-  const withName = rows.filter((r) => r.editable && r.suggestedName);
-  const withId = rows.filter((r) => r.editable && r.suggestedId);
-  const pickedRows = rows.filter((r) => r.editable && picked.has(r.entityId));
-
-  // A name or an id is proposed only if it differs from what the entity has.
-  const nameInputs = pickedRows
-    .map((r) => ({ r, name: nameFor(r.entityId, r.suggestedName).trim() }))
-    .filter(({ r, name }) => name && name !== r.name && !proposed[r.entityId]?.name)
-    .map(({ r, name }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { name } }));
+  const ignoreLocked = !namingIgnoresLoaded || namingIgnoresSaving;
   // The server refuses another domain, so an id is valid only in the entity's own.
   const idValid = (entityId: string, v: string) => ENTITY_ID_RE.test(v) && v.split(".")[0] === entityId.split(".")[0];
-  const idInputs = pickedRows
-    .map((r) => ({ r, id: idFor(r.entityId, r.suggestedId).trim() }))
-    .filter(({ r, id }) => id && id !== r.entityId && idValid(r.entityId, id) && !proposed[r.entityId]?.id)
-    .map(({ r, id }) => ({ kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields: { new_entity_id: id } }));
 
-  // Rule: after a successful propose, only the rows proposed for this field are
-  // touched. A row leaves `picked` once it has nothing left to add; if its other
-  // suggestion is still pending it stays picked, with this field marked as done.
-  const add = async (field: "name" | "id", inputs: ChangeInput[]) => {
-    if (inputs.length === 0) return;
-    if (!(await propose(inputs))) return;
-    const other = new Set((field === "name" ? idInputs : nameInputs).map((i) => i.targetId));
-    const done = inputs.map((i) => i.targetId as string);
-    setProposed((p) => {
-      const n = { ...p };
-      for (const id of done) {
-        if (other.has(id)) n[id] = { ...n[id], [field]: true };
-        else delete n[id];
+  const stateOf = (r: NamingRow, field: NamingField): FieldState => (fieldIgnored(r, namingIgnores, field) ? "ignored" : accepted[r.entityId]?.[field] ? "accepted" : "neutral");
+  const setAcceptedField = (entityId: string, field: NamingField, on: boolean) =>
+    setAccepted((a) => {
+      if ((a[entityId]?.[field] ?? false) === on) return a;
+      const next = { ...a[entityId], [field]: on };
+      if (!next.name && !next.id) {
+        const { [entityId]: _gone, ...rest } = a;
+        return rest;
+      }
+      return { ...a, [entityId]: next };
+    });
+
+  // Ignoring or restoring a suggestion is saved at once, in Taxis only. Resolves
+  // to false when it could not be saved.
+  const saveIgnore = async (r: NamingRow, field: NamingField, ignore: boolean): Promise<boolean> => {
+    const err = await saveNamingIgnores((s) => (ignore ? ignoreSuggestions(s, [r.entityId], [field]) : restoreSuggestions(s, [r.entityId], [field])));
+    if (err) notify({ tone: "error", text: err });
+    return !err;
+  };
+  // The tick: accepts; takes an acceptance back; on an ignored suggestion, stops ignoring it and accepts it.
+  const onAccept = async (r: NamingRow, field: NamingField) => {
+    const s = stateOf(r, field);
+    if (s === "accepted") return setAcceptedField(r.entityId, field, false);
+    if (s === "ignored" && !(await saveIgnore(r, field, false))) return;
+    setAcceptedField(r.entityId, field, true);
+  };
+  // The cross: ignores; on an ignored suggestion, brings it back to neutral.
+  const onIgnore = async (r: NamingRow, field: NamingField) => {
+    if (stateOf(r, field) === "ignored") {
+      await saveIgnore(r, field, false);
+      return;
+    }
+    if (await saveIgnore(r, field, true)) setAcceptedField(r.entityId, field, false);
+  };
+
+  // Everything below acts on the visible rows only, so a hidden row is never added.
+  const acceptAll = (field: NamingField) =>
+    setAccepted((a) => {
+      const n = { ...a };
+      for (const r of rows) {
+        if (!r.editable || fieldIgnored(r, namingIgnores, field) || (field === "name" ? r.suggestedName : r.suggestedId) === null) continue;
+        n[r.entityId] = { ...n[r.entityId], [field]: true };
       }
       return n;
     });
-    setPicked((p) => {
-      const n = new Set(p);
-      for (const id of done) if (!other.has(id)) n.delete(id);
+  const nameCount = rows.filter((r) => r.editable && r.suggestedName !== null && !fieldIgnored(r, namingIgnores, "name")).length;
+  const idCount = rows.filter((r) => r.editable && r.suggestedId !== null && !fieldIgnored(r, namingIgnores, "id")).length;
+
+  // What adding would do: one change per entity, with the fields accepted on it. A
+  // name is added only if it differs from what the entity has, an id only if it is
+  // valid and differs.
+  const pending = rows.flatMap((r) => {
+    const a = accepted[r.entityId];
+    if (!a || !r.editable) return [];
+    const fields: Record<string, unknown> = {};
+    const done: NamingField[] = [];
+    if (a.name && !fieldIgnored(r, namingIgnores, "name")) {
+      const name = nameFor(r.entityId, r.suggestedName).trim();
+      if (name && name !== r.name) {
+        fields.name = name;
+        done.push("name");
+      }
+    }
+    if (a.id && !fieldIgnored(r, namingIgnores, "id")) {
+      const id = idFor(r.entityId, r.suggestedId).trim();
+      if (id && id !== r.entityId && idValid(r.entityId, id)) {
+        fields.new_entity_id = id;
+        done.push("id");
+      }
+    }
+    return done.length > 0 ? [{ entityId: r.entityId, done, input: { kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields } satisfies ChangeInput }] : [];
+  });
+  const pendingCount = pending.reduce((n, p) => n + p.done.length, 0);
+
+  const add = async () => {
+    if (pending.length === 0 || !(await propose(pending.map((p) => p.input)))) return;
+    // What was added is no longer a suggestion to accept; the preview brings the new names.
+    setAccepted((a) => {
+      const n = { ...a };
+      for (const p of pending) {
+        const left = { ...n[p.entityId] };
+        for (const f of p.done) delete left[f];
+        if (!left.name && !left.id) delete n[p.entityId];
+        else n[p.entityId] = left;
+      }
       return n;
     });
+    setNames((n) => omit(n, pending.filter((p) => p.done.includes("name")).map((p) => p.entityId)));
+    setIds((n) => omit(n, pending.filter((p) => p.done.includes("id")).map((p) => p.entityId)));
   };
 
   if (total === 0) return <p className="text-[13px] text-muted">No entities in this area to check.</p>;
+
+  const renderRow = (r: NamingRow) => {
+    const st = STATUS[r.status];
+    const other = r.otherAreaId ? h.areas[r.otherAreaId]?.name : null;
+    return (
+      <tr key={r.entityId} className="border-t border-line align-top">
+        <td className="px-3 py-1.5">
+          <div>{r.name}</div>
+          <div className={`text-[11px] ${st.tone}`}>
+            {st.label}
+            {r.status === "old-prefix" && r.foundPrefix && ` (${r.foundPrefix})`}
+            {other && ` (${other})`}
+          </div>
+        </td>
+        <td className="px-3 py-1.5 font-mono text-xs">{r.entityId}</td>
+        <td className="min-w-[12rem] px-3 py-1.5">
+          {r.suggestedName !== null && r.editable ? (
+            <SuggestionField
+              kind="name"
+              entity={r.name}
+              state={stateOf(r, "name")}
+              value={nameFor(r.entityId, r.suggestedName)}
+              locked={ignoreLocked}
+              onChange={(v) => {
+                setNames((n) => ({ ...n, [r.entityId]: v }));
+                setAcceptedField(r.entityId, "name", true);
+              }}
+              onAccept={() => void onAccept(r, "name")}
+              onIgnore={() => void onIgnore(r, "name")}
+            />
+          ) : (
+            <span className="text-xs text-muted">{r.editable ? "fits" : "can't be renamed (no unique id)"}</span>
+          )}
+        </td>
+        <td className="min-w-[14rem] px-3 py-1.5 font-mono text-xs">
+          {r.suggestedId && r.editable ? (
+            <SuggestionField
+              kind="id"
+              entity={r.name}
+              mono
+              state={stateOf(r, "id")}
+              value={idFor(r.entityId, r.suggestedId)}
+              invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
+              locked={ignoreLocked}
+              onChange={(v) => {
+                setIds((n) => ({ ...n, [r.entityId]: v }));
+                setAcceptedField(r.entityId, "id", true);
+              }}
+              onAccept={() => void onAccept(r, "id")}
+              onIgnore={() => void onIgnore(r, "id")}
+            />
+          ) : (
+            <span className="font-sans text-muted">{r.suggestedId ? "can't be renamed" : "fits"}</span>
+          )}
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -470,124 +684,71 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
         </div>
         <span className="text-xs tabular-nums text-muted">
           {analysis.counts.ok} of {total} ids start with the code
+          {fit.ignored > 0 && `; ${fit.ignored} ignored, so ${fit.fits} of ${total} count as fine`}
         </span>
       </div>
 
-      <div role="group" aria-label="Show" className="flex flex-wrap gap-1 text-xs">
-        {(
-          [
-            ["all", `All ${total}`],
-            ["suggested", `With a suggestion ${analysis.rows.filter((r) => r.editable && (r.suggestedName || r.suggestedId)).length}`],
-            ...(Object.keys(STATUS) as NamingStatus[]).map((s) => [s, `${STATUS[s].label} ${analysis.counts[s]}`]),
-          ] as [typeof filter, string][]
-        ).map(([v, l]) => (
-          <button key={v} type="button" aria-pressed={filter === v} onClick={() => setFilter(v)} className={`rounded-md border px-2 py-1 ${filter === v ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}>
-            {l}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div role="group" aria-label="Show" className="flex flex-wrap gap-1 text-xs">
+          {(
+            [
+              ["all", `All ${total}`],
+              ["suggested", `With a suggestion ${analysis.rows.filter(open).length}`],
+              ...(Object.keys(STATUS) as NamingStatus[]).map((s) => [s, `${STATUS[s].label} ${analysis.counts[s]}`]),
+              ["ignored", `Ignored ${ignoredRows.length}`],
+            ] as [typeof filter, string][]
+          ).map(([v, l]) => (
+            <button key={v} type="button" aria-pressed={filter === v} onClick={() => setFilter(v)} className={`rounded-md border px-2 py-1 ${filter === v ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <GroupToggle on={grouped} onChange={setGrouped} />
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-line bg-surface">
         <table className="w-full text-[13px]">
           <thead className="bg-sunken text-left text-xs text-muted">
             <tr>
-              <th className="w-8 px-3 py-2" />
-              <th className="px-3 py-2 font-medium">Entity</th>
-              <th className="px-3 py-2 font-medium">Id</th>
-              <th className="px-3 py-2 font-medium">Suggested name</th>
-              <th className="px-3 py-2 font-medium">Suggested id</th>
+              <SortHeader label="Entity" k="name" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Id" k="id" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Suggested name" k="suggestedName" sort={sort} onToggle={toggleSort} />
+              <SortHeader label="Suggested id" k="suggestedId" sort={sort} onToggle={toggleSort} />
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
-              const st = STATUS[r.status];
-              const other = r.otherAreaId ? h.areas[r.otherAreaId]?.name : null;
-              return (
-                <tr key={r.entityId} className="border-t border-line align-top">
-                  <td className="px-3 py-1.5">
-                    {r.editable && (r.suggestedName !== null || r.suggestedId) && (
-                      <input
-                        type="checkbox"
-                        aria-label={`Change ${r.name}`}
-                        checked={picked.has(r.entityId)}
-                        onChange={() =>
-                          setPicked((p) => {
-                            const n = new Set(p);
-                            if (n.has(r.entityId)) n.delete(r.entityId);
-                            else n.add(r.entityId);
-                            return n;
-                          })
-                        }
-                      />
-                    )}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <div>{r.name}</div>
-                    <div className={`text-[11px] ${st.tone}`}>
-                      {st.label}
-                      {r.status === "old-prefix" && r.foundPrefix && ` (${r.foundPrefix})`}
-                      {other && ` (${other})`}
-                    </div>
-                  </td>
-                  <td className="px-3 py-1.5 font-mono text-xs">{r.entityId}</td>
-                  <td className="px-3 py-1.5">
-                    {r.suggestedName !== null && r.editable ? (
-                      <input
-                        aria-label={`New name for ${r.name}`}
-                        className={inputClass}
-                        value={nameFor(r.entityId, r.suggestedName)}
-                        onChange={(e) => {
-                          setNames((n) => ({ ...n, [r.entityId]: e.target.value }));
-                          setProposed((p) => (p[r.entityId]?.name ? { ...p, [r.entityId]: { ...p[r.entityId], name: false } } : p));
-                          setPicked((p) => new Set(p).add(r.entityId));
-                        }}
-                      />
-                    ) : (
-                      <span className="text-xs text-muted">{r.editable ? "fits" : "can't be renamed (no unique id)"}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-1.5 font-mono text-xs">
-                    {r.suggestedId && r.editable ? (
-                      <input
-                        aria-label={`New id for ${r.name}`}
-                        className={`${inputClass} font-mono`}
-                        value={idFor(r.entityId, r.suggestedId)}
-                        spellCheck={false}
-                        aria-invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
-                        onChange={(e) => {
-                          setIds((n) => ({ ...n, [r.entityId]: e.target.value }));
-                          setProposed((p) => (p[r.entityId]?.id ? { ...p, [r.entityId]: { ...p[r.entityId], id: false } } : p));
-                          setPicked((p) => new Set(p).add(r.entityId));
-                        }}
-                      />
-                    ) : (
-                      <span className="text-muted">{r.suggestedId ? "can't be renamed" : "fits"}</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            <GroupedRows rows={rows} grouped={grouped} roleOf={roleOf} colSpan={4} row={renderRow} />
           </tbody>
         </table>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => setPicked(new Set(withName.map((r) => r.entityId)))}>Select every name suggestion</Button>
-        <Button onClick={() => setPicked(new Set(withId.map((r) => r.entityId)))}>Select every id suggestion</Button>
-        <Button tone="primary" disabled={busy || nameInputs.length === 0} onClick={() => void add("name", nameInputs)}>
-          Add {nameInputs.length || ""} name change{nameInputs.length === 1 ? "" : "s"} to the list
+        <Button disabled={nameCount === 0} onClick={() => acceptAll("name")}>
+          Accept every name suggestion
         </Button>
-        <Button tone="primary" disabled={busy || idInputs.length === 0} onClick={() => void add("id", idInputs)}>
-          Add {idInputs.length || ""} id rename{idInputs.length === 1 ? "" : "s"} to the list
+        <Button disabled={idCount === 0} onClick={() => acceptAll("id")}>
+          Accept every id suggestion
         </Button>
+        {pendingCount > 0 && (
+          <Button tone="primary" disabled={busy} onClick={() => void add()}>
+            Add {pendingCount} to changes
+          </Button>
+        )}
         <span className="text-xs text-muted">
-          For an entity of a device, Home Assistant may still put the device's name in front of the name you set. The preview shows what you set; after Apply, Taxis shows what Home
-          Assistant settles on.
+          Tick a suggestion to accept it, cross it to ignore it. For an entity of a device, Home Assistant may still put the device's name in front of the name you set. The preview shows what you
+          set; after Apply, Taxis shows what Home Assistant settles on.
         </span>
       </div>
     </div>
   );
 }
+
+const omit = (m: Record<string, string>, keys: string[]): Record<string, string> => {
+  if (!keys.some((k) => Object.hasOwn(m, k))) return m;
+  const n = { ...m };
+  for (const k of keys) delete n[k];
+  return n;
+};
 
 // The area's entity id code, shown where the area is. It's changed in
 // Settings, with every other area's code, so the codes stay in one place.

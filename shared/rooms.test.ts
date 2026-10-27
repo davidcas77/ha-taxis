@@ -11,6 +11,7 @@ function entity(entityId: string, role: EntityItem["role"], state: string | null
     domain: entityId.split(".")[0],
     role,
     deviceClass: null,
+    deviceClassOverride: null,
     state,
     unit: role === "temperature" ? "°C" : null,
     icon: null,
@@ -31,6 +32,10 @@ function entity(entityId: string, role: EntityItem["role"], state: string | null
     inRegistry: true,
     configEntryId: null,
     presetModes: [],
+    hvacModes: [],
+    restored: false,
+    lastChanged: null,
+    lastReported: null,
     platform: "x",
     ...extra,
   };

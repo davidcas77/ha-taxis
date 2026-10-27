@@ -113,7 +113,7 @@ export function AssignTool({
   return (
     <section className="flex flex-col gap-3" aria-label={title}>
       <h2 className="text-sm font-semibold">{title}</h2>
-      <div className="flex flex-wrap items-end gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <label className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-md border border-line bg-bg px-2 py-1.5">
           <Search className="size-4 text-muted" aria-hidden />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or entity id" aria-label="Search entities" className="w-full bg-transparent text-[13px] outline-none" />
@@ -131,7 +131,7 @@ export function AssignTool({
             </select>
           </div>
         )}
-        <select aria-label="Role" className={`${inputClass} w-40`} value={role} onChange={(e) => setRole(e.target.value)}>
+        <select aria-label="Role" className={`${inputClass} w-40!`} value={role} onChange={(e) => setRole(e.target.value)}>
           <option value="">Any role</option>
           {ROLE_ORDER.map((r) => (
             <option key={r.role} value={r.role}>
@@ -140,7 +140,7 @@ export function AssignTool({
             </option>
           ))}
         </select>
-        <select aria-label="Domain" className={`${inputClass} w-36`} value={domain} onChange={(e) => setDomain(e.target.value)}>
+        <select aria-label="Domain" className={`${inputClass} w-36!`} value={domain} onChange={(e) => setDomain(e.target.value)}>
           <option value="">Any domain</option>
           {domains.map((d) => (
             <option key={d} value={d}>
@@ -148,7 +148,7 @@ export function AssignTool({
             </option>
           ))}
         </select>
-        <div role="group" aria-label="Show" className="flex rounded-md border border-line p-0.5 text-xs">
+        <div role="group" aria-label="Show" className="flex shrink-0 rounded-md border border-line p-0.5 text-xs">
           {(
             [
               ["not", "Not added yet"],

@@ -4,16 +4,21 @@ import { buildMockRegistry } from "../scripts/mock-ha-core.ts";
 import { buildHierarchy, type RawEntity, type RawRegistry } from "../server/model/hierarchy.ts";
 import {
   CAPABILITIES,
+  CAPABILITY_LABEL,
+  CLIMATE_KINDS,
   EMPTY_INVENTORY,
   areaChoice,
   areaInventory,
   defaultCapability,
+  detectClimateKind,
   inventoryMatrix,
   matrixTotals,
   resetEntity,
+  setAppliance,
   setAreaType,
   setBed,
   setBedroom,
+  setClimateKind,
   setCounts,
   setKind,
   setLightRole,
@@ -32,6 +37,7 @@ type Spec = {
   area?: string;
   disabled?: boolean;
   category?: string;
+  attrs?: Record<string, unknown>;
 };
 
 // A small invented house: a living room and a bedroom on one floor, a garden.
@@ -54,7 +60,7 @@ function house(specs: Spec[]) {
     if (s.disabled) entity.disabled_by = "user";
     if (s.category) entity.entity_category = s.category;
     reg.entities.push(entity);
-    reg.states.push({ entity_id: s.id, state: s.state ?? "off", attributes: { friendly_name: s.id.split(".")[1].replace(/_/g, " "), device_class: s.dc, entity_id: s.members } });
+    reg.states.push({ entity_id: s.id, state: s.state ?? "off", attributes: { friendly_name: s.id.split(".")[1].replace(/_/g, " "), device_class: s.dc, entity_id: s.members, ...s.attrs } });
   }
   return buildHierarchy(reg, "now");
 }
@@ -88,7 +94,9 @@ describe("defaultCapability", () => {
     expect(cap("light")).toBe("lights");
     expect(cap("climate")).toBe("thermostat");
     expect(cap("cover")).toBe("cover");
-    expect(cap("switch")).toBeNull();
+    // Fans count; a switch is listed with them but only counts when the user says it runs a fan.
+    expect(cap("fan")).toBe("fan");
+    expect(cap("switch")).toBe("fan");
     expect(cap("lock")).toBeNull();
   });
 
@@ -289,11 +297,25 @@ describe("choices", () => {
     expect(setCounts(h, off, "light.lamp", true)).toEqual(EMPTY_INVENTORY);
   });
 
-  it("compares with the entity's own default: a helper's default is off", () => {
+  it("never counts a light group as a light, whatever is ticked, and still lists it as a helper", () => {
     expect(setCounts(h, EMPTY_INVENTORY, "light.all", false)).toBe(EMPTY_INVENTORY);
-    const on = setCounts(h, EMPTY_INVENTORY, "light.all", true);
-    expect(on.entities).toEqual({ "light.all": { counts: true } });
-    expect(row(on, "light.all")).toMatchObject({ counts: true, countsDefault: false, overridden: true });
+    // Ticking it changes nothing: there is nothing to choose.
+    expect(setCounts(h, EMPTY_INVENTORY, "light.all", true)).toBe(EMPTY_INVENTORY);
+    const forced: InventorySettings = { entities: { "light.all": { counts: true } }, areas: {} };
+    expect(row(forced, "light.all")).toMatchObject({ counts: false, countsDefault: false });
+    expect(row(forced, "light.all").flags).toContain("helper");
+  });
+
+  it("tells a light group that is unavailable, and so reports no members, by its platform", () => {
+    const g = house(inLiving([{ id: "light.lamp" }, { id: "light.balcony_all", platform: "group", state: "unavailable" }]));
+    const lights = areaInventory(g, EMPTY_INVENTORY, "living_room").lights;
+    expect(lights.map((r) => [r.entityId, r.counts])).toEqual([["light.balcony_all", false], ["light.lamp", true]]);
+    expect(setCounts(g, EMPTY_INVENTORY, "light.balcony_all", true)).toBe(EMPTY_INVENTORY);
+  });
+
+  it("lets the user count a group of switches that runs a fan: only light groups never count", () => {
+    const g = house(inLiving([{ id: "switch.fan_pair", platform: "group", members: ["switch.fan_a", "switch.fan_b"] }]));
+    expect(setCounts(g, EMPTY_INVENTORY, "switch.fan_pair", true).entities).toEqual({ "switch.fan_pair": { counts: true } });
   });
 
   it("returns the same object when nothing changes", () => {
@@ -425,9 +447,10 @@ describe("inventoryMatrix", () => {
   it("follows the user's choices", () => {
     const s = setCounts(h, setCounts(h, EMPTY_INVENTORY, "light.lamp", false), "light.all", true);
     const living = inventoryMatrix(h, s).find((r) => r.areaId === "living_room")!;
-    expect(living.perCapability.lights).toEqual({ counted: 2, total: 3 });
+    // The light group is ticked, and still not counted.
+    expect(living.perCapability.lights).toEqual({ counted: 1, total: 3 });
     const none = setCounts(h, s, "light.spots", false);
-    expect(inventoryMatrix(h, none).find((r) => r.areaId === "living_room")!.perCapability.lights).toEqual({ counted: 1, total: 3 });
+    expect(inventoryMatrix(h, none).find((r) => r.areaId === "living_room")!.perCapability.lights).toEqual({ counted: 0, total: 3 });
   });
 
   it("totals every area", () => {
@@ -443,6 +466,16 @@ describe("the demo house", () => {
   const h = buildHierarchy(buildMockRegistry(), "now");
   const inv = (area: string) => areaInventory(h, EMPTY_INVENTORY, area);
   const find = (area: string, capability: Capability, id: string) => inv(area)[capability].find((r) => r.entityId === id)!;
+
+  it("has an AC with presets, a heating-only valve and a thermostat with presets, each read from its modes", () => {
+    expect(find("study", "thermostat", "climate.study_ac")).toMatchObject({ climate: "ac", overridden: false });
+    expect(find("kitchen", "thermostat", "climate.kitchen_valve")).toMatchObject({ climate: "heating", overridden: false });
+    expect(find("living_room", "thermostat", "climate.living_valve").climate).toBe("heating");
+    expect(find("bedroom", "thermostat", "climate.bedroom").climate).toBe("heating");
+    expect(h.entities["climate.study_ac"].presetModes).toEqual(["eco", "comfort", "sleep", "boost"]);
+    expect(h.entities["climate.study_ac"].hvacModes).toContain("cool");
+    expect(h.entities["climate.kitchen_valve"].hvacModes).toEqual(["off", "heat"]);
+  });
 
   it("has a kitchen with motion, presence, light level and temperature", () => {
     const k = inv("kitchen");
@@ -466,5 +499,132 @@ describe("the demo house", () => {
 
   it("starts a room with presence only from its presence sensor", () => {
     expect(find("study", "presence", "binary_sensor.study_presence").role).toBe("starts");
+  });
+});
+
+describe("fans and appliances", () => {
+  const h = buildHierarchy(
+    {
+      config: { location_name: "Test house" },
+      floors: [],
+      areas: [{ area_id: "bathroom", name: "Bathroom" }],
+      devices: [],
+      entities: [
+        { entity_id: "fan.bath_extractor", platform: "demo", area_id: "bathroom" },
+        { entity_id: "switch.bath_fan_plug", platform: "demo", area_id: "bathroom" },
+        { entity_id: "switch.bath_hidden", platform: "demo", area_id: "bathroom", hidden_by: "integration" },
+        { entity_id: "switch.bath_group", platform: "group", area_id: "bathroom" },
+        { entity_id: "sensor.bath_washer_power", platform: "demo", area_id: "bathroom" },
+      ],
+      labels: [],
+      states: [
+        { entity_id: "fan.bath_extractor", state: "off", attributes: { friendly_name: "Extractor" } },
+        { entity_id: "switch.bath_fan_plug", state: "off", attributes: { friendly_name: "Fan plug" } },
+        { entity_id: "switch.bath_hidden", state: "off", attributes: { friendly_name: "Hidden" } },
+        { entity_id: "switch.bath_group", state: "off", attributes: { friendly_name: "Group", entity_id: ["switch.bath_fan_plug"] } },
+        { entity_id: "sensor.bath_washer_power", state: "0.3", attributes: { friendly_name: "Washer power", device_class: "power", unit_of_measurement: "W" } },
+      ],
+    } satisfies RawRegistry,
+    "now",
+  );
+  const rows = (s: InventorySettings = EMPTY_INVENTORY) => areaInventory(h, s, "bathroom");
+
+  it("counts a fan by default, and lists a switch without counting it", () => {
+    expect(CAPABILITIES.map((c) => c.key)).toContain("fan");
+    expect(rows().fan.map((r) => [r.entityId, r.counts, r.countsDefault])).toEqual([
+      ["fan.bath_extractor", true, true],
+      ["switch.bath_fan_plug", false, false],
+      // A group of switches is a helper: listed, not counted. A switch an integration hides is not listed.
+      ["switch.bath_group", false, false],
+    ]);
+    expect(rows().fan.find((r) => r.entityId === "switch.bath_group")!.flags).toContain("helper");
+  });
+
+  it("counts a switch the user says runs a fan, and puts it back with a reset", () => {
+    const on = setCounts(h, EMPTY_INVENTORY, "switch.bath_fan_plug", true);
+    expect(on.entities["switch.bath_fan_plug"]).toEqual({ counts: true });
+    expect(rows(on).fan.filter((r) => r.counts).map((r) => r.entityId)).toEqual(["fan.bath_extractor", "switch.bath_fan_plug"]);
+    expect(rows(on).fan.find((r) => r.entityId === "switch.bath_fan_plug")!.overridden).toBe(true);
+    expect(rows(resetEntity(on, "switch.bath_fan_plug")).fan.filter((r) => r.counts).map((r) => r.entityId)).toEqual(["fan.bath_extractor"]);
+    // The matrix has a column for fans.
+    const row = inventoryMatrix(h, on)[0];
+    expect(row.perCapability.fan).toEqual({ counted: 2, total: 3 });
+  });
+
+  it("marks a power sensor as an appliance, and nothing else", () => {
+    expect(rows().power.map((r) => [r.entityId, r.appliance])).toEqual([["sensor.bath_washer_power", false]]);
+    const marked = setAppliance(EMPTY_INVENTORY, "sensor.bath_washer_power", true);
+    expect(marked.entities["sensor.bath_washer_power"]).toEqual({ appliance: true });
+    expect(rows(marked).power[0]).toMatchObject({ appliance: true, overridden: true });
+    expect(setAppliance(marked, "sensor.bath_washer_power", false)).toEqual(EMPTY_INVENTORY);
+    // Only a power row has the mark.
+    expect(rows(marked).fan.every((r) => r.appliance === undefined)).toBe(true);
+  });
+});
+
+describe("climate kinds", () => {
+  const h = house(
+    inLiving([
+      { id: "climate.split_ac", attrs: { hvac_modes: ["off", "cool", "heat", "dry"] } },
+      { id: "climate.auto_ac", attrs: { hvac_modes: ["off", "heat_cool"] } },
+      { id: "climate.heater", attrs: { hvac_modes: ["off", "heat"] } },
+      { id: "climate.silent" },
+      { id: "light.lamp" },
+    ]),
+  );
+  const rows = (s: InventorySettings = EMPTY_INVENTORY) => areaInventory(h, s, "living_room").thermostat;
+  const kind = (s: InventorySettings, id: string) => rows(s).find((r) => r.entityId === id)!;
+
+  it("is called Climate, and has one column for all three kinds", () => {
+    expect(CAPABILITY_LABEL.thermostat).toBe("Climate");
+    expect(CAPABILITIES.filter((c) => c.key === "thermostat")).toHaveLength(1);
+    expect(CLIMATE_KINDS).toEqual(["ac", "heating", "valve"]);
+  });
+
+  it("reads the modes the entity offers into the hierarchy", () => {
+    expect(h.entities["climate.split_ac"].hvacModes).toEqual(["off", "cool", "heat", "dry"]);
+    expect(h.entities["climate.silent"].hvacModes).toEqual([]);
+    expect(h.entities["light.lamp"].hvacModes).toEqual([]);
+  });
+
+  it("detects an AC from cool or heat_cool, and anything that only heats as heating", () => {
+    expect(detectClimateKind(["off", "cool"])).toBe("ac");
+    expect(detectClimateKind(["off", "heat_cool"])).toBe("ac");
+    expect(detectClimateKind(["off", "heat"])).toBe("heating");
+    expect(detectClimateKind(["off", "heat", "auto"])).toBe("heating");
+    expect(detectClimateKind([])).toBe("heating");
+    expect(rows().map((r) => [r.entityId, r.climate, r.climateDefault, r.overridden])).toEqual([
+      ["climate.auto_ac", "ac", "ac", false],
+      ["climate.heater", "heating", "heating", false],
+      ["climate.silent", "heating", "heating", false],
+      ["climate.split_ac", "ac", "ac", false],
+    ]);
+  });
+
+  it("gives only a climate row a kind", () => {
+    const inv = areaInventory(h, EMPTY_INVENTORY, "living_room");
+    expect(inv.lights[0].climate).toBeUndefined();
+  });
+
+  it("switches among the three, stores the choice only when it differs, and takes it back", () => {
+    const valve = setClimateKind(h, EMPTY_INVENTORY, "climate.heater", "valve");
+    expect(valve.entities).toEqual({ "climate.heater": { climate: "valve" } });
+    expect(kind(valve, "climate.heater")).toMatchObject({ climate: "valve", climateDefault: "heating", overridden: true });
+    // An AC can be read as a valve too, and back.
+    const acAsHeating = setClimateKind(h, EMPTY_INVENTORY, "climate.split_ac", "heating");
+    expect(kind(acAsHeating, "climate.split_ac")).toMatchObject({ climate: "heating", overridden: true });
+    expect(setClimateKind(h, acAsHeating, "climate.split_ac", "ac")).toEqual(EMPTY_INVENTORY);
+    expect(setClimateKind(h, valve, "climate.heater", "heating")).toEqual(EMPTY_INVENTORY);
+  });
+
+  it("changes nothing for an entity that isn't a climate entity, or for a kind that doesn't exist", () => {
+    expect(setClimateKind(h, EMPTY_INVENTORY, "light.lamp", "ac")).toBe(EMPTY_INVENTORY);
+    expect(setClimateKind(h, EMPTY_INVENTORY, "climate.nowhere", "ac")).toBe(EMPTY_INVENTORY);
+    expect(setClimateKind(h, EMPTY_INVENTORY, "climate.heater", "boiler" as never)).toBe(EMPTY_INVENTORY);
+  });
+
+  it("is dropped together with the other choices by a reset", () => {
+    const s = setCounts(h, setClimateKind(h, EMPTY_INVENTORY, "climate.heater", "valve"), "climate.heater", false);
+    expect(resetEntity(s, "climate.heater")).toEqual(EMPTY_INVENTORY);
   });
 });

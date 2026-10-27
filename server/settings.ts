@@ -26,6 +26,7 @@ import {
   EMPTY_INVENTORY,
   INVENTORY_AREA_ID,
   INVENTORY_ENTITY_ID,
+  CLIMATE_KINDS,
   KIND_PAIRS,
   LIGHT_ROLES,
   MAX_INVENTORY_AREAS,
@@ -38,9 +39,7 @@ import {
 import {
   EMPTY_PARAMETERS,
   MAX_PARAMETER_AREAS,
-  MAX_PARAMETER_FLOORS,
   PARAMETER_AREA_ID,
-  PARAMETER_FLOOR_ID,
   PARAM_DEF,
   checkValue,
   isParamKey,
@@ -48,11 +47,12 @@ import {
   type ParamValues,
   type ParameterSettings,
 } from "../shared/parameters.ts";
+import { EMPTY_NAMING_IGNORES, readNamingIgnores, type NamingIgnores } from "../shared/naming-ignores.ts";
 import { DEFAULT_HOUSE_GROUP, DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, floorCodes, slug, type NamingSettings } from "../shared/naming.ts";
 import type { EntityRole, Hierarchy } from "../shared/types.ts";
 
-// App settings, one JSON value per key in SQLite: naming, groups, the
-// capability inventory, the recipe parameters and the optional AI.
+// App settings, one JSON value per key in SQLite: naming, the naming
+// suggestions the user ignored, groups, the capability inventory, the recipe parameters and the optional AI.
 
 export function settingsStore(db: DatabaseSync) {
   const get = db.prepare("SELECT value FROM settings WHERE key = ?");
@@ -70,6 +70,20 @@ export function settingsStore(db: DatabaseSync) {
     },
     saveNaming(s: NamingSettings): void {
       put.run("naming", JSON.stringify(s));
+    },
+    namingIgnores(): NamingIgnores {
+      const row = get.get("namingIgnores") as { value: string } | undefined;
+      if (!row) return structuredClone(EMPTY_NAMING_IGNORES);
+      try {
+        // Same as groups: validate again in case the row was edited by hand.
+        const checked = validateNamingIgnores(JSON.parse(row.value));
+        return checked.ok ? checked.value : structuredClone(EMPTY_NAMING_IGNORES);
+      } catch {
+        return structuredClone(EMPTY_NAMING_IGNORES);
+      }
+    },
+    saveNamingIgnores(s: NamingIgnores): void {
+      put.run("namingIgnores", JSON.stringify(s));
     },
     groups(): GroupSettings {
       const row = get.get("groups") as { value: string } | undefined;
@@ -303,12 +317,15 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
     if (!isRecord(raw)) return { ok: false, error: `The choices for ${id} weren't readable.` };
     const choice: EntityChoice = {};
     for (const [key, v] of Object.entries(raw)) {
-      if (key === "counts" || key === "bed") {
+      if (key === "counts" || key === "bed" || key === "appliance") {
         if (typeof v !== "boolean") return { ok: false, error: `${key} for ${id} must be true or false.` };
         choice[key] = v;
       } else if (key === "kind") {
         if (typeof v !== "string" || !KIND_VALUES.has(v)) return { ok: false, error: `kind for ${id} must be door, window, speaker or tv.` };
         choice.kind = v as EntityChoice["kind"];
+      } else if (key === "climate") {
+        if (!has(CLIMATE_KINDS, v)) return { ok: false, error: `climate for ${id} must be ac, heating or valve.` };
+        choice.climate = v as EntityChoice["climate"];
       } else if (key === "role") {
         if (!has(MOTION_ROLES, v)) return { ok: false, error: `role for ${id} must be starts or holds.` };
         choice.role = v as EntityChoice["role"];
@@ -343,9 +360,18 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
   return { ok: true, value: { entities: Object.fromEntries(entityEntries), areas: Object.fromEntries(areaEntries) } };
 }
 
-// The recipe parameters: values per level (house, interior/exterior, floor,
-// area). Only known parameters, each inside its range. Anything the editor
-// couldn't have produced is refused with a message, never silently dropped.
+// The naming suggestions the user ignored: per entity, whether its name and its
+// id suggestion are. The older shape, a list of entity ids, is read as both
+// ignored. Sorted on the way in, so the stored value is always the same shape.
+export function validateNamingIgnores(input: unknown): { ok: true; value: NamingIgnores } | { ok: false; error: string } {
+  return readNamingIgnores(input);
+}
+
+// The recipe parameters: values per level (house, interior/exterior, area). Only
+// known parameters, each inside its range. Anything the editor couldn't have
+// produced is refused with a message, never silently dropped. The exception is
+// "floors": an older version let a floor have values, a floor has none now, and
+// what was saved for floors is ignored here, so it is gone with the next save.
 export function validateParameters(input: unknown): { ok: true; value: ParameterSettings } | { ok: false; error: string } {
   if (!isRecord(input)) return { ok: false, error: "The parameter settings weren't readable." };
   for (const key of Object.keys(input)) {
@@ -353,21 +379,19 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   }
   const house = input.house ?? {};
   const types = input.types ?? {};
-  const floors = input.floors ?? {};
   const areas = input.areas ?? {};
   if (!isRecord(house)) return { ok: false, error: "The house parameters weren't readable." };
   if (!isRecord(types)) return { ok: false, error: "The interior and exterior parameters weren't readable." };
-  if (!isRecord(floors)) return { ok: false, error: "The floor parameters weren't readable." };
   if (!isRecord(areas)) return { ok: false, error: "The area parameters weren't readable." };
-  if (Object.keys(floors).length > MAX_PARAMETER_FLOORS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_FLOORS} floors.` };
   if (Object.keys(areas).length > MAX_PARAMETER_AREAS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_AREAS} areas.` };
 
-  const values = (raw: unknown, where: string, area = false): { ok: true; value: ParamValues } | { ok: false; error: string } => {
+  const values = (raw: unknown, where: string, area = false, house = false): { ok: true; value: ParamValues } | { ok: false; error: string } => {
     if (!isRecord(raw)) return { ok: false, error: `The parameters for ${where} weren't readable.` };
     const out: [string, ParamValue][] = [];
     for (const [key, v] of Object.entries(raw)) {
       if (!isParamKey(key)) return { ok: false, error: `${key.slice(0, 40)} isn't a parameter (${where}).` };
       if (PARAM_DEF[key].areaOnly && !area) return { ok: false, error: `${PARAM_DEF[key].label} can only be set for one area (${where}).` };
+      if (PARAM_DEF[key].houseOnly && !house) return { ok: false, error: `${PARAM_DEF[key].label} can only be set for the house (${where}).` };
       const problem = checkValue(PARAM_DEF[key], v);
       if (problem) return { ok: false, error: `${problem.replace(/\.$/, "")} (${where}).` };
       out.push([key, v as ParamValue]);
@@ -376,7 +400,7 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   };
 
   // Built from entries, not by assignment: an id is a key, and "__proto__" must stay one.
-  const houseValues = values(house, "the house");
+  const houseValues = values(house, "the house", false, true);
   if (!houseValues.ok) return houseValues;
   const typeEntries: [string, ParamValues][] = [];
   for (const [id, raw] of Object.entries(types)) {
@@ -384,13 +408,6 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
     const v = values(raw, `${id} areas`);
     if (!v.ok) return v;
     if (Object.keys(v.value).length > 0) typeEntries.push([id, v.value]);
-  }
-  const floorEntries: [string, ParamValues][] = [];
-  for (const [id, raw] of Object.entries(floors)) {
-    if (!PARAMETER_FLOOR_ID.test(id)) return { ok: false, error: `${id.slice(0, 60)} isn't a floor id.` };
-    const v = values(raw, `floor ${id}`);
-    if (!v.ok) return v;
-    if (Object.keys(v.value).length > 0) floorEntries.push([id, v.value]);
   }
   const areaEntries: [string, ParamValues][] = [];
   for (const [id, raw] of Object.entries(areas)) {
@@ -401,7 +418,7 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   }
   return {
     ok: true,
-    value: { house: houseValues.value, types: Object.fromEntries(typeEntries), floors: Object.fromEntries(floorEntries), areas: Object.fromEntries(areaEntries) },
+    value: { house: houseValues.value, types: Object.fromEntries(typeEntries), areas: Object.fromEntries(areaEntries) },
   };
 }
 

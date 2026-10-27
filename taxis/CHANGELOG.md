@@ -1,5 +1,135 @@
 # Changelog
 
+## 0.5.1
+
+- **Devices & entities.** One table of devices with their entities under them
+  replaces the separate Devices and Entities pages and the two tabs of an area. A
+  device is a row (name, manufacturer and model, number of entities, a summary of
+  their states, area, why it doesn't work) with a chevron; opened, its entities are
+  rows under it with the columns the entities table had (name, entity id, type,
+  Show as, state, area, Open). Entities with no device are under **No device**.
+  **Show entities** opens or folds all (remembered in this browser), chevrons
+  override it, and a search opens the devices that match. The kind chips filter
+  devices by their entities, the headers sort devices and the entities under each,
+  and a device's name and area change in place (as the changes the device editor
+  makes). **Group by type** switches to the flat table of entities in sections, as
+  before. An area's tab shows the devices in the area and, under their device
+  (marked "device in <area>"), the entities in the area whose device is elsewhere.
+- **Navigation.** Devices and Entities leave the top bar: they are
+  **Organize > Devices** and **Organize > Entities**, each with a **Table | Records**
+  switch (the table above across the page, or the list with properties beside it;
+  remembered per section). Old links (`#devices`, `#entities`, `#entities/<id>`,
+  and an area's Devices or Entities tab) are rewritten to the new ones. The entities
+  page's checkboxes, bulk bar, filters (area, manufacturer, label, disabled, hidden
+  and diagnostic) and the 400-device limit are all in the table.
+- **Climate kinds.** The capability **Thermostats** is now **Climate**. Each climate
+  entity is an **AC**, **Heating** or **Valve**: Taxis reads AC from the modes it
+  offers (`cool` or `heat_cool`) and Heating from one that only heats, and you can
+  switch any to another, kept in Taxis like the door/window choice. Area climate
+  runs an AC in both seasons, and Heating and Valve in the heating season only; the
+  Recipes cell says which it left out.
+- **Cooling temperatures.** New Climate parameters *Cool: comfort / eco / night and
+  sleep / away* (24, 27, 25, 29). In the cooling season the recipe uses them instead
+  of the heating ones, and *Lowest* and *Highest* no longer limit the target (they
+  would cap 27 at 24). The Area climate blueprint is now **version 2**: an installed
+  one shows as out of date until it is updated.
+- **Parameters.** Floors have no values: a value comes from the area, interior or
+  exterior, or the house. Floors are headings over their areas. What an older
+  version saved for floors is ignored and dropped on the next save. Values in the
+  tables now show a box, a pencil and a pointer, with "Click a value to change it."
+  above them (buttons everywhere show the pointer cursor).
+- **Naming.** Suggested names and ids each have a tick (accept) and a cross
+  (ignore) inside the field. Accepted fields turn green, ignored ones grey, and both
+  can be undone. **Accept every name suggestion**, **Accept every id suggestion**
+  and **Add N to changes** (one change per entity with both fields). Ignoring is per
+  field now; an older ignore counts for both.
+- **Changes.** **Apply** on a change applies just it (**Apply with N more** and "Also
+  applies: …" when it needs others, in the order Apply all uses). A rename's card
+  warns "This changes the entity id" and lists where it is used, what Taxis
+  rewrites and what to update by hand; the last needs **I understand** before Apply.
+- **Why.** Entities that are disabled, left over, unavailable or unknown say why
+  (an (i) beside the state, a **Why** column, the Health tab's list, device rows):
+  disabled, device disabled, left over, integration failed, group with missing
+  members, device offline, low battery, stale, unknown. It reads Home Assistant's
+  list of integrations with `config_entries/get`, a read added to what Taxis may send
+  (domain, title, state, reason and whether it is disabled are kept).
+- **Groups.** A light group is never counted as a light, and a helper or group is
+  listed under Helpers, with a "group of N" badge and the number of members missing.
+  A group helper that is unavailable reports no members (Home Assistant leaves them
+  out), and is told by its platform. The Helpers tab updates a group with members
+  that are gone to the lights the area counts, and Health has a **Broken groups**
+  check (warning).
+- **Tree and Overview.** An area with things to look at has a small amber or red dot
+  in the tree; **Show empty areas** (on to begin with) joins the other two toggles,
+  and all three are remembered. The Overview's live status is bigger (humidity was
+  already among them) and the cards under it denser.
+- **Mock demo.** An air conditioner with presets (Study), a heating-only valve
+  (Kitchen), groups with missing members (the Loft's own, two on the balcony), a
+  leftover entity, an integration that fails, an offline thermometer and a flat
+  battery.
+
+- **Recipe: Bathroom fan.** The fan of an area runs while the room is steamed up.
+  It goes on when the humidity rises at least 0.03 %/s, is 10 % above a
+  reference humidity sensor, or reaches 80 %; it goes off when the humidity is back
+  within 3 % of the reference (or, with no reference, of where it started) and no
+  longer rising fast, when the rate has been flat for 20 minutes, or after 60.
+  A fan that is already on is left alone, and an option keeps it from starting
+  while the house sleeps. It needs a humidity sensor that counts, its helper, and a
+  fan: the Capabilities tab has a new **Fans** section, where a `fan` counts and a
+  switch counts when you tick it. Installing makes the **humidity rate sensor**
+  `sensor.<code>_humidity_rate` (a derivative helper, % per second, smoothed over
+  two minutes) with the pause switch and `taxis/bathroom_fan.yaml`. The thresholds,
+  the reference sensor and the sleep option are on a new **Bathroom fan** tab of
+  Parameters.
+- **A shower keeps the bathroom occupied.** A new Occupancy parameter, *Shower
+  holds occupied at* (%/s, 0 is off): when the area's humidity rate sensor exists,
+  a rate at or above it keeps the hold timer running (it never starts it). The
+  Occupancy blueprint is now **version 4**, so an installed Occupancy shows as out
+  of date until it is updated.
+- **Recipe: Exterior lights**, for areas of type exterior. Lights on at sunset
+  (moved by an offset), off after a clock of 120 minutes that motion, a counted
+  camera sensor or a person arriving home starts again, off at sunrise, nothing in
+  daytime. It uses the area's light group, its pause switch and the same manual
+  override timer as Motion lights. New **Exterior** tab of Parameters.
+- **Recipe: Left open.** A door open for 10 minutes or a window for 30 sends a
+  message, naming the sensor, and again every so often if you set a repeat.
+- **Recipe: Appliance done.** A power sensor you tick as an **Appliance** on the
+  Capabilities tab is running after 2 minutes above 10 W, and done after 3 minutes
+  below 5 W; one automation per area, the message names the machine. New **Safety**
+  tab of Parameters for both.
+- **Notify services.** Left open and Appliance done send to the notify services
+  listed in a new House parameter, *Notify services* (like
+  `notify.mobile_app_phone`), and to Home Assistant's own notifications when it is
+  empty. Health says once, as info, when a recipe that notifies is installed with no
+  service set. Taxis can't tell whether a service exists: that would need a read of
+  the list of services, which it does not make. The notify services, the
+  text-to-speech entity and the announcement volume are **house only** parameters:
+  every other row of their tab shows a dash.
+- **Recipe: Announce.** One script for the house, `script.taxis_announce`, from the
+  script blueprint `taxis/announce.yaml`. Called with a message and an optional
+  volume, it speaks on the speakers of the areas that are occupied, not asleep and
+  not paused. The areas go to the blueprint as a list of objects. It needs a
+  text-to-speech entity (House tab) and a speaker in an area that has Occupancy. It
+  is in a House row of the Recipes table.
+- **Health.** A bathroom fan without its rate sensor is reported as a recipe out of
+  date, with the fix that makes the sensor again; Announce is reported when it is
+  out of date or no longer something Taxis would write; and the notify info above.
+- **What Taxis may write.** Four additions, each exact and tested. `blueprint/save`
+  now takes the domain `script`, for the path `taxis/announce.yaml` only (and
+  `announce.yaml` is refused as an automation blueprint). The config flow handler
+  `derivative` is allowed beside group, min/max and template. A new kind of change,
+  a script, writes `taxis_announce` through the REST config API Taxis already uses
+  for scripts (`/config/script/config/<id>`), which needed no new path. No service
+  is called and nothing is deleted.
+- **Mock demo.** A Bathroom (humidity sensor, extractor fan), a Garden (lights, a
+  camera and its motion sensor, two people), a Laundry (two power sensors, a door,
+  a window, a speaker) and a text-to-speech entity. The mock Home Assistant answers
+  the script blueprint list, makes scripts from a blueprint and runs the derivative
+  flow.
+
+Not in this version: covers by the sun, which needs to know which way each window
+faces.
+
 ## 0.5.0
 
 - **Entry lights.** A new Lighting parameter, **Entry lights**: the lights that

@@ -1,5 +1,6 @@
-import { BLUEPRINT_PATH_RE, blueprintByPath, blueprintForRecipe, checkBlueprintInput, isRecipeKey } from "./blueprints.ts";
+import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, BLUEPRINT_PATH_RE, blueprintByPath, blueprintForRecipe, checkBlueprintInput, isRecipeKey } from "./blueprints.ts";
 import { HOUSE_HELPER_IDS } from "./climate.ts";
+import { deviceClassError } from "./device-classes.ts";
 import { checkPeriods } from "./periods.ts";
 import { CATEGORY_SCOPES, type CategoryScope, type Change, type ChangeInput, type ChangeKind, type Hierarchy } from "./types.ts";
 
@@ -41,17 +42,20 @@ const categoryMap: Check = (v) =>
   typeof v === "object" && v !== null && !Array.isArray(v) &&
   Object.entries(v).every(([k, c]) => (CATEGORY_SCOPES as readonly string[]).includes(k) && idOrNull(c));
 
+// The class itself is checked against the entity's domain in validateInput.
+const deviceClassField: Check = (v) => v === null || (typeof v === "string" && /^[a-z0-9_]{1,40}$/.test(v));
+
 // Every field each kind may change, named as Home Assistant names it. Anything
 // else is refused before it is stored, let alone sent.
 export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
-  entity: { new_entity_id: entityIdCheck, name: strOrNull(), icon, area_id: idOrNull, labels: ids, categories: categoryMap, hidden_by: userOrNull, disabled_by: userOrNull },
+  entity: { new_entity_id: entityIdCheck, name: strOrNull(), icon, area_id: idOrNull, labels: ids, categories: categoryMap, hidden_by: userOrNull, disabled_by: userOrNull, device_class: deviceClassField },
   device: { name_by_user: strOrNull(), area_id: idOrNull, labels: ids, disabled_by: userOrNull },
   area: { name: str(), floor_id: idOrNull, icon, labels: ids, temperature_entity_id: entityIdOrNull, humidity_entity_id: entityIdOrNull },
   floor: { name: str(), level, icon },
   label: { name: str(), color: strOrNull(32), icon, description: strOrNull(1000) },
   category: { name: str(), icon },
   helper: {
-    helper: oneOf("group", "min_max", "timer", "input_boolean", "template", "schedule"),
+    helper: oneOf("group", "min_max", "timer", "input_boolean", "template", "schedule", "derivative"),
     group_type: oneOf("light", "binary_sensor", "media_player"),
     name: str(),
     entity_id: entityIdCheck,
@@ -73,19 +77,24 @@ export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
     alias: str(),
     use_blueprint: useBlueprint,
   },
+  script: {
+    script_id: (v) => v === ANNOUNCE_SCRIPT_ID,
+    alias: str(),
+    use_blueprint: useBlueprint,
+  },
 };
 
 // What can be created and deleted. Entities and devices come from integrations:
 // Taxis edits them but never creates or removes them. Helpers, blueprints and
 // recipe automations can be created and updated but, like entities, are never
 // deleted.
-const CREATABLE = new Set<ChangeKind>(["area", "floor", "label", "category", "helper", "blueprint", "automation"]);
-const NEVER_DELETED = new Set<ChangeKind>(["helper", "blueprint", "automation"]);
+const CREATABLE = new Set<ChangeKind>(["area", "floor", "label", "category", "helper", "blueprint", "automation", "script"]);
+const NEVER_DELETED = new Set<ChangeKind>(["helper", "blueprint", "automation", "script"]);
 
 // Kinds a change is keyed by what it makes, not by a temporary id: a helper by
-// its entity id, a blueprint by its path, an automation by its id. Nothing else
-// in the list points at them, so they need no temporary id.
-export const KEYED_KINDS = new Set<ChangeKind>(["helper", "blueprint", "automation"]);
+// its entity id, a blueprint by its path, an automation or a script by its id.
+// Nothing else in the list points at them, so they need no temporary id.
+export const KEYED_KINDS = new Set<ChangeKind>(["helper", "blueprint", "automation", "script"]);
 
 // The kinds Apply writes through the registries. Helpers, blueprints and
 // automations have steps of their own.
@@ -104,8 +113,8 @@ export function validateInput(input: ChangeInput): string | null {
   } else if (input.scope !== undefined && input.scope !== null) {
     return "Only a category change has a scope.";
   }
-  // A blueprint or an automation is named by a field, not by a target.
-  const keyed = input.kind === "blueprint" || input.kind === "automation";
+  // A blueprint, an automation or a script is named by a field, not by a target.
+  const keyed = input.kind === "blueprint" || input.kind === "automation" || input.kind === "script";
   if (input.op !== "create" && !keyed && !id(input.targetId)) return "Say which item to change.";
   if (input.op === "delete") return null;
   const fields = input.fields ?? {};
@@ -114,11 +123,16 @@ export function validateInput(input: ChangeInput): string | null {
     if (!(key in allowed)) return `"${key}" can't be changed on ${an(input.kind)}.`;
     if (!allowed[key](value)) return `"${key}" has a value Home Assistant wouldn't accept.`;
   }
+  if (input.kind === "entity" && "device_class" in fields) {
+    const bad = deviceClassError(input.targetId ?? "", fields.device_class);
+    if (bad) return bad;
+  }
   if (input.op === "create" && !keyed && !str()(fields.name)) return `A new ${input.kind} needs a name.`;
   if (input.op === "update" && Object.keys(fields).length === 0) return "Nothing to change.";
   if (input.kind === "helper") return validateHelper(input.op, fields);
   if (input.kind === "blueprint") return validateBlueprint(fields);
   if (input.kind === "automation") return validateAutomation(fields);
+  if (input.kind === "script") return validateScript(fields);
   return null;
 }
 
@@ -140,8 +154,19 @@ function validateAutomation(fields: Record<string, unknown>): string | null {
   const automationId = String(fields.automation_id);
   const prefix = `taxis_${String(fields.recipe)}_`;
   if (!automationId.startsWith(prefix) || automationId === prefix) return "The automation id has to be taxis_<recipe>_<area code>.";
+  const info = blueprintForRecipe(fields.recipe as Parameters<typeof blueprintForRecipe>[0]);
+  // Announce is a script: it has its own kind of change.
+  if (info.domain !== "automation") return "That recipe is a script, not an automation.";
   const ub = fields.use_blueprint as { path: string };
-  if (ub.path !== blueprintForRecipe(fields.recipe as Parameters<typeof blueprintForRecipe>[0]).path) return "That recipe uses another blueprint.";
+  if (ub.path !== info.path) return "That recipe uses another blueprint.";
+  return null;
+}
+
+// The announce script: one for the house, from its blueprint, under one id.
+function validateScript(fields: Record<string, unknown>): string | null {
+  for (const key of ["script_id", "alias", "use_blueprint"]) if (!(key in fields)) return `A script change needs ${key.replace("_", " ")}.`;
+  const ub = fields.use_blueprint as { path: string };
+  if (ub.path !== ANNOUNCE_PATH) return "That script uses another blueprint.";
   return null;
 }
 
@@ -149,7 +174,7 @@ function validateAutomation(fields: Record<string, unknown>): string | null {
 // or min/max has an entity id and members in the domain it works on. A recipe's
 // helpers are a timer, an input boolean, a template sensor and a schedule: each
 // has its entity id in its own domain, an area (except the house's two switches),
-// and nothing a group has.
+// and nothing a group has. A derivative sensor is a min/max with one member.
 const OWN_FIELDS = {
   timer: ["helper", "name", "entity_id", "area_id", "duration"],
   input_boolean: ["helper", "name", "entity_id", "area_id", "icon"],
@@ -184,6 +209,13 @@ function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>):
   }
   if ("duration" in fields || "icon" in fields || "state_template" in fields || "device_class" in fields || "periods" in fields) return "Only a timer, an input boolean, a template sensor or a schedule sets those.";
   if (!("entities" in fields)) return "A new helper needs members.";
+  if (fields.helper === "derivative") {
+    if ("group_type" in fields || "set_area_sensor" in fields) return "A derivative sensor has neither a group type nor sets the area's sensor.";
+    if (domain !== "sensor") return "A derivative sensor's entity id has to start with “sensor.”.";
+    const source = fields.entities as string[];
+    if (source.length !== 1 || !source[0].startsWith("sensor.")) return "A derivative sensor has one sensor it derives from.";
+    return null;
+  }
   if (fields.helper === "group") {
     if (!("group_type" in fields)) return "A new group needs a group type.";
     if (domain !== fields.group_type) return `A ${String(fields.group_type)} group's entity id has to start with “${String(fields.group_type)}.”.`;
@@ -212,6 +244,7 @@ export function currentValues(h: Hierarchy, kind: ChangeKind, targetId: string, 
         categories: e.categories,
         hidden_by: e.hiddenBy,
         disabled_by: e.disabledBy,
+        device_class: e.deviceClassOverride,
       };
     }
     case "device": {
@@ -242,15 +275,20 @@ export function currentValues(h: Hierarchy, kind: ChangeKind, targetId: string, 
     // from Home Assistant on their own (server/changes/recipes.ts).
     case "blueprint":
     case "automation":
+    case "script":
       return null;
   }
 }
 
 export function sameValue(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    const plain = (v: unknown) => v === null || typeof v !== "object";
+    // Lists of plain values are sets; a list of objects (an announce area) is compared in order.
+    if (!a.every(plain) || !b.every(plain)) return a.every((v, i) => sameValue(v, b[i]));
     const x = [...a].sort();
     const y = [...b].sort();
-    return x.length === y.length && x.every((v, i) => v === y[i]);
+    return x.every((v, i) => v === y[i]);
   }
   if (a && b && typeof a === "object" && typeof b === "object") {
     const ka = Object.keys(a).filter((k) => (a as Record<string, unknown>)[k] != null);
@@ -356,7 +394,7 @@ export function planMerge(existing: Change[], input: ChangeInput, h: Hierarchy):
   const scope = input.scope ?? null;
   const fields = input.fields ?? {};
   if (kind === "helper") return planHelper(existing, input, h);
-  if (kind === "blueprint" || kind === "automation") return planRecipePart(existing, input, h);
+  if (kind === "blueprint" || kind === "automation" || kind === "script") return planRecipePart(existing, input, h);
 
   if (input.op === "create") {
     const bad = checkRefs(existing, h, {}, fields);
@@ -530,14 +568,14 @@ function planSchedulePeriods(existing: Change[], input: ChangeInput, h: Hierarch
   return { action: "insert", change: { kind: "helper", op: "update", targetId, scope: null, before: {}, after: { periods } } };
 }
 
-// A blueprint or an automation is keyed by its path or its id: adding it again
-// replaces the first, so the list holds one of each. Nothing in the registries
-// says whether Home Assistant has it already; Apply finds out and writes it
-// either way.
+// A blueprint, an automation or a script is keyed by its path or its id: adding it
+// again replaces the first, so the list holds one of each. Nothing in the
+// registries says whether Home Assistant has it already; Apply finds out and
+// writes it either way.
 function planRecipePart(existing: Change[], input: ChangeInput, h: Hierarchy): MergePlan {
   const fields = input.fields ?? {};
-  const kind = input.kind as "blueprint" | "automation";
-  const key = String(kind === "blueprint" ? fields.path : fields.automation_id);
+  const kind = input.kind as "blueprint" | "automation" | "script";
+  const key = String(kind === "blueprint" ? fields.path : kind === "script" ? fields.script_id : fields.automation_id);
   if (kind === "automation") {
     if (!h.areas[String(fields.area_id)]) return none("That area isn't in Home Assistant any more.");
   }

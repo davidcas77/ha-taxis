@@ -3,7 +3,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { GroupSettings } from "../../shared/groups.ts";
 import { EMPTY_INVENTORY, type InventorySettings } from "../../shared/inventory.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "../../shared/naming.ts";
+import { EMPTY_NAMING_IGNORES, type NamingIgnores } from "../../shared/naming-ignores.ts";
 import { EMPTY_PARAMETERS, type ParameterSettings } from "../../shared/parameters.ts";
+import { DEVICES_ENTITIES, normalizeLegacyHash } from "../../shared/route-hash.ts";
 import type { Change, ChangeInput, Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 
@@ -56,6 +58,14 @@ type TaxisState = {
   parametersSaving: boolean;
   saveParameters: (edit: (p: ParameterSettings) => ParameterSettings) => Promise<string | null>;
   saveNaming: (n: NamingSettings) => Promise<string | null>;
+  // The naming suggestions the user ignored: Taxis only, saved right away like
+  // the inventory.
+  namingIgnores: NamingIgnores;
+  // False until the saved list has arrived; edits wait for it.
+  namingIgnoresLoaded: boolean;
+  // True while a save is in flight; further edits wait for it.
+  namingIgnoresSaving: boolean;
+  saveNamingIgnores: (edit: (s: NamingIgnores) => NamingIgnores) => Promise<string | null>;
   reload: (refresh?: boolean) => Promise<void>;
   propose: (input: ChangeInput | ChangeInput[]) => Promise<boolean>;
   removeChange: (id: number) => Promise<void>;
@@ -85,6 +95,11 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
   const [parameters, setParameters] = useState<ParameterSettings>(EMPTY_PARAMETERS);
   const [parametersLoaded, setParametersLoaded] = useState(false);
   const [parametersSaving, setParametersSaving] = useState(false);
+  const [namingIgnores, setNamingIgnores] = useState<NamingIgnores>(EMPTY_NAMING_IGNORES);
+  const [namingIgnoresLoaded, setNamingIgnoresLoaded] = useState(false);
+  const [namingIgnoresSaving, setNamingIgnoresSaving] = useState(false);
+  const namingIgnoresRef = useRef<NamingIgnores>(EMPTY_NAMING_IGNORES);
+  const namingIgnoresBusy = useRef(false);
   const groupsRef = useRef<GroupSettings>({});
   const groupsBusy = useRef(false);
   const inventoryRef = useRef<InventorySettings>(EMPTY_INVENTORY);
@@ -101,6 +116,40 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
       } else setError(r.error);
     });
   }, []);
+
+  useEffect(() => {
+    void api.namingIgnores().then((r) => {
+      if (r.ok) {
+        namingIgnoresRef.current = r.ignores;
+        setNamingIgnores(r.ignores);
+        setNamingIgnoresLoaded(true);
+      } else setError(r.error);
+    });
+  }, []);
+
+  const saveNamingIgnores = useCallback(async (edit: (s: NamingIgnores) => NamingIgnores) => {
+    // Never save before the real list has arrived: an empty one would overwrite it.
+    if (!namingIgnoresLoaded) return "The ignored suggestions haven't loaded yet.";
+    if (namingIgnoresBusy.current) return "Still saving the last change. Try again in a moment.";
+    const before = namingIgnoresRef.current;
+    const next = edit(before);
+    if (next === before) return null;
+    namingIgnoresBusy.current = true;
+    setNamingIgnoresSaving(true);
+    namingIgnoresRef.current = next;
+    setNamingIgnores(next);
+    const r = await api.saveNamingIgnores(next);
+    namingIgnoresBusy.current = false;
+    setNamingIgnoresSaving(false);
+    if (!r.ok) {
+      namingIgnoresRef.current = before;
+      setNamingIgnores(before);
+      return r.error;
+    }
+    namingIgnoresRef.current = r.ignores;
+    setNamingIgnores(r.ignores);
+    return null;
+  }, [namingIgnoresLoaded]);
 
   useEffect(() => {
     void api.groups().then((r) => {
@@ -302,8 +351,8 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
   }, [changes]);
 
   const value = useMemo(
-    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, parameters, parametersLoaded, parametersSaving, saveParameters, saveNaming, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
-    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, parameters, parametersLoaded, parametersSaving, saveParameters, saveNaming, reload, propose, removeChange, clearChanges],
+    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, parameters, parametersLoaded, parametersSaving, saveParameters, saveNaming, namingIgnores, namingIgnoresLoaded, namingIgnoresSaving, saveNamingIgnores, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
+    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, parameters, parametersLoaded, parametersSaving, saveParameters, saveNaming, namingIgnores, namingIgnoresLoaded, namingIgnoresSaving, saveNamingIgnores, reload, propose, removeChange, clearChanges],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -315,7 +364,7 @@ export function useTaxis(): TaxisState {
 }
 
 // The selected screen, kept in the URL hash so a reload or bookmark opens it.
-export const AREA_TABS = ["overview", "capabilities", "entities", "devices", "naming", "labels", "health"] as const;
+export const AREA_TABS = ["overview", "capabilities", DEVICES_ENTITIES, "naming", "labels", "health"] as const;
 export type AreaTab = (typeof AREA_TABS)[number];
 
 // What the Organize page lists. In "spaces" an id reads "floor:<id>" or "area:<id>".
@@ -326,13 +375,11 @@ export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
 const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
 
 // The sub-tabs of the Parameters page. Later stages add more.
-export const PARAMETER_TABS = ["capabilities", "helpers", "house", "occupancy", "lighting", "media", "climate", "recipes"] as const;
+export const PARAMETER_TABS = ["capabilities", "helpers", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety", "recipes"] as const;
 export type ParameterTab = (typeof PARAMETER_TABS)[number];
 
 export type Route =
   | { page: "areas"; sel: Selection; tab: AreaTab }
-  | { page: "devices" }
-  | { page: "entities" }
   | { page: "organize"; type: OrganizeType; id: string | null }
   | { page: "parameters"; tab: ParameterTab }
   | { page: "health" }
@@ -349,7 +396,8 @@ export type Selection =
 const HOME: Route = { page: "areas", sel: { kind: "home" }, tab: "overview" };
 
 export function parseHash(hash: string): Route {
-  const parts = hash.replace(/^#/, "").split("/");
+  // #devices, #entities and the area tabs of those names are the one page and tab now.
+  const parts = normalizeLegacyHash(hash).replace(/^#/, "").split("/");
   let dec: string[];
   try {
     dec = parts.map(decodeURIComponent);
@@ -367,10 +415,6 @@ export function parseHash(hash: string): Route {
       return { page: "changes" };
     case "settings":
       return { page: "settings" };
-    case "devices":
-      return { page: "devices" };
-    case "entities":
-      return { page: "entities" };
     case "organize":
       // Floors and areas used to be two types; their links still open the tree.
       if (a === "floors" || a === "areas") return { page: "organize", type: "spaces", id: b ? `${a === "floors" ? "floor" : "area"}:${b}` : null };
@@ -401,8 +445,6 @@ export function toHash(r: Route): string {
     case "health":
     case "changes":
     case "settings":
-    case "devices":
-    case "entities":
       return `#${r.page}`;
     case "parameters":
       return `#parameters/${r.tab}`;
@@ -420,7 +462,13 @@ export function toHash(r: Route): string {
 export function useRoute(): [Route, (r: Route) => void] {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash));
   useEffect(() => {
-    const on = () => setRoute(parseHash(window.location.hash));
+    const on = () => {
+      // An old link is shown as the new one in the address bar too.
+      const fixed = normalizeLegacyHash(window.location.hash);
+      if (fixed !== window.location.hash) window.history.replaceState(null, "", fixed);
+      setRoute(parseHash(window.location.hash));
+    };
+    on();
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);

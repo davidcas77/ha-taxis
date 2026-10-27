@@ -5,10 +5,12 @@ import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import {
   HELPERS,
   HELPER_SUFFIX_RE,
+  areaHelperRow,
   effectiveSuffixes,
   hasPendingChange,
   helperChangeInputs,
   helperExclusions,
+  helperKeyFor,
   helperNameErrors,
   planHelpers,
   type HelperRow,
@@ -92,6 +94,33 @@ describe("what gets a helper", () => {
     const rows = plan([...lights, { id: "binary_sensor.living_pir", dc: "motion" }], EMPTY_INVENTORY, { ...naming, helperNames: { lights: "lamps", motion: "pirs" } });
     expect(row(rows, "lights")!.canonicalId).toBe("light.living_lamps");
     expect(row(rows, "motion")!.canonicalId).toBe("binary_sensor.living_pirs");
+  });
+});
+
+describe("the combined entity of a capability", () => {
+  it("maps each capability to its helper, speakers and TVs to the media group", () => {
+    expect(helperKeyFor("lights")).toBe("lights");
+    expect(helperKeyFor("illuminance")).toBe("illuminance");
+    expect(helperKeyFor("speaker")).toBe("media");
+    expect(helperKeyFor("tv")).toBe("media");
+    for (const none of ["thermostat", "cover", "fan", "power"] as const) expect(helperKeyFor(none)).toBeNull();
+  });
+
+  it("finds the row of an area for a helper, and nothing where the area gets none", () => {
+    const rows = plan([...lights, { id: "media_player.living_speaker" }, { id: "binary_sensor.kitchen_pir", dc: "motion", area: "kitchen" }]);
+    expect(areaHelperRow(rows, "living_room", "lights")?.canonicalId).toBe("light.living_all");
+    expect(areaHelperRow(rows, "kitchen", "motion")?.canonicalId).toBe("binary_sensor.kitchen_motions");
+    // One player is not enough for a media group; the other area has no lights.
+    expect(areaHelperRow(rows, "living_room", "media")).toBeUndefined();
+    expect(areaHelperRow(rows, "kitchen", "lights")).toBeUndefined();
+  });
+
+  it("follows the counts: a capability whose entities no longer count has no row", () => {
+    const specs = [{ id: "binary_sensor.living_pir", dc: "motion" }];
+    const h = house(specs);
+    expect(areaHelperRow(planHelpers(h, EMPTY_INVENTORY, naming), "living_room", "motion")).toBeDefined();
+    const off = setCounts(h, EMPTY_INVENTORY, "binary_sensor.living_pir", false);
+    expect(areaHelperRow(planHelpers(h, off, naming), "living_room", "motion")).toBeUndefined();
   });
 });
 
@@ -531,5 +560,42 @@ describe("the mock house", () => {
     expect(h.entities["light.porch_lamp"]).toMatchObject({ areaId: null, needsOwnName: true });
     expect(h.areas.garage.floorId).toBeNull();
     expect(h.floors.map((f) => f.id)).toEqual(expect.arrayContaining(["floor_2", "level_1"]));
+  });
+});
+
+describe("a group whose members are gone", () => {
+  const spots = { id: "light.living_spots" };
+  const lamp = { id: "light.living_lamp" };
+
+  it("is updated with the lights the area counts, and says which members don't exist", () => {
+    const rows = plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", members: ["light.living_spots", "light.living_old"] }]);
+    const lights = row(rows, "lights")!;
+    expect(lights).toMatchObject({ status: "update-members", added: ["light.living_lamp"], removed: ["light.living_old"], missing: ["light.living_old"], actionable: true });
+    expect(lights.membersUnreadable).toBeUndefined();
+    expect(helperChangeInputs(lights)).toEqual([{ kind: "helper", op: "update", targetId: "light.living_all", fields: { entities: ["light.living_lamp", "light.living_spots"] } }]);
+  });
+
+  it("lists no missing members for a group that is only short of some", () => {
+    const rows = plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", members: ["light.living_spots"] }]);
+    expect(row(rows, "lights")).toMatchObject({ status: "update-members", added: ["light.living_lamp"], removed: [], missing: [] });
+  });
+
+  it("is updated even when it is unavailable and reports no members at all", () => {
+    const rows = plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", state: "unavailable" }]);
+    const lights = row(rows, "lights")!;
+    expect(lights).toMatchObject({ status: "update-members", added: ["light.living_lamp", "light.living_spots"], removed: [], membersUnreadable: true, actionable: true });
+    expect(helperChangeInputs(lights)).toEqual([{ kind: "helper", op: "update", targetId: "light.living_all", fields: { entities: ["light.living_lamp", "light.living_spots"] } }]);
+    expect(validateInput(helperChangeInputs(lights)[0])).toBeNull();
+  });
+
+  it("leaves a group that is up but reports no members alone, and one in YAML that can't be edited", () => {
+    expect(row(plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", state: "on" }]), "lights")).toMatchObject({ status: "in-place", membersUnknown: true, actionable: false });
+    expect(row(plan([spots, lamp, { id: "light.living_all", platform: "group", state: "unavailable" }]), "lights")).toMatchObject({ status: "in-place", membersUnknown: true, actionable: false });
+  });
+
+  it("is in place once its members are the lights the area counts", () => {
+    const rows = plan([spots, lamp, { id: "light.living_all", platform: "group", entry: "e1", members: ["light.living_spots", "light.living_lamp"] }]);
+    expect(row(rows, "lights")).toMatchObject({ status: "in-place", actionable: false });
+    expect(row(rows, "lights")!.missing).toBeUndefined();
   });
 });

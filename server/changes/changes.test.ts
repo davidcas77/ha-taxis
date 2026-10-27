@@ -195,6 +195,53 @@ describe("placing a light that is in no area", () => {
   });
 });
 
+describe("showing an entity as another device class", () => {
+  const show = (targetId: string, device_class: string | null): ChangeInput => ({ kind: "entity", op: "update", targetId, fields: { device_class } });
+
+  it("accepts a class of the entity's own domain, or null to go back to the default", () => {
+    expect(validateInput(show("binary_sensor.study_skylight", "window"))).toBeNull();
+    expect(validateInput(show("binary_sensor.study_skylight", null))).toBeNull();
+    expect(validateInput(show("sensor.study_climate_temperature", "humidity"))).toBeNull();
+    expect(validateInput(show("cover.shutter", "shutter"))).toBeNull();
+  });
+
+  it("refuses a class the domain doesn't have, a domain with none, and anything that isn't a class", () => {
+    expect(validateInput(show("binary_sensor.study_skylight", "temperature"))).toMatch(/isn't a device class for a binary_sensor/);
+    expect(validateInput(show("light.desk", "window"))).toMatch(/no device class to choose/);
+    expect(validateInput(show("binary_sensor.study_skylight", "Window"))).toMatch(/wouldn't accept/);
+    expect(validateInput(show("binary_sensor.study_skylight", "window; drop"))).toMatch(/wouldn't accept/);
+    expect(validateInput({ kind: "entity", op: "update", targetId: "binary_sensor.study_skylight", fields: { device_class: 3 as never } })).toMatch(/wouldn't accept/);
+    // Only an entity has one: a device or an area can't be shown as anything.
+    expect(validateInput({ kind: "device", op: "update", targetId: "plug", fields: { device_class: "outlet" } })).toMatch(/can't be changed/);
+  });
+
+  it("previews the new role at once, and Apply writes only the class and reads it back", async () => {
+    const t = setup();
+    expect(t.live().entities["binary_sensor.study_skylight"]).toMatchObject({ role: "opening", deviceClass: "opening", deviceClassOverride: null });
+    expect(t.add(show("binary_sensor.study_skylight", "motion"))).toBeNull();
+    expect(t.store.list()[0]).toMatchObject({ before: { device_class: null }, after: { device_class: "motion" } });
+    const preview = buildHierarchy(overlayChanges(structuredClone(t.ha) as RawRegistry, t.store.list()), "now");
+    expect(preview.entities["binary_sensor.study_skylight"]).toMatchObject({ role: "motion", deviceClass: "motion", deviceClassOverride: "motion" });
+    // The live read is untouched until Apply.
+    expect(t.live().entities["binary_sensor.study_skylight"].deviceClass).toBe("opening");
+
+    const { results } = await t.apply();
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(t.writes).toEqual([{ type: "config/entity_registry/update", payload: { entity_id: "binary_sensor.study_skylight", device_class: "motion" } }]);
+    expect(t.live().entities["binary_sensor.study_skylight"]).toMatchObject({ role: "motion", deviceClassOverride: "motion" });
+  });
+
+  it("refuses to apply over a class that changed in Home Assistant meanwhile", async () => {
+    const t = setup();
+    t.add(show("binary_sensor.study_skylight", "motion"));
+    t.ha.entities.find((e) => e.entity_id === "binary_sensor.study_skylight")!.device_class = "door";
+    const { results } = await t.apply();
+    expect(results[0]).toMatchObject({ ok: false });
+    expect(results[0].message).toMatch(/device class was changed in Home Assistant/);
+    expect(t.writes).toEqual([]);
+  });
+});
+
 describe("helper changes", () => {
   const group = (fields: Record<string, unknown> = {}): ChangeInput => ({
     kind: "helper",
@@ -345,5 +392,89 @@ describe("helper changes", () => {
     expect(results).toHaveLength(1);
     expect(t.writes.map((w) => w.type)).toEqual(["config/entity_registry/update"]);
     expect(t.live().entities["light.study_all"]).toBeUndefined();
+  });
+});
+
+describe("a derivative sensor", () => {
+  const rate = (fields: Record<string, unknown> = {}): ChangeInput => ({
+    kind: "helper",
+    op: "create",
+    fields: { helper: "derivative", name: "Study humidity rate", entity_id: "sensor.study_humidity_rate", entities: ["sensor.study_climate_temperature"], area_id: "study", ...fields },
+  });
+
+  it("is a sensor in an area with the one sensor it derives from, and nothing a group or a min/max has", () => {
+    expect(validateInput(rate())).toBeNull();
+    expect(validateInput(rate({ entities: [] }))).toMatch(/wouldn't accept/);
+    expect(validateInput(rate({ entities: ["sensor.a", "sensor.b"] }))).toMatch(/one sensor it derives from/);
+    expect(validateInput(rate({ entities: ["binary_sensor.a"] }))).toMatch(/one sensor it derives from/);
+    expect(validateInput(rate({ entity_id: "light.study_humidity_rate" }))).toMatch(/has to start with “sensor/);
+    expect(validateInput(rate({ group_type: "light" }))).toMatch(/neither a group type/);
+    expect(validateInput(rate({ set_area_sensor: "humidity" }))).toMatch(/neither a group type nor sets the area's sensor|Only a min\/max/);
+    expect(validateInput(rate({ duration: 60 }))).toMatch(/Only a timer/);
+    const { area_id: _area, ...noArea } = rate().fields!;
+    expect(validateInput({ kind: "helper", op: "create", fields: noArea })).toMatch(/needs an area/);
+    // Never deleted, and no other kind of helper is added by this one.
+    expect(validateInput({ kind: "helper", op: "delete", targetId: "sensor.study_humidity_rate" })).toMatch(/not deleted/);
+    expect(validateInput(rate({ helper: "threshold" }))).toMatch(/wouldn't accept/);
+  });
+
+  it("is kept under the entity id it will have, once, and its source may be a sensor the list makes", () => {
+    const t = setup();
+    expect(t.add(rate())).toBeNull();
+    expect(t.store.list()[0]).toMatchObject({ kind: "helper", op: "create", targetId: "sensor.study_humidity_rate" });
+    expect(t.add(rate())).toMatch(/already creates/);
+    expect(t.add(rate({ entity_id: "sensor.study_other", entities: ["sensor.not_there"] }))).toMatch(/isn't in Home Assistant/);
+    // A min/max the list creates is a source.
+    const mean: ChangeInput = { kind: "helper", op: "create", fields: { helper: "min_max", name: "Study humidity", entity_id: "sensor.study_humidity", entities: ["sensor.study_climate_temperature"], area_id: "study" } };
+    expect(t.add(mean)).toBeNull();
+    expect(t.add(rate({ entity_id: "sensor.study_rate_2", entities: ["sensor.study_humidity"] }))).toBeNull();
+  });
+});
+
+describe("the announce script", () => {
+  const input = { areas: [], tts_entity: "tts.cloud", default_volume: 40 };
+  const script = (fields: Record<string, unknown> = {}): ChangeInput => ({
+    kind: "script",
+    op: "create",
+    fields: { script_id: "taxis_announce", alias: "Announce (Taxis)", use_blueprint: { path: "taxis/announce.yaml", input }, ...fields },
+  });
+
+  it("is one script, from the announce blueprint, never deleted", () => {
+    expect(validateInput(script())).toBeNull();
+    expect(validateInput({ ...script(), op: "update" })).toBeNull();
+    expect(validateInput(script({ script_id: "taxis_other" }))).toMatch(/wouldn't accept/);
+    expect(validateInput(script({ script_id: "movie_time" }))).toMatch(/wouldn't accept/);
+    expect(validateInput(script({ use_blueprint: { path: "taxis/occupancy.yaml", input } }))).toMatch(/another blueprint|wouldn't accept/);
+    expect(validateInput(script({ use_blueprint: { path: "taxis/announce.yaml", input: { ...input, extra: 1 } } }))).toMatch(/wouldn't accept/);
+    expect(validateInput(script({ use_blueprint: { path: "taxis/announce.yaml", input: { tts_entity: "tts.cloud" } } }))).toMatch(/wouldn't accept/);
+    expect(validateInput(script({ alias: "" }))).toMatch(/wouldn't accept/);
+    expect(validateInput(script({ area_id: "study" }))).toMatch(/can't be changed/);
+    expect(validateInput({ kind: "script", op: "delete", targetId: "taxis_announce" })).toMatch(/created or updated, not deleted/);
+    const { alias: _a, ...noAlias } = script().fields!;
+    expect(validateInput({ kind: "script", op: "create", fields: noAlias })).toMatch(/needs alias/);
+  });
+
+  it("takes the areas as objects with their four fields, and refuses anything else in them", () => {
+    const area = { occupied: "binary_sensor.k_occupied", paused: "input_boolean.k_paused", bed: [], speakers: ["media_player.k"] };
+    const use = (areas: unknown) => script({ use_blueprint: { path: "taxis/announce.yaml", input: { ...input, areas } } });
+    expect(validateInput(use([area]))).toBeNull();
+    expect(validateInput(use([{ ...area, speakers: ["light.k"] }]))).toMatch(/wouldn't accept/);
+    expect(validateInput(use([{ ...area, extra: true }]))).toMatch(/wouldn't accept/);
+    expect(validateInput(use("areas"))).toMatch(/wouldn't accept/);
+  });
+
+  it("an automation cannot be the announce recipe: it is a script", () => {
+    const use = { path: "taxis/announce.yaml", input };
+    expect(validateInput({ kind: "automation", op: "create", fields: { automation_id: "taxis_announce_study", recipe: "announce", area_id: "study", alias: "x", use_blueprint: use } })).toMatch(/a script, not an automation/);
+  });
+
+  it("is kept under its id, once: adding it again replaces it, and it has no temporary id", () => {
+    const t = setup();
+    expect(t.add(script())).toBeNull();
+    expect(t.add(script({ alias: "Announce (Taxis) 2" }))).toBeNull();
+    expect(t.store.list()).toHaveLength(1);
+    expect(t.store.list()[0]).toMatchObject({ kind: "script", op: "create", targetId: "taxis_announce", after: { alias: "Announce (Taxis) 2" } });
+    // Nothing for Apply's registry step: it leaves it to the script step.
+    expect(t.writes).toEqual([]);
   });
 });

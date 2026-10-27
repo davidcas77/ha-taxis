@@ -1,10 +1,10 @@
-import { blueprintForRecipe, type RecipeKey } from "./blueprints.ts";
+import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeKey, type RecipeKey } from "./blueprints.ts";
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
-import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID } from "./climate.ts";
+import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID, kindRunsIn, type Season } from "./climate.ts";
 import { RECIPE_HELPER_SUFFIX, canonicalId, effectiveSuffixes, helperExclusions } from "./helpers.ts";
-import { areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
+import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
-import { entryLights, resolve, resolveAll, withSeconds, type ParameterSettings } from "./parameters.ts";
+import { entryLights, resolve, resolveAll, resolveIn, withSeconds, type ParameterSettings } from "./parameters.ts";
 import { canonicalPeriods, DEFAULT_COMFORT_PERIODS } from "./periods.ts";
 import type { Change, ChangeInput, Hierarchy } from "./types.ts";
 
@@ -14,14 +14,22 @@ import type { Change, ChangeInput, Hierarchy } from "./types.ts";
 // Pure functions; nothing here changes anything. Applying lives in
 // server/changes/helpers.ts and server/changes/recipes.ts.
 
-export const RECIPES: readonly { key: RecipeKey; label: string }[] = [
+// The recipes that are an automation for one area, one column each in the Recipes
+// table. Announce, the script for the whole house, is planned apart (planAnnounce).
+export const RECIPES: readonly { key: AreaRecipeKey; label: string }[] = [
   { key: "occupancy", label: "Occupancy" },
   { key: "motion_lights", label: "Motion lights" },
   { key: "media_off", label: "Media off" },
   { key: "area_climate", label: "Area climate" },
+  { key: "bathroom_fan", label: "Bathroom fan" },
+  { key: "exterior_lights", label: "Exterior lights" },
+  { key: "left_open", label: "Left open" },
+  { key: "appliance_done", label: "Appliance done" },
 ];
 
-export const RECIPE_LABEL = Object.fromEntries(RECIPES.map((r) => [r.key, r.label])) as Record<RecipeKey, string>;
+export const RECIPE_LABEL = { ...Object.fromEntries(RECIPES.map((r) => [r.key, r.label])), announce: "Announce" } as Record<RecipeKey, string>;
+
+export const ANNOUNCE_ALIAS = "Announce (Taxis)";
 
 export const automationIdFor = (recipe: RecipeKey, code: string) => `taxis_${recipe}_${code}`;
 
@@ -29,8 +37,8 @@ export const automationAlias = (areaName: string, recipe: RecipeKey) => `${areaN
 
 // The helpers the recipes of an area need, by entity id: the hold timer, the
 // occupied sensor and the pause switch (Occupancy makes them, the others use
-// them), the manual override timer (Motion lights) and the comfort schedule
-// (Area climate).
+// them), the manual override timer (Motion lights, Exterior lights), the comfort
+// schedule (Area climate) and the humidity rate sensor (Bathroom fan).
 export function runtimeIds(code: string) {
   return {
     timer: `timer.${code}_${RECIPE_HELPER_SUFFIX.hold}`,
@@ -38,8 +46,17 @@ export function runtimeIds(code: string) {
     switch: `input_boolean.${code}_${RECIPE_HELPER_SUFFIX.switch}`,
     override: `timer.${code}_${RECIPE_HELPER_SUFFIX.override}`,
     schedule: `schedule.${code}_${RECIPE_HELPER_SUFFIX.climate}`,
+    rate: `sensor.${code}_${RECIPE_HELPER_SUFFIX.humidityRate}`,
   };
 }
+
+// The rate below which the humidity counts as flat, in % per second. The Bathroom
+// fan blueprint has it as an input but it is not a parameter.
+export const FAN_FLAT_RATE = 0.001;
+
+// What the derivative sensor of the humidity smooths over: two minutes, so a
+// sensor that reports every few seconds doesn't make the rate jump about.
+export const RATE_WINDOW = { hours: 0, minutes: 2, seconds: 0 } as const;
 
 // The length the override timer is made with when the override has no fixed
 // time: the automation sets the real length each time it starts the timer.
@@ -58,13 +75,15 @@ export type RecipeInstalled = {
   blueprints: Record<string, number | null>;
   // Automation id -> its stored config, null when there is none.
   automations: Record<string, InstalledAutomation | null>;
+  // Script id -> its stored config (taxis_announce), null when there is none.
+  scripts: Record<string, InstalledAutomation | null>;
   // Timer entity id -> its duration in seconds, when Home Assistant says.
   timers: Record<string, number | null>;
   // Canonical light group, or a thermostat -> other automations that use it.
   controllers: Record<string, { entityId: string; name: string }[]>;
 };
 
-export const NOTHING_INSTALLED: RecipeInstalled = { blueprints: {}, automations: {}, timers: {}, controllers: {} };
+export const NOTHING_INSTALLED: RecipeInstalled = { blueprints: {}, automations: {}, scripts: {}, timers: {}, controllers: {} };
 
 export type RecipesResponse = { ok: true; installed: RecipeInstalled } | { ok: false; error: string };
 
@@ -130,6 +149,38 @@ const INPUT_LABEL: Record<string, string> = {
   tv_entities: "TVs",
   speaker_minutes: "Speakers off when clear for (min)",
   tv_minutes: "TVs off when clear for (min)",
+  rate_entities: "Humidity rate sensor",
+  rate_hold: "Shower holds occupied at (%/s)",
+  humidity_entity: "Humidity sensor",
+  rate_entity: "Humidity rate sensor",
+  reference_entity: "Reference humidity sensor",
+  fan_entities: "Fan",
+  rate_on: "Fan on: rise rate (%/s)",
+  delta_on: "Fan on: above the reference (%)",
+  abs_on: "Fan on: humidity (%)",
+  delta_off: "Fan off: within the reference (%)",
+  flat_rate: "Flat rate (%/s)",
+  flat_minutes: "Fan off: flat for (min)",
+  max_minutes: "Fan off: after at most (min)",
+  suppress_in_sleep: "Not while the house sleeps",
+  motion_entities: "Motion sensors",
+  person_entities: "People",
+  sunset_offset: "Sunset offset (s)",
+  clock_minutes: "Stay on for (min)",
+  door_entities: "Doors",
+  window_entities: "Windows",
+  door_minutes: "Door open for (min)",
+  window_minutes: "Window open for (min)",
+  repeat_minutes: "Repeat every (min)",
+  notify_targets: "Notify services",
+  area_name: "Area name",
+  power_entities: "Appliances",
+  run_watts: "Running above (W)",
+  run_minutes: "Running for (min)",
+  idle_watts: "Done below (W)",
+  idle_minutes: "Done for (min)",
+  tts_entity: "Text-to-speech",
+  default_volume: "Default volume (%)",
   climate_entities: "Thermostats",
   opening_entities: "Windows and doors",
   occupied_entities: "Occupied sensor",
@@ -147,6 +198,10 @@ const INPUT_LABEL: Record<string, string> = {
   night_temp: "Night temperature",
   sleep_temp: "Sleep temperature",
   away_temp: "Away temperature",
+  cool_comfort_temp: "Cooling comfort temperature",
+  cool_eco_temp: "Cooling eco temperature",
+  cool_night_temp: "Cooling night temperature",
+  cool_away_temp: "Cooling away temperature",
   frost_temp: "Frost protection temperature",
   min_temp: "Lowest temperature",
   max_temp: "Highest temperature",
@@ -189,6 +244,7 @@ const pendingRename = (changes: readonly Change[], id: string) => changes.some((
 const pendingDuration = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "helper" && c.op === "update" && c.targetId === id && "duration" in c.after);
 const pendingPeriods = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "helper" && c.op === "update" && c.targetId === id && "periods" in c.after);
 const pendingAutomation = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "automation" && c.targetId === id);
+const pendingScript = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "script" && c.targetId === id);
 const pendingBlueprint = (changes: readonly Change[], path: string, version: number) => changes.some((c) => c.kind === "blueprint" && c.targetId === path && c.after.version === version);
 
 // A helper of the recipes in Home Assistant: absent, as it should be, or the
@@ -228,7 +284,10 @@ export function planRecipes(
     const ids = runtimeIds(code);
     const values = resolveAll(params, h, inventory, area.id);
     const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
-    const usable = [ids.timer, ids.occupied, ids.switch, ids.override, ids.schedule].every((id) => ENTITY_ID_RE.test(id));
+    const usable = [ids.timer, ids.occupied, ids.switch, ids.override, ids.schedule, ids.rate].every((id) => ENTITY_ID_RE.test(id));
+
+    // Optional helpers: used when they are in place or already in the change list.
+    const groupThere = (id: string, platform: string) => h.entities[id]?.platform === platform || (!h.entities[id] && (pendingHelper(changes, id) || pendingRename(changes, id)));
 
     const occupancyId = automationIdFor("occupancy", code);
     const motionId = automationIdFor("motion_lights", code);
@@ -302,6 +361,8 @@ export function planRecipes(
       starts_entities: starts,
       holds_entities: holds,
       bed_entities: bedSensors,
+      rate_entities: groupThere(ids.rate, "derivative") ? [ids.rate] : [],
+      rate_hold: values.humidity_hold_rate,
       occupied_entity: ids.occupied,
       hold_timer: ids.timer,
       hold_minutes: holdMinutes,
@@ -511,7 +572,11 @@ export function planRecipes(
 
     // ---- Area climate -----------------------------------------------------
     const climateId = automationIdFor("area_climate", code);
-    const thermostats = inv.thermostat.filter((r) => r.counts).map((r) => r.entityId).sort();
+    // An AC runs in both seasons, heating and radiator valves in the heating season only.
+    const season = values.season as Season;
+    const climateCounted = inv.thermostat.filter((r) => r.counts);
+    const thermostats = climateCounted.filter((r) => kindRunsIn(r.climate ?? "heating", season)).map((r) => r.entityId).sort();
+    const climateSkipped = climateCounted.filter((r) => !thermostats.includes(r.entityId));
     const bedroom = areaChoice(inventory, area.id).bedroom;
     const text = (k: "away_mode_entity" | "sleep_mode_entity" | "preset_comfort" | "preset_eco" | "preset_away" | "preset_sleep") => String(values[k] ?? "");
     // The house switches: the ones the user picked, else the two Taxis makes.
@@ -520,25 +585,28 @@ export function planRecipes(
     const awayId = awayPicked || HOUSE_AWAY_ID;
     const sleepId = sleepPicked || HOUSE_SLEEP_ID;
     const climateMissing: string[] = [];
-    const houseSwitch = (id: string, picked: string, what: string, name: string, icon: string): ChangeInput[] => {
+    // A house switch: the one the user picked (which has to exist), else the one Taxis makes.
+    // What stops a recipe is put in `missing`.
+    const houseSwitch = (missing: string[], id: string, picked: string, what: string, name: string, icon: string): ChangeInput[] => {
       if (picked) {
         const e = h.entities[picked];
-        if (!e) climateMissing.push(`The ${what} switch “${picked}” isn't in Home Assistant (Parameters, House)`);
-        else if (e.domain !== "input_boolean") climateMissing.push(`The ${what} switch “${picked}” isn't a toggle (an input boolean)`);
+        if (!e) missing.push(`The ${what} switch “${picked}” isn't in Home Assistant (Parameters, House)`);
+        else if (e.domain !== "input_boolean") missing.push(`The ${what} switch “${picked}” isn't a toggle (an input boolean)`);
         return [];
       }
       const held = heldBy(h, id, "input_boolean");
       if (held.state === "taken") {
-        climateMissing.push(`${id} is already used by “${held.name}”. Pick a switch of your own for ${what} (Parameters, House)`);
+        missing.push(`${id} is already used by “${held.name}”. Pick a switch of your own for ${what} (Parameters, House)`);
         return [];
       }
       if (held.state === "ok" || pendingHelper(changes, id)) return [];
       return [{ kind: "helper", op: "create", fields: { helper: "input_boolean", name, entity_id: id, icon } }];
     };
-    const houseInputs = [...houseSwitch(awayId, awayPicked, "away mode", "Taxis away mode", "mdi:home-export-outline"), ...houseSwitch(sleepId, sleepPicked, "sleep mode", "Taxis sleep mode", "mdi:sleep")];
+    const houseInputs = [
+      ...houseSwitch(climateMissing, awayId, awayPicked, "away mode", "Taxis away mode", "mdi:home-export-outline"),
+      ...houseSwitch(climateMissing, sleepId, sleepPicked, "sleep mode", "Taxis sleep mode", "mdi:sleep"),
+    ];
 
-    // Optional helpers: used when they are in place or already in the change list.
-    const groupThere = (id: string, platform: string) => h.entities[id]?.platform === platform || (!h.entities[id] && (pendingHelper(changes, id) || pendingRename(changes, id)));
     const windowId = canonicalId("binary_sensor", code, suffix.window);
     const doorId = canonicalId("binary_sensor", code, suffix.door);
     const tempId = canonicalId("sensor", code, suffix.temperature);
@@ -578,6 +646,10 @@ export function planRecipes(
       night_temp: values.night_temp,
       sleep_temp: values.sleep_temp,
       away_temp: values.away_temp,
+      cool_comfort_temp: values.cool_comfort_temp,
+      cool_eco_temp: values.cool_eco_temp,
+      cool_night_temp: values.cool_night_temp,
+      cool_away_temp: values.cool_away_temp,
       frost_temp: values.frost_temp,
       min_temp: values.min_temp,
       max_temp: values.max_temp,
@@ -593,7 +665,13 @@ export function planRecipes(
       pause_switch: ids.switch,
     };
 
-    if (thermostats.length === 0) climateMissing.push("A thermostat that counts (Capabilities)");
+    if (thermostats.length === 0) {
+      climateMissing.push(
+        climateSkipped.length > 0
+          ? "An air conditioner that counts: heating and radiator valves are not run in the cooling season (Capabilities)"
+          : "A thermostat that counts (Capabilities)",
+      );
+    }
     if (!usable) climateMissing.push("An area code that makes valid entity ids (Settings)");
     else for (const m of [taken(ids.switch, toggle), taken(ids.schedule, schedule)]) if (m) climateMissing.push(m);
     if ((values.min_temp as number) > (values.max_temp as number)) climateMissing.push("The lowest temperature is above the highest (Parameters, Climate)");
@@ -640,6 +718,7 @@ export function planRecipes(
       const unknown = mapped.filter(([, p]) => p !== "" && !offered.includes(p));
       if (offered.length > 0 && unknown.length > 0) climateNotes.push(`${h.entities[id]?.name ?? id} doesn't offer ${unknown.map(([k, p]) => `“${p}” (${k})`).join(", ")}; it gets temperatures for ${unknown.length === 1 ? "that" : "those"}`);
     }
+    if (climateSkipped.length > 0) climateNotes.push(`Not run while cooling: ${climateSkipped.map((r) => `${r.name} (${CLIMATE_KIND_LABEL[r.climate ?? "heating"].toLowerCase()})`).join(", ")}`);
     if (values.season === "off") climateNotes.push("The season is off, so the recipe does nothing");
     if (!occupiedThere) climateNotes.push("No Occupancy yet, so comfort follows the schedule alone");
     if (bedroom && needsResolved.source.level === "default") climateNotes.push("A bedroom: comfort doesn't need anyone in the room unless you set it to");
@@ -660,8 +739,310 @@ export function planRecipes(
       inputs: climateInputs,
       actionable: climateInputs.length > 0,
     });
+
+    // ---- The recipes that follow ----------------------------------------------
+    // One cell from what a recipe found: its status, and the changes (built only
+    // when it can be added) in the order they have to be applied.
+    const finish = (recipe: AreaRecipeKey, id: string, missing: string[], reasons: string[], notes: string[], build: () => ChangeInput[], controlledBy: RecipeCell["controlledBy"] = []): void => {
+      const status = statusOf(id, missing, reasons);
+      const inputs = status === "ready" || status === "out-of-date" ? build() : [];
+      out.push({
+        areaId: area.id,
+        areaName: area.name,
+        recipe,
+        status,
+        missing: status === "missing" ? missing : [],
+        reasons: status === "out-of-date" ? reasons : [],
+        notes: status === "missing" ? [] : notes,
+        controlledBy: status === "missing" ? [] : controlledBy,
+        controls: "lights",
+        inputs,
+        actionable: inputs.length > 0,
+      });
+    };
+    // The area's pause switch, when nothing has made it yet.
+    const pauseSwitch = (): ChangeInput[] =>
+      toggle.state === "absent" && !pendingHelper(changes, ids.switch)
+        ? [{ kind: "helper", op: "create", fields: { helper: "input_boolean", name: `${area.name} automations paused`, entity_id: ids.switch, area_id: area.id, icon: "mdi:pause-circle-outline" } }]
+        : [];
+    const switchGone = (installedHere: boolean): string[] => (installedHere && toggle.state === "absent" && !pendingHelper(changes, ids.switch) ? [`${ids.switch} is missing`] : []);
+    const notifyTargets = values.notify_targets as string[];
+    const noTargets = "No notify services are set (Parameters, House), so the message appears in Home Assistant's notifications";
+
+    // ---- Bathroom fan -----------------------------------------------------
+    const fanId = automationIdFor("bathroom_fan", code);
+    const fans = inv.fan.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const humidityId = canonicalId("sensor", code, suffix.humidity);
+    const rate = heldBy(h, ids.rate, "sensor", "derivative");
+    const suppress = values.fan_suppress_in_sleep === true;
+    const reference = String(values.fan_reference ?? "");
+    const fanMissing: string[] = [];
+    if (!inv.humidity.some((r) => r.counts)) fanMissing.push("A humidity sensor that counts (Capabilities)");
+    else if (!groupThere(humidityId, "min_max")) fanMissing.push("The humidity helper (Helpers tab)");
+    if (fans.length === 0) fanMissing.push("A fan, or a switch marked as a fan (Capabilities)");
+    if (!usable) fanMissing.push("An area code that makes valid entity ids (Settings)");
+    else for (const m of [taken(ids.rate, rate), taken(ids.switch, toggle)]) if (m) fanMissing.push(m);
+    if (reference && !h.entities[reference]) fanMissing.push(`The reference humidity sensor “${reference}” isn't in Home Assistant (Parameters, Bathroom fan)`);
+    const fanSleepSwitch = suppress ? houseSwitch(fanMissing, sleepId, sleepPicked, "sleep mode", "Taxis sleep mode", "mdi:sleep") : [];
+    const fanInput: Record<string, unknown> = {
+      humidity_entity: humidityId,
+      rate_entity: ids.rate,
+      ...(reference ? { reference_entity: reference } : {}),
+      fan_entities: fans,
+      rate_on: values.fan_rate_on,
+      delta_on: values.fan_delta_on,
+      abs_on: values.fan_abs_on,
+      delta_off: values.fan_delta_off,
+      flat_rate: FAN_FLAT_RATE,
+      flat_minutes: values.fan_flat_minutes,
+      max_minutes: values.fan_max_minutes,
+      suppress_in_sleep: suppress,
+      ...(suppress ? { sleep_entity: sleepId } : {}),
+      pause_switch: ids.switch,
+    };
+    const fanThere = Boolean(installed.automations[fanId]);
+    const fanReasons = automationReasons("bathroom_fan", fanId, fanInput);
+    if (fanThere) {
+      fanReasons.push(...blueprintReason("bathroom_fan"), ...switchGone(true));
+      if (rate.state === "absent" && !pendingHelper(changes, ids.rate)) fanReasons.push(`${ids.rate} is missing`);
+    }
+    const fanNotes: string[] = [];
+    if (!reference) fanNotes.push("No reference humidity sensor, so the fan starts on the rise rate and the humidity level only, and stops when the humidity is back near where it started (Parameters, Bathroom fan)");
+    if (values.humidity_hold_rate === 0) fanNotes.push("A shower doesn't hold the area occupied yet (Parameters, Occupancy)");
+    finish("bathroom_fan", fanId, fanMissing, fanReasons, fanNotes, () => [
+      ...blueprintInput("bathroom_fan"),
+      ...pauseSwitch(),
+      ...fanSleepSwitch,
+      // The rate of the humidity helper, per second, smoothed over two minutes.
+      ...(rate.state === "absent" && !pendingHelper(changes, ids.rate)
+        ? [{ kind: "helper" as const, op: "create" as const, fields: { helper: "derivative", name: `${area.name} humidity rate`, entity_id: ids.rate, entities: [humidityId], area_id: area.id } }]
+        : []),
+      automationInput("bathroom_fan", fanId, fanInput),
+    ]);
+
+    // ---- Exterior lights --------------------------------------------------
+    const exteriorId = automationIdFor("exterior_lights", code);
+    const exteriorMissing: string[] = [];
+    if (areaChoice(inventory, area.id).type !== "exterior") exteriorMissing.push("An exterior area (Capabilities, Type)");
+    if (!lights) {
+      if (!lightsPending) exteriorMissing.push("A light group (make it on the Helpers tab)");
+    } else if (lights.domain !== "light" || lights.platform !== "group") {
+      exteriorMissing.push(`${lightsId} is already used by “${lights.name}”`);
+    }
+    if (!usable) exteriorMissing.push("An area code that makes valid entity ids (Settings)");
+    else for (const m of [taken(ids.switch, toggle), overrideTaken]) if (m) exteriorMissing.push(m);
+    const watchers = [...inv.motion, ...inv.presence].filter((r) => r.counts).map((r) => r.entityId).sort();
+    const people = Object.values(h.entities).filter((e) => e.domain === "person" && !e.disabled).map((e) => e.entityId).sort();
+    const exteriorInput: Record<string, unknown> = {
+      light_target: lightsId,
+      motion_entities: watchers,
+      person_entities: people,
+      sunset_offset: (values.exterior_sunset_offset as number) * 60,
+      clock_minutes: values.exterior_clock,
+      override_timer: ids.override,
+      override_minutes: overrideMinutes,
+      pause_switch: ids.switch,
+    };
+    const exteriorThere = Boolean(installed.automations[exteriorId]);
+    const exteriorReasons = automationReasons("exterior_lights", exteriorId, exteriorInput);
+    if (exteriorThere) {
+      exteriorReasons.push(...blueprintReason("exterior_lights"), ...switchGone(true));
+      if (overrideTimer.state === "absent" && !pendingHelper(changes, ids.override)) exteriorReasons.push(`${ids.override} is missing`);
+      if (overrideDiffers) exteriorReasons.push(`The override timer is ${timerNow(ids.override)! / 60} min, the override setting says ${overrideSeconds / 60}`);
+    }
+    const exteriorNotes: string[] = [];
+    if (watchers.length === 0) exteriorNotes.push("No motion sensor counts here (a camera's counts when you say so), so only sunset and a person arriving keep the lights on");
+    if (people.length === 0) exteriorNotes.push("Home Assistant has no person, so arriving home turns nothing on");
+    if (motionInstalled || pendingAutomation(changes, motionId)) exteriorNotes.push("Motion lights is installed for this area too, and both switch its lights: one of them is enough");
+    finish(
+      "exterior_lights",
+      exteriorId,
+      exteriorMissing,
+      exteriorReasons,
+      exteriorNotes,
+      () => [
+        ...blueprintInput("exterior_lights"),
+        ...pauseSwitch(),
+        ...(overrideTimer.state === "absent" && !pendingHelper(changes, ids.override) ? [timerCreate(`${area.name} override`, ids.override, overrideSeconds)] : overrideDiffers ? [timerUpdate(ids.override, overrideSeconds)] : []),
+        automationInput("exterior_lights", exteriorId, exteriorInput),
+      ],
+      installed.controllers[lightsId] ?? [],
+    );
+
+    // ---- Left open --------------------------------------------------------
+    const leftId = automationIdFor("left_open", code);
+    const doors = inv.door.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const windows = inv.window.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const leftMissing: string[] = [];
+    if (doors.length + windows.length === 0) leftMissing.push("A door or window that counts (Capabilities)");
+    if (!usable) leftMissing.push("An area code that makes valid entity ids (Settings)");
+    else {
+      const m = taken(ids.switch, toggle);
+      if (m) leftMissing.push(m);
+    }
+    const leftInput: Record<string, unknown> = {
+      door_entities: doors,
+      window_entities: windows,
+      door_minutes: values.door_open_after,
+      window_minutes: values.window_open_after,
+      repeat_minutes: values.left_open_repeat,
+      notify_targets: notifyTargets,
+      area_name: area.name,
+      pause_switch: ids.switch,
+    };
+    const leftReasons = automationReasons("left_open", leftId, leftInput);
+    if (installed.automations[leftId]) leftReasons.push(...blueprintReason("left_open"), ...switchGone(true));
+    finish("left_open", leftId, leftMissing, leftReasons, notifyTargets.length === 0 ? [noTargets] : [], () => [
+      ...blueprintInput("left_open"),
+      ...pauseSwitch(),
+      automationInput("left_open", leftId, leftInput),
+    ]);
+
+    // ---- Appliance done ---------------------------------------------------
+    const applianceId = automationIdFor("appliance_done", code);
+    const appliances = inv.power.filter((r) => r.counts && r.appliance).map((r) => r.entityId).sort();
+    const applianceMissing: string[] = [];
+    if (appliances.length === 0) applianceMissing.push("A power sensor that counts and is marked as an appliance (Capabilities)");
+    if (!usable) applianceMissing.push("An area code that makes valid entity ids (Settings)");
+    else {
+      const m = taken(ids.switch, toggle);
+      if (m) applianceMissing.push(m);
+    }
+    if ((values.appliance_run_watts as number) <= (values.appliance_idle_watts as number)) applianceMissing.push("Running above is not higher than Done below (Parameters, Safety)");
+    const applianceInput: Record<string, unknown> = {
+      power_entities: appliances,
+      run_watts: values.appliance_run_watts,
+      run_minutes: values.appliance_run_minutes,
+      idle_watts: values.appliance_idle_watts,
+      idle_minutes: values.appliance_idle_minutes,
+      notify_targets: notifyTargets,
+      area_name: area.name,
+      pause_switch: ids.switch,
+    };
+    const applianceReasons = automationReasons("appliance_done", applianceId, applianceInput);
+    if (installed.automations[applianceId]) applianceReasons.push(...blueprintReason("appliance_done"), ...switchGone(true));
+    const applianceNotes = notifyTargets.length === 0 ? [noTargets] : [];
+    if (appliances.some((id) => h.entities[id]?.unit === "kW")) applianceNotes.push("A sensor reports kW; the levels are in watts, so set them in kW or use a sensor in W");
+    finish("appliance_done", applianceId, applianceMissing, applianceReasons, applianceNotes, () => [
+      ...blueprintInput("appliance_done"),
+      ...pauseSwitch(),
+      automationInput("appliance_done", applianceId, applianceInput),
+    ]);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Announce: one script for the whole house, taxis_announce, which speaks a message
+// on the speakers of the areas that are occupied, awake and not paused.
+// ---------------------------------------------------------------------------
+
+export type AnnounceArea = { occupied: string; paused: string; bed: string[]; speakers: string[] };
+
+export function planAnnounce(
+  h: Hierarchy,
+  inventory: InventorySettings,
+  naming: NamingSettings,
+  params: ParameterSettings,
+  installed: RecipeInstalled,
+  changes: readonly Change[],
+): RecipeCell {
+  const codes = areaCodes(h, naming);
+  const exclusions = helperExclusions(h, naming);
+  // The house settings: the same for every area.
+  const house = (key: "tts_entity" | "announce_volume") => resolveIn(params, [{ level: "house" }], key).value;
+  const missing: string[] = [];
+  const notes: string[] = [];
+
+  // The areas that can be spoken to: counted speakers, and Occupancy (installed or
+  // in the list) with the sensor and the switch it makes.
+  const areas: AnnounceArea[] = [];
+  const noOccupancy: string[] = [];
+  for (const area of Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))) {
+    const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
+    const speakers = inv.speaker.filter((r) => r.counts).map((r) => r.entityId).sort();
+    if (speakers.length === 0) continue;
+    const code = codes[area.id].code;
+    const ids = runtimeIds(code);
+    const occupancyId = automationIdFor("occupancy", code);
+    const exists = (id: string, domain: string, platform?: string) => heldBy(h, id, domain, platform).state === "ok" || pendingHelper(changes, id);
+    const occupied =
+      ENTITY_ID_RE.test(ids.occupied) &&
+      Boolean(installed.automations[occupancyId] || pendingAutomation(changes, occupancyId)) &&
+      exists(ids.occupied, "binary_sensor", "template") &&
+      exists(ids.switch, "input_boolean");
+    if (!occupied) {
+      noOccupancy.push(area.name);
+      continue;
+    }
+    const beds = areaChoice(inventory, area.id).bedroom ? inv.presence.filter((r) => r.counts && r.bed).map((r) => r.entityId).sort() : [];
+    areas.push({ occupied: ids.occupied, paused: ids.switch, bed: beds, speakers });
+  }
+
+  // The text-to-speech entity is a house setting.
+  const tts = String(house("tts_entity") ?? "");
+  if (!tts) missing.push("A text-to-speech entity (Parameters, House)");
+  else if (!h.entities[tts]) missing.push(`The text-to-speech entity “${tts}” isn't in Home Assistant (Parameters, House)`);
+  if (areas.length === 0) missing.push("A speaker that counts in an area that has Occupancy (Capabilities, Recipes)");
+  const held = h.entities[`script.${ANNOUNCE_SCRIPT_ID}`];
+  const there = installed.scripts[ANNOUNCE_SCRIPT_ID] ?? null;
+  if (held && !there && !pendingScript(changes, ANNOUNCE_SCRIPT_ID)) missing.push(`script.${ANNOUNCE_SCRIPT_ID} is already used by “${held.name}”, which Taxis didn't make or can't edit`);
+
+  const input: Record<string, unknown> = { areas, tts_entity: tts, default_volume: house("announce_volume") };
+  const alias = ANNOUNCE_ALIAS;
+
+  const reasons: string[] = [];
+  if (there) {
+    if (there.path !== ANNOUNCE_PATH) reasons.push("It isn't made from the Taxis blueprint");
+    else {
+      const was = Array.isArray(there.input.areas) ? (there.input.areas as Partial<AnnounceArea>[]) : [];
+      const key = (a: Partial<AnnounceArea>) => String(a.occupied);
+      const nowKeys = areas.map(key);
+      const wasKeys = was.map(key);
+      const label = (occupied: string) => Object.values(h.areas).find((a) => runtimeIds(codes[a.id].code).occupied === occupied)?.name ?? occupied;
+      for (const k of nowKeys) if (!wasKeys.includes(k)) reasons.push(`${label(k)}: not spoken to → spoken to`);
+      for (const k of wasKeys) if (!nowKeys.includes(k)) reasons.push(`${label(k)}: spoken to → not spoken to`);
+      for (const a of areas) {
+        const w = was.find((x) => key(x) === a.occupied);
+        if (w && !sameValue(w, a)) reasons.push(`${label(a.occupied)}: speakers or bed sensors changed`);
+      }
+      for (const k of ["tts_entity", "default_volume"] as const) {
+        if (!sameValue(there.input[k] ?? null, input[k] ?? null)) reasons.push(`${INPUT_LABEL[k]}: ${show(there.input[k])} → ${show(input[k])}`);
+      }
+    }
+    if (there.alias !== alias) reasons.push(`Name: ${show(there.alias)} → ${alias}`);
+    const bp = blueprintForRecipe("announce");
+    const version = installed.blueprints[bp.path] ?? null;
+    if (version === null) reasons.push("The blueprint is missing");
+    else if (version !== bp.version) reasons.push(`The blueprint is version ${version}, Taxis has ${bp.version}`);
+  }
+
+  if (noOccupancy.length > 0) notes.push(`${noOccupancy.join(", ")} ${noOccupancy.length === 1 ? "has" : "have"} speakers but no Occupancy yet, so ${noOccupancy.length === 1 ? "it is" : "they are"} left out`);
+  notes.push("The volume is set before speaking and is not put back");
+
+  const status: RecipeStatus = pendingScript(changes, ANNOUNCE_SCRIPT_ID) ? "in-changes" : missing.length > 0 ? "missing" : there ? (reasons.length === 0 ? "installed" : "out-of-date") : "ready";
+  const inputs: ChangeInput[] = [];
+  if (status === "ready" || status === "out-of-date") {
+    const bp = blueprintForRecipe("announce");
+    const version = installed.blueprints[bp.path] ?? null;
+    if (version !== bp.version && !pendingBlueprint(changes, bp.path, bp.version)) {
+      inputs.push({ kind: "blueprint", op: version === null ? "create" : "update", fields: { path: bp.path, version: bp.version } });
+    }
+    inputs.push({ kind: "script", op: there ? "update" : "create", fields: { script_id: ANNOUNCE_SCRIPT_ID, alias, use_blueprint: { path: ANNOUNCE_PATH, input } } });
+  }
+  return {
+    areaId: "",
+    areaName: "House",
+    recipe: "announce",
+    status,
+    missing: status === "missing" ? missing : [],
+    reasons: status === "out-of-date" ? reasons : [],
+    notes: status === "missing" ? [] : notes,
+    controlledBy: [],
+    controls: "lights",
+    inputs,
+    actionable: inputs.length > 0,
+  };
 }
 
 // The changes for the chosen cells, in order, each blueprint once.

@@ -76,6 +76,12 @@ export function overlayChanges(raw: RawRegistry, changes: Change[]): RawRegistry
           const st = r.states.find((x) => x.entity_id === c.targetId);
           if (st && typeof fields.name === "string") st.attributes = { ...st.attributes, friendly_name: fields.name };
         }
+        // The class is read from the live state too; show the one chosen now (or,
+        // when it is cleared, the integration's own).
+        if ("device_class" in fields) {
+          const st = r.states.find((x) => x.entity_id === c.targetId);
+          if (st) st.attributes = { ...st.attributes, device_class: (typeof fields.device_class === "string" ? fields.device_class : e.original_device_class) ?? undefined };
+        }
         // A rename shows everywhere at once: the entity, its state, the groups
         // it's in, and the area that uses it as its temperature or humidity.
         if (typeof newId === "string") renameInRaw(r, c.targetId, newId);

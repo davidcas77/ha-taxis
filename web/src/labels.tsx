@@ -40,7 +40,7 @@ export function NewForm({ kind, scope, onCreated }: { kind: "label" | "category"
         <input id={id} className={inputClass} value={name} placeholder={kind === "label" ? "New label" : `New ${SCOPE_NAMES[scope!].toLowerCase().replace(/s$/, "")} category`} onChange={(e) => setName(e.target.value)} />
       </div>
       {kind === "label" && (
-        <select aria-label="Color" className={`${inputClass} w-28`} value={color} onChange={(e) => setColor(e.target.value)}>
+        <select aria-label="Color" className={`${inputClass} w-28!`} value={color} onChange={(e) => setColor(e.target.value)}>
           <option value="">No color</option>
           {LABEL_COLORS.map((c) => (
             <option key={c} value={c}>

@@ -56,6 +56,15 @@ describe("read-only guard", () => {
     }
   });
 
+  it("reads the list of integrations, and no other command for config entries", () => {
+    expect(READ_COMMANDS.has("config_entries/get")).toBe(true);
+    for (const t of ["config_entries/delete", "config_entries/disable", "config_entries/update", "config_entries/reload", "config_entries/flow/progress", "config_entries/subentries/list"]) {
+      expect(READ_COMMANDS.has(t), t).toBe(false);
+      expect(() => assertReadCommand(t), t).toThrow(/isn.t a read/);
+      expect(WRITE_COMMANDS.has(t), t).toBe(false);
+    }
+  });
+
   it("write() sends only registry edits: no services, no removing devices or entities", async () => {
     const ha = fakeHa();
     const client = new HaSocket("ws://x", "good", ha.factory);
@@ -77,12 +86,21 @@ describe("read-only guard", () => {
     }
   });
 
-  it("saves a blueprint only for the automation domain, at taxis/<name>.yaml", () => {
+  it("saves a blueprint for the automation domain at taxis/<name>.yaml, and for the script domain at taxis/announce.yaml only", () => {
     expect(() => assertWriteCommand("blueprint/save", blueprint())).not.toThrow();
     expect(() => assertWriteCommand("blueprint/save", blueprint({ source_url: "https://example.test/x.yaml", allow_override: false }))).not.toThrow();
-    for (const domain of ["script", "template", "Automation", "", undefined, null, ["automation"]]) {
-      expect(() => assertWriteCommand("blueprint/save", blueprint({ domain })), String(domain)).toThrow(/automation blueprints only/);
+    for (const domain of ["template", "Automation", "Script", "scene", "", undefined, null, ["automation"], ["script"]]) {
+      expect(() => assertWriteCommand("blueprint/save", blueprint({ domain })), String(domain)).toThrow(/automation blueprints, and one script blueprint/);
     }
+    // The one script blueprint, and nowhere else.
+    expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path: "taxis/announce.yaml" }))).not.toThrow();
+    for (const path of ["taxis/occupancy.yaml", "taxis/announce2.yaml", "taxis/other.yaml", "taxis/a.yaml"]) {
+      expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path })), path).toThrow(/the only script blueprint Taxis writes is taxis\/announce\.yaml/);
+    }
+    // ...and announce is not an automation blueprint.
+    expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "automation", path: "taxis/announce.yaml" }))).toThrow(/the only script blueprint/);
+    expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path: "taxis/../announce.yaml" }))).toThrow(/only to taxis/);
+    expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path: "other/announce.yaml" }))).toThrow(/only to taxis/);
     const paths = [
       "other/x.yaml",
       "x.yaml",
@@ -109,13 +127,14 @@ describe("read-only guard", () => {
     expect(() => assertWriteCommand("blueprint/save", blueprint({ yaml: "x".repeat(64 * 1024 + 1) }))).toThrow(/no text or too much/);
     // Nothing else rides along, and it needs a payload at all.
     expect(() => assertWriteCommand("blueprint/save", blueprint({ extra: 1 }))).toThrow(/isn't something Taxis sends/);
-    expect(() => assertWriteCommand("blueprint/save")).toThrow(/automation blueprints only/);
+    expect(() => assertWriteCommand("blueprint/save")).toThrow(/automation blueprints, and one script blueprint/);
   });
 
   it("write() checks a blueprint's payload before anything is sent", async () => {
     const ha = fakeHa();
     const client = new HaSocket("ws://x", "good", ha.factory);
-    await expect(client.write("blueprint/save", blueprint({ domain: "script" }))).rejects.toThrow(/automation blueprints only/);
+    await expect(client.write("blueprint/save", blueprint({ domain: "scene" }))).rejects.toThrow(/automation blueprints, and one script blueprint/);
+    await expect(client.write("blueprint/save", blueprint({ domain: "script" }))).rejects.toThrow(/only script blueprint/);
     await expect(client.write("blueprint/save", blueprint({ path: "taxis/../../x.yaml" }))).rejects.toThrow(/only to taxis/);
     expect(ha.opened()).toBe(0);
     await client.write("blueprint/save", blueprint());

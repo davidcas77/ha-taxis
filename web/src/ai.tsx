@@ -392,7 +392,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
                     <input
                       aria-label={`Input price for ${r.model || "the model"}`}
                       inputMode="decimal"
-                      className={`${inputClass} w-24`}
+                      className={`${inputClass} w-24!`}
                       placeholder="In"
                       value={r.input}
                       onChange={(e) => setPrices(prices.map((x, j) => (j === i ? { ...x, input: e.target.value } : x)))}
@@ -400,7 +400,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
                     <input
                       aria-label={`Output price for ${r.model || "the model"}`}
                       inputMode="decimal"
-                      className={`${inputClass} w-24`}
+                      className={`${inputClass} w-24!`}
                       placeholder="Out"
                       value={r.output}
                       onChange={(e) => setPrices(prices.map((x, j) => (j === i ? { ...x, output: e.target.value } : x)))}

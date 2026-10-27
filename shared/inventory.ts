@@ -15,10 +15,11 @@ export const CAPABILITIES = [
   { key: "temperature", label: "Temperature", short: "Temp" },
   { key: "humidity", label: "Humidity", short: "Humid." },
   { key: "illuminance", label: "Light level", short: "Lux" },
-  { key: "thermostat", label: "Thermostats", short: "Therm." },
+  { key: "thermostat", label: "Climate", short: "Climate" },
   { key: "speaker", label: "Speakers", short: "Speak." },
   { key: "tv", label: "TVs", short: "TVs" },
   { key: "cover", label: "Covers", short: "Covers" },
+  { key: "fan", label: "Fans", short: "Fans" },
   { key: "power", label: "Power", short: "Power" },
 ] as const;
 
@@ -43,7 +44,26 @@ export const KIND_PAIRS: readonly (readonly [Capability, Capability])[] = [
   ["speaker", "tv"],
 ];
 
-export type EntityChoice = { counts?: boolean; kind?: Capability; role?: MotionRole; light?: LightRole; bed?: boolean };
+// What a climate entity is: an air conditioner, heating (a heater, a thermostat
+// that only heats) or a radiator valve. Detected from the modes it offers (an
+// entity that can cool or heat_cool is an AC, one that only heats is heating),
+// and the three can be switched among themselves, since a radiator valve looks
+// just like a heater. Area climate runs an AC in both seasons, and heating and
+// valves in the heating season only.
+export const CLIMATE_KINDS = ["ac", "heating", "valve"] as const;
+export type ClimateKind = (typeof CLIMATE_KINDS)[number];
+
+export const CLIMATE_KIND_LABEL: Record<ClimateKind, string> = { ac: "AC", heating: "Heating", valve: "Valve" };
+
+export const isClimateKind = (v: unknown): v is ClimateKind => typeof v === "string" && (CLIMATE_KINDS as readonly string[]).includes(v);
+
+// From the hvac_modes the entity reports. One that reports none (unavailable, or
+// an integration that says nothing) is taken for heating, the common case.
+export const detectClimateKind = (hvacModes: readonly string[]): ClimateKind => (hvacModes.includes("cool") || hvacModes.includes("heat_cool") ? "ac" : "heating");
+
+// bed: a presence sensor that senses a bed. appliance: a power sensor that is a
+// machine (a washer, an oven) whose end Appliance done reports.
+export type EntityChoice = { counts?: boolean; kind?: Capability; climate?: ClimateKind; role?: MotionRole; light?: LightRole; bed?: boolean; appliance?: boolean };
 export type AreaChoice = { type?: AreaType; bedroom?: boolean };
 export type InventorySettings = { entities: Record<string, EntityChoice>; areas: Record<string, AreaChoice> };
 
@@ -77,10 +97,13 @@ const SENSOR: Record<string, Capability> = {
   power: "power",
 };
 
+// A switch is listed with the fans but doesn't count until the user says it runs one.
 const DOMAIN: Record<string, Capability> = {
   light: "lights",
   climate: "thermostat",
   cover: "cover",
+  fan: "fan",
+  switch: "fan",
 };
 
 const lookup = (map: Record<string, Capability>, key: string | null): Capability | null => (key !== null && Object.hasOwn(map, key) ? map[key] : null);
@@ -103,6 +126,12 @@ const CAMERA_CAPABILITIES = new Set<Capability>(["motion", "presence", "door", "
 
 export type InventoryFlag = "helper" | "camera" | "unavailable";
 
+// A light group is a switch for its members, never a light of its own: it can be
+// the area's combined lights helper, but it is not counted as a light, whatever the
+// user ticks. (Any group light: Hue's room groups report their members too.) A group
+// that is unavailable reports no members, and is told by its platform.
+const isLightGroup = (e: EntityItem): boolean => e.domain === "light" && (e.platform === "group" || e.members.length > 0);
+
 function isHelper(e: EntityItem): boolean {
   return e.members.length > 0 || HELPER_PLATFORMS.has(e.platform);
 }
@@ -112,20 +141,22 @@ function onCameraDevice(h: Hierarchy, e: EntityItem): boolean {
   return Boolean(device?.entityIds.some((id) => h.entities[id]?.domain === "camera"));
 }
 
-type Candidate = { entity: EntityItem; base: Capability; countsDefault: boolean; flags: InventoryFlag[] };
+type Candidate = { entity: EntityItem; base: Capability; countsDefault: boolean; flags: InventoryFlag[]; never: boolean };
 
 // What an entity is before any choice: its capability, whether it counts and
 // the flags that explain why not. Null for entities that aren't listed:
 // not a capability, disabled, or config/diagnostic.
 function candidate(h: Hierarchy, e: EntityItem): Candidate | null {
   if (e.disabled || e.maintenance) return null;
+  // A switch an integration hides (switch_as_x makes a light of it) is not a fan.
+  if (e.domain === "switch" && e.hidden) return null;
   const base = defaultCapability(e);
   if (!base) return null;
   const flags: InventoryFlag[] = [];
   if (isHelper(e)) flags.push("helper");
   if (CAMERA_CAPABILITIES.has(base) && onCameraDevice(h, e)) flags.push("camera");
   if (e.state === "unavailable" || e.state === "unknown") flags.push("unavailable");
-  return { entity: e, base, countsDefault: !flags.includes("helper") && !flags.includes("camera"), flags };
+  return { entity: e, base, countsDefault: !flags.includes("helper") && !flags.includes("camera") && e.domain !== "switch", flags, never: isLightGroup(e) };
 }
 
 const ownChoice = (s: InventorySettings, entityId: string): EntityChoice | undefined => (Object.hasOwn(s.entities, entityId) ? s.entities[entityId] : undefined);
@@ -150,8 +181,13 @@ export type InventoryRow = {
   roleDefault?: MotionRole;
   // Lights only.
   light?: LightRole;
+  // Climate only: what it is, and what was detected.
+  climate?: ClimateKind;
+  climateDefault?: ClimateKind;
   // Presence only: a bed sensor.
   bed?: boolean;
+  // Power only: an appliance.
+  appliance?: boolean;
   flags: InventoryFlag[];
   // True when any choice differs from its default.
   overridden: boolean;
@@ -181,7 +217,7 @@ export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string
     found.push({
       c,
       capability: choice.kind && kindAllowed(c.base, choice.kind) ? choice.kind : c.base,
-      counts: choice.counts ?? c.countsDefault,
+      counts: c.never ? false : choice.counts ?? c.countsDefault,
       choice,
     });
   }
@@ -210,9 +246,18 @@ export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string
       row.light = choice.light ?? "main";
       overridden ||= row.light !== "main";
     }
+    if (capability === "thermostat") {
+      row.climateDefault = detectClimateKind(c.entity.hvacModes);
+      row.climate = choice.climate ?? row.climateDefault;
+      overridden ||= row.climate !== row.climateDefault;
+    }
     if (capability === "presence") {
       row.bed = choice.bed ?? false;
       overridden ||= row.bed;
+    }
+    if (capability === "power") {
+      row.appliance = choice.appliance ?? false;
+      overridden ||= row.appliance;
     }
     row.overridden = overridden;
     out[capability].push(row);
@@ -316,7 +361,8 @@ function rowOf(h: Hierarchy, s: InventorySettings, entityId: string): InventoryR
 export function setCounts(h: Hierarchy, s: InventorySettings, entityId: string, counts: boolean): InventorySettings {
   const e = h.entities[entityId];
   const c = e && candidate(h, e);
-  return c ? patchEntity(s, entityId, "counts", counts, c.countsDefault) : s;
+  // A light group never counts, so there is nothing to choose.
+  return c && !c.never ? patchEntity(s, entityId, "counts", counts, c.countsDefault) : s;
 }
 
 // Only between door and window, or speaker and TV.
@@ -326,6 +372,15 @@ export function setKind(h: Hierarchy, s: InventorySettings, entityId: string, ki
   if (!c) return s;
   if (kind !== c.base && !kindAllowed(c.base, kind)) return s;
   return patchEntity(s, entityId, "kind", kind, c.base);
+}
+
+// Air conditioner, heating or radiator valve, for a climate entity. The default is
+// what its modes say.
+export function setClimateKind(h: Hierarchy, s: InventorySettings, entityId: string, kind: ClimateKind): InventorySettings {
+  const e = h.entities[entityId];
+  const c = e && candidate(h, e);
+  if (!c || c.base !== "thermostat" || !isClimateKind(kind)) return s;
+  return patchEntity(s, entityId, "climate", kind, detectClimateKind(e.hvacModes));
 }
 
 // Motion and presence. The default of a presence sensor depends on the area's
@@ -338,6 +393,8 @@ export function setRole(h: Hierarchy, s: InventorySettings, entityId: string, ro
 export const setLightRole = (s: InventorySettings, entityId: string, light: LightRole): InventorySettings => patchEntity(s, entityId, "light", light, "main");
 
 export const setBed = (s: InventorySettings, entityId: string, bed: boolean): InventorySettings => patchEntity(s, entityId, "bed", bed, false);
+
+export const setAppliance = (s: InventorySettings, entityId: string, appliance: boolean): InventorySettings => patchEntity(s, entityId, "appliance", appliance, false);
 
 // Back to detection, for one entity.
 export function resetEntity(s: InventorySettings, entityId: string): InventorySettings {

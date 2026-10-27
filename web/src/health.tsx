@@ -109,7 +109,7 @@ export function targetRoute(t: HealthTarget): Route {
 function entityRoute(h: Hierarchy, id: string): Route | null {
   const e = h.entities[id];
   if (!e) return null;
-  return e.areaId ? { page: "areas", sel: { kind: "area", id: e.areaId }, tab: "entities" } : { page: "entities" };
+  return e.areaId ? { page: "areas", sel: { kind: "area", id: e.areaId }, tab: "devices-entities" } : { page: "organize", type: "entities", id };
 }
 
 const TONE: Record<Severity, string> = { error: "text-danger", warning: "text-warn", info: "text-muted" };
@@ -353,7 +353,7 @@ export function HealthPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
                 <label htmlFor="health-check" className="text-xs font-medium text-muted">
                   Check
                 </label>
-                <select id="health-check" className={`${inputClass} w-56`} value={check} onChange={(e) => setCheck(e.target.value as HealthCheck | "all")}>
+                <select id="health-check" className={`${inputClass} w-56!`} value={check} onChange={(e) => setCheck(e.target.value as HealthCheck | "all")}>
                   <option value="all">All checks · {report.findings.length}</option>
                   {HEALTH_CHECKS.map((c) => (
                     <option key={c.key} value={c.key}>
@@ -366,7 +366,7 @@ export function HealthPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
                 <label htmlFor="health-area" className="text-xs font-medium text-muted">
                   Area
                 </label>
-                <select id="health-area" className={`${inputClass} w-48`} value={area} onChange={(e) => setArea(e.target.value)}>
+                <select id="health-area" className={`${inputClass} w-48!`} value={area} onChange={(e) => setArea(e.target.value)}>
                   <option value="all">All areas</option>
                   <option value="none">Not in an area</option>
                   {areaIds.map((id) => (
@@ -380,7 +380,7 @@ export function HealthPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
                 <label htmlFor="health-search" className="text-xs font-medium text-muted">
                   Search
                 </label>
-                <input id="health-search" className={`${inputClass} w-48`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or entity id" />
+                <input id="health-search" className={`${inputClass} w-48!`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or entity id" />
               </div>
               <Thresholds options={options} onChange={setOptions} />
             </div>
@@ -436,7 +436,7 @@ function Threshold({ id, label, k, options, onChange }: { id: string; label: str
         inputMode="numeric"
         min={min}
         max={max}
-        className={`${inputClass} w-28`}
+        className={`${inputClass} w-28!`}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
