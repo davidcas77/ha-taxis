@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { canonicalId, effectiveSuffixes } from "../../shared/helpers.ts";
 import { analyzeArea, areaCodes, duplicateCodes, floorCodeAdvice, floorCodes, slug, type NamingSettings } from "../../shared/naming.ts";
 import { sortRows } from "../../shared/sort.ts";
 import type { AreaNode, Hierarchy } from "../../shared/types.ts";
@@ -53,6 +54,7 @@ function AreaCodesForm({ h, go, naming }: { h: Hierarchy; go: (route: Route) => 
 export function AreaCodesTable({ h, go, draft, onChange }: { h: Hierarchy; go: (route: Route) => void; draft: NamingSettings; onChange: (codes: CodeOverrides) => void }) {
   const codes = useMemo(() => areaCodes(h, draft), [h, draft]);
   const floorCodeMap = useMemo(() => floorCodes(h, draft), [h, draft]);
+  const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
   const floorClashes = useMemo(() => {
     const out = new Map<string, string[]>();
     for (const ids of duplicateCodes(floorCodeMap).values()) for (const id of ids) out.set(id, ids.filter(other => other !== id).map(other => h.floors.find(f => f.id === other)?.name ?? other));
@@ -116,7 +118,7 @@ export function AreaCodesTable({ h, go, draft, onChange }: { h: Hierarchy; go: (
                   {floor && c ? <tr className={`border-t border-line align-top font-semibold ${also ? "bg-danger-soft" : "bg-sunken"}`}>
                     <th scope="rowgroup" className="px-3 py-2 text-left">{floor.name}<span className="block text-xs font-normal text-muted">Floor</span></th>
                     <td className="px-3 py-2 font-mono text-xs text-muted">{floor.id}</td>
-                    <td className="px-3 py-2 text-xs font-normal text-muted">Default: <code>{c.detected}</code></td>
+                    <td className="px-3 py-2 text-xs font-normal text-muted">Default: <code>{c.detected}</code><span className="mt-1 block">Light group: <code>{canonicalId("light", c.code, suffixes.lights)}</code></span></td>
                     <td className="px-3 py-2 font-normal">
                       <input aria-label={`Code for floor ${floor.name}`} aria-invalid={also ? true : undefined}
                         className={`${inputClass} w-40! min-w-0 max-w-full font-mono ${also ? "border-danger text-danger" : ""}`}

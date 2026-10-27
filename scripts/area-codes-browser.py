@@ -90,8 +90,11 @@ class AreaCodesRegression(unittest.TestCase):
         self.assertEqual(self.current, self.fixture)
         self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Settings", exact=True).click()
         self.assertEqual(self.page.get_by_role("heading", name="Area codes", exact=True).count(), 0)
-        for heading in ("Patterns", "Floor codes", "Type words", "Helper names"):
+        for heading in ("Patterns", "House light group", "Type words", "Helper names"):
             self.page.get_by_role("heading", name=heading, exact=True).wait_for()
+        self.assertEqual(self.page.get_by_role("heading", name="Floor codes", exact=True).count(), 0)
+        self.assertEqual(self.page.get_by_role("textbox", name="Code for floor Ground floor", exact=True).count(), 0)
+        self.assertEqual(self.page.get_by_label("Light group of the whole house", exact=True).input_value(), self.fixture["houseGroup"])
         self.assertEqual(self.puts, [])
 
     def test_saving_area_codes_preserves_every_other_naming_field(self):
@@ -149,13 +152,27 @@ class AreaCodesRegression(unittest.TestCase):
         self.assertTrue(self.page.url.endswith("#parameters/area-codes"))
         self.assertEqual(self.puts, [])
 
-    def test_settings_default_reset_leaves_relocated_area_codes_untouched(self):
+    def test_settings_default_reset_leaves_relocated_area_and_floor_codes_untouched(self):
         self.open("#settings")
         self.page.get_by_role("button", name="Back to defaults", exact=True).click()
         self.page.get_by_role("button", name="Save settings", exact=True).click()
         self.page.get_by_role("status").filter(has_text="Saved in Taxis").wait_for()
         self.assertEqual(len(self.puts), 1)
         self.assertEqual(self.puts[0]["body"]["areaCodes"], self.fixture["areaCodes"])
+        self.assertEqual(self.puts[0]["body"]["floorCodes"], self.fixture["floorCodes"])
+        self.page.goto(BASE + "/#parameters/area-codes", wait_until="networkidle")
+        self.assertEqual(self.floor_code().input_value(), self.fixture["floorCodes"]["ground"])
+        self.assertEqual(self.kitchen_code().input_value(), self.fixture["areaCodes"]["kitchen"])
+
+    def test_settings_save_keeps_relocated_codes_and_other_sections_editable(self):
+        self.open("#settings")
+        self.page.get_by_label("Display name", exact=True).fill("{Name} ({Area})")
+        self.page.get_by_label("Light group of the whole house", exact=True).fill("home_lights")
+        self.page.get_by_role("button", name="Save settings", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="Saved in Taxis").wait_for()
+        self.assertEqual(len(self.puts), 1)
+        expected = {**self.fixture, "namePattern": "{Name} ({Area})", "houseGroup": "home_lights"}
+        self.assertEqual(self.puts[0]["body"], expected)
 
     def floor_code(self):
         return self.page.get_by_role("textbox", name="Code for floor Ground floor", exact=True)
@@ -195,9 +212,11 @@ class AreaCodesRegression(unittest.TestCase):
         self.open()
         self.assertEqual(self.floor_code().input_value(), "ground_custom")
         self.assertEqual(self.floor_code().get_attribute("placeholder"), "ground")
+        self.page.get_by_text("light.ground_custom_lighting", exact=True).wait_for()
         self.floor_code().fill("Ground Changed")
         self.kitchen_code().fill("kitchen_changed")
         self.assertEqual(self.floor_code().input_value(), "ground_changed")
+        self.page.get_by_text("light.ground_changed_lighting", exact=True).wait_for()
         self.page.get_by_role("button", name="Save codes", exact=True).click()
         self.page.get_by_role("status").filter(has_text="Saved in Taxis").wait_for()
         expected = {**self.fixture, "areaCodes": {"kitchen": "kitchen_changed"}, "floorCodes": {"ground": "ground_changed"}}

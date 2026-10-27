@@ -10,16 +10,14 @@ import {
   analyzeArea,
   areaCodes,
   duplicateCodes,
-  floorCodeAdvice,
   floorCodes,
-  slug,
   type NamingRow,
   type NamingSettings,
   type NamingStatus,
 } from "../../shared/naming.ts";
 import { allIgnored, anyIgnored, fieldIgnored, hasSuggestion, ignoreSuggestions, namingFit, restoreSuggestions, type NamingField } from "../../shared/naming-ignores.ts";
 import { ROLE_ORDER } from "../../shared/roles.ts";
-import type { AreaNode, ChangeInput, EntityRole, FloorNode, Hierarchy } from "../../shared/types.ts";
+import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { AiSection } from "./ai.tsx";
 import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis, type Route } from "./state.tsx";
@@ -27,7 +25,7 @@ import { useStoredFlag } from "./storage.ts";
 import { GroupToggle, GroupedRows, SortHeader, useSort } from "./table.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
 
-// Naming: the Settings panel (a code per area, the patterns, the type words)
+// Naming: the Settings panel (patterns, type words and helper names)
 // and an area's Naming tab (how its entities measure up, and suggestions).
 
 const STATUS: Record<NamingStatus, { label: string; tone: string }> = {
@@ -60,37 +58,11 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
     for (const ids of duplicateCodes(codes).values()) for (const id of ids) out.set(id, ids.filter((x) => x !== id).map((x) => h.areas[x]?.name ?? x));
     return out;
   }, [codes, h]);
-  // Floor codes: the same rule as area codes, so two floors can't share one. A
-  // floor code that is also an area's would put the floor's light group on the
-  // area's: a warning, since the planner shows it as a conflict.
-  const floorCodeMap = useMemo(() => floorCodes(h, draft), [h, draft]);
-  const floorClashes = useMemo(() => {
-    const out = new Map<string, string[]>();
-    for (const ids of duplicateCodes(floorCodeMap).values()) for (const id of ids) out.set(id, ids.filter((x) => x !== id).map((x) => h.floors.find((f) => f.id === x)?.name ?? x));
-    return out;
-  }, [floorCodeMap, h]);
-  const areaWithFloorCode = useMemo(() => {
-    const out = new Map<string, string>();
-    for (const f of h.floors) {
-      const same = Object.entries(codes).find(([, c]) => c.code === floorCodeMap[f.id].code);
-      if (same) out.set(f.id, h.areas[same[0]]?.name ?? same[0]);
-    }
-    return out;
-  }, [codes, floorCodeMap, h]);
+  // Codes are edited in Parameters, but their uniqueness still gates a settings save.
+  const floorClashes = useMemo(() => duplicateCodes(floorCodes(h, draft)), [h, draft]);
   const houseGroup = draft.houseGroup || DEFAULT_HOUSE_GROUP;
   const houseGroupError = HELPER_SUFFIX_RE.test(houseGroup) ? null : "Use a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled.";
   const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
-  // Floors: also in the order Home Assistant gives them until a column is clicked.
-  const floorColumns = useMemo(
-    () => ({
-      floor: (f: FloorNode) => f.name,
-      id: (f: FloorNode) => f.id,
-      code: (f: FloorNode) => floorCodeMap[f.id].code,
-      group: (f: FloorNode) => canonicalId("light", floorCodeMap[f.id].code, suffixes.lights),
-    }),
-    [floorCodeMap, suffixes],
-  );
-  const { rows: floors, sort: floorSort, toggle: toggleFloor } = useSort(h.floors, floorColumns, { key: "order", dir: "asc" });
   // Helper names: live problems, and an example id from the first area.
   const helperErrors = useMemo(() => helperNameErrors(draft.helperNames), [draft.helperNames]);
   const firstArea = floorOrder[0];
@@ -140,72 +112,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
         </section>
 
         <section className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <h2 className="text-sm font-semibold">Floor codes</h2>
-            <p className="text-xs text-muted">
-              What the entity id of a floor's light group starts with: <code className="font-mono">{"light.<floor code>_<lights name>"}</code>. The default is the floor's id.
-            </p>
-          </div>
-          {h.floors.length === 0 ? (
-            <p className="text-[13px] text-muted">Home Assistant has no floors.</p>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-              <table className="w-full text-[13px]">
-                <thead className="bg-sunken text-left text-xs text-muted">
-                  <tr>
-                    <SortHeader label="Floor" k="floor" sort={floorSort} onToggle={toggleFloor} />
-                    <SortHeader label="Floor id" k="id" sort={floorSort} onToggle={toggleFloor} />
-                    <SortHeader label="Code" k="code" sort={floorSort} onToggle={toggleFloor} />
-                    <SortHeader label="Light group" k="group" sort={floorSort} onToggle={toggleFloor} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {floors.map((f) => {
-                    const c = floorCodeMap[f.id];
-                    const also = floorClashes.get(f.id);
-                    const advice = floorCodeAdvice(f, c);
-                    const sameAsArea = areaWithFloorCode.get(f.id);
-                    return (
-                      <tr key={f.id} className={`border-t border-line align-top ${also ? "bg-danger-soft" : ""}`}>
-                        <td className="px-3 py-1.5">{f.name}</td>
-                        <td className="px-3 py-1.5 font-mono text-xs text-muted">{f.id}</td>
-                        <td className="px-3 py-1.5">
-                          <input
-                            aria-label={`Code for floor ${f.name}`}
-                            aria-invalid={also ? true : undefined}
-                            className={`${inputClass} w-40! min-w-0 max-w-full font-mono ${also ? "border-danger text-danger" : ""}`}
-                            value={draft.floorCodes[f.id] ?? ""}
-                            placeholder={c.detected}
-                            spellCheck={false}
-                            onChange={(e) => {
-                              const next = { ...draft.floorCodes };
-                              if (e.target.value.trim()) next[f.id] = e.target.value;
-                              else delete next[f.id];
-                              setDraft({ ...draft, floorCodes: next });
-                            }}
-                            onBlur={(e) => e.target.value.trim() && setDraft((d) => ({ ...d, floorCodes: { ...d.floorCodes, [f.id]: slug(e.target.value) } }))}
-                          />
-                          {also && <div className="mt-1 text-xs text-danger">Also used by {also.join(", ")}</div>}
-                          {!also && advice && (
-                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-warn">
-                              <span>
-                                “{c.code}” says little about this floor. Suggested: <code className="font-mono">{advice}</code>
-                              </span>
-                              <Button tone="ghost" className="px-2 py-0.5 text-xs" onClick={() => setDraft((d) => ({ ...d, floorCodes: { ...d.floorCodes, [f.id]: advice } }))}>
-                                Use it
-                              </Button>
-                            </div>
-                          )}
-                          {!also && sameAsArea && <div className="mt-1 text-xs text-warn">The area {sameAsArea} has the same code, so the floor's light group would sit on the area's. Give one of them another code.</div>}
-                        </td>
-                        <td className="px-3 py-1.5 font-mono text-xs text-muted">{canonicalId("light", c.code, suffixes.lights)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <h2 className="text-sm font-semibold">House light group</h2>
           <div className="flex max-w-sm flex-col gap-1">
             <label htmlFor="house-group" className="text-xs font-medium text-muted">
               Light group of the whole house
@@ -309,7 +216,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           <Button tone="ghost" onClick={() => setDraft(naming)}>
             Undo changes
           </Button>
-          <Button tone="ghost" onClick={() => setDraft({ ...structuredClone(DEFAULT_NAMING), areaCodes: draft.areaCodes })}>
+          <Button tone="ghost" onClick={() => setDraft({ ...structuredClone(DEFAULT_NAMING), areaCodes: draft.areaCodes, floorCodes: draft.floorCodes })}>
             Back to defaults
           </Button>
           {clashes.size > 0 && (
@@ -320,7 +227,8 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           )}
           {floorClashes.size > 0 && (
             <span role="alert" className="text-xs text-danger">
-              Two floors share a code. Give each floor its own before saving.
+              Two floors share a code. Give each floor its own before saving.{" "}
+              <button type="button" className="underline" onClick={() => go({ page: "parameters", tab: "area-codes" })}>Edit floor codes in Parameters</button>
             </span>
           )}
           {error && (

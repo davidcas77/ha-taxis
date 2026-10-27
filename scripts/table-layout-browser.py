@@ -171,7 +171,7 @@ class TableLayoutRegression(unittest.TestCase):
         device = next(iter(h["devices"]))
         category = h["categories"]["automation"][0]["id"]
         label = next(iter(h["labels"]))
-        routes = ["#", "#settings", "#health", "#unassigned", "#organize/entities", "#organize/devices/"+device,
+        routes = ["#", "#health", "#unassigned", "#organize/entities", "#organize/devices/"+device,
                   "#organize/category-automation/"+category, "#organize/labels/"+label,
                   "#organize/blueprints", "#recipes", "#parameters/capabilities", "#parameters/helpers", "#parameters/area-codes",
                   "#area/"+area, "#area/"+area+"/capabilities", "#area/"+area+"/naming", "#parameters/house"]
@@ -206,7 +206,7 @@ class TableLayoutRegression(unittest.TestCase):
 
     def test_resized_editors_and_headers_stay_inside_their_columns(self):
         area = next(iter(self.body["hierarchy"]["areas"]))
-        routes = ["#settings", "#organize/devices", "#area/"+area+"/naming", "#parameters/house", "#parameters/climate", "#recipes"]
+        routes = ["#parameters/area-codes", "#organize/devices", "#area/"+area+"/naming", "#parameters/house", "#parameters/climate", "#recipes"]
         for route in routes:
             self.open(route)
             if route == "#organize/devices":
