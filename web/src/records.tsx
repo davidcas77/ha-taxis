@@ -116,6 +116,9 @@ export function FilterChips({ items, clear }: { items: { label: string; remove: 
 // All result sets remain reachable; changing filters/sort resets the page.
 export function usePagination(total: number, resetKey: string, size = 100) {
   const [state, setState] = useState({ key: resetKey, page: 0 });
+  // Forget the previous filter's page when its key changes. Merely displaying
+  // page zero would restore the old page when the user clears those filters.
+  if (state.key !== resetKey) setState({ key: resetKey, page: 0 });
   const pages = Math.max(1, Math.ceil(total / size));
   const page = state.key === resetKey ? Math.min(state.page, pages - 1) : 0;
   const setPage = (next: number) => setState({ key: resetKey, page: Math.max(0, Math.min(pages - 1, next)) });

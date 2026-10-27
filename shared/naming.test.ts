@@ -328,3 +328,66 @@ describe("the house light group", () => {
     expect(DEFAULT_HOUSE_GROUP).toBe("all");
   });
 });
+
+
+describe("semantic motion aggregates and windows", () => {
+  function serenity(groupMembers: string[] = ["binary_sensor.serenity_pir_left", "binary_sensor.serenity_pir_right"], windowClass: string | null = "window") {
+    const reg = buildMockRegistry();
+    reg.areas = [{ area_id: "serenity", name: "Serenity" }];
+    reg.devices = [];
+    reg.entities = [];
+    reg.states = [];
+    for (const [id, dc, members] of [
+      ["binary_sensor.serenity_pir_left", "motion", undefined],
+      ["binary_sensor.serenity_pir_right", "motion", undefined],
+      ["binary_sensor.serenity_motions", "motion", groupMembers],
+      ["binary_sensor.serenity_window_side", windowClass, undefined],
+    ] as const) {
+      reg.entities.push({ entity_id: id, area_id: "serenity", platform: members ? "group" : "demo", original_name: id });
+      reg.states.push({ entity_id: id, state: "off", attributes: { device_class: dc ?? undefined, entity_id: members ? [...members] : undefined } });
+    }
+    const h = buildHierarchy(reg, "now");
+    return { h, analyze: (settings = DEFAULT_NAMING) => analyzeArea(h.areas.serenity, h, settings).rows };
+  }
+
+  it("names a verified all-motion group motion_all, preserving the chosen pattern and type word", () => {
+    const { analyze } = serenity();
+    expect(analyze().find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).toBe("binary_sensor.serenity_motion_all");
+    expect(analyze({ ...DEFAULT_NAMING, idPattern: "{area}_{name}_{type}", typeWords: { motion: "pir" } }).find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).toBe("binary_sensor.serenity_all_pir");
+    expect(analyze({ ...DEFAULT_NAMING, helperNames: { motion: "motions" } }).find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).toBeNull();
+    expect(analyze({ ...DEFAULT_NAMING, helperNames: { motion: "all_motion" } }).find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).toBe("binary_sensor.serenity_all_motion");
+  });
+
+  it("does not infer all from a plural individual name or a group containing only some motion sensors", () => {
+    const { h, analyze } = serenity(["binary_sensor.serenity_pir_left"]);
+    expect(analyze().find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).not.toBe("binary_sensor.serenity_motion_all");
+    h.entities["binary_sensor.serenity_motions"].members = [];
+    h.entities["binary_sensor.serenity_motions"].platform = "demo";
+    expect(analyze().find(r => r.entityId === "binary_sensor.serenity_motions")!.suggestedId).not.toBe("binary_sensor.serenity_motion_all");
+  });
+
+  it("keeps window_side for a real window, a general opening contact, and a contact missing its live class", () => {
+    for (const deviceClass of ["window", "opening", null]) {
+      const { analyze } = serenity(undefined, deviceClass);
+      expect(analyze().find(r => r.entityId === "binary_sensor.serenity_window_side")!.suggestedId).toBeNull();
+    }
+  });
+
+  it("does not infer a window from a token belonging to the area's prefix", () => {
+    const { h, analyze } = serenity(undefined, "opening");
+    const oldId = "binary_sensor.serenity_window_side";
+    const newId = "binary_sensor.window_room_side";
+    h.entities[newId] = { ...h.entities[oldId], entityId: newId };
+    delete h.entities[oldId];
+    h.areas.serenity.entityIds = h.areas.serenity.entityIds.map(id => id === oldId ? newId : id);
+    expect(analyze({ ...DEFAULT_NAMING, areaCodes: { serenity: "window_room" } }).find(r => r.entityId === newId)!.suggestedId).toBe("binary_sensor.window_room_door_side");
+  });
+
+  it("preserves an explicit custom opening word and skips contradictory door/window ID suggestions", () => {
+    const { analyze } = serenity(undefined, "window");
+    expect(analyze({ ...DEFAULT_NAMING, typeWords: { opening: "contact" } }).find(r => r.entityId === "binary_sensor.serenity_window_side")!.suggestedId).toBe("binary_sensor.serenity_contact_window_side");
+    const door = serenity(undefined, "door");
+    expect(door.analyze().find(r => r.entityId === "binary_sensor.serenity_window_side")!.suggestedId).toBeNull();
+    expect(door.h.entities["binary_sensor.serenity_window_side"].deviceClass).toBe("door");
+  });
+});

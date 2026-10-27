@@ -234,7 +234,7 @@ export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => 
             <tbody>
               {rows.map((r) => (
                 <tr key={r.areaId} className="border-t border-line">
-                  <td className="whitespace-nowrap px-3 py-1.5 text-muted">{r.floorName ?? "No floor"}</td>
+                  <td className="px-3 py-1.5 text-muted">{r.floorName ?? "No floor"}</td>
                   <td className="px-3 py-1.5">
                     <button type="button" className="text-left text-accent hover:underline" onClick={() => open(r.areaId)}>
                       {r.name}

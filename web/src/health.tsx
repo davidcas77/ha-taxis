@@ -16,6 +16,7 @@ import {
   type Severity,
 } from "../../shared/health.ts";
 import type { Hierarchy } from "../../shared/types.ts";
+import { organizeEntityType } from "../../shared/organize.ts";
 import { api } from "./api.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { SortHeader, useSort } from "./table.tsx";
@@ -111,7 +112,7 @@ export function targetRoute(t: HealthTarget): Route {
 function entityRoute(h: Hierarchy, id: string): Route | null {
   const e = h.entities[id];
   if (!e) return null;
-  return e.areaId ? { page: "areas", sel: { kind: "area", id: e.areaId }, tab: "devices-entities" } : { page: "organize", type: "entities", id };
+  return e.areaId ? { page: "areas", sel: { kind: "area", id: e.areaId }, tab: "devices-entities" } : { page: "organize", type: organizeEntityType(e), id };
 }
 
 const TONE: Record<Severity, string> = { error: "text-danger", warning: "text-warn", info: "text-muted" };

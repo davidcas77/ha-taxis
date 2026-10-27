@@ -369,12 +369,12 @@ export type AreaTab = (typeof AREA_TABS)[number];
 // What the Organize page lists. In "spaces" an id reads "floor:<id>" or "area:<id>".
 // Home Assistant keeps one category list per scope, so each scope is its own
 // type.
-export const ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers", "zones", "devices", "entities", "helpers"] as const;
+export const ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers", "zones", "automations", "blueprints", "devices", "entities", "helpers"] as const;
 export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
 const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
 
 // The sub-tabs of the Parameters page. Later stages add more.
-export const PARAMETER_TABS = ["capabilities", "helpers", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety"] as const;
+export const PARAMETER_TABS = ["capabilities", "helpers", "area-codes", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety"] as const;
 export type ParameterTab = (typeof PARAMETER_TABS)[number];
 
 export type Route =

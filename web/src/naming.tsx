@@ -79,22 +79,6 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
   }, [codes, floorCodeMap, h]);
   const houseGroup = draft.houseGroup || DEFAULT_HOUSE_GROUP;
   const houseGroupError = HELPER_SUFFIX_RE.test(houseGroup) ? null : "Use a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled.";
-  // "floor order" is the neutral start: no column is sorted until one is clicked.
-  const sortColumns = useMemo(
-    () => ({
-      area: (a: AreaNode) => a.name,
-      id: (a: AreaNode) => a.id,
-      found: (a: AreaNode) => codes[a.id].detectedCount,
-      code: (a: AreaNode) => codes[a.id].code,
-      fit: (a: AreaNode) => {
-        const f = analyzeArea(a, h, draft, codes).counts;
-        const t = Object.values(f).reduce((x, y) => x + y, 0);
-        return t ? f.ok / t : null;
-      },
-    }),
-    [codes, h, draft],
-  );
-  const { rows: areas, sort, toggle } = useSort(floorOrder, sortColumns, { key: "floor", dir: "asc" });
   const suffixes = useMemo(() => effectiveSuffixes(draft.helperNames), [draft.helperNames]);
   // Floors: also in the order Home Assistant gives them until a column is clicked.
   const floorColumns = useMemo(
@@ -157,74 +141,6 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
 
         <section className="flex flex-col gap-3">
           <div className="flex flex-wrap items-baseline gap-2">
-            <h2 className="text-sm font-semibold">Area codes</h2>
-            <p className="text-xs text-muted">What each area's entity ids start with. Taxis proposes the prefix your entities already use; type another code to change it.</p>
-          </div>
-          <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-            <table className="w-full text-[13px]">
-              <thead className="bg-sunken text-left text-xs text-muted">
-                <tr>
-                  <SortHeader label="Area" k="area" sort={sort} onToggle={toggle} />
-                  <SortHeader label="Area id" k="id" sort={sort} onToggle={toggle} />
-                  <SortHeader label="Found in its entities" k="found" sort={sort} onToggle={toggle} />
-                  <SortHeader label="Code" k="code" sort={sort} onToggle={toggle} />
-                  <SortHeader label="Fit" k="fit" sort={sort} onToggle={toggle} />
-                </tr>
-              </thead>
-              <tbody>
-                {areas.map((a) => {
-                  const c = codes[a.id];
-                  const fit = analyzeArea(a, h, draft, codes).counts;
-                  const total = Object.values(fit).reduce((x, y) => x + y, 0);
-                  const also = clashes.get(a.id);
-                  return (
-                    <tr key={a.id} className={`border-t border-line ${also ? "bg-danger-soft" : ""}`}>
-                      <td className="px-3 py-1.5">
-                        <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: a.id }, tab: "naming" })}>
-                          {a.name}
-                        </button>
-                      </td>
-                      <td className="px-3 py-1.5 font-mono text-xs text-muted">{a.id}</td>
-                      <td className="px-3 py-1.5 text-xs">
-                        {c.detectedCount > 0 ? (
-                          <>
-                            <code className="font-mono">{c.detected}</code> <span className="text-muted">· {c.detectedCount} of {c.total}</span>
-                          </>
-                        ) : (
-                          <span className="text-muted">
-                            {c.total ? "no common prefix" : "no entities"}
-                            {c.fallback === "id" ? ": using the area id" : ""}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5">
-                        <input
-                          aria-label={`Code for ${a.name}`}
-                          aria-invalid={also ? true : undefined}
-                          className={`${inputClass} w-40! font-mono ${also ? "border-danger text-danger" : ""}`}
-                          value={draft.areaCodes[a.id] ?? ""}
-                          placeholder={c.detected}
-                          onChange={(e) => {
-                            const areaCodesNext = { ...draft.areaCodes };
-                            if (e.target.value.trim()) areaCodesNext[a.id] = e.target.value;
-                            else delete areaCodesNext[a.id];
-                            setDraft({ ...draft, areaCodes: areaCodesNext });
-                          }}
-                          onBlur={(e) => e.target.value.trim() && setDraft((d) => ({ ...d, areaCodes: { ...d.areaCodes, [a.id]: slug(e.target.value) } }))}
-                        />
-                        {also && <div className="mt-1 text-xs text-danger">Also used by {also.join(", ")}</div>}
-                      </td>
-                      <td className="px-3 py-1.5 text-xs tabular-nums text-muted">{total ? `${fit.ok} of ${total}` : "–"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-baseline gap-2">
             <h2 className="text-sm font-semibold">Floor codes</h2>
             <p className="text-xs text-muted">
               What the entity id of a floor's light group starts with: <code className="font-mono">{"light.<floor code>_<lights name>"}</code>. The default is the floor's id.
@@ -257,7 +173,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
                           <input
                             aria-label={`Code for floor ${f.name}`}
                             aria-invalid={also ? true : undefined}
-                            className={`${inputClass} w-40! font-mono ${also ? "border-danger text-danger" : ""}`}
+                            className={`${inputClass} w-40! min-w-0 max-w-full font-mono ${also ? "border-danger text-danger" : ""}`}
                             value={draft.floorCodes[f.id] ?? ""}
                             placeholder={c.detected}
                             spellCheck={false}
@@ -393,12 +309,13 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           <Button tone="ghost" onClick={() => setDraft(naming)}>
             Undo changes
           </Button>
-          <Button tone="ghost" onClick={() => setDraft(structuredClone(DEFAULT_NAMING))}>
-            Back to detected codes and defaults
+          <Button tone="ghost" onClick={() => setDraft({ ...structuredClone(DEFAULT_NAMING), areaCodes: draft.areaCodes })}>
+            Back to defaults
           </Button>
           {clashes.size > 0 && (
             <span role="alert" className="text-xs text-danger">
-              Two areas share a code. Give each area its own before saving.
+              Two areas share a code. Give each area its own before saving.{" "}
+              <button type="button" className="underline" onClick={() => go({ page: "parameters", tab: "area-codes" })}>Edit area codes in Parameters</button>
             </span>
           )}
           {floorClashes.size > 0 && (
@@ -454,17 +371,17 @@ function SuggestionField({
 }) {
   const button = "rounded p-0.5 disabled:cursor-not-allowed disabled:opacity-50";
   return (
-    <div className="relative">
+    <div className={`flex min-w-0 max-w-full flex-wrap items-center gap-1 rounded-md border border-line bg-bg pr-1 focus-within:border-accent ${state === "accepted" ? "border-on! bg-ok-soft!" : ""}`}>
       <input
         aria-label={`New ${kind} for ${entity}`}
-        className={`${inputClass} pr-14 ${mono ? "font-mono" : ""} ${state === "accepted" ? "border-on! bg-ok-soft!" : ""} ${state === "ignored" ? "text-muted opacity-60" : ""}`}
+        className={`${inputClass} min-w-0 max-w-full flex-1 basis-32 border-0! bg-transparent! ${mono ? "font-mono" : ""} ${state === "ignored" ? "text-muted opacity-60" : ""}`}
         value={value}
         spellCheck={false}
         disabled={state === "ignored"}
         aria-invalid={invalid ? true : undefined}
         onChange={(e) => onChange(e.target.value)}
       />
-      <span className="absolute inset-y-0 right-1.5 flex items-center gap-0.5">
+      <span className="flex max-w-full flex-wrap items-center gap-0.5">
         <button
           type="button"
           aria-label={`Accept the suggested ${kind} for ${entity}`}
@@ -683,8 +600,8 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-[13px]">
           Code <code className="rounded bg-sunken px-1.5 py-0.5 font-mono">{analysis.code}</code>{" "}
-          <button type="button" className="text-xs text-accent hover:underline" onClick={() => go({ page: "settings" })}>
-            change in Settings
+          <button type="button" className="text-xs text-accent hover:underline" onClick={() => go({ page: "parameters", tab: "area-codes" })}>
+            change in Parameters
           </button>
         </p>
         <div className="flex h-2 min-w-[10rem] flex-1 overflow-hidden rounded-full bg-sunken" aria-hidden>
@@ -761,7 +678,7 @@ const omit = (m: Record<string, string>, keys: string[]): Record<string, string>
 };
 
 // The area's entity id code, shown where the area is. It's changed in
-// Settings, with every other area's code, so the codes stay in one place.
+// Parameters, with every other area's code, so the codes stay in one place.
 export function AreaCodeField({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
   const { naming, namingLoaded } = useTaxis();
   if (!namingLoaded) return <p className="text-[13px] text-muted">Loading the naming settings…</p>;
@@ -771,8 +688,8 @@ export function AreaCodeField({ h, area, go }: { h: Hierarchy; area: AreaNode; g
       <div className="flex items-baseline gap-3">
         <h3 className="text-sm font-semibold">Entity id code</h3>
         <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[13px]">{c.code}</code>
-        <button type="button" className="ml-auto text-xs text-accent hover:underline" onClick={() => go({ page: "settings" })}>
-          Go to Settings to change
+        <button type="button" className="ml-auto text-xs text-accent hover:underline" onClick={() => go({ page: "parameters", tab: "area-codes" })}>
+          Go to Parameters to change
         </button>
       </div>
       <p className="text-xs text-muted">

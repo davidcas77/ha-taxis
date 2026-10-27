@@ -54,10 +54,10 @@ export function SortHeader({
   const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
   return (
     <th ref={header} data-column-key={`${k}:${label}`} scope="col" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className={`${className} relative pr-3 font-medium`}>
-      {help ? <TooltipButton label={title ?? label} content={help} compact onClick={() => onToggle(k)} className="inline-flex items-center gap-1 hover:text-fg">
-        {label}<Icon className={`size-3 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
-      </TooltipButton> : <button type="button" title={title} onClick={() => onToggle(k)} className="inline-flex items-center gap-1 hover:text-fg">
-        {label}<Icon className={`size-3 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
+      {help ? <TooltipButton label={title ?? label} content={help} compact onClick={() => onToggle(k)} className="inline-flex min-w-0 max-w-full items-center gap-1 hover:text-fg">
+        <span className="min-w-0">{label}</span><Icon className={`size-3 shrink-0 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
+      </TooltipButton> : <button type="button" title={title} onClick={() => onToggle(k)} className="inline-flex min-w-0 max-w-full items-center gap-1 hover:text-fg">
+        <span className="min-w-0">{label}</span><Icon className={`size-3 shrink-0 ${active ? "text-accent" : "opacity-50"}`} aria-hidden />
       </button>}
       {resize ?? <AutoColumnResize header={header} label={label} />}
     </th>
@@ -120,5 +120,5 @@ export function GroupedRows<T>({ rows, grouped, roleOf, colSpan, row }: { rows: 
 export function ColumnHeader({ children, help, className = "px-3 py-2", ...props }: ComponentPropsWithoutRef<"th"> & { help?: string }) {
   const header = useRef<HTMLTableCellElement>(null);
   const label = props["aria-label"] ?? (typeof children === "string" ? children : "Column");
-  return <th {...props} ref={header} scope="col" className={`${className} relative pr-3 font-medium`}>{help ? <TooltipButton label={label} content={help} compact>{children}</TooltipButton> : children}<AutoColumnResize header={header} label={label} /></th>;
+  return <th {...props} ref={header} scope="col" className={`${className} relative pr-3 font-medium`}>{help ? <TooltipButton label={label} content={help} compact className="inline-flex min-w-0 max-w-full items-center"><span className="min-w-0">{children}</span></TooltipButton> : children}<AutoColumnResize header={header} label={label} /></th>;
 }

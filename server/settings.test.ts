@@ -347,10 +347,10 @@ describe("validateNaming: helper names", () => {
 
   it("refuses two helpers with the same name, defaults included", () => {
     expect(validateNaming({ ...base, helperNames: { lights: "x", motion: "x" } })).toMatchObject({ ok: false });
-    // "motions" is the default of motion.
-    expect(validateNaming({ ...base, helperNames: { lights: "motions" } })).toMatchObject({ ok: false, error: expect.stringContaining("Motion") });
+    // "motion_all" is the default of motion.
+    expect(validateNaming({ ...base, helperNames: { lights: "motion_all" } })).toMatchObject({ ok: false, error: expect.stringContaining("Motion") });
     // Freeing it first makes it available.
-    expect(validateNaming({ ...base, helperNames: { lights: "motions", motion: "pirs" } })).toMatchObject({ ok: true });
+    expect(validateNaming({ ...base, helperNames: { lights: "motion_all", motion: "pirs" } })).toMatchObject({ ok: true });
   });
 
   it("is stored and read back, and settings saved before helper names existed still load", () => {

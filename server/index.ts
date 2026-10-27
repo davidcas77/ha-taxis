@@ -37,6 +37,7 @@ import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
 import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateNamingIgnores, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
+import { readBlueprintInventory } from "./blueprints.ts";
 import { applyPreflight } from "./changes/preflight.ts";
 import { settingsConcurrency } from "./settings-concurrency.ts";
 import { applyHistory } from "./changes/history.ts";
@@ -214,6 +215,11 @@ app.get("/api/hierarchy", async (c) => {
     log.error("Reading Home Assistant failed", message);
     return c.json<HierarchyResponse>({ ok: false, error: message }, 502);
   }
+});
+
+app.get("/api/blueprints", async (c) => {
+  if (!ha) return c.json({ ok: false, error: "Home Assistant is not configured." }, 503);
+  return c.json(await readBlueprintInventory(ha, message => redact(message, token)));
 });
 
 const history = applyHistory(store.db);

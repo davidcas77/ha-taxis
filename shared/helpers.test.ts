@@ -64,7 +64,7 @@ describe("what gets a helper", () => {
     ]);
     expect(rows.map((r) => [r.key, r.canonicalId, r.status, r.helper, r.groupType])).toEqual([
       ["lights", "light.living_all", "create", "group", "light"],
-      ["motion", "binary_sensor.living_motions", "create", "group", "binary_sensor"],
+      ["motion", "binary_sensor.living_motion_all", "create", "group", "binary_sensor"],
       ["presence", "binary_sensor.living_presences", "create", "group", "binary_sensor"],
       ["door", "binary_sensor.living_doors", "create", "group", "binary_sensor"],
       ["window", "binary_sensor.living_windows", "create", "group", "binary_sensor"],
@@ -109,7 +109,7 @@ describe("the combined entity of a capability", () => {
   it("finds the row of an area for a helper, and nothing where the area gets none", () => {
     const rows = plan([...lights, { id: "media_player.living_speaker" }, { id: "binary_sensor.kitchen_pir", dc: "motion", area: "kitchen" }]);
     expect(areaHelperRow(rows, "living_room", "lights")?.canonicalId).toBe("light.living_all");
-    expect(areaHelperRow(rows, "kitchen", "motion")?.canonicalId).toBe("binary_sensor.kitchen_motions");
+    expect(areaHelperRow(rows, "kitchen", "motion")?.canonicalId).toBe("binary_sensor.kitchen_motion_all");
     // One player is not enough for a media group; the other area has no lights.
     expect(areaHelperRow(rows, "living_room", "media")).toBeUndefined();
     expect(areaHelperRow(rows, "kitchen", "lights")).toBeUndefined();
@@ -295,22 +295,22 @@ describe("rows already in the change list", () => {
 describe("what the inventory leaves out", () => {
   it("hides an area's canonical helpers that exist as the right kind of helper, not a real sensor", () => {
     const h = house([
-      { id: "binary_sensor.living_motions", platform: "group", dc: "motion", members: ["binary_sensor.living_pir"], entry: "E" },
+      { id: "binary_sensor.living_motion_all", platform: "group", dc: "motion", members: ["binary_sensor.living_pir"], entry: "E" },
       { id: "binary_sensor.living_pir", dc: "motion" },
       { id: "sensor.living_temperature", dc: "temperature", state: "21" },
     ]);
     const exclude = helperExclusions(h, naming)("living_room");
-    expect([...exclude]).toEqual(["binary_sensor.living_motions"]);
+    expect([...exclude]).toEqual(["binary_sensor.living_motion_all"]);
     const motion = areaInventory(h, EMPTY_INVENTORY, "living_room", exclude).motion.map((m) => m.entityId);
     expect(motion).toEqual(["binary_sensor.living_pir"]);
-    expect(areaInventory(h, EMPTY_INVENTORY, "living_room").motion.map((m) => m.entityId)).toContain("binary_sensor.living_motions");
+    expect(areaInventory(h, EMPTY_INVENTORY, "living_room").motion.map((m) => m.entityId)).toContain("binary_sensor.living_motion_all");
     expect(areaInventory(h, EMPTY_INVENTORY, "living_room", exclude).temperature.map((m) => m.entityId)).toEqual(["sensor.living_temperature"]);
   });
 });
 
 describe("helper names", () => {
   it("fills in the defaults and takes the ones set", () => {
-    expect(effectiveSuffixes(undefined)).toMatchObject({ lights: "all", motion: "motions", presence: "presences", door: "doors", window: "windows", temperature: "temperature", humidity: "humidity", illuminance: "illuminance", media: "media" });
+    expect(effectiveSuffixes(undefined)).toMatchObject({ lights: "all", motion: "motion_all", presence: "presences", door: "doors", window: "windows", temperature: "temperature", humidity: "humidity", illuminance: "illuminance", media: "media" });
     expect(effectiveSuffixes({ lights: "lamps" }).lights).toBe("lamps");
     expect(HELPERS.map((s) => s.key)).toHaveLength(9);
   });
@@ -324,7 +324,7 @@ describe("helper names", () => {
     expect(helperNameErrors({})).toEqual({});
     expect(helperNameErrors({ lights: "Lamps" }).lights).toMatch(/a–z/);
     // The default of another key counts too.
-    expect(helperNameErrors({ lights: "motions" })).toMatchObject({ lights: expect.stringContaining("Motion"), motion: expect.stringContaining("Lights") });
+    expect(helperNameErrors({ lights: "motion_all" })).toMatchObject({ lights: expect.stringContaining("Motion"), motion: expect.stringContaining("Lights") });
     expect(helperNameErrors({ lights: "x", motion: "x" })).toMatchObject({ lights: expect.any(String), motion: expect.any(String) });
   });
 });
@@ -340,7 +340,7 @@ describe("the demo house", () => {
     expect(at("light.hall_all")).toMatchObject({ status: "adopt", adoptFrom: "light.hall_lights" });
     expect(at("sensor.living_temperature")).toMatchObject({ status: "conflict", conflict: "taken" });
     expect(at("sensor.study_temperature")).toMatchObject({ status: "create", helper: "min_max", areaSensor: { field: "temperature_entity_id", current: null } });
-    expect(at("binary_sensor.kitchen_motions")).toMatchObject({ status: "create", helper: "group" });
+    expect(at("binary_sensor.kitchen_motion_all")).toMatchObject({ status: "create", helper: "group" });
   });
 });
 
@@ -626,5 +626,25 @@ describe("duplicate inferred area codes", () => {
       expect(helperChangeInputs(r)).toEqual([]);
     }
     expect(rows.find(r => r.areaId === "kitchen" && r.key === "lights")!.actionable).toBe(true);
+  });
+});
+
+
+describe("motion aggregate naming migration", () => {
+  it("only proposes adoption of a legacy motions group and preserves an explicit legacy suffix", () => {
+    const h = house([
+      { id: "binary_sensor.living_pir", dc: "motion" },
+      { id: "binary_sensor.living_motions", platform: "group", dc: "motion", members: ["binary_sensor.living_pir"], entry: "legacy" },
+    ]);
+    const before = JSON.stringify(h);
+    const planned = row(planHelpers(h, EMPTY_INVENTORY, naming), "motion")!;
+    expect(planned).toMatchObject({ status: "adopt", canonicalId: "binary_sensor.living_motion_all", adoptFrom: "binary_sensor.living_motions" });
+    expect(helperChangeInputs(planned)).toEqual([{ kind: "entity", op: "update", targetId: "binary_sensor.living_motions", fields: { new_entity_id: "binary_sensor.living_motion_all" } }]);
+    expect(JSON.stringify(h)).toBe(before);
+    expect(h.entities["binary_sensor.living_motions"]).toBeDefined();
+    expect(h.entities["binary_sensor.living_motion_all"]).toBeUndefined();
+    const custom = row(planHelpers(h, EMPTY_INVENTORY, { ...naming, helperNames: { motion: "motions" } }), "motion")!;
+    expect(custom).toMatchObject({ status: "in-place", canonicalId: "binary_sensor.living_motions", actionable: false });
+    expect(helperChangeInputs(custom)).toEqual([]);
   });
 });

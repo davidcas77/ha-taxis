@@ -26,9 +26,9 @@ import type { DeviceItem, EntityItem, EntityRole, Hierarchy } from "../../shared
 import { ListEmpty, Pagination, ResizeHandle, usePagination, useWidths } from "./records.tsx";
 import { useStoredValue } from "./storage.ts";
 import { useTaxis } from "./state.tsx";
-import { useStoredChoice, useStoredFlag } from "./storage.ts";
+import { useStoredChoice } from "./storage.ts";
 import { useWhy } from "./why.tsx";
-import { GroupToggle, GroupedRows, SortHeader, useSortState } from "./table.tsx";
+import { GroupedRows, SortHeader, useSortState } from "./table.tsx";
 import { AreaSelect, EditedDot, inputClass } from "./ui.tsx";
 
 // Devices & entities: the table of every device with the entities it holds, for
@@ -37,16 +37,26 @@ import { AreaSelect, EditedDot, inputClass } from "./ui.tsx";
 // with no device sits under "No device". Names and areas change in place, and every
 // change goes in the change list like an edit anywhere else.
 //
-// With "Group by type" on, the device tree gives way to one flat table of the
-// entities, in sections by what they are: a tree of devices and sections by type
-// don't mix.
+// Groups uses the shared entity/group cards; Devices shows a collapsible tree;
+// Entities is a flat table. All three use the same filters and selection state.
 
-const VIEWS = ["devices", "groups"] as const;
+const VIEWS = ["groups", "devices", "entities"] as const;
 type View = (typeof VIEWS)[number];
 
 const chip = (on: boolean) => `rounded-md border px-2 py-1 ${on ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`;
 
 const roleOf = displayRole;
+
+// Upgrade the previous two view buttons plus independent switches once, without
+// silently turning a saved Groups preference into a device table.
+function legacyView(place: string, defaultShowEntities: boolean): View {
+  try {
+    if (localStorage.getItem("taxis:devices-entities-view") === "groups") return "groups";
+    if (localStorage.getItem("taxis:group-by-type:devices-entities") === "1") return "entities";
+    const show = localStorage.getItem(`taxis:devices-entities:show:${place}`);
+    return (show === null ? defaultShowEntities : show === "1") ? "entities" : "devices";
+  } catch { return defaultShowEntities ? "entities" : "devices"; }
+}
 
 export type DevicesEntitiesProps = {
   h: Hierarchy;
@@ -67,8 +77,8 @@ export type DevicesEntitiesProps = {
   onOpenDevice: (id: string) => void;
   // Controls for the page's own filters, beside the search box.
   toolbar?: ReactNode;
-  // Where "Show entities" is remembered, and whether it starts on (an area's tab
-  // starts on; a table of the whole home, on the section's say).
+  // Preference scope and the legacy Show entities default, used only to migrate
+  // existing browser settings to the three mutually exclusive views.
   place: string;
   defaultShowEntities?: boolean;
   // Open the item in Organize's list (Records), selected.
@@ -85,10 +95,8 @@ export type DevicesEntitiesProps = {
 export function DevicesEntities({ h, areaId, entityOk, deviceOk, deviceLabelOk, includeLoose, onResetFilters, activeFilters, areaOk, picked, toggle, onOpenEntity, onOpenDevice, toolbar, place, defaultShowEntities, onRecord, groups, limit, bulk, onSelectAll }: DevicesEntitiesProps) {
   const [query, setQuery] = useStoredValue(`taxis:search:${place}:${areaId ?? "home"}`, "", (v): v is string => typeof v === "string");
   const [chosen, setChosen] = useState<ReadonlySet<EntityRole>>(new Set());
-  const [showAll, setShowAll] = useStoredFlag(`taxis:devices-entities:show:${place}`, defaultShowEntities ?? place === "area");
-  const [grouped, setGrouped] = useStoredFlag("taxis:group-by-type:devices-entities");
-  const [view, setView] = useStoredChoice<View>("taxis:devices-entities-view", VIEWS, "devices");
-  // Chevrons the user clicked: they decide for their device, whatever Show entities says.
+  const [view, setView] = useStoredChoice<View>("taxis:devices-entities:mode:v2", VIEWS, legacyView(place, defaultShowEntities ?? place === "area"));
+  // Device chevrons keep their manual state while switching between views.
   const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
   const { sort, toggle: toggleSort } = useSortState({ key: "name", dir: "asc" });
   const column = sort.key as TreeColumn;
@@ -115,24 +123,19 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, deviceLabelOk, 
       return n;
     });
 
-  const flat = grouped && view === "devices";
+  const flat = view === "entities" || (view === "groups" && !groups);
+  const cards = view === "groups" && Boolean(groups);
   const branches = useMemo(() => sortBranches(h, filtered, column, sort.dir), [h, filtered, column, sort.dir]);
-  const flatRows = useMemo(() => (flat ? sortRows(branchEntities(filtered), (e) => entityValue(h, e, column), sort.dir) : []), [flat, filtered, h, column, sort.dir]);
-  const paging = usePagination(flat ? flatRows.length : branches.length, JSON.stringify([query, [...active], sort, areaId, collected.map(b => [b.key, b.all.length])]), limit ?? 100);
+  const flatRows = useMemo(() => ((flat || cards) ? sortRows(branchEntities(filtered), (e) => entityValue(h, e, column), sort.dir) : []), [flat, cards, filtered, h, column, sort.dir]);
+  const paging = usePagination(flat || cards ? flatRows.length : branches.length, JSON.stringify([view, query, [...active], sort, areaId, collected.map(b => [b.key, b.all.length])]), limit ?? 100);
   const drawnBranches = branches.slice(paging.start, paging.end);
   const drawnFlat = flatRows.slice(paging.start, paging.end);
-  const shownIds = useMemo(() => new Set((flat ? drawnFlat : branchEntities(drawnBranches)).map((e) => e.entityId)), [flat, drawnFlat, drawnBranches]);
-  const entityCount = flat ? flatRows.length : branchEntities(filtered).length;
+  const shownIds = useMemo(() => new Set((flat || cards ? drawnFlat : branchEntities(drawnBranches)).map((e) => e.entityId)), [flat, cards, drawnFlat, drawnBranches]);
+  const entityCount = flat || cards ? flatRows.length : branchEntities(filtered).length;
   const deviceCount = branches.filter(branch => branch.device !== null).length;
   const looseCount = branches.find(branch => branch.device === null)?.entities.length ?? 0;
 
   const setOpen = (key: string, open: boolean) => setOverrides((m) => new Map(m).set(key, open));
-  // Show entities opens or folds every device, and leaves the chevrons clicked before it behind.
-  const showEntities = (on: boolean) => {
-    setShowAll(on);
-    setOverrides(new Map());
-  };
-
   const resetFilters = () => { setQuery(""); setChosen(new Set()); onResetFilters?.(); };
 
   return (
@@ -158,27 +161,19 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, deviceLabelOk, 
             </button>
           ))}
         </div>
-        {groups && (
-          <div role="group" aria-label="View" className="flex gap-1 text-xs">
-            {VIEWS.map((v) => (
-              <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)} className={chip(view === v)}>
-                {v === "devices" ? "Devices" : "Groups"}
-              </button>
-            ))}
-          </div>
-        )}
-        {view === "devices" && (
-          <>
-            <label className="flex items-center gap-1.5 text-xs text-muted">
-              <input type="checkbox" checked={showAll} onChange={(e) => showEntities(e.target.checked)} className="accent-[var(--accent)]" /> Show entities
-            </label>
-            <GroupToggle on={grouped} onChange={setGrouped} />
-          </>
-        )}
+        <div role="group" aria-label="Entity view" className="flex gap-1 text-xs">
+          {VIEWS.map(mode => <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)} className={chip(view === mode)}>
+            {mode === "groups" ? "Groups" : mode === "devices" ? "Devices" : "Entities"}
+          </button>)}
+        </div>
       </div>
 
-      {filtered.length === 0 ? <ListEmpty reset={resetFilters} /> : view === "groups" && groups ? (
-        groups(branchEntities(filtered).map((e) => e.entityId))
+      {filtered.length === 0 ? <ListEmpty reset={resetFilters} /> : cards && groups ? (
+        <>
+          {bulk?.(shownIds)}
+          {groups(drawnFlat.map(entity => entity.entityId))}
+          <Pagination {...paging} />
+        </>
       ) : (
         <>
           {bulk?.(shownIds)}
@@ -213,10 +208,10 @@ export function DevicesEntities({ h, areaId, entityOk, deviceOk, deviceLabelOk, 
               </thead>
               <tbody>
                 {flat ? (
-                  <GroupedRows rows={drawnFlat} grouped colSpan={9} roleOf={roleOf} row={(e) => <EntityRow key={e.entityId} h={h} e={e} picked={picked} toggle={toggle} onOpen={onOpenEntity} onRecord={onRecord} />} />
+                  <GroupedRows rows={drawnFlat} grouped={view === "groups"} colSpan={9} roleOf={roleOf} row={(e) => <EntityRow key={e.entityId} h={h} e={e} picked={picked} toggle={toggle} onOpen={onOpenEntity} onRecord={onRecord} />} />
                 ) : (
                   drawnBranches.map((b) => {
-                    const open = isBranchOpen(b, { showAll, query, override: overrides.get(b.key) });
+                    const open = isBranchOpen(b, { showAll: false, query, override: overrides.get(b.key) });
                     return (
                       <Fragment key={b.key}>
                         <DeviceRow h={h} b={b} open={open} onToggle={() => setOpen(b.key, !open)} onOpen={onOpenDevice} onRecord={onRecord} />
@@ -364,7 +359,7 @@ function DeviceRow({ h, b, open, onToggle, onOpen, onRecord }: { h: Hierarchy; b
       <WhyCell why={reason} />
       <td className="px-3 py-1.5">
         {d ? (
-          <div className="w-40">
+          <div className="w-40 max-w-full">
             <label className="sr-only" htmlFor={`device-area-${d.id}`}>
               Area of device {d.name}
             </label>
@@ -402,9 +397,11 @@ function EntityRow({ h, e, picked, toggle, onOpen, onRecord, indent }: { h: Hier
   const domain = e.domain;
   const change = (fields: Record<string, unknown>) => propose({ kind: "entity", op: "update", targetId: e.entityId, fields });
   return (
-    <tr className="border-t border-line align-top hover:bg-sunken">
+    <tr data-entity-id={e.entityId} data-device-child={indent ? "true" : undefined} className="border-t border-line align-top hover:bg-sunken">
       <td className="px-3 py-1.5">{e.inRegistry && <input type="checkbox" aria-label={`Select ${e.name}`} checked={picked.has(e.entityId)} onChange={() => toggle(e.entityId)} />}</td>
-      <td className={`min-w-[10rem] py-1.5 pr-3 ${indent ? "pl-10" : "pl-3"}`}>
+      <td className={`relative min-w-[10rem] py-1.5 pr-3 ${indent ? "pl-14" : "pl-3"}`}>
+        {indent && <span aria-hidden className="pointer-events-none absolute bottom-0 left-8 top-0 w-5 border-l border-line"><span className="absolute left-0 top-1/2 w-3 border-t border-line" /></span>}
+        <span className="sr-only">{indent ? "Entity of the device above" : ""}</span>
         {e.inRegistry ? (
           <div className="flex items-center gap-1.5">
             <EditableText label={`Name of ${e.entityId}`} value={e.name} disabled={!editable} onCommit={(v) => change({ name: v })} />
@@ -433,7 +430,7 @@ function EntityRow({ h, e, picked, toggle, onOpen, onRecord, indent }: { h: Hier
         {e.inRegistry && hasDeviceClasses(domain) ? (
           <select
             aria-label={`Show ${e.name} as`}
-            className={`${inputClass} w-40!`}
+            className={`${inputClass} w-40! min-w-0 max-w-full`}
             disabled={!editable}
             value={e.deviceClassOverride ?? ""}
             onChange={(ev) => void change({ device_class: ev.target.value || null })}
@@ -453,7 +450,7 @@ function EntityRow({ h, e, picked, toggle, onOpen, onRecord, indent }: { h: Hier
       <WhyCell why={why.entity(e)} />
       <td className="px-3 py-1.5">
         {e.inRegistry ? (
-          <div className="w-40">
+          <div className="w-40 max-w-full">
             <label className="sr-only" htmlFor={`area-${e.entityId}`}>
               Area of {e.name}
             </label>

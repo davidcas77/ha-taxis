@@ -71,13 +71,25 @@ export const slug = (s: string): string =>
 const objectId = (entityId: string) => entityId.slice(entityId.indexOf(".") + 1);
 const startsWithCode = (id: string, code: string) => code.length > 0 && (id === code || id.startsWith(`${code}_`));
 
-// Doors and windows use their own word when Home Assistant says which they are.
-export function typeWord(e: EntityItem, s: NamingSettings): string {
-  if (e.role === "opening" && !Object.hasOwn(s.typeWords, "opening")) {
+// A real device class wins over wording. For an unclassified/general opening
+// contact, retain an explicit window token rather than inventing a door prefix.
+export function typeWord(e: EntityItem, s: NamingSettings, suffix: string = objectId(e.entityId)): string {
+  if (Object.hasOwn(s.typeWords, e.role)) return s.typeWords[e.role] ?? DEFAULT_TYPE_WORDS[e.role];
+  if (e.domain === "binary_sensor") {
     if (e.deviceClass === "window") return "window";
     if (e.deviceClass === "garage_door") return "garage";
+    if ((!e.deviceClass || e.deviceClass === "opening") && suffix.split("_").includes("window")) return "window";
   }
-  return (Object.hasOwn(s.typeWords, e.role) ? s.typeWords[e.role] : undefined) ?? DEFAULT_TYPE_WORDS[e.role] ?? e.domain;
+  return DEFAULT_TYPE_WORDS[e.role] ?? e.domain;
+}
+
+// Aggregate semantics come from membership, never a plural entity name. Only a
+// group of every physical motion sensor in this area may be called motion_all.
+function allAreaMotion(e: EntityItem, area: AreaNode, h: Hierarchy): boolean {
+  if (e.domain !== "binary_sensor" || !e.members.length) return false;
+  const physicalMotion = (entity: EntityItem) => entity.domain === "binary_sensor" && entity.role === "motion" && !entity.members.length && entity.platform !== "group" && counted(entity);
+  const sources = area.entityIds.map(id => h.entities[id]).filter((entity): entity is EntityItem => Boolean(entity) && physicalMotion(entity));
+  return sources.length > 0 && e.members.length === sources.length && new Set(e.members).size === sources.length && sources.every(source => e.members.includes(source.entityId));
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +366,12 @@ export function analyzeArea(area: AreaNode, h: Hierarchy, s: NamingSettings, cod
     // and type as the name part.
     let rest = obj;
     if (foundPrefix || status === "ok") rest = rest.slice((foundPrefix ?? code).length).replace(/^_+/, "");
-    const tw = typeWord(e, s);
+    const aggregateMotion = allAreaMotion(e, area, h);
+    const tw = aggregateMotion ? (s.typeWords.motion ?? DEFAULT_TYPE_WORDS.motion) : typeWord(e, s, rest);
+    // A suffix explicitly calling this a window conflicts with a door class.
+    // Leave the ID for human review rather than inventing door_window or
+    // silently reclassifying what Home Assistant says this contact is.
+    const conflictingContactName = e.domain === "binary_sensor" && ["door", "garage_door"].includes(e.deviceClass ?? "") && rest.split("_").includes("window");
     // The type word goes in only where the domain doesn't already say it
     // ("light.study_main", not "light.study_light_main"), and never twice.
     const type = CARRIER_DOMAINS.has(e.domain) && tw !== e.domain ? tw : "";
@@ -379,9 +396,12 @@ export function analyzeArea(area: AreaNode, h: Hierarchy, s: NamingSettings, cod
       for (const n of [area.name, ...otherNames]) fromName = fromName.replace(new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
       tokens = dropLeadingPrefix(clean(slug(fromName).split("_")), ownPrefixes);
     }
-    const namePart = tokens.join("_");
-    let wanted = slug(fill(s.idPattern, { area: code, type, name: namePart })).replace(/_+/g, "_");
-    let full = `${e.domain}.${wanted}`;
+    const namePart = aggregateMotion ? "all" : tokens.join("_");
+    // A helper-specific suffix is more specific than the general naming
+    // pattern; keep explicitly configured canonical helper IDs coherent.
+    const patternId = aggregateMotion && s.helperNames.motion ? `${code}_${s.helperNames.motion}` : fill(s.idPattern, { area: code, type, name: namePart });
+    const wanted = slug(patternId).replace(/_+/g, "_");
+    let full = conflictingContactName ? e.entityId : `${e.domain}.${wanted}`;
     for (let n = 2; full !== e.entityId && (taken.has(full) || proposed.has(full)); n++) full = `${e.domain}.${wanted}_${n}`;
     // An id that already fits isn't worth trading for a numbered one.
     if (status === "ok" && full !== `${e.domain}.${wanted}`) full = e.entityId;

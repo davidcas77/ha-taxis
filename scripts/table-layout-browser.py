@@ -1,0 +1,185 @@
+"""Long-text and resized-column regressions against the built mock preview.
+
+Start `npm run dev:mock` and build the app first, then run:
+  TAXIS_TEST_URL=http://localhost:8099 python3 scripts/table-layout-browser.py
+All writes are intercepted; stress values exist only in browser DOM/fixtures.
+"""
+import copy
+import json
+import os
+import re
+import unittest
+import urllib.request
+from playwright.sync_api import sync_playwright
+
+BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:8099")
+LONG_ID = "automation.balcony_door_open_serenity_delta_alert_" + "long_identifier_" * 12
+
+
+class TableLayoutRegression(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with urllib.request.urlopen(BASE + "/api/hierarchy", timeout=20) as response:
+            cls.body = json.load(response)
+        cls.playwright = sync_playwright().start()
+        cls.browser = cls.playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), headless=True, args=["--no-sandbox"])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.playwright.stop()
+
+    def setUp(self):
+        self.context = self.browser.new_context(viewport={"width": 1600, "height": 1100}, color_scheme="dark")
+        self.page = self.context.new_page()
+        self.page.set_default_timeout(15000)
+        self.page.set_default_navigation_timeout(30000)
+        self.writes = []
+        def read_only(route):
+            if route.request.method not in ["GET", "HEAD"]:
+                self.writes.append(route.request.url)
+                route.fulfill(status=409, json={"ok": False, "error": "Layout checks do not write"})
+            else:
+                route.continue_()
+        self.page.route("**/api/**", read_only)
+
+    def tearDown(self):
+        self.context.close()
+        self.assertEqual(self.writes, [])
+
+    def open(self, route):
+        self.page.goto(BASE + "/" + route, wait_until="domcontentloaded")
+        if route == "#unassigned":
+            self.page.get_by_role("group", name="Unassigned view", exact=True).get_by_role("button", name="Table", exact=True).click()
+        self.page.locator("table").first.wait_for()
+
+    def assert_text_fits(self, target):
+        result = target.evaluate("""element => {
+          const cell = element.closest('td');
+          const c = cell.getBoundingClientRect();
+          const style = getComputedStyle(cell);
+          const range = document.createRange(); range.selectNodeContents(element);
+          const rects = [...range.getClientRects()];
+          return {text:element.textContent, lines:rects.length, left:c.left+parseFloat(style.paddingLeft), right:c.right-parseFloat(style.paddingRight), rects:rects.map(r=>({left:r.left,right:r.right}))};
+        }""")
+        self.assertGreater(result["lines"], 1, result)
+        self.assertTrue(all(rect["left"] >= result["left"] - 1 and rect["right"] <= result["right"] + 1 for rect in result["rects"]), result)
+
+    def test_category_entity_id_wraps_after_resize_and_reload(self):
+        body = copy.deepcopy(self.body)
+        h = body["hierarchy"]
+        base = next(iter(h["entities"].values()))
+        category = h["categories"]["automation"][0]
+        entity = {**copy.deepcopy(base), "entityId": LONG_ID, "name": "Long automation for wrapping", "domain": "automation", "role": "automation", "platform": "automation", "categoryScope": "automation", "categories": {}, "members": [], "areaId": None, "ownAreaId": None, "deviceId": None, "disabled": False, "hidden": False, "maintenance": False, "inRegistry": True}
+        h["entities"][LONG_ID] = entity
+        self.page.route("**/api/hierarchy*", lambda route: route.fulfill(json=body))
+        route = "#organize/category-automation/" + category["id"]
+        self.open(route)
+        self.page.get_by_role("textbox", name="Search entities", exact=True).fill("Long automation for wrapping")
+        code = self.page.locator("td code").filter(has_text=LONG_ID)
+        code.wait_for()
+        handle = self.page.get_by_role("separator", name="Resize Entity id column", exact=True)
+        handle.focus()
+        for _ in range(80):
+            if float(handle.get_attribute("aria-valuenow")) <= 200:
+                break
+            self.page.keyboard.press("ArrowLeft")
+        self.assert_text_fits(code)
+        width = code.locator("..").bounding_box()["width"]
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.get_by_role("textbox", name="Search entities", exact=True).fill("Long automation for wrapping")
+        code.wait_for()
+        self.assertAlmostEqual(code.locator("..").bounding_box()["width"], width, delta=2)
+        self.assert_text_fits(code)
+        self.assertEqual(code.text_content(), LONG_ID)
+        self.page.screenshot(path="/workspace/.cache/ha-taxis/inspection/assignment-wrapping.png")
+
+    def test_every_table_family_keeps_unbroken_text_inside_cells(self):
+        h = self.body["hierarchy"]
+        area = next(iter(h["areas"]))
+        device = next(iter(h["devices"]))
+        category = h["categories"]["automation"][0]["id"]
+        label = next(iter(h["labels"]))
+        routes = ["#", "#settings", "#health", "#unassigned", "#organize/entities", "#organize/devices/"+device,
+                  "#organize/category-automation/"+category, "#organize/labels/"+label,
+                  "#organize/blueprints", "#recipes", "#parameters/capabilities", "#parameters/helpers", "#parameters/area-codes",
+                  "#area/"+area, "#area/"+area+"/capabilities", "#area/"+area+"/naming", "#parameters/house"]
+        tested_tables = 0
+        for route in routes:
+            self.open(route)
+            if route == "#recipes":
+                self.page.get_by_role("button", name="Table", exact=True).click()
+            tables = self.page.locator("table")
+            for table in tables.all():
+                result = table.evaluate("""(table, token) => {
+                  const headers=[...(table.tHead?.rows[0]?.cells??[])];
+                  table.style.tableLayout='fixed';table.style.width=`${headers.length*120}px`;
+                  table.querySelectorAll('col').forEach(col=>col.style.width='120px');
+                  headers.forEach(th=>th.style.width='120px');
+                  let tested=0;const bad=[];
+                  for(const td of table.querySelectorAll('tbody td')){
+                    if(td.matches('.truncate,.whitespace-nowrap')||td.querySelector('input,select,button,details,textarea')||!td.textContent.trim()||!td.getBoundingClientRect().height)continue;
+                    const target=td.querySelector('code')??td;
+                    target.textContent=token;
+                    const box=td.getBoundingClientRect(),style=getComputedStyle(td),range=document.createRange();range.selectNodeContents(target);
+                    const rects=[...range.getClientRects()];tested++;
+                    if(rects.length<2||rects.some(r=>r.left<box.left+parseFloat(style.paddingLeft)-1||r.right>box.right-parseFloat(style.paddingRight)+1))bad.push({text:target.textContent,cell:box.width,rects:rects.map(r=>({left:r.left-box.left,right:r.right-box.left}))});
+                  }
+                  return {tested,bad};
+                }""", LONG_ID)
+                self.assertEqual(result["bad"], [], {"route": route, "result": result})
+                if result["tested"]:
+                    tested_tables += 1
+        self.assertGreaterEqual(tested_tables, 16)
+        print("Verified long text in", tested_tables, "rendered tables across all table families", flush=True)
+
+    def test_resized_editors_and_headers_stay_inside_their_columns(self):
+        area = next(iter(self.body["hierarchy"]["areas"]))
+        routes = ["#settings", "#organize/devices", "#area/"+area+"/naming", "#parameters/house", "#parameters/climate", "#recipes"]
+        for route in routes:
+            self.open(route)
+            if route == "#organize/devices":
+                self.page.get_by_role("button", name="Table", exact=True).click()
+            if route == "#recipes":
+                self.page.get_by_role("button", name="Table", exact=True).click()
+            errors = self.page.locator("table").evaluate_all("""tables => {
+              const bad=[];
+              for(const table of tables){
+                const headers=[...(table.tHead?.rows[0]?.cells??[])];
+                table.style.tableLayout='fixed';table.style.width=`${headers.length*100}px`;
+                table.querySelectorAll('col').forEach(col=>col.style.width='100px');headers.forEach(th=>th.style.width='100px');
+                for(const control of table.querySelectorAll('th button,td input:not([type=checkbox]),td select')){
+                  if(!control.getBoundingClientRect().height)continue;
+                  const cell=control.closest('td,th'),c=cell.getBoundingClientRect(),b=control.getBoundingClientRect();
+                  if(b.left<c.left-1||b.right>c.right+1)bad.push({label:control.getAttribute('aria-label')??control.textContent,cell:c.width,width:b.width});
+                }
+              }return bad;
+            }""")
+            self.assertEqual(errors, [], {"route": route, "errors": errors})
+
+    def test_active_parameter_editors_fit_without_saving(self):
+        self.open("#parameters/house")
+        self.page.locator("table").evaluate("""table => {
+          const headers=[...table.tHead.rows[0].cells];table.style.tableLayout='fixed';table.style.width=`${headers.length*100}px`;
+          headers.forEach(th=>th.style.width='100px');
+        }""")
+        self.page.get_by_role("button", name=re.compile(r"^Night starts for House default:")).click()
+        editor = self.page.get_by_label("Night starts for House default", exact=True)
+        editor.wait_for()
+        self.assertTrue(editor.evaluate("e=>{const c=e.closest('td').getBoundingClientRect(),r=e.getBoundingClientRect();return r.left>=c.left&&r.right<=c.right;}"))
+        editor.press("Escape")
+        self.open("#parameters/lighting")
+        self.page.locator("table").evaluate("""table => {
+          const headers=[...table.tHead.rows[0].cells];table.style.tableLayout='fixed';table.style.width=`${headers.length*100}px`;
+          headers.forEach(th=>th.style.width='100px');
+        }""")
+        self.page.get_by_role("button", name=re.compile(r"^Entry lights for Living room:")).click()
+        choices = self.page.get_by_role("dialog", name="Entry lights for Living room", exact=True)
+        choices.wait_for()
+        self.assertGreater(choices.get_by_role("checkbox").count(), 0)
+        self.assertTrue(choices.evaluate("e=>{const r=e.getBoundingClientRect();return !e.closest('table')&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;}"))
+        choices.get_by_role("button", name="Done", exact=True).click()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

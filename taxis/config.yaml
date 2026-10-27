@@ -1,7 +1,7 @@
 # Home Assistant app manifest.
 # https://developers.home-assistant.io/docs/add-ons/configuration
 name: Taxis
-version: "0.6.0"
+version: "0.6.2"
 slug: taxis
 description: See and organise your floors, areas, devices and entities as one hierarchy.
 url: https://github.com/davidcas77/ha-taxis
