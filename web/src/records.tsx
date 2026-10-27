@@ -37,7 +37,7 @@ export function ResizeHandle({ label, value, onChange, min = 64, max = () => 200
   label: string; value: number; onChange: (width: number) => void; min?: number; max?: () => number; pane?: boolean; savedWidth?: number;
 }) {
   const handle = useRef<HTMLDivElement>(null);
-  const column = useColumnResize(handle, !pane, savedWidth, label);
+  const column = useColumnResize(handle, !pane, savedWidth);
   const current = column.width ?? value;
   const drag = useRef<{ x: number; width: number } | null>(null);
   const change = (width: number) => {

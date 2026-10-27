@@ -121,6 +121,21 @@ class TableLayoutRegression(unittest.TestCase):
         reset_width = table.locator("th").first.bounding_box()["width"]
         self.assertGreater(reset_width, 64)
 
+    def test_view_changes_keep_resize_controls_in_sync_with_their_columns(self):
+        self.page.add_init_script("localStorage.setItem('taxis:organize-view:devices', 'table')")
+        self.open("#organize/devices")
+        modes = self.page.get_by_role("group", name="Entity view", exact=True)
+        for mode in ["Devices", "Entities", "Devices", "Entities"]:
+            modes.get_by_role("button", name=mode, exact=True).click()
+            self.page.wait_for_function("document.querySelector('table')?.dataset.contentSized === 'true'")
+            handle = self.page.get_by_role("separator", name="Resize name column", exact=True)
+            header = handle.locator("..")
+            self.assertAlmostEqual(float(handle.get_attribute("aria-valuenow")), header.bounding_box()["width"], delta=1)
+            original = header.bounding_box()["width"]
+            handle.focus()
+            self.page.keyboard.press("ArrowRight")
+            self.assertAlmostEqual(header.bounding_box()["width"], original + 20, delta=1)
+
     def test_category_entity_id_wraps_after_resize_and_reload(self):
         body = copy.deepcopy(self.body)
         h = body["hierarchy"]

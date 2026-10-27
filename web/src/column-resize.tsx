@@ -111,9 +111,8 @@ function tableColumns(table: HTMLTableElement): Columns {
 
 // Both formerly automatic tables and explicit colgroups share content sizing.
 // savedWidth migrates an existing manual preference from useWidths, if present.
-export function useColumnResize(handle: RefObject<HTMLDivElement | null>, enabled: boolean, savedWidth?: number, label?: string) {
+export function useColumnResize(handle: RefObject<HTMLDivElement | null>, enabled: boolean, savedWidth?: number) {
   const [width, setWidth] = useState<number | null>(null);
-  const identity = `${window.location.pathname}:${window.location.hash}:${label}`;
   useLayoutEffect(() => {
     if (!enabled) return;
     const cell = handle.current?.closest("th");
@@ -127,13 +126,12 @@ export function useColumnResize(handle: RefObject<HTMLDivElement | null>, enable
     update();
     return () => {
       columns.listeners.delete(update);
-      if (!columns.listeners.size && tables.get(table) === columns) { columns.dispose(); tables.delete(table); }
+      // All header effects reconnect after each commit, including header/view
+      // changes. Wait until then before disposing a table with no subscribers.
+      queueMicrotask(() => {
+        if (!columns.listeners.size && tables.get(table) === columns) { columns.dispose(); tables.delete(table); }
+      });
     };
-  }, [enabled, identity]);
-  useLayoutEffect(() => {
-    if (!enabled) return;
-    const table = handle.current?.closest("table");
-    if (table) tableColumns(table).render();
   });
   return { width, resize: (next: number) => {
     const cell = handle.current?.closest("th");
