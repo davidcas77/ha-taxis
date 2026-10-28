@@ -194,6 +194,39 @@ describe("house readiness", () => {
     expect(
       assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["occupancy"]), installed, [])[0].stage,
     ).toBe("test");
+    const ready = assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["occupancy"]), installed, [])[0];
+    const testedGuide = {
+      ...guide(["occupancy"]),
+      tests: {
+        living_room: {
+          configuration: ready.configuration,
+          checked: ready.checks.map((check) => check.key),
+          notes: "Observed in the room.",
+          testedAt: "2026-10-28T00:00:00.000Z",
+        },
+      },
+    };
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, testedGuide, installed, [])[0]).toMatchObject({
+      stage: "tested",
+      testCurrent: true,
+    });
+    // Routine sensor states and refresh timestamps must not erase a room test.
+    h.fetchedAt = "later";
+    h.entities["binary_sensor.living_pir"].state = "on";
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, testedGuide, installed, [])[0].stage).toBe(
+      "tested",
+    );
+    h.entities["automation.taxis_occupancy_living"].state = "off";
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, testedGuide, installed, [])[0]).toMatchObject({
+      stage: "check",
+      testCurrent: false,
+    });
+    h.entities["automation.taxis_occupancy_living"].state = "on";
+    h.entities["binary_sensor.living_pir"].deviceId = "replacement_sensor";
+    const changed = assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, testedGuide, installed, [])[0];
+    expect(changed.configuration).not.toBe(ready.configuration);
+    expect(changed.testCurrent).toBe(false);
+    expect(changed.testRecord?.notes).toBe("Observed in the room.");
     const proposedMove: Change = {
       id: 3,
       kind: "entity",
@@ -211,13 +244,24 @@ describe("house readiness", () => {
   });
 });
 
-
 it("requires explicit bedroom classification before sleep-sensitive room setup without changing inventory", () => {
   const h = house().get();
   const settings = { areas: { living_room: { profile: "bedroom" as const, goals: ["night" as const] } } };
   const first = assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, settings, NOTHING_INSTALLED, [])[0];
-  expect(first.equipment.find((check) => check.key === "bedroom_behavior")).toMatchObject({ status: "review", required: true, entityIds: [] });
-  const classified = assessHouse(h, setBedroom(EMPTY_INVENTORY, "living_room", true), naming, EMPTY_PARAMETERS, settings, NOTHING_INSTALLED, [])[0];
+  expect(first.equipment.find((check) => check.key === "bedroom_behavior")).toMatchObject({
+    status: "review",
+    required: true,
+    entityIds: [],
+  });
+  const classified = assessHouse(
+    h,
+    setBedroom(EMPTY_INVENTORY, "living_room", true),
+    naming,
+    EMPTY_PARAMETERS,
+    settings,
+    NOTHING_INSTALLED,
+    [],
+  )[0];
   expect(classified.equipment.some((check) => check.key === "bedroom_behavior")).toBe(false);
   expect(EMPTY_INVENTORY.areas).toEqual({});
 });

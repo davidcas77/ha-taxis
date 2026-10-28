@@ -22,7 +22,17 @@ describe("guide settings API", () => {
         guide: EMPTY_GUIDE,
         revision: "0",
       });
-      const body = { areas: { bedroom: { profile: "bedroom", goals: ["night"] } } };
+      const body = {
+        areas: { bedroom: { profile: "bedroom", goals: ["night"] } },
+        tests: {
+          bedroom: {
+            configuration: "room-v1-0123456789abcdef",
+            checked: ["night"],
+            notes: "Still needs the other checks.",
+            testedAt: "2026-10-28T00:00:00.000Z",
+          },
+        },
+      };
       const put = (revision: string) =>
         app.request("/api/settings/guide", {
           method: "PUT",

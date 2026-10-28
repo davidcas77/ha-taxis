@@ -9,9 +9,11 @@ import {
 } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import { automationIdFor, planRecipes, type RecipeCell, type RecipeInstalled } from "./recipes.ts";
-import type { AreaRecipeKey } from "./blueprints.ts";
-import type { ParameterSettings } from "./parameters.ts";
+import { blueprintForRecipe, type AreaRecipeKey } from "./blueprints.ts";
+import { resolveAll, type ParameterSettings } from "./parameters.ts";
 import type { Change, Hierarchy } from "./types.ts";
+import { GUIDE_CHECKS, currentRoomTest, guideConfiguration, roomChecks, type GuideTestRecord } from "./guide-checks.ts";
+import { planHouseModes } from "./house-modes.ts";
 
 // The guide describes chosen outcomes. It does not replace inventory choices,
 // helper naming or recipe planning, and never controls a device.
@@ -119,7 +121,7 @@ export const ROOM_PROFILES = [
 ] as const satisfies readonly { key: string; label: string; goals: readonly GuideGoal[]; advice: string }[];
 export type RoomProfile = (typeof ROOM_PROFILES)[number]["key"];
 export type AreaGuideChoice = { profile: RoomProfile; goals: GuideGoal[] };
-export type GuideSettings = { areas: Record<string, AreaGuideChoice> };
+export type GuideSettings = { areas: Record<string, AreaGuideChoice>; tests?: Record<string, GuideTestRecord> };
 export const EMPTY_GUIDE: GuideSettings = { areas: {} };
 export type GuideResponse = { ok: true; guide: GuideSettings; revision?: string } | { ok: false; error: string };
 
@@ -145,7 +147,40 @@ export function validateGuide(input: unknown): { ok: true; value: GuideSettings 
       return { ok: false, error: "Choose valid automation goals for each area." };
     areas.push([id, { profile: value.profile as RoomProfile, goals: [...new Set(value.goals)] as GuideGoal[] }]);
   }
-  return { ok: true, value: { areas: Object.fromEntries(areas) } };
+  const value: GuideSettings = { areas: Object.fromEntries(areas) };
+  if (input.tests !== undefined) {
+    if (!record(input.tests) || Object.keys(input.tests).length > 500)
+      return { ok: false, error: "Store room tests for up to 500 areas." };
+    const tests: [string, GuideTestRecord][] = [];
+    for (const [id, test] of Object.entries(input.tests)) {
+      if (
+        !INVENTORY_AREA_ID.test(id) ||
+        !record(test) ||
+        typeof test.configuration !== "string" ||
+        !/^room-v1-[a-f0-9]{16}$/.test(test.configuration) ||
+        !Array.isArray(test.checked) ||
+        test.checked.length > GUIDE_CHECKS.length ||
+        test.checked.some((key) => !GUIDE_CHECKS.some((check) => check.key === key)) ||
+        typeof test.notes !== "string" ||
+        test.notes.length > 2000 ||
+        typeof test.testedAt !== "string" ||
+        !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(test.testedAt) ||
+        !Number.isFinite(Date.parse(test.testedAt))
+      )
+        return { ok: false, error: "The room test record wasn't readable. Check its answers, date and notes." };
+      tests.push([
+        id,
+        {
+          configuration: test.configuration,
+          checked: [...new Set(test.checked)] as GuideTestRecord["checked"],
+          notes: test.notes,
+          testedAt: test.testedAt,
+        },
+      ]);
+    }
+    value.tests = Object.fromEntries(tests);
+  }
+  return { ok: true, value };
 }
 
 export const guideChoice = (settings: GuideSettings, areaId: string): AreaGuideChoice | null =>
@@ -170,6 +205,7 @@ export const GUIDE_STAGES = {
   recipes: "Set up automations",
   check: "Check installed automations",
   test: "Ready for a room test",
+  tested: "Tested by you for this configuration",
 } as const;
 export type GuideStage = keyof typeof GUIDE_STAGES;
 export type AreaReadiness = {
@@ -184,6 +220,10 @@ export type AreaReadiness = {
   switches: string[];
   unavailable: string[];
   hasEntities: boolean;
+  configuration: string;
+  checks: ReturnType<typeof roomChecks>;
+  testRecord: GuideTestRecord | null;
+  testCurrent: boolean;
 };
 const known = (state: string | null | undefined): boolean =>
   state !== null && state !== undefined && !["", "unknown", "unavailable"].includes(state);
@@ -407,11 +447,59 @@ export function assessHouse(
       else if (neededRecipes.some((recipe) => recipe.cell?.status === "in-changes")) stage = "changes";
       else if (neededRecipes.some((recipe) => recipe.cell?.status !== "installed")) stage = "recipes";
       else if (neededRecipes.some((recipe) => !recipe.enabled || recipe.cell!.controlledBy.length)) stage = "check";
+      const modes = planHouseModes(h, parameters, inventory, changes, area.id);
+      const integrated = (key: "guest" | "away" | "sleep") =>
+        modes.some((mode) => mode.key === key && (mode.status === "present" || mode.status === "in-changes"));
+      const checks = roomChecks(choice, {
+        guest: integrated("guest"),
+        away: integrated("away"),
+        sleep: integrated("sleep"),
+      });
+      const recipeState = neededRecipes.map((recipe) => {
+        const bp = blueprintForRecipe(recipe.key);
+        return {
+          key: recipe.key,
+          enabled: recipe.enabled,
+          version: installed?.blueprints[bp.path] ?? null,
+          automation: installed?.automations[automationIdFor(recipe.key, codes[area.id].code)] ?? null,
+        };
+      });
+      const relevantIds = new Set([...area.entityIds, ...neededHelpers.map((helper) => helper.row.canonicalId)]);
+      const configuration = guideConfiguration({
+        choice: choice && { ...choice, goals: [...choice.goals].sort() },
+        area: { id: area.id, floorId: area.floorId, choice: areaChoice(inventory, area.id), code: codes[area.id].code },
+        parameters: resolveAll(parameters, h, inventory, area.id),
+        inventory: [...relevantIds].sort().map((id) => [id, inventory.entities[id] ?? null]),
+        entities: [...relevantIds].sort().map((id) => {
+          const e = h.entities[id];
+          return e
+            ? {
+                id,
+                domain: e.domain,
+                platform: e.platform,
+                device: e.deviceId,
+                deviceClass: e.deviceClass,
+                disabled: e.disabled,
+                members: [...e.members].sort(),
+              }
+            : { id };
+        }),
+        recipes: recipeState,
+        modes: modes.map((mode) => ({ key: mode.key, id: mode.id })),
+        checks: checks.map((check) => check.key),
+      });
+      const testRecord = guide.tests && Object.hasOwn(guide.tests, area.id) ? guide.tests[area.id] : null;
+      const testCurrent = stage === "test" && currentRoomTest(testRecord, configuration, checks);
+      if (testCurrent) stage = "tested";
       return {
         areaId: area.id,
         name: area.name,
         floor: h.floors.find((floor) => floor.id === area.floorId)?.name ?? "No floor",
         choice,
+        configuration,
+        checks,
+        testRecord,
+        testCurrent,
         stage,
         equipment,
         helpers: neededHelpers,
