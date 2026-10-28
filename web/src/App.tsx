@@ -1,4 +1,5 @@
 import { RecipesPage } from "./recipes.tsx";
+import { GuidePage } from "./guide.tsx";
 import { Workflow, AlertTriangle, CheckCircle2, FolderTree, HeartPulse, Layers, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
@@ -56,6 +57,7 @@ function Shell() {
           <span className="text-base font-semibold tracking-tight">Taxis</span>
         </div>
         <nav aria-label="Pages" className="flex flex-wrap gap-1">
+          <Tab active={route.page === "guide"} onClick={() => go({ page: "guide", areaId: null })} icon={<ListChecks className="size-4" aria-hidden />}>Guide</Tab>
           <Tab active={route.page === "areas"} onClick={() => go(route.page === "areas" ? route : { page: "areas", sel: { kind: "home" }, tab: "overview" })} icon={<MapPin className="size-4" aria-hidden />}>
             Areas
           </Tab>
@@ -138,6 +140,8 @@ function Shell() {
             "Nothing to show yet. Fix the problem above, then refresh."
           )}
         </div>
+      ) : route.page === "guide" ? (
+        <GuidePage h={hierarchy} areaId={route.areaId} go={go} />
       ) : route.page === "organize" ? (
         <OrganizePage h={hierarchy} type={route.type} id={route.id} go={go} />
       ) : route.page === "recipes" ? (

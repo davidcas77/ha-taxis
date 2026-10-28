@@ -382,6 +382,7 @@ export type Route =
   | { page: "organize"; type: OrganizeType; id: string | null }
   | { page: "parameters"; tab: ParameterTab }
   | { page: "recipes" }
+  | { page: "guide"; areaId: string | null }
   | { page: "health" }
   | { page: "changes" }
   | { page: "settings" };
@@ -407,6 +408,8 @@ export function parseHash(hash: string): Route {
   const [head, a, b] = dec;
   const tab = (t: string | undefined): AreaTab => ((AREA_TABS as readonly string[]).includes(t ?? "") ? (t as AreaTab) : "overview");
   switch (head) {
+    case "guide":
+      return { page: "guide", areaId: a || null };
     case "parameters":
       return { page: "parameters", tab: (PARAMETER_TABS as readonly string[]).includes(a ?? "") ? (a as ParameterTab) : PARAMETER_TABS[0] };
     case "recipes":
@@ -444,6 +447,8 @@ export function parseHash(hash: string): Route {
 export function toHash(r: Route): string {
   const enc = encodeURIComponent;
   switch (r.page) {
+    case "guide":
+      return r.areaId ? `#guide/${enc(r.areaId)}` : "#guide";
     case "recipes":
     case "health":
     case "changes":

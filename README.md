@@ -27,6 +27,12 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 
 ## What it does
 
+- **House guide:** choose each room's purpose and automation goals, then work
+  through detected equipment, missing helpers, comfort settings and native recipe
+  prerequisites. Recommendations describe equipment types and placement, not
+  products. Pending proposals and failed reads never count as installed work;
+  installed automations still need a real-room comfort test. Community ideas link
+  to their original discussions. Open Guide in the navigation or Guide this area.
 - **Spaces:** home → floors → areas, plus areas on no floor and entities that
   are in no area at all. **Not in any area** has Cards and searchable Table
   views, with paged results and bulk area assignment through Changes.
@@ -41,8 +47,8 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   they're on. An entity-first label table shows every entity's labels, supports
   bulk assignment without replacing existing labels, and can queue a new label
   inline.
-- **Naming:** edit area codes under **Parameters → Area codes**; patterns,
-  floor codes and helper names remain in Settings. Each area checks its entity
+- **Naming:** edit area and floor codes under **Parameters → Area codes**;
+  patterns, shared type words and aggregation markers remain in Settings. Each area checks its entity
   IDs against the naming scheme and suggests display names. Area-wide motion
   groups use `motion_all`; window contacts retain their own type. Suggested
   renames require review in Changes.

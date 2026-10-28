@@ -1,5 +1,6 @@
 import type { AiTier, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
+import type { GuideResponse, GuideSettings } from "../../shared/guide.ts";
 import type { HealthOptions, HealthReportResponse } from "../../shared/health.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
@@ -37,6 +38,8 @@ export type { ApplyRun };
 export type Repair = RepairItem;
 
 export const api = {
+  guide: () => call<GuideResponse>("api/settings/guide"),
+  saveGuide: (guide: GuideSettings) => call<GuideResponse>("api/settings/guide", { method: "PUT", body: JSON.stringify(guide) }),
   blueprints: () => call<BlueprintsResponse>("api/blueprints"),
   history: () => call<HistoryResponse>("api/history"),
   repairs: () => call<RepairsResponse>("api/repairs"),

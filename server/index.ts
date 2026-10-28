@@ -40,6 +40,7 @@ import { openStore } from "./db.ts";
 import { readBlueprintInventory } from "./blueprints.ts";
 import { applyPreflight } from "./changes/preflight.ts";
 import { settingsConcurrency } from "./settings-concurrency.ts";
+import { guideRoutes } from "./guide.ts";
 import { applyHistory } from "./changes/history.ts";
 import { readRegistry } from "./ha/registry.ts";
 import { HaRest } from "./ha/rest.ts";
@@ -305,6 +306,7 @@ app.put("/api/settings/inventory", bodyLimit({ maxSize: 1024 * 1024, onError: (c
 // The recipe parameters: house, interior/exterior, floor and area values. Taxis
 // only; they reach Home Assistant when a recipe is installed.
 app.get("/api/settings/parameters", (c) => c.json<ParametersResponse>({ ok: true, parameters: settings.parameters() }));
+app.route("/api", guideRoutes(settings));
 
 app.put("/api/settings/parameters", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json<ParametersResponse>({ ok: false, error: "The parameters are too large." }, 413) }), async (c) => {
   const checked = validateParameters(await c.req.json().catch(() => null));
