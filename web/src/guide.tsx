@@ -386,6 +386,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
                   key={`${active.areaId}:${active.testRecord?.testedAt ?? "new"}`}
                   area={active}
                   onSave={(record) => saveTest(active, record)}
+                  openJevSettings={() => go({ page: "settings" })}
                 />
               </>
             )}

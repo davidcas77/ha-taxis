@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Jev decisions.** Settings has a dedicated write-only TypeSafe API key field,
+  pinned model selection, monthly request limit, usage and connection test,
+  separate from the Low/Medium/Strong AI models. Keys can be replaced or removed;
+  stale saves preserve drafts and the stored key is never returned to the browser.
+- **Review room notes.** The Guide can ask Jev whether room-test notes describe
+  success, a problem or insufficient evidence for each checklist item. This
+  manual action sends only notes and public checklist descriptions. Suggestions
+  show their probabilities and never change checkmarks, saved observations,
+  readiness or Home Assistant. Editing notes invalidates the displayed review.
+- **Bounded requests.** Connection tests and failed requests count toward a
+  separate monthly limit. Requests do not follow redirects or retry paid POSTs.
+  Usage stores counts and estimated costs, not notes, answers or credentials.
+
 ## 0.7.0
 
 - **House guide.** Choose each area's room type and automation goals, then work

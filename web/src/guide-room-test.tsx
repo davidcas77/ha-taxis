@@ -3,13 +3,16 @@ import type { AreaReadiness } from "../../shared/guide.ts";
 import type { GuideTestRecord } from "../../shared/guide-checks.ts";
 import { useDraftGuard } from "./draft-guard.ts";
 import { Button, inputClass } from "./ui.tsx";
+import { JevNotesReview } from "./jev-notes-review.tsx";
 
 export function GuideRoomTest({
   area,
   onSave,
+  openJevSettings,
 }: {
   area: AreaReadiness;
   onSave: (record: GuideTestRecord) => Promise<string | null>;
+  openJevSettings: () => void;
 }) {
   const initial = () => ({
     configuration: area.configuration,
@@ -141,6 +144,7 @@ export function GuideRoomTest({
           {error}
         </p>
       )}
+      <JevNotesReview notes={draft.notes} checks={area.checks.map((check) => check.key)} openSettings={openJevSettings} />
     </section>
   );
 }

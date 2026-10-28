@@ -91,15 +91,21 @@ services they need. The commands Taxis may send are fixed in
 
 ## Privacy
 
-- Taxis connects only to your Home Assistant, through the Supervisor's own
+- Taxis connects to your Home Assistant through the Supervisor's own
   connection. It needs no long-lived token.
 - It only answers requests that come through Home Assistant (Ingress), so only
   signed-in Home Assistant users can open it.
 - It keeps its change list, settings, snapshots, Apply history and repair
-  reminders in `/data/taxis.db` inside the app. Nothing leaves your Home Assistant,
-  unless you turn on the optional AI in Settings: then Taxis talks to the AI service you chose, with an
-  API key that stays in the app, and to no other address. AI can't change Home
-  Assistant; its proposals would go through the change list.
+  reminders in `/data/taxis.db` inside the app. Optional AI services are off by
+  default. When enabled, explicit AI requests contact the configured provider.
+  Jev has a separate key and request limit in **Settings > Jev decisions**;
+  **Review notes with Jev** in the Guide sends only typed notes and public test
+  descriptions to TypeSafe. Saved keys stay server-side in app data and are
+  included in app backups. Jev does not tick checklists, save observations or
+  change readiness. AI has no direct Home Assistant write path.
+
+For Jev setup, request accounting and data boundaries, see
+[Jev decisions](docs/design/jev-decisions.md).
 
 ## Development
 

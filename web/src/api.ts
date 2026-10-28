@@ -1,6 +1,7 @@
 import type { AiTier, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { GuideResponse, GuideSettings } from "../../shared/guide.ts";
+import type { JevReviewInput, JevReviewResponse, JevSave, JevSettingsResponse, JevTestResponse, JevUsageResponse } from "../../shared/jev.ts";
 import type { HealthOptions, HealthReportResponse } from "../../shared/health.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
@@ -38,6 +39,11 @@ export type { ApplyRun };
 export type Repair = RepairItem;
 
 export const api = {
+  jev: () => call<JevSettingsResponse>("api/settings/jev"),
+  saveJev: (value: JevSave) => call<JevSettingsResponse>("api/settings/jev", { method: "PUT", body: JSON.stringify(value) }),
+  jevTest: () => call<JevTestResponse>("api/jev/test", { method: "POST", body: "{}" }),
+  jevUsage: () => call<JevUsageResponse>("api/jev/usage"),
+  jevRoomNotes: (value: JevReviewInput) => call<JevReviewResponse>("api/jev/room-notes", { method: "POST", body: JSON.stringify(value) }),
   guide: () => call<GuideResponse>("api/settings/guide"),
   saveGuide: (guide: GuideSettings) => call<GuideResponse>("api/settings/guide", { method: "PUT", body: JSON.stringify(guide) }),
   blueprints: () => call<BlueprintsResponse>("api/blueprints"),
