@@ -1,4 +1,5 @@
 import { RecipesPage } from "./recipes.tsx";
+import { ButtonsPage } from './buttons.tsx';
 import { AskTaxis } from "./assistant.tsx";
 import { AiAdminPage } from "./ai-admin.tsx";
 import { GuidePage } from "./guide.tsx";
@@ -68,6 +69,7 @@ function Shell() {
             Organize
           </Tab>
           <Tab active={route.page === "recipes"} onClick={() => go({ page: "recipes" })} icon={<Workflow className="size-4" aria-hidden />}>Recipes</Tab>
+          <Tab active={route.page === 'buttons'} onClick={() => go({page:'buttons',controlId:null})} icon={<SlidersHorizontal className="size-4" aria-hidden />}>Buttons</Tab>
           <Tab active={route.page === "parameters"} onClick={() => go(route.page === "parameters" ? route : { page: "parameters", tab: "capabilities" })} icon={<SlidersHorizontal className="size-4" aria-hidden />}>
             Parameters
           </Tab>
@@ -150,6 +152,8 @@ function Shell() {
         <OrganizePage h={hierarchy} type={route.type} id={route.id} go={go} />
       ) : route.page === "recipes" ? (
         <RecipesPage h={hierarchy} />
+      ) : route.page === 'buttons' ? (
+        <ButtonsPage h={hierarchy} controlId={route.controlId} go={go} />
       ) : route.page === "parameters" ? (
         <ParametersPage h={hierarchy} tab={route.tab} go={go} />
       ) : route.page === "health" ? (

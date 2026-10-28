@@ -1,4 +1,5 @@
 import type { AiTier, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
+import type { ButtonInventoryResponse, ButtonAssignment, ButtonAiPreview, ButtonAiResponse } from '../../shared/buttons.ts';
 import type { AssistantAdminResponse, AssistantPreviewResponse, AssistantResponse, AssistantRequest, AssistantScope } from "../../shared/assistant.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { GuideResponse, GuideSettings } from "../../shared/guide.ts";
@@ -40,6 +41,10 @@ export type { ApplyRun };
 export type Repair = RepairItem;
 
 export const api = {
+  buttons: (refresh=false) => call<ButtonInventoryResponse>(`api/buttons${refresh?'?refresh=1':''}`),
+  assignButton: (value:ButtonAssignment) => call<ChangesResponse>('api/buttons/assign',{method:'POST',body:JSON.stringify(value)}),
+  buttonAiPreview: (id:string) => call<{ok:true;preview:ButtonAiPreview}|{ok:false;error:string}>(`api/buttons/${encodeURIComponent(id)}/ai-preview`),
+  buttonAiReview: (id:string,fingerprint:string) => call<ButtonAiResponse>(`api/buttons/${encodeURIComponent(id)}/ai-review`,{method:'POST',body:JSON.stringify({fingerprint})}),
   assistantAdmin: () => call<AssistantAdminResponse>("api/assistant/admin"),
   assistantContext: (scope: AssistantScope) => call<AssistantPreviewResponse>("api/assistant/context", { method: "POST", body: JSON.stringify(scope) }),
   assistantAsk: (request: AssistantRequest) => call<AssistantResponse>("api/assistant/ask", { method: "POST", body: JSON.stringify(request) }),

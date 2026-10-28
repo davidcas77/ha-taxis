@@ -217,6 +217,7 @@ export type ChangeFields = {
     area_id?: string;
     alias?: string;
     use_blueprint?: { path: string; input: Record<string, unknown> };
+    button_map?: import("./buttons.ts").ButtonMap;
   };
   // The one script Taxis makes, taxis_announce, from its blueprint. Never deleted.
   script: {

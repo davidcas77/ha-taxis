@@ -386,7 +386,8 @@ export type Route =
   | { page: "health" }
   | { page: "changes" }
   | { page: "settings" }
-  | { page: "ai-admin" };
+  | { page: "ai-admin" }
+  | { page: "buttons"; controlId: string | null };
 
 export type Selection =
   | { kind: "home" }
@@ -411,6 +412,8 @@ export function parseHash(hash: string): Route {
   switch (head) {
     case "guide":
       return { page: "guide", areaId: a || null };
+    case "buttons":
+      return { page: "buttons", controlId: a || null };
     case "parameters":
       return { page: "parameters", tab: (PARAMETER_TABS as readonly string[]).includes(a ?? "") ? (a as ParameterTab) : PARAMETER_TABS[0] };
     case "recipes":
@@ -452,6 +455,8 @@ export function toHash(r: Route): string {
   switch (r.page) {
     case "guide":
       return r.areaId ? `#guide/${enc(r.areaId)}` : "#guide";
+    case "buttons":
+      return r.controlId ? `#buttons/${enc(r.controlId)}` : '#buttons';
     case "recipes":
     case "health":
     case "changes":

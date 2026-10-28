@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { closureFor, renameGate } from "../../shared/apply-plan.ts";
 import { describePeriods } from "../../shared/periods.ts";
+import { validButtonMap } from '../../shared/buttons.ts';
 import { RECIPE_LABEL } from "../../shared/recipes.ts";
 import type { ApplyResult, Change, Hierarchy, RenameRefs } from "../../shared/types.ts";
 import { ApplyHistory } from "./history.tsx";
@@ -71,6 +72,7 @@ function helperTitle(h: Hierarchy, c: Change): string {
 }
 
 function recipeTitle(h: Hierarchy, c: Change): string {
+  if(validButtonMap(c.after.button_map)) return `${c.op==='create'?'Create':'Update'} button automation for ${h.entities[c.after.button_map.output]?.name??c.after.button_map.output} · ${c.after.button_map.bindings.length} assignments`;
   if (c.kind === "blueprint") return `${c.op === "create" ? "Write" : "Update"} blueprint ${c.targetId}`;
   if (c.kind === "script") return `${c.op === "create" ? "Install" : "Update"} the Announce script (script.${c.targetId})`;
   const recipe = RECIPE_LABEL[c.after.recipe as keyof typeof RECIPE_LABEL] ?? "recipe";
@@ -96,6 +98,8 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
   const b = c.before[key];
   const a = c.after[key];
   switch (key) {
+    case 'button_map':
+      return {label:'Button assignments',from:c.op==='create'?'No managed map':'Existing map, checked again before replacing',to:validButtonMap(a)?<ul className="flex flex-col gap-2">{a.bindings.map(binding=><li key={binding.key}><p>{h.devices[binding.controlId.replace(/^device:/,'')]?.name??binding.controlId} · {binding.button} · {binding.gesture}</p><code className="text-xs">{binding.action.service} → {binding.action.entityId??'Service action'} · {binding.enabled?'Enabled':'Disabled'}</code>{Object.keys(binding.action.data).length>0 && <pre className="mt-1 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(binding.action.data,null,2)}</pre>}</li>)}</ul>:'Invalid map'};
     case "name":
     case "name_by_user":
       return { label: "Name", from: plain(b, c.op === "create" ? "" : "default"), to: plain(a) };
@@ -140,7 +144,8 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
   const { changes, version, removeChange, clearChanges, reload, busy } = useTaxis();
   const hasRename = changes.some((c) => c.kind === "entity" && c.after.new_entity_id !== undefined);
   const hasHelper = changes.some((c) => c.kind === "helper");
-  const hasRecipe = changes.some((c) => c.kind === "blueprint" || c.kind === "automation" || c.kind === "script");
+  const hasRecipe = changes.some((c) => (c.kind === "blueprint" || c.kind === "automation" || c.kind === "script") && !c.after.button_map);
+  const hasButtons = changes.some((c) => validButtonMap(c.after.button_map));
   const refs = useReferences(hasRename, version);
   const [step, setStep] = useState<"list" | "confirm" | "confirmNoBackup" | "applying">("list");
   // The change being applied on its own (the ids are the change and what it needs),
@@ -269,7 +274,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                       </dl>
                     )}
                     {c.kind === "helper" && <HelperBody h={h} c={c} />}
-                    {(c.kind === "blueprint" || c.kind === "automation" || c.kind === "script") && <RecipeBody c={c} />}
+                    {(c.kind === "blueprint" || c.kind === "automation" || c.kind === "script") && <RecipeBody h={h} c={c} />}
                     {c.op === "delete" && <p className="text-xs text-muted">Home Assistant removes it from everything it's on.</p>}
                     {c.kind === "entity" && c.after.new_entity_id !== undefined && (
                       <RenameRefsView refs={refs} change={c} understood={understood.has(c.id)} onUnderstood={() => flip(c.id)} />
@@ -333,6 +338,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                     loaded it. Nothing is deleted, and an area's recipes can be paused with its pause switch.
                   </span>
                 )}
+                {hasButtons && <span className="mt-2 block">Buttons: Taxis saves one native automation per output, rechecks supported gestures and existing handlers, then verifies the stored config and enabled state. Enabled assignments can control their targets when those buttons are pressed. Existing external handlers are preserved.</span>}
                 {hasRename && (
                   <span className="mt-2 block">
                     Renamed entities: Taxis also rewrites the old id in the automations, scripts, scenes and dashboards listed, each only if it hasn't changed since Taxis read it.
@@ -429,7 +435,8 @@ function showInput(v: unknown): string {
 }
 
 // A blueprint, or one recipe's automation (or the Announce script) with the inputs it fills in.
-function RecipeBody({ c }: { c: Change }) {
+function RecipeBody({ h, c }: { h: Hierarchy; c: Change }) {
+  if(validButtonMap(c.after.button_map)) return <div className="text-xs"><p className="mb-2 text-muted">One native automation for this output. Each enabled assignment runs its action when its gesture occurs.</p>{describe(h,c,'button_map').to}{c.after.button_map.allowExisting && <p className="mt-2 text-warn">Coexistence acknowledged: other handlers or unreadable configurations may also respond.</p>}</div>;
   if (c.kind === "blueprint") {
     return <p className="text-xs text-muted">Version {String(c.after.version)}. Taxis writes it once; every area that uses the recipe shares it.</p>;
   }

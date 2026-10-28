@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Buttons.** A new input inventory shows advertised gestures across integrations,
+  existing exact/possible automation matches and discovery gaps. Assign lights or
+  groups On/Off/Toggle, scripts, scenes, automation actions and registered services.
+  Multiple controls share one native automation per output; reverse lookup shows
+  every mapped button. Edit or disable assignments through Changes, with fresh
+  conflict/config checks and readback during Apply. Existing external handlers
+  remain intact and block duplication by default.
+- **Button AI review.** Manually preview and send a selected control's bounded,
+  redacted automation summary to Medium AI. AI cannot assign or Apply. Unknown
+  gestures and unreadable automation configs remain explicit.
+
 ## 0.7.2
 
 - **Floating assistant.** Ask Taxis opens in a rounded, compact floating window
