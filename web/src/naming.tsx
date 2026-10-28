@@ -98,6 +98,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
           <nav aria-label="Settings sections" className="mt-3 flex flex-wrap gap-2">
             <Button onClick={() => document.getElementById("ai-settings")?.scrollIntoView({ block: "start" })}>AI models</Button>
             <Button onClick={() => document.getElementById("jev-settings")?.scrollIntoView({ block: "start" })}>Jev decisions</Button>
+            <Button onClick={() => go({ page: "ai-admin" })}>AI administration</Button>
           </nav>
         </div>
 

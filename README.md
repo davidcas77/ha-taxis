@@ -107,6 +107,30 @@ services they need. The commands Taxis may send are fixed in
 For Jev setup, request accounting and data boundaries, see
 [Jev decisions](docs/design/jev-decisions.md).
 
+### Ask Taxis and AI administration
+
+The floating sparkle button opens **Ask Taxis** alongside the current page.
+Use **Explain** (Medium), **Suggest next steps** (Strong) or **Naming help** (Low).
+These use the models configured in Settings; enable AI and test each connection
+there first. Replies are advice only: no HA tools, automatic proposals or Apply.
+
+Page data starts off. Select an area and enable it for room-specific advice;
+review the exact context before sending. Only the projected context, your question
+and up to six recent messages (2,000 characters each) are sent. Room context
+includes names/IDs, roles, availability flags, capability counts, helper plans
+and the guide's equipment assessment. House scope includes counts only. Raw
+state values, attributes, automation YAML, credentials and saved room notes are
+omitted. Pending changes are explicitly identified as a preview, not live work.
+Health advice needs a selected area or a finding pasted into the question; it
+does not independently read the complete Health report or automation history.
+
+**AI** in the main navigation opens administration: connected functions, triggers,
+model routing, data access, usage and the last 30 assistant request results.
+At most 200 request metadata records are kept, with no questions, answers or room
+identities. Chats stay in memory and clear when closed, scope changes or the app
+reloads. No background AI analysis runs. Jev remains a separate manual room-note
+review, not a hidden second model in the assistant. See [Ask Taxis](docs/design/ask-taxis.md).
+
 ## Development
 
 You need Node.js 22.13 or newer.

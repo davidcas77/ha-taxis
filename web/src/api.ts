@@ -1,4 +1,5 @@
 import type { AiTier, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
+import type { AssistantAdminResponse, AssistantPreviewResponse, AssistantResponse, AssistantRequest, AssistantScope } from "../../shared/assistant.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { GuideResponse, GuideSettings } from "../../shared/guide.ts";
 import type { JevReviewInput, JevReviewResponse, JevSave, JevSettingsResponse, JevTestResponse, JevUsageResponse } from "../../shared/jev.ts";
@@ -39,6 +40,9 @@ export type { ApplyRun };
 export type Repair = RepairItem;
 
 export const api = {
+  assistantAdmin: () => call<AssistantAdminResponse>("api/assistant/admin"),
+  assistantContext: (scope: AssistantScope) => call<AssistantPreviewResponse>("api/assistant/context", { method: "POST", body: JSON.stringify(scope) }),
+  assistantAsk: (request: AssistantRequest) => call<AssistantResponse>("api/assistant/ask", { method: "POST", body: JSON.stringify(request) }),
   jev: () => call<JevSettingsResponse>("api/settings/jev"),
   saveJev: (value: JevSave) => call<JevSettingsResponse>("api/settings/jev", { method: "PUT", body: JSON.stringify(value) }),
   jevTest: () => call<JevTestResponse>("api/jev/test", { method: "POST", body: "{}" }),
