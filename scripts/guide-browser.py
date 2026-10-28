@@ -42,6 +42,7 @@ class GuideRegression(unittest.TestCase):
         self.prefs = {"areas": {}}
         self.queued, self.puts, self.posts, self.unexpected, self.errors = [], [], [], [], []
         self.read_failure = False
+        self.installed = {"blueprints": {}, "automations": {}, "scripts": {}, "timers": {}, "controllers": {}}
         self.fail_save = False
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
         def guard(route):
@@ -70,7 +71,7 @@ class GuideRegression(unittest.TestCase):
             if self.read_failure:
                 route.fulfill(status=502, json={"ok": False, "error": "Fixture blueprint read failed"})
             else:
-                route.fulfill(json={"ok": True, "installed": {"blueprints": {}, "automations": {}, "scripts": {}, "timers": {}, "controllers": {}}})
+                route.fulfill(json={"ok": True, "installed": copy.deepcopy(self.installed)})
         self.page.route("**/api/recipes/state*", recipes)
         def changes(route):
             if route.request.method == "POST":
@@ -188,6 +189,86 @@ class GuideRegression(unittest.TestCase):
         self.assertEqual(self.prefs["areas"]["living_room"]["profile"], "living")
         self.assertEqual(len(self.puts), 1)
         self.assertEqual(self.posts, [])
+
+    def ready_room(self):
+        self.selected()
+        self.prefs["areas"]["living_room"]["goals"] = ["occupancy"]
+        self.add_entity("binary_sensor.living_motion_all", "motion", "motion", "group", ["binary_sensor.living_pir"])
+        self.add_entity("timer.living_hold", "helper", platform="timer")
+        self.body["hierarchy"]["entities"]["timer.living_hold"]["state"] = "idle"
+        self.add_entity("input_boolean.living_paused", "helper", platform="input_boolean")
+        self.add_entity("binary_sensor.living_occupied", "presence", "occupancy", "template")
+        self.add_entity("automation.taxis_occupancy_living", "automation", platform="automation")
+        self.body["hierarchy"]["entities"]["automation.taxis_occupancy_living"]["state"] = "on"
+        self.open(True)
+        self.page.get_by_role("region", name="Guided automations", exact=True).get_by_role("button", name="Add Occupancy to changes", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="changes added to the list").wait_for()
+        automation = next(item["fields"] for item in self.posts if item["kind"] == "automation")
+        blueprint = next(item["fields"] for item in self.posts if item["kind"] == "blueprint")
+        self.installed["blueprints"][blueprint["path"]] = blueprint["version"]
+        self.installed["automations"][automation["automation_id"]] = {"alias": automation["alias"], "path": automation["use_blueprint"]["path"], "input": automation["use_blueprint"]["input"]}
+        self.installed["timers"]["timer.living_hold"] = 300
+        self.queued, self.posts = [], []
+        self.page.reload(wait_until="networkidle")
+        self.page.get_by_text("Ready for a room test", exact=True).wait_for()
+        return self.page.get_by_role("region", name="Room test checklist", exact=True)
+
+    def test_room_observations_save_reload_and_require_retest_after_sensor_replacement(self):
+        checks = self.ready_room()
+        self.assertEqual(checks.get_by_role("checkbox").count(), 3)
+        for checkbox in checks.get_by_role("checkbox").all():
+            checkbox.check()
+        checks.get_by_label("Room test notes", exact=True).fill("Tested both entry paths and sitting still.")
+        checks.get_by_role("button", name="Save room test record", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="Room test record saved in Taxis").wait_for()
+        record = copy.deepcopy(self.prefs["tests"]["living_room"])
+        self.assertEqual(len(record["checked"]), 3)
+        self.assertTrue(record["configuration"].startswith("room-v1-"))
+        self.assertEqual(self.prefs["areas"]["living_room"]["goals"], ["occupancy"])
+        self.page.reload(wait_until="networkidle")
+        checks.get_by_text("Tested by you for the current configuration.", exact=True).wait_for()
+        self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["deviceId"] = "replacement"
+        self.page.reload(wait_until="networkidle")
+        checks.get_by_text("Previous test needs a retest because the room configuration changed.", exact=True).wait_for()
+        self.assertFalse(any(checkbox.is_checked() for checkbox in checks.get_by_role("checkbox").all()))
+        self.assertEqual(self.prefs["tests"]["living_room"], record)
+        self.assertEqual(self.posts, [])
+
+    def test_room_observation_conflict_keeps_answers_and_notes_for_review(self):
+        checks = self.ready_room()
+        self.fail_save = True
+        checks.get_by_role("checkbox").first.check()
+        checks.get_by_label("Room test notes", exact=True).fill("Still working on coverage.")
+        checks.get_by_role("button", name="Save room test record", exact=True).click()
+        checks.get_by_role("alert").filter(has_text="changed in another session").wait_for()
+        self.assertTrue(checks.get_by_role("checkbox").first.is_checked())
+        self.assertEqual(checks.get_by_label("Room test notes", exact=True).input_value(), "Still working on coverage.")
+        self.assertNotIn("tests", self.prefs)
+        self.assertEqual(self.posts, [])
+
+    def test_room_setup_refresh_preserves_dirty_observations_until_explicit_retest(self):
+        checks = self.ready_room()
+        checks.get_by_role("checkbox").first.check()
+        checks.get_by_label("Room test notes", exact=True).fill("Keep these observations while refreshing.")
+        self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["deviceId"] = "replacement"
+        self.page.get_by_role("button", name="Refresh", exact=True).click()
+        checks.get_by_role("alert").filter(has_text="Your draft is kept").wait_for()
+        self.assertTrue(checks.get_by_role("checkbox").first.is_checked())
+        self.assertEqual(checks.get_by_label("Room test notes", exact=True).input_value(), "Keep these observations while refreshing.")
+        self.assertTrue(checks.get_by_role("button", name="Save room test record", exact=True).is_disabled())
+        checks.get_by_role("button", name="Start new room test", exact=True).click()
+        self.assertFalse(any(checkbox.is_checked() for checkbox in checks.get_by_role("checkbox").all()))
+        self.assertEqual(checks.get_by_label("Room test notes", exact=True).input_value(), "")
+        self.assertEqual(self.puts, [])
+        self.assertEqual(self.posts, [])
+
+    def test_uninstalled_room_cannot_be_recorded_as_physically_tested(self):
+        self.selected()
+        self.open(True)
+        checks = self.page.get_by_role("region", name="Room test checklist", exact=True)
+        self.assertTrue(checks.get_by_role("button", name="Save room test record", exact=True).is_disabled())
+        self.assertTrue(all(checkbox.is_disabled() for checkbox in checks.get_by_role("checkbox").all()))
+        self.assertEqual(self.puts, [])
 
     def test_house_modes_queue_only_one_native_switch_and_show_pending(self):
         self.open()

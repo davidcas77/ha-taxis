@@ -19,6 +19,8 @@ import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { Button, inputClass } from "./ui.tsx";
 import { HouseModes } from "./house-modes.tsx";
+import { GuideRoomTest } from "./guide-room-test.tsx";
+import type { GuideTestRecord } from "../../shared/guide-checks.ts";
 
 export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | null; go: (route: Route) => void }) {
   const {
@@ -80,15 +82,24 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
   ];
   const save = async (id: string, choice: AreaGuideChoice): Promise<string | null> => {
     if (!guide) return "Wait for the guide choices to load.";
-    const next = { areas: { ...guide.areas, [id]: choice } };
+    const next = { ...guide, areas: { ...guide.areas, [id]: choice } };
     const result = await api.saveGuide(next);
     if (!result.ok) return result.error;
     setGuide(result.guide);
     notify({ tone: "ok", text: "Area goals saved in Taxis. Home Assistant is unchanged." });
     return null;
   };
+  const saveTest = async (area: AreaReadiness, record: GuideTestRecord): Promise<string | null> => {
+    if (!guide || !["test", "tested"].includes(area.stage) || record.configuration !== area.configuration)
+      return "Review this room's current setup before saving observations.";
+    const result = await api.saveGuide({ ...guide, tests: { ...guide.tests, [area.areaId]: record } });
+    if (!result.ok) return result.error;
+    setGuide(result.guide);
+    notify({ tone: "ok", text: "Room test record saved in Taxis. No Home Assistant action was sent." });
+    return null;
+  };
   const stageTone = (area: AreaReadiness) =>
-    area.stage === "test"
+    area.stage === "test" || area.stage === "tested"
       ? "text-on"
       : area.stage === "choose" || area.stage === "unplanned"
         ? "text-muted"
@@ -282,7 +293,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
                     room before adding a recipe.
                   </p>
                   {active.choice.goals.some((goal) => goal === "lighting" || goal === "night") && (
-                    <dl className="grid gap-3 sm:grid-cols-3">
+                    <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                       {lightParameters.map((key) => (
                         <div className="rounded-lg border border-line p-3" key={key}>
                           <dt className="text-xs text-muted">{PARAM_DEF[key].label}</dt>
@@ -371,19 +382,11 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
                     ))}
                   </ul>
                 </section>
-                <section aria-label="Room test checklist" className="rounded-lg border border-line p-4 text-[13px]">
-                  <h2 className="font-semibold">5. Test comfort in the room</h2>
-                  <p className="mt-2 text-muted">
-                    Installed configuration is not proof that the room behaves well. After you choose to Apply, test
-                    entry, sitting still, daylight, night brightness and manual on/off. Check an HA automation trace if
-                    the result is unexpected. Check Guest, Away and Sleep explicitly, including guests remaining when
-                    residents leave. Confirm that Pause and manual light override behave as expected. Creating a mode
-                    switch alone does not update an existing recipe; review its proposed inputs before Apply.
-                  </p>
-                  <Button className="mt-3" onClick={() => go({ page: "changes" })}>
-                    Review Changes
-                  </Button>
-                </section>
+                <GuideRoomTest
+                  key={`${active.areaId}:${active.testRecord?.testedAt ?? "new"}`}
+                  area={active}
+                  onSave={(record) => saveTest(active, record)}
+                />
               </>
             )}
           </>
@@ -393,6 +396,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
               {[
                 [areas.filter((area) => area.choice && area.choice.goals.length).length, "areas with chosen goals"],
                 [areas.filter((area) => area.stage === "test").length, "areas ready for a room test"],
+                [areas.filter((area) => area.stage === "tested").length, "areas tested by you"],
                 [areas.filter((area) => area.stage === "changes").length, "areas awaiting review and Apply"],
               ].map(([count, label]) => (
                 <div key={label} className="rounded-lg border border-line bg-surface p-4">

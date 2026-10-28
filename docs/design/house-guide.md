@@ -66,7 +66,7 @@ assessment, parameter links, native recipe queueing and explicit room-test guida
 API tests cover persistence and stale-write protection; mock-browser flows cover
 onboarding, goal preservation, failed reads, queued helpers/blueprints and mobile
 draft protection. The house-mode increment is described below; verified
-room-test records remain to build.
+room-test records are described in the next delivery section.
 The checklist above remains
 the acceptance scope; this document does not mark a smaller first increment as
 the completed goal. Pending PRs #10 and #11 remain preserved separately. This
@@ -89,4 +89,19 @@ scheduled occupancy requirement, retaining season/window/sleep/night precedence.
 All changes require an explicit proposal review and Apply; publishing or opening
 the Guide does not alter existing live automations. Bedroom guide choices require
 an explicit matching bedroom classification in Capabilities instead of silently
-rewriting inventory preferences. Verified room-test records remain to build.
+rewriting inventory preferences. Verified room-test records are described in the next delivery section.
+
+
+## Room-test records
+
+The Guide stores user observations in Taxis with the existing conditional-write
+settings API. It distinguishes installed/enabled, ready for a physical room test,
+and tested by the user for the current configuration. Partial observations and
+notes do not count as a completed test. The checklist follows the selected goals
+and integrated modes. A configuration checksum covers effective parameters,
+room purpose, inventory roles, source/device identities, helper members and
+installed automation inputs/blueprint versions. Changing that setup requires a
+retest; routine sensor values and refresh timestamps do not. Old notes remain
+visible, stale settings saves retain drafts, and a hierarchy refresh cannot
+silently assign a dirty draft to a changed setup. This remains a user report,
+not an automated claim about physical coverage or equipment safety.

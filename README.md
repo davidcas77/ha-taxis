@@ -31,7 +31,8 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   through detected equipment, missing helpers, comfort settings and native recipe
   prerequisites. Recommendations describe equipment types and placement, not
   products. Pending proposals and failed reads never count as installed work;
-  installed automations still need a real-room comfort test. Community ideas link
+  installed automations still need a real-room comfort test. Save your observations
+  and notes in the Guide; relevant setup changes require a retest. Community ideas link
   to their original discussions. Open Guide in the navigation or Guide this area.
 - **Spaces:** home → floors → areas, plus areas on no floor and entities that
   are in no area at all. **Not in any area** has Cards and searchable Table
