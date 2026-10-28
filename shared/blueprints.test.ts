@@ -740,7 +740,8 @@ describe("bathroom fan", () => {
     // The humidity it starts from, kept for the length of the run: no helper needed.
     expect(String(obj(obj(actions[0]).variables).baseline)).toBe("{{ states(humidity_entity) | float(0) }}");
     expect(actions[1]).toMatchObject({ action: "homeassistant.turn_on", continue_on_error: true, target: { entity_id: { input: "fan_entities" } } });
-    expect(actions[3]).toMatchObject({ action: "homeassistant.turn_off", continue_on_error: true, target: { entity_id: { input: "fan_entities" } } });
+    expect(actions[4]).toMatchObject({ action: "homeassistant.turn_off", continue_on_error: true, target: { entity_id: { input: "fan_entities" } } });
+    expect(actions[3]).toEqual({ condition: "state", entity_id: { input: "pause_switch" }, state: "off" });
     const wait = actions[2];
     expect(wait.timeout).toEqual({ minutes: { input: "max_minutes" } });
     expect(wait.continue_on_timeout).toBe(true);
@@ -837,7 +838,7 @@ describe("exterior lights", () => {
     expect(list(on.if).map(obj)).toEqual([{ condition: "state", entity_id: { input: "light_target" }, state: "off" }]);
     expect(obj(list(on.then)[0]).action).toBe("light.turn_on");
     expect(delay).toEqual({ delay: { minutes: { input: "clock_minutes" } } });
-    expect(list(off.if).map(obj)).toEqual([{ condition: "state", entity_id: { input: "light_target" }, state: "on" }]);
+    expect(list(off.if).map(obj)).toEqual([{ condition: "state", entity_id: { input: "pause_switch" }, state: "off" }, { condition: "state", entity_id: { input: "light_target" }, state: "on" }]);
     expect(obj(list(off.then)[0]).action).toBe("light.turn_off");
   });
 
@@ -867,26 +868,27 @@ describe("left open", () => {
   it("names the opening and how long it has been open, and goes on until it closes only when a repeat is set", () => {
     expect(String(obj(obj(actions[0]).variables).opening)).toBe("{{ trigger.entity_id }}");
     const repeat = obj(obj(actions[1]).repeat);
-    expect(repeat.until).toBe("{{ (repeat_minutes | int(0)) == 0 or not is_state(opening, 'on') }}");
-    const [vars, notify, wait] = list(repeat.sequence).map(obj);
+    expect(repeat.until).toBe("{{ (repeat_minutes | int(0)) == 0 or not is_state(opening, 'on') or not is_state(pause_switch, 'off') }}");
+    const [pause, vars, notify, wait] = list(repeat.sequence).map(obj);
+    expect(pause).toEqual({ condition: "state", entity_id: { input: "pause_switch" }, state: "off" });
     expect(String(obj(vars.variables).text)).toMatch(/has been open for \{\{ open_for \}\} minutes\./);
     expect(String(obj(vars.variables).open_for)).toMatch(/states\[opening\]\.last_changed/);
     // Once with no repeat: it never waits.
     expect(String(obj(list(wait.if)[0]).value_template)).toBe("{{ (repeat_minutes | int(0)) > 0 }}");
     const waiting = obj(list(wait.then)[0]);
-    expect(waiting.wait_template).toBe("{{ not is_state(opening, 'on') }}");
+    expect(waiting.wait_template).toBe("{{ not is_state(opening, 'on') or not is_state(pause_switch, 'off') }}");
     expect(waiting.continue_on_timeout).toBe(true);
     expect(notify.choose).toBeDefined();
   });
 
   it("calls each notify service in the list, tolerating one that refuses, or Home Assistant's notifications when there are none", () => {
     const repeat = obj(obj(actions[1]).repeat);
-    const choose = obj(list(obj(list(repeat.sequence)[1]).choose)[0]);
+    const choose = obj(list(obj(list(repeat.sequence)[2]).choose)[0]);
     expect(String(obj(list(choose.conditions)[0]).value_template)).toBe("{{ (notify_targets | count) > 0 }}");
     const each = obj(obj(list(choose.sequence)[0]).repeat);
     expect(each.for_each).toBe("{{ notify_targets }}");
     expect(obj(list(each.sequence)[0])).toMatchObject({ action: "{{ repeat.item }}", continue_on_error: true });
-    const fallback = obj(list(obj(list(repeat.sequence)[1]).default)[0]);
+    const fallback = obj(list(obj(list(repeat.sequence)[2]).default)[0]);
     expect(fallback.action).toBe("persistent_notification.create");
     expect(String(obj(fallback.data).notification_id)).toMatch(/^taxis_left_open_\{\{ opening \| replace\('\.', '_'\) \}\}$/);
   });
@@ -920,7 +922,8 @@ describe("appliance done", () => {
   it("names the appliance without the word power, and says it has finished", () => {
     const vars = obj(obj(actions[0]).variables);
     expect(String(vars.label)).toBe("{{ (state_attr(appliance, 'friendly_name') or appliance) | regex_replace(' [Pp]ower$', '') }}");
-    const json = JSON.stringify(actions[2]);
+    expect(actions[2]).toEqual({ condition: "state", entity_id: { input: "pause_switch" }, state: "off" });
+    const json = JSON.stringify(actions[3]);
     expect(json).toContain("{{ label }} has finished.");
     expect(json).toContain("persistent_notification.create");
     expect(json).toContain('"action":"{{ repeat.item }}","continue_on_error":true');

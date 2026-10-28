@@ -105,3 +105,15 @@ retest; routine sensor values and refresh timestamps do not. Old notes remain
 visible, stale settings saves retain drafts, and a hierarchy refresh cannot
 silently assign a dirty draft to a changed setup. This remains a user report,
 not an automated claim about physical coverage or equipment safety.
+
+
+## Pause during delayed recipes
+
+Reviewing the room-test checklist exposed delayed writes that only checked Pause
+when a run began. Bathroom fan and Appliance done now recheck immediately after
+their waits; Exterior lights rechecks before its delayed off. Left open wakes
+its repeat wait when paused, rechecks before sending, and exits rather than
+starting another notification cycle. Those four native blueprints move to v2.
+These are proposal-only updates until the user chooses Apply. The condition and
+wait behavior follows the official [condition building block](https://www.home-assistant.io/building-blocks/condition/)
+and [wait building block](https://www.home-assistant.io/building-blocks/wait_for_trigger/) documentation.

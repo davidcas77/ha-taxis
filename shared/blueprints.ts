@@ -1500,7 +1500,7 @@ const BATHROOM_FAN_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Runs the fan of an area while it is steamed up. The fan goes on when the humidity rises at least as fast as the rise rate, when it is at least the delta above the reference sensor, or when it is at least the absolute level. It goes off when the humidity is back within the off delta of the reference (or, with no reference sensor, of the humidity when the fan started) and no longer rising fast, when the rate has been flat for the flat time, or after the maximum time. A fan that is already on is left alone, and with the sleep option nothing starts while the sleep switch is on. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  description: "Runs the fan of an area while it is steamed up. The fan goes on when the humidity rises at least as fast as the rise rate, when it is at least the delta above the reference sensor, or when it is at least the absolute level. It goes off when the humidity is back within the off delta of the reference (or, with no reference sensor, of the humidity when the fan started) and no longer rising fast, when the rate has been flat for the flat time, or after the maximum time. A fan that is already on is left alone, and with the sleep option nothing starts while the sleep switch is on. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 2."
   input:
     humidity_entity:
       name: Humidity sensor
@@ -1681,6 +1681,10 @@ actions:
     timeout:
       minutes: !input max_minutes
     continue_on_timeout: true
+  # Pause may have changed during the humidity/time wait.
+  - condition: state
+    entity_id: !input pause_switch
+    state: "off"
   - action: homeassistant.turn_off
     continue_on_error: true
     target:
@@ -1707,7 +1711,7 @@ const EXTERIOR_LIGHTS_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Switches the lights of an outdoor area on at sunset (moved by the offset) and off again after the clock time. Motion, a camera seeing motion or a person arriving home turns the lights on during the night and starts the clock again. At sunrise they go off, and in daytime nothing starts. A light changed by hand stops this automation for the area until the override timer runs out or the sun rises. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  description: "Switches the lights of an outdoor area on at sunset (moved by the offset) and off again after the clock time. Motion, a camera seeing motion or a person arriving home turns the lights on during the night and starts the clock again. At sunrise they go off, and in daytime nothing starts. A light changed by hand stops this automation for the area until the override timer runs out or the sun rises. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 2."
   input:
     light_target:
       name: Light group
@@ -1886,6 +1890,9 @@ actions:
           minutes: !input clock_minutes
       - if:
           - condition: state
+            entity_id: !input pause_switch
+            state: "off"
+          - condition: state
             entity_id: !input light_target
             state: "on"
         then:
@@ -1908,7 +1915,7 @@ const LEFT_OPEN_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Reports a door that has been open for the door time, or a window that has been open for the window time. The message goes to every notify service in the list, or to Home Assistant's notifications when the list is empty. With a repeat time it is sent again until the opening closes. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  description: "Reports a door that has been open for the door time, or a window that has been open for the window time. The message goes to every notify service in the list, or to Home Assistant's notifications when the list is empty. With a repeat time it is sent again until the opening closes. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 2."
   input:
     door_entities:
       name: Doors
@@ -1980,6 +1987,7 @@ mode: parallel
 max: 20
 max_exceeded: silent
 variables:
+  pause_switch: !input pause_switch
   notify_targets: !input notify_targets
   repeat_minutes: !input repeat_minutes
   area_name: !input area_name
@@ -2006,6 +2014,9 @@ actions:
       title: "{{ area_name if area_name != '' else 'Taxis' }}: {{ 'door' if trigger.id == 'door' else 'window' }} left open"
   - repeat:
       sequence:
+        - condition: state
+          entity_id: !input pause_switch
+          state: "off"
         - variables:
             open_for: "{{ ((now() - states[opening].last_changed).total_seconds() // 60) | int }}"
             text: "{{ state_attr(opening, 'friendly_name') or opening }} has been open for {{ open_for }} minutes."
@@ -2032,11 +2043,11 @@ actions:
             - condition: template
               value_template: "{{ (repeat_minutes | int(0)) > 0 }}"
           then:
-            - wait_template: "{{ not is_state(opening, 'on') }}"
+            - wait_template: "{{ not is_state(opening, 'on') or not is_state(pause_switch, 'off') }}"
               timeout:
                 minutes: "{{ repeat_minutes | int(0) }}"
               continue_on_timeout: true
-      until: "{{ (repeat_minutes | int(0)) == 0 or not is_state(opening, 'on') }}"
+      until: "{{ (repeat_minutes | int(0)) == 0 or not is_state(opening, 'on') or not is_state(pause_switch, 'off') }}"
 `;
 
 // ---------------------------------------------------------------------------
@@ -2055,7 +2066,7 @@ const APPLIANCE_DONE_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Reports when an appliance has finished. It is running once its power sensor has stayed above the run level for the run time, and finished once the power has stayed below the idle level for the idle time. The message names the appliance and goes to every notify service in the list, or to Home Assistant's notifications when the list is empty. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  description: "Reports when an appliance has finished. It is running once its power sensor has stayed above the run level for the run time, and finished once the power has stayed below the idle level for the idle time. The message names the appliance and goes to every notify service in the list, or to Home Assistant's notifications when the list is empty. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 2."
   input:
     power_entities:
       name: Power sensors
@@ -2155,6 +2166,10 @@ actions:
     timeout:
       hours: 24
     continue_on_timeout: false
+  # The area may have been paused while the machine was running.
+  - condition: state
+    entity_id: !input pause_switch
+    state: "off"
   - choose:
       - conditions:
           - condition: template
@@ -2389,7 +2404,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/bathroom_fan.yaml",
     recipe: "bathroom_fan",
     domain: "automation",
-    version: 1,
+    version: 2,
     yaml: BATHROOM_FAN_YAML,
     inputs: {
       humidity_entity: { kind: "entity", required: true, domain: "sensor" },
@@ -2412,7 +2427,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/exterior_lights.yaml",
     recipe: "exterior_lights",
     domain: "automation",
-    version: 1,
+    version: 2,
     yaml: EXTERIOR_LIGHTS_YAML,
     inputs: {
       light_target: { kind: "entity", required: true, domain: "light" },
@@ -2429,7 +2444,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/left_open.yaml",
     recipe: "left_open",
     domain: "automation",
-    version: 1,
+    version: 2,
     yaml: LEFT_OPEN_YAML,
     inputs: {
       door_entities: { kind: "entities", required: false, domain: "binary_sensor" },
@@ -2446,7 +2461,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/appliance_done.yaml",
     recipe: "appliance_done",
     domain: "automation",
-    version: 1,
+    version: 2,
     yaml: APPLIANCE_DONE_YAML,
     inputs: {
       power_entities: { kind: "entities", required: true, domain: "sensor" },
