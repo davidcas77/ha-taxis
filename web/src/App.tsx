@@ -53,7 +53,7 @@ function Shell() {
   );
 
   return (
-    <div className={`flex h-full flex-col ${assistantOpen ? "md:pr-[420px]" : ""}`}>
+    <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line bg-surface px-4 py-2">
         <div className="flex items-center gap-2">
           <Layers className="size-5 text-accent" aria-hidden />

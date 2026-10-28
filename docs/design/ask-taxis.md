@@ -1,9 +1,12 @@
 # Ask Taxis
 
 The floating sparkle button is available on every page, including when the HA
-read fails. It opens a responsive side panel; desktop keeps the current page
-visible. AI administration is in the main navigation and linked from Settings
-and the panel. Keyboard Escape closes the panel and restores launcher focus.
+read fails. It opens a rounded floating window at the bottom right, roughly 55%
+of the viewport height (at most 600 pixels). The page never shrinks or shifts.
+The window fits narrow and short viewports with margins, a scrollable message
+area and fixed composer. AI administration is in the main navigation and linked
+from Settings and the assistant's three-dot menu. Keyboard Escape dismisses
+open options first, then closes the window and restores launcher focus.
 
 ## Connected work
 
@@ -23,7 +26,10 @@ and the panel. Keyboard Escape closes the panel and restores launcher focus.
 Opening the panel and refreshing context are local Taxis requests, not provider
 calls. Page data is off by default. An area selector follows the selected area
 or an organized entity/device's effective area; users can change it. A projected
-JSON context is displayed before the Send-context checkbox enables a question.
+JSON context can be inspected in the context chip's options. Pressing Send or
+Enter explicitly submits the message and selected context; no extra confirmation
+checkbox is required. Shift+Enter adds a newline. Context controls, model and
+token/cost details and administrative links are collapsed out of the main chat.
 The server authors that projection; callers cannot supply raw context, a system
 prompt, model, tools or URLs. A SHA-256 fingerprint rejects changes between
 preview and send. The fingerprint is a freshness check, not authentication;
@@ -87,3 +93,10 @@ Implementation validation: TypeScript, production build and 1,381 tests across
 58 files passed. Ten new assistant browser scenarios plus 78 existing Guide,
 AI, Jev, helper/naming, table and desktop scenarios passed against the dummy HA
 with writes intercepted. The assistant panel screenshot was visually inspected.
+
+The subsequent floating-window correction passed TypeScript, production build,
+all 1,381 unit/API tests and 21 relevant browser scenarios: 14 assistant flows
+and seven table/layout regressions. Desktop and mobile screenshots were visually
+inspected. Additional checks cover unchanged page width, half-height bounds,
+short screens, long-reply scrolling, fixed composer, Enter/Shift+Enter, and
+Escape/focus behavior for collapsed options.

@@ -78,6 +78,17 @@ body {
   font-size: 14px;
 }
 
+.assistant-window {
+  position: fixed;
+  right: 20px;
+  bottom: 80px;
+  z-index: 40;
+  width: min(400px, calc(100vw - 32px));
+  height: min(55dvh, 600px);
+  min-height: min(340px, calc(100dvh - 100px));
+  max-height: calc(100dvh - 100px);
+}
+
 /* Tailwind's reset gives buttons the arrow cursor; an enabled one is clickable. */
 button:not(:disabled),
 [role="button"]:not([aria-disabled="true"]) {
