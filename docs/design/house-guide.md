@@ -7,26 +7,26 @@ advice describes types, placement and integration needs, never brands or models.
 
 ## Completion requirements
 
-- [ ] A house overview and an ordered, area-by-area setup path.
-- [ ] Persisted room purposes and chosen outcomes, not one mandatory equipment
+- [x] A house overview and an ordered, area-by-area setup path.
+- [x] Persisted room purposes and chosen outcomes, not one mandatory equipment
   checklist for every room. Suggested purposes require confirmation.
-- [ ] Explain detected, counted, excluded, disabled and unavailable equipment.
+- [x] Explain detected, counted, excluded, disabled and unavailable equipment.
   Include switches and physical controls without assuming every switch is a light.
-- [ ] Explain missing equipment types and placement for lighting, motion,
+- [x] Explain missing equipment types and placement for lighting, motion,
   stationary presence, climate, media, ventilation and relevant safety features.
-- [ ] Show each required helper's exact configured ID, sources and actual
+- [x] Show each required helper's exact configured ID, sources and actual
   planner status. Distinguish pending changes from installed helpers.
-- [ ] Guide the user through prerequisites, helper creation/adoption, parameter
+- [x] Guide the user through prerequisites, helper creation/adoption, parameter
   choices, blueprint installation and post-install checks using existing planners.
-- [ ] Day lighting, gentle night lighting and manual override are explained and
+- [x] Day lighting, gentle night lighting and manual override are explained and
   generated from tested native blueprints using motion and presence appropriately.
-- [ ] Guest, away and sleep behavior has explicit precedence and clear effects
+- [x] Guest, away and sleep behavior has explicit precedence and clear effects
   on lighting, climate and media; unknown presence must not mean an empty house.
-- [ ] Automation ideas from Reddit and the HA community are linked and mapped
+- [x] Automation ideas from Reddit and the HA community are linked and mapped
   to prerequisites and implementation status, with no borrowed code assumed safe.
-- [ ] Read errors, unavailable sensors, conflicting automations, queued proposals
+- [x] Read errors, unavailable sensors, conflicting automations, queued proposals
   and untested physical behavior never become an unsupported "fully ready" claim.
-- [ ] Unit, API and dummy-data browser verification cover the complete guide
+- [x] Unit, API and dummy-data browser verification cover the complete guide
   path, migrations and preservation of existing settings.
 
 Live HA remains read-only during development. No app update/restart, Apply or
@@ -117,3 +117,26 @@ starting another notification cycle. Those four native blueprints move to v2.
 These are proposal-only updates until the user chooses Apply. The condition and
 wait behavior follows the official [condition building block](https://www.home-assistant.io/building-blocks/condition/)
 and [wait building block](https://www.home-assistant.io/building-blocks/wait_for_trigger/) documentation.
+
+
+## Delivery verification — 28 October 2026
+
+The application scope above is implemented and merged through PRs #10–#15 at
+`0c163f817310f03fc77bd6f93ff11249bbb0ff41`. Its Git tree
+`a6a2070f601b7f10b7b1788838488025657abfa7` exactly matches the combined local
+verification tree. TypeScript, production build and all **1,333 tests across 56
+files** passed. **53 dummy-data browser scenarios** passed: 14 Guide, 24 helper/
+naming, eight AI-model and seven table-layout scenarios. The latter covered 24
+rendered tables. Writes were intercepted in the browser; API/helper tests used
+isolated SQLite stores and fake Home Assistant backends.
+
+Each PR passed refreshed check and amd64/arm64 image CI before merging. This
+verifies the delivered application and its proposal workflow; it is not a claim
+that David's physical rooms have been tested. The `.env` and existing local
+SQLite files still match their pre-work backup hashes. No live app installation,
+update, restart, Apply, entity rename or device control was performed.
+
+The latest merged work is eligible for the separately scheduled **0.7.0 release
+at 07:30 Europe/Athens**. Until that release is published, main is ahead of the
+installed/released version. The schedule publishes images and metadata; it does
+not install the app on the live house.
