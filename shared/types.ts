@@ -186,7 +186,7 @@ export type ChangeFields = {
   // with its canonical entity id and area; for a temperature or humidity sensor
   // the area can be pointed at it in the same step. A recipe's own helpers are a
   // timer (with its duration), an input boolean, a template binary sensor and a
-  // schedule (with its comfort periods); the house's away and sleep switches are
+  // schedule (with its comfort periods); the house's away, sleep and guest switches are
   // input booleans with no area.
   // A derivative sensor (a humidity's rate of change) has the one sensor it derives
   // from as its only member, and goes in the area of that sensor.

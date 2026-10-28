@@ -65,8 +65,28 @@ the Guide page, saved room purposes/goals, deterministic equipment and helper
 assessment, parameter links, native recipe queueing and explicit room-test guidance.
 API tests cover persistence and stale-write protection; mock-browser flows cover
 onboarding, goal preservation, failed reads, queued helpers/blueprints and mobile
-draft protection. House-mode setup and verified room-test records remain to build.
+draft protection. The house-mode increment is described below; verified
+room-test records remain to build.
 The checklist above remains
 the acceptance scope; this document does not mark a smaller first increment as
 the completed goal. Pending PRs #10 and #11 remain preserved separately. This
 guide branch starts from #11 so its helper filters and queue actions are retained.
+
+
+## House-mode increment
+
+The Guide now plans native Away, Sleep and Guest toggles, uses existing selected
+switches, and queues missing Taxis toggles through Changes. It does not toggle
+modes itself or infer empty-house status from residents' geolocation. Area
+parameter overrides are shown in each room's guide.
+
+Motion lights v5 can pause for guests, suppress automatic turn-on while Away,
+and use Sleep/night targets with a bedroom guard. A mode change does not force
+a light state. Manual light overrides remain available. The final off after a
+dimming delay rechecks Pause and Guest. Media off v2 rechecks occupancy, Pause
+and Guest at execution time. Area climate v4 lets Guest override Away and the
+scheduled occupancy requirement, retaining season/window/sleep/night precedence.
+All changes require an explicit proposal review and Apply; publishing or opening
+the Guide does not alter existing live automations. Bedroom guide choices require
+an explicit matching bedroom classification in Capabilities instead of silently
+rewriting inventory preferences. Verified room-test records remain to build.

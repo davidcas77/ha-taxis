@@ -467,6 +467,20 @@ describe("a schedule and the house switches", () => {
     expect(t.state("input_boolean.taxis_away")?.state).toBe("off");
   });
 
+  it("creates the guided guest switch off, without an area, and never resets it on repeat Apply", async () => {
+    const t = setup();
+    const guest = { ...createAway(), after: { helper: "input_boolean", entity_id: "input_boolean.taxis_guest", name: "Taxis guest mode", icon: "mdi:account-group" } };
+    expect(await applyHelperChanges([guest], t.io())).toMatchObject([{ ok: true }]);
+    expect(t.fake.writes().ws.map((w) => w.type)).toEqual(["input_boolean/create", "config/entity_registry/update"]);
+    expect(t.entity("input_boolean.taxis_guest")?.area_id).toBeUndefined();
+    expect(t.state("input_boolean.taxis_guest")?.state).toBe("off");
+    t.state("input_boolean.taxis_guest")!.state = "on";
+    const writes = t.fake.writes().ws.length;
+    expect(await applyHelperChanges([guest], t.io())).toMatchObject([{ ok: true }]);
+    expect(t.fake.writes().ws).toHaveLength(writes);
+    expect(t.state("input_boolean.taxis_guest")?.state).toBe("on");
+  });
+
   it("applying again makes nothing twice, and a schedule of that name somewhere else is not copied", async () => {
     const t = setup();
     expect(await applyHelperChanges([createSchedule()], t.io())).toMatchObject([{ ok: true }]);

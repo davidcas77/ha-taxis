@@ -315,8 +315,8 @@ describe("occupancy", () => {
 describe("motion lights", () => {
   const tree = parsed("taxis/motion_lights.yaml");
   const triggers = list(tree.triggers).map(obj);
-  const branches = list(obj(list(tree.actions)[0]).choose).map(obj);
-  const branch = (id: string) => branches.find((b) => JSON.stringify(b.conditions) === JSON.stringify([{ condition: "trigger", id }]))!;
+  const branches = list(list(tree.actions).map(obj).find((step) => step.choose)!.choose).map(obj);
+  const branch = (id: string) => branches.find((b) => list(b.conditions).map(obj).some((condition) => condition.condition === "trigger" && condition.id === id))!;
   const sequence = (id: string) => list(branch(id).sequence).map(obj);
 
   it("restarts when it is triggered again", () => {
@@ -380,8 +380,8 @@ describe("motion lights", () => {
     }
   });
 
-  it("is version 4: the entry lights are an optional list of lights, empty by default, and the day profile turns them on", () => {
-    expect(BLUEPRINTS.find((b) => b.path === "taxis/motion_lights.yaml")!.version).toBe(4);
+  it("is version 5: the entry lights are an optional list of lights, empty by default, and the day profile turns them on", () => {
+    expect(BLUEPRINTS.find((b) => b.path === "taxis/motion_lights.yaml")!.version).toBe(5);
     const entry = obj(obj(obj(tree.blueprint).input).entry_lights);
     expect(entry.default).toEqual([]);
     expect(obj(obj(entry.selector).entity).multiple).toBe(true);
@@ -433,6 +433,8 @@ describe("motion lights", () => {
     expect(obj(dim.target).entity_id).toMatch(/expand\(light_target\) \| selectattr\('state', 'eq', 'on'\)/);
     // The turn-off re-checks that the area is clear and the lights are on.
     expect(list(turnOff.if).map(obj)).toEqual([
+      { condition: "state", entity_id: { input: "pause_switch" }, state: "off" },
+      { condition: "template", value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}" },
       { condition: "state", entity_id: { input: "occupied_entity" }, state: "off" },
       { condition: "state", entity_id: { input: "light_target" }, state: "on" },
     ]);
@@ -471,12 +473,28 @@ describe("motion lights", () => {
     expect(servicesOf(tree)).toEqual(["light.turn_off", "light.turn_on", "timer.cancel", "timer.start"]);
   });
 
+  it("gates every automatic light branch for guests, gates turn-on for away, and keeps manual overrides available", () => {
+    for (const id of ["occupied", "clear", "extended", "override_end"]) {
+      const conditions = list(branch(id).conditions).map(obj);
+      expect(conditions[0]).toEqual({ condition: "trigger", id });
+      expect(conditions[1]).toEqual({ condition: "template", value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}" });
+      if (id === "occupied" || id === "extended") expect(conditions[2]).toEqual({ condition: "template", value_template: "{{ away_entity == '' or is_state(away_entity, 'off') or is_state(guest_entity, 'on') }}" });
+      else expect(conditions).toHaveLength(2);
+    }
+    expect(branch("manual").conditions).toEqual([{ condition: "trigger", id: "manual" }]);
+    expect(String(variable(tree, "asleep"))).toContain("is_bedroom and is_state(sleep_entity, 'on')");
+    expect(String(variable(tree, "in_night"))).toContain("is_state(sleep_entity, 'on') or");
+    const defaults = obj(obj(tree.blueprint).input);
+    for (const key of ["guest_entity", "away_entity", "sleep_entity"]) expect(obj(defaults[key]).default).toBe("");
+    expect(obj(defaults.guest_pause_lighting).default).toBe(true);
+  });
+
   it("refers only to trigger ids it has", () => checkTriggerIds(tree));
 });
 
 describe("media off", () => {
   const tree = parsed("taxis/media_off.yaml");
-  const branches = list(obj(list(tree.actions)[0]).choose).map(obj);
+  const branches = list(list(tree.actions).map(obj).find((step) => step.choose)!.choose).map(obj);
 
   it("runs queued, so two triggers at the same moment both run", () => {
     expect(tree.mode).toBe("queued");
@@ -506,6 +524,14 @@ describe("media off", () => {
     expect(servicesOf(tree)).toEqual(["media_player.turn_off"]);
   });
 
+  it("rechecks occupancy, pause and guest state when a queued run actually executes", () => {
+    expect(list(tree.actions).slice(0, 3).map(obj)).toEqual([
+      { condition: "state", entity_id: { input: "occupied_entity" }, state: "off" },
+      { condition: "state", entity_id: { input: "pause_switch" }, state: "off" },
+      { condition: "template", value_template: "{{ not guest_pause_media or guest_entity == '' or is_state(guest_entity, 'off') }}" },
+    ]);
+  });
+
   it("refers only to trigger ids it has", () => checkTriggerIds(tree));
 });
 
@@ -527,12 +553,13 @@ describe("area climate", () => {
   });
 
   it("is triggered by the inputs, never by the thermostats it sets", () => {
-    expect(triggers.map((t) => t.trigger)).toEqual(["homeassistant", ...Array(9).fill("state"), "time", "time"]);
+    expect(triggers.map((t) => t.trigger)).toEqual(["homeassistant", ...Array(10).fill("state"), "time", "time"]);
     expect(triggers.map(inputOf).filter(Boolean)).toEqual([
       "opening_entities",
       "opening_entities",
       "opening_entities",
       "away_entity",
+      "guest_entities",
       "sleep_entity",
       "bed_entities",
       "occupied_entities",
@@ -542,7 +569,7 @@ describe("area climate", () => {
     expect(triggers[0]).toEqual({ trigger: "homeassistant", id: "start", event: "start" });
     // A change of state only (to: null): a schedule's next event and a sensor's battery change all the time.
     const plain = triggers.filter((t) => t.trigger === "state" && !("for" in t) && t.to !== "on" && t.to !== "off");
-    expect(plain).toHaveLength(6);
+    expect(plain).toHaveLength(7);
     for (const t of plain) expect(t.to).toBeNull();
   });
 
@@ -590,11 +617,11 @@ describe("area climate", () => {
     expect(text("open_now")).toMatch(/select\('is_state', 'on'\)/);
     expect(text("shut_now")).toMatch(/select\('is_state', 'off'\)/);
     // Away is the house switch; sleep needs a bedroom, then a bed sensor on or the house sleep switch.
-    expect(text("away")).toBe("{{ is_state(away_entity, 'on') }}");
+    expect(text("away")).toBe("{{ is_state(away_entity, 'on') and not guest }}");
     expect(text("sleeping")).toBe("{{ is_bedroom and ((bed_entities | select('is_state', 'on') | list | count) > 0 or is_state(sleep_entity, 'on')) }}");
     expect(text("in_night")).toMatch(/\(t >= night_start or t < night_end\) if night_start > night_end else \(night_start <= t < night_end\)/);
     // Comfort: the schedule on, and (occupancy not needed, or occupied, or clear for less than the eco delay).
-    expect(text("comfort_now")).toBe("{{ is_state(schedule_entity, 'on') and ((not needs_occupancy) or occupied_ok) }}");
+    expect(text("comfort_now")).toBe("{{ is_state(schedule_entity, 'on') and (guest or (not needs_occupancy) or occupied_ok) }}");
     expect(text("occupied_ok")).toBe(
       "{{ occupied_entity == '' or not is_state(occupied_entity, 'off') or (now() - states[occupied_entity].last_changed).total_seconds() < (eco_after_clear | float(0)) * 60 }}",
     );
@@ -635,7 +662,7 @@ describe("area climate", () => {
     expect(String(each.use_preset)).toBe("{{ preset_name != '' and preset_name in presets }}");
     expect(String(each.presets)).toMatch(/state_attr\(t, 'preset_modes'\) or \[\]/);
     expect(String(each.opposite_mode)).toBe("{{ (st == 'heat' and mode_wanted == 'cool') or (st == 'cool' and mode_wanted == 'heat') }}");
-    expect(BLUEPRINTS.find(b => b.path === "taxis/area_climate.yaml")!.version).toBe(3);
+    expect(BLUEPRINTS.find(b => b.path === "taxis/area_climate.yaml")!.version).toBe(4);
     expect(String(each.on_ok)).toBe("{{ (not opposite_mode or (auto_hvac_on and mode_wanted in modes)) and (st != 'off' or (mode_wanted in modes and (reference is none or (reference > goal if season == 'cooling' else reference < goal)))) }}");
   });
 
@@ -753,7 +780,7 @@ describe("bathroom fan", () => {
 describe("exterior lights", () => {
   const tree = parsed("taxis/exterior_lights.yaml");
   const triggers = list(tree.triggers).map(obj);
-  const branches = list(obj(list(tree.actions)[0]).choose).map(obj);
+  const branches = list(list(tree.actions).map(obj).find((step) => step.choose)!.choose).map(obj);
   const dflt = list(obj(list(tree.actions)[0]).default).map(obj);
 
   it("restarts when it is triggered again, so the clock starts again", () => {

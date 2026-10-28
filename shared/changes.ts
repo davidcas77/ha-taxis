@@ -189,9 +189,9 @@ function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>):
   }
   if (!("helper" in fields)) return "A new helper needs a kind.";
   if (!("entity_id" in fields)) return "A new helper needs an entity id.";
-  // The house's away and sleep switches belong to no area.
+  // The house's mode switches belong to no area.
   const house = fields.helper === "input_boolean" && HOUSE_HELPER_IDS.includes(String(fields.entity_id));
-  if (house && "area_id" in fields) return "The house's away and sleep switches have no area.";
+  if (house && "area_id" in fields) return "The house's mode switches have no area.";
   // A light group of a floor or of the house gathers other groups and goes in no area.
   const floating = fields.helper === "group" && fields.group_type === "light";
   if (!house && !floating && !("area_id" in fields)) return "A new helper needs an area.";

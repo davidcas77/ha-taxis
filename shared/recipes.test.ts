@@ -623,7 +623,7 @@ describe("motion lights: roles, sleep and the manual override", () => {
       "Accent lights: none → light.living_lamp",
       "Override timer: none → timer.living_override",
       "Manual override lasts (min): none → 0",
-      "The blueprint is version 3, Taxis has 4",
+      "The blueprint is version 3, Taxis has 5",
     ]);
   });
 
@@ -2188,5 +2188,38 @@ describe("ambiguous canonical area codes", () => {
     const pending: Change = { id: 10, kind: "automation", op: "create", targetId: "taxis_occupancy_living", scope: null, before: {}, after: {}, createdAt: "now" };
     expect(planRecipes(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, [pending]).find(c => c.areaId === "living_room" && c.recipe === "occupancy")!.status).toBe("missing");
     expect(planAnnounce(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []).missing.join(" ")).toMatch(/code “living”/);
+  });
+});
+
+
+describe("optional house modes in native recipes", () => {
+  const base = [motion, spots, lights, speaker, ...runtime];
+  const occInstalled = { automations: { [automationIdFor("occupancy", "living")]: { alias: "Living occupancy", path: OCC.path, input: {} } } };
+  const mode = (name: string, state = "off"): Spec => ({ id: `input_boolean.taxis_${name}`, platform: "input_boolean", state });
+  it("keeps optional mode inputs absent until switches exist or are deliberately queued", () => {
+    const c = cell(plan(base, { installed: occInstalled }), "motion_lights");
+    expect(autoInput(c)).not.toHaveProperty("guest_entity");
+    expect(autoInput(c)).not.toHaveProperty("away_entity");
+    const queued = [change({ kind: "helper", targetId: "new:helper:1", after: { helper: "input_boolean", entity_id: "input_boolean.taxis_guest" } })];
+    const updated = cell(plan(base, { installed: occInstalled, changes: queued }), "motion_lights");
+    expect(autoInput(updated)).toMatchObject({ guest_entity: "input_boolean.taxis_guest", guest_pause_lighting: true });
+    expect(updated.inputs.filter((i) => i.kind === "helper")).toEqual([]);
+  });
+  it("wires the effective modes and per-area guest exceptions to the right recipes", () => {
+    const params = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "guest_pause_lighting", false);
+    const inv = setBedroom(EMPTY_INVENTORY, "living_room", true);
+    const cells = plan([...base, mode("guest"), mode("away"), mode("sleep")], { installed: occInstalled, params, inv });
+    expect(autoInput(cell(cells, "motion_lights"))).toMatchObject({ guest_entity: "input_boolean.taxis_guest", away_entity: "input_boolean.taxis_away", sleep_entity: "input_boolean.taxis_sleep", is_bedroom: true, guest_pause_lighting: false });
+    expect(autoInput(cell(cells, "media_off"))).toMatchObject({ guest_entity: "input_boolean.taxis_guest", guest_pause_media: true });
+  });
+  it("blocks recipes when a selected or existing guest switch cannot be used", () => {
+    const params = setParameter(EMPTY_PARAMETERS, { level: "house" }, "guest_mode_entity", "input_boolean.visitors");
+    expect(cell(plan(base, { installed: occInstalled, params }), "motion_lights").status).toBe("missing");
+    expect(cell(plan([...base, mode("guest", "unavailable")], { installed: occInstalled }), "media_off").missing.join(" ")).toContain("state cannot be used");
+  });
+  it("gives climate guest input without proposing a second guest switch", () => {
+    const cells = plan([{ id: "climate.living", platform: "demo" }, mode("guest")]);
+    expect(autoInput(cell(cells, "area_climate"))).toHaveProperty("guest_entities", ["input_boolean.taxis_guest"]);
+    expect(cell(cells, "area_climate").inputs.filter((i) => i.fields?.entity_id === "input_boolean.taxis_guest")).toEqual([]);
   });
 });

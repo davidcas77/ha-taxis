@@ -6,6 +6,7 @@ import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, type InventorySettings, 
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import { entryLights, resolve, resolveAll, resolveIn, withSeconds, type ParameterSettings } from "./parameters.ts";
 import { canonicalPeriods, DEFAULT_COMFORT_PERIODS } from "./periods.ts";
+import { planHouseModes, recipeHouseModes } from "./house-modes.ts";
 import type { Change, ChangeInput, Hierarchy } from "./types.ts";
 
 // Recipes: for each area, whether Taxis can install a recipe (an automation made
@@ -128,6 +129,10 @@ const INPUT_LABEL: Record<string, string> = {
   pause_switch: "Pause switch",
   occupied_entity: "Occupied sensor",
   light_target: "Lights",
+  guest_entity: "Guest mode switch",
+  guest_entities: "Guest mode switches",
+  guest_pause_lighting: "Guest mode pauses automatic lighting",
+  guest_pause_media: "Guest mode keeps media on",
   entry_lights: "Entry lights",
   main_lights: "Main lights",
   accent_lights: "Accent lights",
@@ -284,6 +289,10 @@ export function planRecipes(
     const code = codes[area.id].code;
     const ids = runtimeIds(code);
     const values = resolveAll(params, h, inventory, area.id);
+    const houseModes = planHouseModes(h, params, inventory, changes, area.id);
+    const modes = recipeHouseModes(houseModes);
+    const modeProblems = (keys: string[]) => houseModes.filter((row) => keys.includes(row.key) && row.status === "review").map((row) => `${row.label} mode: ${row.detail} (${row.id})`);
+    const guestInput = modes.guest ? { guest_entity: modes.guest } : {};
     const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
     const usable = [ids.timer, ids.occupied, ids.switch, ids.override, ids.schedule, ids.rate].every((id) => ENTITY_ID_RE.test(id));
 
@@ -467,6 +476,11 @@ export function planRecipes(
       accent_lights: accentLights,
       night_lights: nightLights,
       bed_entities: bedSensors,
+      ...(areaChoice(inventory, area.id).bedroom ? { is_bedroom: true } : {}),
+      ...(modes.away ? { away_entity: modes.away } : {}),
+      ...(modes.sleep ? { sleep_entity: modes.sleep } : {}),
+      ...guestInput,
+      ...(modes.guest ? { guest_pause_lighting: values.guest_pause_lighting } : {}),
       ...(lux ? { lux_entity: lux } : {}),
       lux_threshold: values.lux_threshold,
       night_start: withSeconds(values.night_start as string),
@@ -484,7 +498,7 @@ export function planRecipes(
       pause_switch: ids.switch,
     };
 
-    const lightMissing: string[] = needsOccupancy();
+    const lightMissing: string[] = [...needsOccupancy(), ...modeProblems(["away", "sleep", "guest"])];
     if (!lights) {
       if (!lightsPending) lightMissing.push("A light group (make it on the Helpers tab)");
     } else if (lights.domain !== "light" || lights.platform !== "group") {
@@ -553,9 +567,11 @@ export function planRecipes(
       tv_entities: viaGroup && tvs.length > 0 ? [mediaId] : tvs,
       speaker_minutes: values.media_off_after,
       tv_minutes: values.tv_off_after,
+      ...guestInput,
+      ...(modes.guest ? { guest_pause_media: values.guest_pause_media } : {}),
       pause_switch: ids.switch,
     };
-    const mediaMissing: string[] = needsOccupancy();
+    const mediaMissing: string[] = [...needsOccupancy(), ...modeProblems(["guest"])];
     if (speakers.length + tvs.length === 0) mediaMissing.push("A speaker or a TV that counts (Capabilities)");
     const mediaReasons = automationReasons("media_off", mediaOffId, mediaInput);
     if (installed.automations[mediaOffId]) mediaReasons.push(...blueprintReason("media_off"));
@@ -598,11 +614,16 @@ export function planRecipes(
         const e = h.entities[picked];
         if (!e) missing.push(`The ${what} switch “${picked}” isn't in Home Assistant (Parameters, House)`);
         else if (e.domain !== "input_boolean") missing.push(`The ${what} switch “${picked}” isn't a toggle (an input boolean)`);
+        else if (e.disabled || !["on", "off"].includes(e.state ?? "")) missing.push(`The ${what} switch “${picked}” is disabled or unavailable`);
         return [];
       }
       const held = heldBy(h, id, "input_boolean");
       if (held.state === "taken") {
         missing.push(`${id} is already used by “${held.name}”. Pick a switch of your own for ${what} (Parameters, House)`);
+        return [];
+      }
+      if (held.state === "ok" && (h.entities[id].disabled || !["on", "off"].includes(h.entities[id].state ?? ""))) {
+        missing.push(`The ${what} switch “${id}” is disabled or unavailable`);
         return [];
       }
       if (held.state === "ok" || pendingHelper(changes, id)) return [];
@@ -612,6 +633,8 @@ export function planRecipes(
       ...houseSwitch(climateMissing, awayId, awayPicked, "away mode", "Taxis away mode", "mdi:home-export-outline"),
       ...houseSwitch(climateMissing, sleepId, sleepPicked, "sleep mode", "Taxis sleep mode", "mdi:sleep"),
     ];
+
+    climateMissing.push(...modeProblems(["guest"]));
 
     const windowId = canonicalId("binary_sensor", code, suffix.window);
     const doorId = canonicalId("binary_sensor", code, suffix.door);
@@ -640,6 +663,7 @@ export function planRecipes(
       bed_entities: bedSensors,
       is_bedroom: bedroom,
       away_entity: awayId,
+      ...(modes.guest ? { guest_entities: [modes.guest] } : {}),
       sleep_entity: sleepId,
       schedule_entity: ids.schedule,
       ...(tempThere ? { temperature_entity: tempId } : {}),

@@ -60,6 +60,9 @@ export const PARAM_KEYS = [
   "night_end",
   "away_mode_entity",
   "sleep_mode_entity",
+  "guest_mode_entity",
+  "guest_pause_lighting",
+  "guest_pause_media",
   "notify_targets",
   "tts_entity",
   "hold_timeout",
@@ -130,6 +133,9 @@ export const PARAMS: readonly ParamDef[] = [
   // "": Taxis makes input_boolean.taxis_away / taxis_sleep when Area climate is installed.
   { key: "away_mode_entity", tab: "house", label: "Away mode switch", unit: null, kind: "entity", domain: "input_boolean", default: "" },
   { key: "sleep_mode_entity", tab: "house", label: "Sleep mode switch", unit: null, kind: "entity", domain: "input_boolean", default: "" },
+  { key: "guest_mode_entity", tab: "house", label: "Guest mode switch", unit: null, kind: "entity", domain: "input_boolean", default: "" },
+  { key: "guest_pause_lighting", tab: "lighting", label: "Guest mode pauses automatic lighting", unit: null, kind: "bool", default: true },
+  { key: "guest_pause_media", tab: "media", label: "Guest mode keeps media on", unit: null, kind: "bool", default: true },
   // Where the notifications of Left open and Appliance done go: notify services, one
   // value for the house. Empty: Home Assistant's own notifications.
   { key: "notify_targets", tab: "house", label: "Notify services", unit: null, kind: "services", domain: "notify", houseOnly: true, default: [] },
