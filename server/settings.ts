@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { EMPTY_GUIDE, validateGuide, type GuideSettings } from "../shared/guide.ts";
 
 import {
   AI_EFFORTS,
@@ -127,6 +128,15 @@ export function settingsStore(db: DatabaseSync) {
     saveParameters(s: ParameterSettings): void {
       put.run("parameters", JSON.stringify(s));
     },
+    guide(): GuideSettings {
+      const row = get.get("guide") as { value: string } | undefined;
+      if (!row) return structuredClone(EMPTY_GUIDE);
+      try {
+        const checked = validateGuide(JSON.parse(row.value));
+        return checked.ok ? checked.value : structuredClone(EMPTY_GUIDE);
+      } catch { return structuredClone(EMPTY_GUIDE); }
+    },
+    saveGuide(s: GuideSettings): void { put.run("guide", JSON.stringify(s)); },
     ai(): AiSettings {
       const row = get.get("ai") as { value: string } | undefined;
       if (!row) return structuredClone(DEFAULT_AI);

@@ -661,9 +661,9 @@ function AreaView({ h, area, filters, select, rows, tab, onTab, go, onEditArea, 
       <Heading
         title={area.name}
         action={
-          <Button onClick={onEditArea}>
+          <div className="flex flex-wrap gap-2"><Button onClick={() => go({ page: "guide", areaId: area.id })}>Guide this area</Button><Button onClick={onEditArea}>
             <Pencil className="size-3.5" aria-hidden /> Edit area
-          </Button>
+          </Button></div>
         }
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
