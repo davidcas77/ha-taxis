@@ -385,7 +385,8 @@ export type Route =
   | { page: "guide"; areaId: string | null }
   | { page: "health" }
   | { page: "changes" }
-  | { page: "settings" };
+  | { page: "settings" }
+  | { page: "ai-admin" };
 
 export type Selection =
   | { kind: "home" }
@@ -420,6 +421,8 @@ export function parseHash(hash: string): Route {
       return { page: "changes" };
     case "settings":
       return { page: "settings" };
+    case "ai-admin":
+      return { page: "ai-admin" };
     case "organize":
       // Floors and areas used to be two types; their links still open the tree.
       if (a === "floors" || a === "areas") return { page: "organize", type: "spaces", id: b ? `${a === "floors" ? "floor" : "area"}:${b}` : null };
@@ -453,6 +456,7 @@ export function toHash(r: Route): string {
     case "health":
     case "changes":
     case "settings":
+    case "ai-admin":
       return `#${r.page}`;
     case "parameters":
       return `#parameters/${r.tab}`;

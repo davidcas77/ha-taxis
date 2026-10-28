@@ -33,6 +33,9 @@ import { readInstalled } from "./changes/recipes.ts";
 import { changeStore } from "./changes/store.ts";
 import { aiLedger } from "./ai/ledger.ts";
 import { aiRoutes } from "./ai/routes.ts";
+import { aiService } from "./ai/service.ts";
+import { assistantRoutes } from "./ai/assistant.ts";
+import { assistantContext } from "./ai/assistant-context.ts";
 import { jevRoutes } from "./jev/routes.ts";
 import { jevLedger } from "./jev/ledger.ts";
 import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
@@ -325,6 +328,22 @@ app.route(
   "/api",
   aiRoutes({ settings, ledger: aiLedger(store.db), protect: addLogSecret, redact: (m) => redact(m, token) }),
 );
+
+const redactAssistant = (text: string) => {
+  let out = redact(text, token);
+  for (const provider of AI_PROVIDERS) out = redact(out, settings.aiKey(provider) ?? undefined);
+  out = redact(out, settings.jevKey() ?? undefined);
+  return out.replace(/\bsk-[A-Za-z0-9_*.-]{4,}/g, "[redacted]").replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, "$1 [redacted]");
+};
+const assistantLedger = aiLedger(store.db);
+app.route("/api", assistantRoutes({
+  db: store.db, settings, service: aiService({ settings, ledger: assistantLedger }),
+  ledger: assistantLedger, jevLedger: jevLedger(store.db), redact: redactAssistant,
+  context: async scope => {
+    const h = scope.includeData ? preview((await loadRead(false)).read) : null;
+    return assistantContext(scope, h, changes.list(), settings, redactAssistant);
+  },
+}));
 
 // Separate decision provider. No hierarchy or HA mutation dependency is passed.
 app.route("/api", jevRoutes({

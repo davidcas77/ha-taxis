@@ -59,6 +59,10 @@ const MIGRATIONS: string[] = [
      model TEXT NOT NULL, status TEXT NOT NULL, input_tokens INTEGER,
      output_tokens INTEGER, estimated_usd REAL
    ); CREATE INDEX IF NOT EXISTS jev_usage_at ON jev_usage(at);`,
+  `CREATE TABLE IF NOT EXISTS assistant_activity (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, action TEXT NOT NULL,
+     page TEXT NOT NULL, scope TEXT NOT NULL, tier TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL
+   );`,
 ];
 
 const KEEP_SNAPSHOTS = 10;

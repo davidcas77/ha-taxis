@@ -1,4 +1,6 @@
 import { RecipesPage } from "./recipes.tsx";
+import { AskTaxis } from "./assistant.tsx";
+import { AiAdminPage } from "./ai-admin.tsx";
 import { GuidePage } from "./guide.tsx";
 import { Workflow, AlertTriangle, CheckCircle2, FolderTree, HeartPulse, Layers, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
@@ -33,6 +35,7 @@ function Shell() {
   const { hierarchy, changes, loading, error, notice, reload } = useTaxis();
   const health = useHealthCounts();
   const [route, go] = useRoute();
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [query, setQuery] = useState("");
   // Kept in this browser, like the folded floors.
   const [maintenance, setMaintenance] = useStoredFlag("taxis:tree:show-maintenance");
@@ -50,7 +53,7 @@ function Shell() {
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div className={`flex h-full flex-col ${assistantOpen ? "md:pr-[420px]" : ""}`}>
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line bg-surface px-4 py-2">
         <div className="flex items-center gap-2">
           <Layers className="size-5 text-accent" aria-hidden />
@@ -80,6 +83,7 @@ function Shell() {
           <Tab active={route.page === "settings"} onClick={() => go({ page: "settings" })} icon={<Settings className="size-4" aria-hidden />}>
             Settings
           </Tab>
+          <Tab active={route.page === "ai-admin"} onClick={() => go({ page: "ai-admin" })} icon={<Settings className="size-4" aria-hidden />}>AI</Tab>
         </nav>
         {hierarchy && (
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-muted">
@@ -130,7 +134,7 @@ function Shell() {
         </div>
       )}
 
-      {!hierarchy ? (
+      {route.page === "ai-admin" ? <AiAdminPage go={go} /> : !hierarchy ? (
         <div className="flex flex-1 items-center justify-center gap-2 text-muted">
           {loading ? (
             <>
@@ -192,6 +196,7 @@ function Shell() {
           </main>
         </div>
       )}
+      <AskTaxis route={route} h={hierarchy} open={assistantOpen} setOpen={setAssistantOpen} go={go} />
     </div>
   );
 }

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Ask Taxis.** A floating sparkle button opens contextual AI help on every
+  page: explanations use Medium, next-step advice Strong, and naming help Low.
+  Select an area, optionally include page data and review its exact context
+  before sending. Replies show model, token usage, cost and incomplete output.
+  Errors preserve the question; changing context prevents stale replies.
+- **AI administration.** The AI page lists connected functions, triggers,
+  model routing, shared data, separate AI/Jev usage and recent request results.
+  Only bounded request metadata is saved; conversations stay in panel memory.
+  Neither AI service has HA tools, automatic proposals, Apply or device control.
+
 - **Jev decisions.** Settings has a dedicated write-only TypeSafe API key field,
   pinned model selection, monthly request limit, usage and connection test,
   separate from the Low/Medium/Strong AI models. Keys can be replaced or removed;
