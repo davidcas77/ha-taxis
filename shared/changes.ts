@@ -1,5 +1,6 @@
 import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, BLUEPRINT_PATH_RE, blueprintByPath, blueprintForRecipe, checkBlueprintInput, isRecipeKey } from "./blueprints.ts";
 import { HOUSE_HELPER_IDS } from "./climate.ts";
+import { BUTTON_AUTOMATION_ID, validButtonMap } from "./buttons.ts";
 import { deviceClassError } from "./device-classes.ts";
 import { checkPeriods } from "./periods.ts";
 import { CATEGORY_SCOPES, type CategoryScope, type Change, type ChangeInput, type ChangeKind, type Hierarchy } from "./types.ts";
@@ -76,6 +77,7 @@ export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
     area_id: id,
     alias: str(),
     use_blueprint: useBlueprint,
+    button_map: validButtonMap,
   },
   script: {
     script_id: (v) => v === ANNOUNCE_SCRIPT_ID,
@@ -150,6 +152,11 @@ function validateBlueprint(fields: Record<string, unknown>): string | null {
 // An automation change is one recipe for one area: its id says which, and it
 // can only use that recipe's blueprint.
 function validateAutomation(fields: Record<string, unknown>): string | null {
+  if ('button_map' in fields) {
+    if(!BUTTON_AUTOMATION_ID.test(String(fields.automation_id)) || typeof fields.alias!=='string' || !validButtonMap(fields.button_map)) return 'A button mapping needs its managed automation id, alias and complete map.';
+    if(Object.keys(fields).some(k=>!['automation_id','alias','button_map'].includes(k))) return 'Button maps cannot also contain recipe or blueprint fields.';
+    return null;
+  }
   for (const key of ["automation_id", "recipe", "area_id", "alias", "use_blueprint"]) if (!(key in fields)) return `An automation change needs ${key.replace("_", " ")}.`;
   const automationId = String(fields.automation_id);
   const prefix = `taxis_${String(fields.recipe)}_`;
@@ -576,7 +583,7 @@ function planRecipePart(existing: Change[], input: ChangeInput, h: Hierarchy): M
   const fields = input.fields ?? {};
   const kind = input.kind as "blueprint" | "automation" | "script";
   const key = String(kind === "blueprint" ? fields.path : kind === "script" ? fields.script_id : fields.automation_id);
-  if (kind === "automation") {
+  if (kind === "automation" && !fields.button_map) {
     if (!h.areas[String(fields.area_id)]) return none("That area isn't in Home Assistant any more.");
   }
   const same = existing.find((c) => c.kind === kind && c.targetId === key);

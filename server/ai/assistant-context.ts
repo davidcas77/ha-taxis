@@ -7,6 +7,7 @@ import type { Hierarchy, Change } from "../../shared/types.ts";
 import type { settingsStore } from "../settings.ts";
 
 const PAGE_HELP: Record<AssistantScope["page"], string> = {
+  buttons: 'Buttons inventories physical remotes and HA button inputs across integrations. Supported gestures come from HA metadata. Existing automation matches distinguish exact from possible references. One managed automation per output combines different remotes, with per-trigger actions. Changes wait for Apply. The button AI review receives only selected control/mapping summaries and never modifies assignments.',
   areas: "Floors and areas show devices, entities, capability counts, naming and health. Counts and helper status are computed by rules.",
   guide: "House guide uses room type and selected automation goals to assess equipment, helpers and setup. The user records room tests; Jev reviews typed notes only on request.",
   parameters: "Capabilities chooses counted sources per area. Helpers Overview shows canonical IDs/status; Details can add selected helper proposals to Changes. Create is a status, not an Apply button. Other tabs configure recipe parameters.",

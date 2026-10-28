@@ -77,13 +77,23 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   status, requirements and proposed native automations for occupancy, lighting,
   media, climate, ventilation and notifications. The generated automations keep
   working when Taxis is stopped.
+- **Buttons:** inspect remotes, wall controls and HA button inputs across
+  integrations, grouped by button and advertised gesture. See existing automation
+  matches, assign lights/groups On, Off or Toggle, run scripts/scenes/automation
+  actions, or choose another registered service. **By output** lists every mapped
+  button controlling an entity. Taxis queues one native automation per output,
+  with separate actions per gesture; edits and disabling reuse that automation.
+  Existing handlers and unreadable configs block new mappings by default.
+  Explicit coexistence preserves those handlers. Unknown gesture metadata stays
+  visible as unknown; nothing runs until Changes → Apply. See
+  [Button action maps](docs/design/button-map.md) for discovery limits.
 - **Changes:** proposed Home Assistant edits wait in a list, shown as before →
   after. Apply backs up Home Assistant, applies the selected changes and their
   dependencies, and reads Home Assistant back to check each change. Apply history
   and unresolved repairs remain available across reloads and app restarts.
 
 Taxis never removes a device or an entity and does not call device-control
-services itself. It can create its own recipe automations and Announce script;
+services itself. It can create its own recipe/button automations and Announce script;
 in other automations, scripts, scenes and dashboards it only replaces renamed
 entity IDs. The native automations run inside Home Assistant and call the
 services they need. The commands Taxis may send are fixed in
@@ -135,6 +145,13 @@ At most 200 request metadata records are kept, with no questions, answers or roo
 identities. Chats stay in memory and clear when closed, scope changes or the app
 reloads. No background AI analysis runs. Jev remains a separate manual room-note
 review, not a hidden second model in the assistant. See [Ask Taxis](docs/design/ask-taxis.md).
+
+The Buttons page also offers a manual **AI review of existing button
+automations**, using Medium. Prepare and inspect its exact summary before
+sending. It includes only the selected control, advertised gestures, coverage
+notes and matching automation names/services/targets, not raw automation YAML
+or action data. It cannot assign actions or Apply. Its tokens/cost contribute to
+shared AI usage; recent assistant request history covers Ask Taxis only.
 
 ## Development
 

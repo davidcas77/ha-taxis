@@ -6,6 +6,7 @@ import type { ConfigKind, HaConfig, RestApi } from "../ha/rest.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
 import { searchRelated } from "../references/find.ts";
 import { mapLimit } from "../references/snapshot.ts";
+import { applyButtonChanges } from "../buttons/apply.ts";
 import type { Outcome } from "./apply.ts";
 
 // Applying a recipe: its blueprint, and its automation (or the announce script).
@@ -157,7 +158,10 @@ const sameConfig = (a: HaConfig | null, b: HaConfig): boolean => {
   return a.alias === b.alias && ua?.path === ub.path && sameValue(ua?.input ?? {}, ub.input);
 };
 
-export const applyAutomationChanges = (all: Change[], io: RecipeIO): Promise<Outcome[]> => applyConfigChanges(all, io, "automation");
+export const applyAutomationChanges = async (all: Change[], io: RecipeIO): Promise<Outcome[]> => [
+  ...await applyConfigChanges(all.filter(c=>!c.after.button_map), io, "automation"),
+  ...await applyButtonChanges(all.filter(c=>c.kind==='automation' && !!c.after.button_map),io),
+];
 export const applyScriptChanges = (all: Change[], io: RecipeIO): Promise<Outcome[]> => applyConfigChanges(all, io, "script");
 
 // What differs between the two: where the stored config lives, what its state in

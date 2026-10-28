@@ -34,6 +34,7 @@ export type MockHome = RawRegistry & {
   // Schedule helpers made in the UI, by their storage id: the name and the seven
   // days' periods as Home Assistant keeps them ("06:30:00").
   schedules: Record<string, Config>;
+  buttonTriggers?: Record<string, Config[]>;
   // Config flows in progress (helper creation, group options), and a counter
   // for the ids Home Assistant would generate.
   flows: { next: number; open: Record<string, MockFlow> };
@@ -463,6 +464,10 @@ export function handleMock(reg: MockHome | RawRegistry, type: string, p: Record<
       return ok(reg.config);
     case "get_states":
       return ok(reg.states);
+    case 'device_automation/trigger/list':
+      return ok((reg as MockHome).buttonTriggers?.[String(p.device_id)]??[]);
+    case 'get_services':
+      return ok({light:{turn_on:{target:{}},turn_off:{target:{}},toggle:{target:{}}},switch:{turn_on:{target:{}},turn_off:{target:{}},toggle:{target:{}}},script:{turn_on:{target:{}},turn_off:{target:{}}},automation:{trigger:{target:{}},turn_on:{target:{}},turn_off:{target:{}},toggle:{target:{}}},scene:{turn_on:{target:{}}},button:{press:{target:{}}},input_button:{press:{target:{}}},persistent_notification:{create:{fields:{message:{}}}}});
     case "config_entries/get":
       // What Home Assistant lists: no options, no data. The helpers set up in the UI, then the integrations the demo has.
       return ok([
@@ -783,6 +788,7 @@ export function handleMockRest(home: MockHome, method: string, path: string, bod
     const path = ((body as Config).use_blueprint as { path?: unknown } | undefined)?.path;
     const st = home.states.find((s) => s.entity_id.startsWith("automation.") && (s.attributes as Config | undefined)?.id === id);
     if (st && typeof path === "string") st.state = Object.hasOwn(home.blueprints ?? {}, path) ? "on" : "unavailable";
+    else if(st && typeof (body as Config).initial_state==='boolean') st.state=(body as Config).initial_state?'on':'off';
   }
   // HA shows the new title in the state: the alias, or a scene's name.
   const title = (body as Config)[kind === "scene" ? "name" : "alias"];
@@ -1385,5 +1391,24 @@ export function withSmartDemo(reg: MockHome): MockHome {
 
   reg.entities.push({ entity_id: "tts.home_assistant_cloud", platform: "tts", unique_id: "cloud" });
   reg.states.push({ entity_id: "tts.home_assistant_cloud", state: "unknown", attributes: { friendly_name: "Home Assistant Cloud" } } as RawState);
+  return reg;
+}
+
+export function withButtonDemo(reg:MockHome):MockHome {
+  reg.buttonTriggers={};
+  for(const [id,name,domain,buttons] of [
+    ['demo_wall_buttons','Bedroom wall control','aqara',['left','right','both']],
+    ['demo_six_buttons','Six-button remote','mqtt',['1','2','3','4','5','6']],
+  ] as const) {
+    reg.devices.push({id,name,manufacturer:'Demo only',model:`${domain} button controller`,area_id:'living_room'});
+    reg.buttonTriggers[id]=buttons.flatMap(subtype=>['short_press','double_press','long_press'].map(type=>({platform:'device',domain,device_id:id,type:`remote_button_${type}`,subtype})));
+  }
+  reg.devices.push({id:'demo_event_remote',name:'Matter bedside button',manufacturer:'Demo only',model:'Event remote',area_id:'living_room'});
+  reg.entities.push({entity_id:'event.bedside_button',platform:'matter',device_id:'demo_event_remote',unique_id:'bedside_event'});
+  reg.states.push({entity_id:'event.bedside_button',state:new Date().toISOString(),attributes:{friendly_name:'Bedside button',device_class:'button',event_types:['single_press','double_press','long_press']} as never});
+  const id='demo_button_handler';
+  reg.automations[id]={id,alias:'Existing wall button toggle',trigger:[reg.buttonTriggers.demo_wall_buttons[0]],action:[{service:'light.toggle',target:{entity_id:'light.living_lamp'}}]};
+  reg.entities.push({entity_id:`automation.${id}`,platform:'automation',unique_id:id});
+  reg.states.push({entity_id:`automation.${id}`,state:'on',attributes:{id,friendly_name:'Existing wall button toggle'}});
   return reg;
 }

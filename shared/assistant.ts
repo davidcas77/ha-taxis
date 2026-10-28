@@ -8,7 +8,7 @@ export const ASSISTANT_ACTIONS = {
   naming: { label: "Naming help", tier: "low", task: "naming", prompt: "Explain the configured naming and suggest consistent names for the supplied entities." },
 } as const;
 export type AssistantAction = keyof typeof ASSISTANT_ACTIONS;
-export const ASSISTANT_PAGES = ["areas", "guide", "parameters", "organize", "recipes", "health", "changes", "settings", "ai-admin"] as const;
+export const ASSISTANT_PAGES = ["areas", "guide", "parameters", "organize", "recipes", "health", "changes", "settings", "ai-admin", "buttons"] as const;
 export type AssistantScope = { page: (typeof ASSISTANT_PAGES)[number]; section: string; areaId: string | null; includeData: boolean };
 export type AssistantPreview = { fingerprint: string; title: string; content: string; omissions: string[] };
 export type AssistantMessage = { role: "user" | "assistant"; content: string };

@@ -36,6 +36,8 @@ import { aiRoutes } from "./ai/routes.ts";
 import { aiService } from "./ai/service.ts";
 import { assistantRoutes } from "./ai/assistant.ts";
 import { assistantContext } from "./ai/assistant-context.ts";
+import { discoverButtons, type ButtonRead } from "./buttons/discovery.ts";
+import { buttonRoutes } from "./buttons/routes.ts";
 import { jevRoutes } from "./jev/routes.ts";
 import { jevLedger } from "./jev/ledger.ts";
 import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
@@ -140,6 +142,20 @@ async function loadRead(force: boolean): Promise<{ read: Read; cached: boolean }
 // What the automations, scripts, scenes and dashboards hold, read once and shared
 // by every rename asked about. Kept like the registry read, and dropped after
 // Apply (which changes them).
+let buttonCache: { at:number; value:ButtonRead & {h:Hierarchy} } | null = null;
+let buttonInFlight: Promise<ButtonRead & {h:Hierarchy}> | null = null;
+async function loadButtons(refresh:boolean):Promise<ButtonRead & {h:Hierarchy}> {
+  if(!refresh && buttonCache && Date.now()-buttonCache.at<60000) return buttonCache.value;
+  buttonInFlight ??= (async()=>{
+    const generation=refsGeneration;
+    if(!ha || !rest) throw new Error('Home Assistant is not configured.');
+    const {read}=await loadRead(refresh);
+    const result=await discoverButtons(ha,rest,read.raw,read.live);
+    if(generation!==refsGeneration) throw new Error('Configuration changed while reading buttons; refresh again.');
+    const value={...result,h:read.live}; buttonCache={at:Date.now(),value}; return value;
+  })().finally(()=>{buttonInFlight=null;});
+  return buttonInFlight;
+}
 let refsCache: { at: number; snap: Snapshot } | null = null;
 let refsInFlight: Promise<Snapshot> | null = null;
 // Bumped when Apply drops the cache, so a read that started before it can't put
@@ -149,6 +165,7 @@ let refsGeneration = 0;
 // long as the read it came with.
 let blueprintCache: { at: number; read: Read; value: Record<string, number | null> | null } | null = null;
 const dropSnapshot = () => {
+  buttonCache = null;
   refsCache = null;
   blueprintCache = null;
   refsGeneration += 1;
@@ -336,6 +353,7 @@ const redactAssistant = (text: string) => {
   return out.replace(/\bsk-[A-Za-z0-9_*.-]{4,}/g, "[redacted]").replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, "$1 [redacted]");
 };
 const assistantLedger = aiLedger(store.db);
+app.route('/api',buttonRoutes({read:loadButtons,changes,applying:()=>applying,ai:aiService({settings,ledger:assistantLedger}),redact:redactAssistant}));
 app.route("/api", assistantRoutes({
   db: store.db, settings, service: aiService({ settings, ledger: assistantLedger }),
   ledger: assistantLedger, jevLedger: jevLedger(store.db), redact: redactAssistant,

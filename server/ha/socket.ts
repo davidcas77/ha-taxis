@@ -35,6 +35,8 @@ import { DAY_KEYS, MAX_RANGES_PER_DAY } from "../../shared/periods.ts";
 export const READ_COMMANDS = new Set([
   "get_config",
   "get_states",
+  "get_services",
+  "device_automation/trigger/list",
   "config/floor_registry/list",
   "config/area_registry/list",
   "config/device_registry/list",
