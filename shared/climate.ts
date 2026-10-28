@@ -34,7 +34,8 @@
 // (input booleans with no area), and the ends of the area ids the recipe adds.
 export const HOUSE_AWAY_ID = "input_boolean.taxis_away";
 export const HOUSE_SLEEP_ID = "input_boolean.taxis_sleep";
-export const HOUSE_HELPER_IDS: readonly string[] = [HOUSE_AWAY_ID, HOUSE_SLEEP_ID];
+export const HOUSE_GUEST_ID = "input_boolean.taxis_guest";
+export const HOUSE_HELPER_IDS: readonly string[] = [HOUSE_AWAY_ID, HOUSE_SLEEP_ID, HOUSE_GUEST_ID];
 
 export type ClimateDecision = "idle" | "window" | "hold" | "away" | "sleep" | "night" | "comfort" | "eco";
 
@@ -89,6 +90,7 @@ export type ClimateFacts = {
   // Empty when the area has no window or door group.
   openings: readonly Opening[];
   awayOn: boolean;
+  guestOn?: boolean;
   houseSleepOn: boolean;
   bedroom: boolean;
   bedOn: boolean;
@@ -115,10 +117,10 @@ export function flagsOf(f: ClimateFacts, p: ClimateParams): Record<ClimateFlag, 
     season_off: p.season === "off",
     window_rule: open.length > 0 && openSeconds >= p.windowDelay * 60,
     window_pending: (open.length > 0 && openSeconds < p.windowDelay * 60) || (open.length === 0 && shut.length > 0 && shutSeconds < p.restoreDelay * 60),
-    away: f.awayOn,
+    away: f.awayOn && !f.guestOn,
     sleeping: f.bedroom && (f.bedOn || f.houseSleepOn),
     in_night: inNight(f.time, f.nightStart, f.nightEnd),
-    comfort_now: f.scheduleOn && (!p.comfortNeedsOccupancy || occupiedOk),
+    comfort_now: f.scheduleOn && (f.guestOn === true || !p.comfortNeedsOccupancy || occupiedOk),
   };
 }
 

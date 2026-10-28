@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { assessHouse, EMPTY_GUIDE, guideChoice, validateGuide, type GuideGoal } from "./guide.ts";
-import { EMPTY_INVENTORY, setCounts, setLightRole } from "./inventory.ts";
+import { EMPTY_INVENTORY, setCounts, setLightRole, setBedroom } from "./inventory.ts";
 import { DEFAULT_NAMING } from "./naming.ts";
 import { EMPTY_PARAMETERS } from "./parameters.ts";
 import { NOTHING_INSTALLED, planRecipes } from "./recipes.ts";
@@ -209,4 +209,15 @@ describe("house readiness", () => {
         .stage,
     ).toBe("changes");
   });
+});
+
+
+it("requires explicit bedroom classification before sleep-sensitive room setup without changing inventory", () => {
+  const h = house().get();
+  const settings = { areas: { living_room: { profile: "bedroom" as const, goals: ["night" as const] } } };
+  const first = assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, settings, NOTHING_INSTALLED, [])[0];
+  expect(first.equipment.find((check) => check.key === "bedroom_behavior")).toMatchObject({ status: "review", required: true, entityIds: [] });
+  const classified = assessHouse(h, setBedroom(EMPTY_INVENTORY, "living_room", true), naming, EMPTY_PARAMETERS, settings, NOTHING_INSTALLED, [])[0];
+  expect(classified.equipment.some((check) => check.key === "bedroom_behavior")).toBe(false);
+  expect(EMPTY_INVENTORY.areas).toEqual({});
 });

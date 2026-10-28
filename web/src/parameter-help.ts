@@ -4,8 +4,11 @@ import type { ParamKey } from "../../shared/parameters.ts";
 export const PARAM_HELP: Record<ParamKey, string> = {
   night_start: "When recipes begin using their night settings.",
   night_end: "When recipes stop using their night settings.",
-  away_mode_entity: "The toggle that tells climate recipes the house is away.",
+  away_mode_entity: "The toggle that tells climate recipes the house is away and suppresses automatic indoor light turn-on. Guests take priority when they remain.",
   sleep_mode_entity: "The toggle that tells recipes the house is asleep.",
+  guest_mode_entity: "The visitor toggle. Empty uses taxis_guest when that switch exists or is queued in the Guide. Guest overrides climate Away and its scheduled occupancy requirement; it does not override window, sleep, night or season rules.",
+  guest_pause_lighting: "While Guest is on, leave indoor lights under manual control. Turn this off only for areas where visitors want automatic lighting.",
+  guest_pause_media: "While Guest is on, do not turn media off just because the room occupancy sensor clears.",
   notify_targets: "Where Left open and Appliance done send messages; empty uses Home Assistant notifications.",
   tts_entity: "The text-to-speech service entity used by the Announce script.",
   hold_timeout: "How long occupancy lasts after the last qualifying sensor change.",

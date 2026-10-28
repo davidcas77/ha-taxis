@@ -189,6 +189,30 @@ class GuideRegression(unittest.TestCase):
         self.assertEqual(len(self.puts), 1)
         self.assertEqual(self.posts, [])
 
+    def test_house_modes_queue_only_one_native_switch_and_show_pending(self):
+        self.open()
+        modes = self.page.get_by_role("region", name="House modes", exact=True)
+        self.assertIn("input_boolean.taxis_guest", modes.inner_text())
+        modes.get_by_role("button", name="Add guest switch to changes", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="Added to the list of changes").wait_for()
+        self.assertEqual(len(self.posts), 1)
+        self.assertEqual(self.posts[0]["kind"], "helper")
+        self.assertEqual(self.posts[0]["op"], "create")
+        self.assertEqual(self.posts[0]["fields"]["helper"], "input_boolean")
+        self.assertEqual(self.posts[0]["fields"]["entity_id"], "input_boolean.taxis_guest")
+        self.assertIn("not live yet", modes.inner_text())
+        self.assertEqual(modes.get_by_role("button", name="Add guest switch to changes", exact=True).count(), 0)
+        self.assertEqual(self.puts, [])
+
+    def test_existing_unavailable_guest_switch_is_reviewed_without_replacement(self):
+        self.add_entity("input_boolean.taxis_guest", "helper", platform="input_boolean")
+        self.body["hierarchy"]["entities"]["input_boolean.taxis_guest"]["state"] = "unavailable"
+        self.open()
+        modes = self.page.get_by_role("region", name="House modes", exact=True)
+        self.assertIn("state cannot be used", modes.inner_text())
+        self.assertEqual(modes.get_by_role("button", name="Add guest switch to changes", exact=True).count(), 0)
+        self.assertEqual(self.posts, [])
+
     def test_mobile_layout_and_draft_navigation_guard(self):
         self.selected()
         self.open(True)

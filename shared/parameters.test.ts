@@ -56,9 +56,10 @@ describe("the definitions", () => {
       else expect(checkValue(p, p.default), p.key).toBeNull();
       expect(["house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety"]).toContain(p.tab);
     }
-    expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end", "away_mode_entity", "sleep_mode_entity", "notify_targets", "tts_entity"]);
+    expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end", "away_mode_entity", "sleep_mode_entity", "guest_mode_entity", "notify_targets", "tts_entity"]);
     expect(PARAMS.filter((p) => p.tab === "occupancy").map((p) => p.key)).toEqual(["hold_timeout", "extended_after", "extended_hold", "sleep_hold", "humidity_hold_rate"]);
     expect(PARAMS.filter((p) => p.tab === "lighting").map((p) => p.key)).toEqual([
+      "guest_pause_lighting",
       "lux_threshold",
       "day_brightness",
       "day_kelvin",
@@ -70,7 +71,7 @@ describe("the definitions", () => {
       "override_duration",
       "entry_lights",
     ]);
-    expect(PARAMS.filter((p) => p.tab === "media").map((p) => p.key)).toEqual(["media_off_after", "tv_off_after", "announce_volume"]);
+    expect(PARAMS.filter((p) => p.tab === "media").map((p) => p.key)).toEqual(["guest_pause_media", "media_off_after", "tv_off_after", "announce_volume"]);
     expect(PARAMS.filter((p) => p.tab === "climate").map((p) => p.key)).toEqual([
       "comfort_temp",
       "eco_temp",

@@ -1,6 +1,7 @@
 import { helperExclusions, hasPendingChange, planHelpers, type HelperKey, type HelperRow } from "./helpers.ts";
 import {
   areaInventory,
+  areaChoice,
   defaultCapability,
   INVENTORY_AREA_ID,
   type Capability,
@@ -223,6 +224,21 @@ export function assessHouse(
           change.before?.area_id === area.id,
       );
       const equipment: EquipmentCheck[] = [];
+      if (
+        choice?.profile === "bedroom" &&
+        (selected.has("night") || selected.has("climate")) &&
+        !areaChoice(inventory, area.id).bedroom
+      ) {
+        equipment.push({
+          key: "bedroom_behavior",
+          label: "Bedroom behavior in Capabilities",
+          required: true,
+          status: "review",
+          entityIds: [],
+          advice:
+            "This guide profile is a bedroom. Mark the area as a bedroom in Capabilities before preparing sleep-sensitive lighting or climate. Changing guide goals does not overwrite your inventory choices.",
+        });
+      }
       const equipmentFor = (
         key: string,
         label: string,
@@ -437,7 +453,7 @@ export const GUIDE_IDEAS = [
     title: "Guest-aware away mode",
     text: "Residents leaving must not make the house empty while visitors remain. Keep guest and resident-location signals separate from room occupancy.",
     source: "https://www.reddit.com/r/homeassistant/comments/1i3caly/",
-    implementation: "House-mode guide and guest gating still to build",
+    implementation: "Guided mode switches and guest-aware Motion lights, Media off and Area climate proposals",
   },
   {
     title: "Humidity ventilation and appliance reminders",

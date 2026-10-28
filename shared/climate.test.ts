@@ -301,3 +301,20 @@ describe("an AC in the cooling season", () => {
     expect(planThermostat({ ...ac, presetModes: [], maxTemp: 26, temperature: 24 }, "eco", cooling, null)).toEqual([{ service: "set_temperature", temperature: 26 }]);
   });
 });
+
+
+describe("guests remaining when residents leave", () => {
+  const guests: Partial<ClimateFacts> = { awayOn: true, guestOn: true, occupied: { state: "off", seconds: 7200 } };
+  it("ignores away and the occupancy requirement during scheduled comfort", () => {
+    expect(run(guests)).toBe("comfort");
+    expect(run({ ...guests, guestOn: false })).toBe("away");
+    expect(run({ ...guests, scheduleOn: false })).toBe("eco");
+  });
+  it("retains season, window, restore delay, sleep and night protections", () => {
+    expect(run(guests, { season: "off" })).toBe("idle");
+    expect(run({ ...guests, openings: [{ state: "on", seconds: 180 }] })).toBe("window");
+    expect(run({ ...guests, openings: [{ state: "on", seconds: 15 }] })).toBe("hold");
+    expect(run({ ...guests, bedroom: true, houseSleepOn: true })).toBe("sleep");
+    expect(run({ ...guests, time: "02:00:00" })).toBe("night");
+  });
+});

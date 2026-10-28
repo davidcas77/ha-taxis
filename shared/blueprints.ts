@@ -310,7 +310,7 @@ const MOTION_LIGHTS_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Turns an area's lights on when it becomes occupied and off when it clears. By day the entry lights go on (the main lights when there are none), and the accent lights once the area has been occupied for the extended time. Inside the night window the night lights go on, or the main lights at the night brightness when there are none. While a bed sensor is on, only the night lights go on, never the main ones. Lights go on only when they are off and, with a light level sensor, only when it reads below the threshold (read while the lights are off, so the lights do not feed back). When the area clears, the lights dim for a while and go off, unless it is occupied again first; coming back brings lights that were left at or below the dim level back to the profile. Turning off uses the whole light group. A light changed by hand stops this automation for the area until the override ends: when the area clears, when the override timer runs out, or when the area becomes occupied after having been clear. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 4."
+  description: "Turns an area's lights on when it becomes occupied and off when it clears. By day the entry lights go on (the main lights when there are none), and the accent lights once the area has been occupied for the extended time. Inside the night window the night lights go on, or the main lights at the night brightness when there are none. While a bed sensor is on, only the night lights go on, never the main ones. Lights go on only when they are off and, with a light level sensor, only when it reads below the threshold (read while the lights are off, so the lights do not feed back). When the area clears, the lights dim for a while and go off, unless it is occupied again first; coming back brings lights that were left at or below the dim level back to the profile. Turning off uses the whole light group. A light changed by hand stops this automation for the area until the override ends: when the area clears, when the override timer runs out, or when the area becomes occupied after having been clear. Does nothing while the pause switch is on. Guest mode pauses automatic lighting by default. Away suppresses automatic turn-on unless guests remain. Sleep uses night lighting; bedrooms use only Night-role lights. Toggling modes does not force lights on or off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 5."
   input:
     occupied_entity:
       name: Occupied sensor
@@ -493,6 +493,40 @@ const MOTION_LIGHTS_YAML = `blueprint:
           max: 240
           unit_of_measurement: min
           mode: box
+    guest_entity:
+      name: Guest mode switch
+      description: Optional. Pause automatic lighting while guests remain.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    away_entity:
+      name: Away mode switch
+      description: Optional. Suppress automatic turn-on while away unless guests remain.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    sleep_entity:
+      name: Sleep mode switch
+      description: Optional. Use night lighting; bedrooms use only Night-role lights.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    is_bedroom:
+      name: Bedroom
+      default: false
+      selector:
+        boolean: {}
+    guest_pause_lighting:
+      name: Guest mode pauses automatic lighting
+      default: true
+      selector:
+        boolean: {}
     pause_switch:
       name: Pause switch
       description: Turn it on to pause this automation for the area.
@@ -503,6 +537,11 @@ const MOTION_LIGHTS_YAML = `blueprint:
 mode: restart
 variables:
   light_target: !input light_target
+  guest_entity: !input guest_entity
+  away_entity: !input away_entity
+  sleep_entity: !input sleep_entity
+  is_bedroom: !input is_bedroom
+  guest_pause_lighting: !input guest_pause_lighting
   occupied_entity: !input occupied_entity
   entry_lights: !input entry_lights
   main_lights: !input main_lights
@@ -520,8 +559,8 @@ variables:
   dim_before_off: !input dim_before_off
   dim_level: !input dim_level
   override_minutes: !input override_minutes
-  asleep: "{{ (bed_entities | select('is_state', 'on') | list | count) > 0 }}"
-  in_night: "{% set t = now().strftime('%H:%M:%S') %}{{ (t >= night_start or t < night_end) if night_start > night_end else (night_start <= t < night_end) }}"
+  asleep: "{{ (bed_entities | select('is_state', 'on') | list | count) > 0 or (is_bedroom and is_state(sleep_entity, 'on')) }}"
+  in_night: "{% set t = now().strftime('%H:%M:%S') %}{{ is_state(sleep_entity, 'on') or ((t >= night_start or t < night_end) if night_start > night_end else (night_start <= t < night_end)) }}"
   profile: "{{ 'sleep' if asleep else ('night' if in_night else 'day') }}"
   profile_lights: "{{ night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else (entry_lights if (profile == 'day' and (entry_lights | count) > 0) else main_lights) }}"
   brightness: "{{ day_brightness if profile == 'day' else night_brightness }}"
@@ -583,6 +622,10 @@ actions:
       - conditions:
           - condition: trigger
             id: occupied
+          - condition: template
+            value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}"
+          - condition: template
+            value_template: "{{ away_entity == '' or is_state(away_entity, 'off') or is_state(guest_entity, 'on') }}"
         sequence:
           # Coming back after the area was clear ends a manual override. The
           # occupied sensor blinking off and on does not.
@@ -634,6 +677,8 @@ actions:
       - conditions:
           - condition: trigger
             id: clear
+          - condition: template
+            value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}"
         sequence:
           # The area cleared: a manual override ends.
           - if:
@@ -668,6 +713,11 @@ actions:
           # Every turn-off checks first that the area is still clear.
           - if:
               - condition: state
+                entity_id: !input pause_switch
+                state: "off"
+              - condition: template
+                value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}"
+              - condition: state
                 entity_id: !input occupied_entity
                 state: "off"
               - condition: state
@@ -683,6 +733,10 @@ actions:
       - conditions:
           - condition: trigger
             id: extended
+          - condition: template
+            value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}"
+          - condition: template
+            value_template: "{{ away_entity == '' or is_state(away_entity, 'off') or is_state(guest_entity, 'on') }}"
         sequence:
           - condition: not
             conditions:
@@ -705,6 +759,8 @@ actions:
       - conditions:
           - condition: trigger
             id: override_end
+          - condition: template
+            value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}"
         sequence:
           - if:
               - condition: state
@@ -731,7 +787,7 @@ const MEDIA_OFF_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Turns off an area's speakers when it has been clear for the speaker time, and its TVs when it has been clear for the TV time. Only players that are on are sent the command, and one that refuses it does not stop the others. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 1."
+  description: "Turns off an area's speakers when it has been clear for the speaker time, and its TVs when it has been clear for the TV time. Only players that are on are sent the command, and one that refuses it does not stop the others. Does nothing while the pause switch is on. Guest mode keeps media on by default. Queued runs recheck occupancy and pause/guest state at execution time. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 2."
   input:
     occupied_entity:
       name: Occupied sensor
@@ -776,6 +832,19 @@ const MEDIA_OFF_YAML = `blueprint:
           max: 720
           unit_of_measurement: min
           mode: box
+    guest_entity:
+      name: Guest mode switch
+      description: Optional. Keep media on while guests remain.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+    guest_pause_media:
+      name: Guest mode keeps media on
+      default: true
+      selector:
+        boolean: {}
     pause_switch:
       name: Pause switch
       description: Turn it on to pause this automation for the area.
@@ -787,6 +856,8 @@ mode: queued
 max: 4
 variables:
   speaker_entities: !input speaker_entities
+  guest_entity: !input guest_entity
+  guest_pause_media: !input guest_pause_media
   tv_entities: !input tv_entities
 triggers:
   - trigger: state
@@ -806,6 +877,15 @@ conditions:
     entity_id: !input pause_switch
     state: "off"
 actions:
+  # Recheck at execution; queue-admission conditions may be stale.
+  - condition: state
+    entity_id: !input occupied_entity
+    state: "off"
+  - condition: state
+    entity_id: !input pause_switch
+    state: "off"
+  - condition: template
+    value_template: "{{ not guest_pause_media or guest_entity == '' or is_state(guest_entity, 'off') }}"
   - choose:
       - conditions:
           - condition: trigger
@@ -872,7 +952,7 @@ const AREA_CLIMATE_YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Sets the thermostats of an area by fixed rules, worked out again whenever an input changes, first match wins. A window open for the window delay turns the heating down to frost protection, or off when switching is allowed; for the restore delay after it closes nothing is changed. Then the away switch, then sleep (a bedroom with a bed sensor on or the house sleep switch on), then the night window, then comfort while the area schedule is on and the area is occupied (or was clear for less than the eco delay, or occupancy is not needed), and eco otherwise. The target is the heating temperature for the decision, kept between the lowest and highest temperature, or, in the cooling season, the cooling temperature (the night one also for sleep), which the lowest and highest do not limit. A thermostat with a mapped preset it offers gets the preset, the others a temperature, and only what differs from what the thermostat shows is sent. A thermostat that is off is left alone unless switching on and off is allowed. With that permission, an active thermostat in the opposite heating or cooling mode is switched to the selected season before its setpoint is changed; without permission it is left alone. Does nothing while the pause switch is on or the season is off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 3."
+  description: "Sets the thermostats of an area by fixed rules, worked out again whenever an input changes, first match wins. A window open for the window delay turns the heating down to frost protection, or off when switching is allowed; for the restore delay after it closes nothing is changed. Then the away switch (ignored while any Guest switch is on), then sleep (a bedroom with a bed sensor on or the house sleep switch on), then the night window, then comfort while the area schedule is on and the area is occupied (or was clear for less than the eco delay, or occupancy is not needed, or Guest is on), and eco otherwise. The target is the heating temperature for the decision, kept between the lowest and highest temperature, or, in the cooling season, the cooling temperature (the night one also for sleep), which the lowest and highest do not limit. A thermostat with a mapped preset it offers gets the preset, the others a temperature, and only what differs from what the thermostat shows is sent. A thermostat that is off is left alone unless switching on and off is allowed. With that permission, an active thermostat in the opposite heating or cooling mode is switched to the selected season before its setpoint is changed; without permission it is left alone. Does nothing while the pause switch is on or the season is off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 4."
   input:
     climate_entities:
       name: Thermostats
@@ -915,6 +995,15 @@ const AREA_CLIMATE_YAML = `blueprint:
       default: false
       selector:
         boolean: {}
+    guest_entities:
+      name: Guest mode switches
+      description: Optional. Any on switch overrides Away and the occupancy requirement for scheduled comfort. Window, season, sleep and night rules still take priority.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: input_boolean
     away_entity:
       name: Away switch
       description: On while the house is away.
@@ -1166,6 +1255,7 @@ variables:
   bed_entities: !input bed_entities
   is_bedroom: !input is_bedroom
   away_entity: !input away_entity
+  guest_entities: !input guest_entities
   sleep_entity: !input sleep_entity
   schedule_entity: !input schedule_entity
   temperature_entity: !input temperature_entity
@@ -1221,6 +1311,10 @@ triggers:
     to: null
   - trigger: state
     id: input
+    entity_id: !input guest_entities
+    to: null
+  - trigger: state
+    id: input
     entity_id: !input sleep_entity
     to: null
   - trigger: state
@@ -1268,11 +1362,12 @@ actions:
       shut_seconds: "{% set ns = namespace(v=999999999) %}{% for e in shut_now %}{% set s = (now() - states[e].last_changed).total_seconds() %}{% if s < ns.v %}{% set ns.v = s %}{% endif %}{% endfor %}{{ ns.v }}"
       window_rule: "{{ (open_now | count) > 0 and (open_seconds | float(0)) >= (window_delay | float(0)) * 60 }}"
       window_pending: "{{ ((open_now | count) > 0 and (open_seconds | float(0)) < (window_delay | float(0)) * 60) or ((open_now | count) == 0 and (shut_now | count) > 0 and (shut_seconds | float(0)) < (restore_delay | float(0)) * 60) }}"
-      away: "{{ is_state(away_entity, 'on') }}"
+      guest: "{{ (guest_entities | select('is_state', 'on') | list | count) > 0 }}"
+      away: "{{ is_state(away_entity, 'on') and not guest }}"
       sleeping: "{{ is_bedroom and ((bed_entities | select('is_state', 'on') | list | count) > 0 or is_state(sleep_entity, 'on')) }}"
       in_night: "{% set t = now().strftime('%H:%M:%S') %}{{ (t >= night_start or t < night_end) if night_start > night_end else (night_start <= t < night_end) }}"
       occupied_ok: "{{ occupied_entity == '' or not is_state(occupied_entity, 'off') or (now() - states[occupied_entity].last_changed).total_seconds() < (eco_after_clear | float(0)) * 60 }}"
-      comfort_now: "{{ is_state(schedule_entity, 'on') and ((not needs_occupancy) or occupied_ok) }}"
+      comfort_now: "{{ is_state(schedule_entity, 'on') and (guest or (not needs_occupancy) or occupied_ok) }}"
       decision: "{% if season_off %}idle{% elif window_rule %}window{% elif window_pending %}hold{% elif away %}away{% elif sleeping %}sleep{% elif in_night %}night{% elif comfort_now %}comfort{% else %}eco{% endif %}"
       base_temp: "{{ ({'comfort': cool_comfort_temp, 'eco': cool_eco_temp, 'night': cool_night_temp, 'sleep': cool_night_temp, 'away': cool_away_temp} if season == 'cooling' else {'comfort': comfort_temp, 'eco': eco_temp, 'night': night_temp, 'sleep': sleep_temp, 'away': away_temp})[decision] if decision in ['comfort', 'eco', 'night', 'sleep', 'away'] else none }}"
       target_temp: "{{ none if base_temp is none else (base_temp | float(0) if season == 'cooling' else ([[base_temp | float(0), min_temp | float(0)] | max, max_temp | float(0)] | min)) }}"
@@ -1281,6 +1376,9 @@ actions:
   - if:
       - condition: template
         value_template: "{{ decision not in ['idle', 'hold'] }}"
+      - condition: state
+        entity_id: !input pause_switch
+        state: "off"
     then:
       - repeat:
           for_each: "{{ climate_entities }}"
@@ -2193,10 +2291,15 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/motion_lights.yaml",
     recipe: "motion_lights",
     domain: "automation",
-    version: 4,
+    version: 5,
     yaml: MOTION_LIGHTS_YAML,
     inputs: {
       occupied_entity: { kind: "entity", required: true, domain: "binary_sensor" },
+      guest_entity: { kind: "entity", required: false, domain: "input_boolean" },
+      away_entity: { kind: "entity", required: false, domain: "input_boolean" },
+      sleep_entity: { kind: "entity", required: false, domain: "input_boolean" },
+      is_bedroom: { kind: "boolean", required: false },
+      guest_pause_lighting: { kind: "boolean", required: false },
       light_target: { kind: "entity", required: true, domain: "light" },
       entry_lights: { kind: "entities", required: false, domain: "light" },
       main_lights: { kind: "entities", required: false, domain: "light" },
@@ -2224,10 +2327,12 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/media_off.yaml",
     recipe: "media_off",
     domain: "automation",
-    version: 1,
+    version: 2,
     yaml: MEDIA_OFF_YAML,
     inputs: {
       occupied_entity: { kind: "entity", required: true, domain: "binary_sensor" },
+      guest_entity: { kind: "entity", required: false, domain: "input_boolean" },
+      guest_pause_media: { kind: "boolean", required: false },
       speaker_entities: { kind: "entities", required: false, domain: "media_player" },
       tv_entities: { kind: "entities", required: false, domain: "media_player" },
       speaker_minutes: { kind: "number", required: false },
@@ -2239,7 +2344,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
     path: "taxis/area_climate.yaml",
     recipe: "area_climate",
     domain: "automation",
-    version: 3,
+    version: 4,
     yaml: AREA_CLIMATE_YAML,
     inputs: {
       climate_entities: { kind: "entities", required: true, domain: "climate" },
@@ -2247,6 +2352,7 @@ export const BLUEPRINTS: readonly BlueprintInfo[] = [
       occupied_entities: { kind: "entities", required: false, domain: "binary_sensor" },
       bed_entities: { kind: "entities", required: false, domain: "binary_sensor" },
       is_bedroom: { kind: "boolean", required: false },
+      guest_entities: { kind: "entities", required: false, domain: "input_boolean" },
       away_entity: { kind: "entity", required: true, domain: "input_boolean" },
       sleep_entity: { kind: "entity", required: true, domain: "input_boolean" },
       schedule_entity: { kind: "entity", required: true, domain: "schedule" },

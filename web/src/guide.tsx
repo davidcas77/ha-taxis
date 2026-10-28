@@ -18,6 +18,7 @@ import { api } from "./api.ts";
 import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { Button, inputClass } from "./ui.tsx";
+import { HouseModes } from "./house-modes.tsx";
 
 export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | null; go: (route: Route) => void }) {
   const {
@@ -138,6 +139,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
               choice={guideChoice(guide, active.areaId)}
               onSave={(choice) => save(active.areaId, choice)}
             />
+            <HouseModes h={h} areaId={active.areaId} go={go} />
             {active.choice && active.choice.goals.length > 0 && (
               <>
                 <section aria-label="Equipment readiness" className="flex flex-col gap-3">
@@ -374,8 +376,9 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
                   <p className="mt-2 text-muted">
                     Installed configuration is not proof that the room behaves well. After you choose to Apply, test
                     entry, sitting still, daylight, night brightness and manual on/off. Check an HA automation trace if
-                    the result is unexpected. Guest and away behavior still needs a dedicated house-mode setup; the
-                    guide does not yet claim those modes are complete.
+                    the result is unexpected. Check Guest, Away and Sleep explicitly, including guests remaining when
+                    residents leave. Confirm that Pause and manual light override behave as expected. Creating a mode
+                    switch alone does not update an existing recipe; review its proposed inputs before Apply.
                   </p>
                   <Button className="mt-3" onClick={() => go({ page: "changes" })}>
                     Review Changes
@@ -398,6 +401,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
                 </div>
               ))}
             </section>
+            <HouseModes h={h} go={go} />
             <section aria-label="Area readiness" className="flex flex-col gap-3">
               <h2 className="font-semibold">Start with one room</h2>
               <p className="text-[13px] text-muted">
