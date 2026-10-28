@@ -116,7 +116,7 @@ export function anthropicProvider(cfg: { key: string; fetch?: FetchLike }): AiPr
       let after: string | undefined;
       // Newest first. A few pages are plenty: Anthropic lists tens of models.
       for (let page = 0; page < 5; page++) {
-        const res = await httpJson(f, `${ANTHROPIC_URL}/v1/models?limit=1000${after ? `&after_id=${encodeURIComponent(after)}` : ""}`, { method: "GET", headers }, { ...opts, timeoutMs: 30_000 });
+        const res = await httpJson(f, `${ANTHROPIC_URL}/v1/models?limit=1000${after ? `&after_id=${encodeURIComponent(after)}` : ""}`, { method: "GET", headers }, { ...opts, timeoutMs: 30_000, retryTransient: true });
         if (!res.ok) throw failure(res, opts);
         const body = res.body;
         if (!isRecord(body) || !Array.isArray(body.data)) throw new AiError("upstream", "Anthropic's model list wasn't in the shape Taxis expects.");
