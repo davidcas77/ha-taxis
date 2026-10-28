@@ -46,6 +46,7 @@ class AiModelsRegression(unittest.TestCase):
         self.available[48]["name"] = "Special planner"
         self.puts, self.tests, self.loads, self.unexpected, self.errors = [], [], [], [], []
         self.fail_load = False
+        self.failure_message = "Fixture model-list failure"
         self.held_model_route = None
         self.hold_models = False
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
@@ -72,7 +73,7 @@ class AiModelsRegression(unittest.TestCase):
             if self.hold_models:
                 self.held_model_route = route
             elif self.fail_load:
-                route.fulfill(status=502, json={"ok": False, "error": "Fixture model-list failure"})
+                route.fulfill(status=502, json={"ok": False, "error": self.failure_message})
             else:
                 route.fulfill(json={"ok": True, "models": self.available})
         self.page.route("**/api/ai/models", load)
@@ -184,6 +185,24 @@ class AiModelsRegression(unittest.TestCase):
         self.page.get_by_text("The service lists no models.", exact=True).wait_for()
         self.assertEqual(self.page.get_by_role("list", name="Available AI models").count(), 0)
         self.assertEqual(self.current, self.fixture)
+
+    def test_model_error_wraps_on_mobile_and_retry_keeps_the_tier_draft(self):
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.fail_load = True
+        self.failure_message = "provider-" + "x" * 280 + " answered 504. The service timed out. Try again shortly."
+        self.open()
+        self.page.get_by_label("Strong model", exact=True).fill("my-custom-model")
+        self.page.get_by_role("button", name="Load models", exact=True).click()
+        alert = self.page.get_by_role("alert").filter(has_text="answered 504")
+        alert.wait_for()
+        self.assertEqual(alert.inner_text(), self.failure_message)
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+        self.assertTrue(self.page.get_by_role("button", name="Load models", exact=True).is_enabled())
+        self.fail_load = False
+        self.load()
+        self.assertEqual(self.page.get_by_label("Strong model", exact=True).input_value(), "my-custom-model")
+        self.assertEqual(self.puts, [])
+        self.assertEqual(self.tests, [])
 
     def test_switching_provider_ignores_the_previous_inflight_model_response(self):
         self.open()
