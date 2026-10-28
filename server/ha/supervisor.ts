@@ -4,14 +4,11 @@
 //
 // Needs `hassio_api: true` and `hassio_role: backup` in taxis/config.yaml.
 
+import { redact } from "../config.ts";
+
 export type BackupResult = { ok: true; name: string; slug: string | null } | { ok: false; reason: string };
 
-export async function backupHomeAssistant(
-  token: string,
-  name: string,
-  fetchImpl: typeof fetch = fetch,
-  timeoutMs = 10 * 60_000,
-): Promise<BackupResult> {
+export async function backupHomeAssistant(token: string, name: string, fetchImpl: typeof fetch = fetch, timeoutMs = 10 * 60_000): Promise<BackupResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -26,12 +23,15 @@ export async function backupHomeAssistant(
     });
     const body = (await res.json().catch(() => ({}))) as { result?: string; message?: string; data?: { slug?: string } };
     if (!res.ok || body.result !== "ok") {
-      return { ok: false, reason: `The Supervisor didn't make the backup (HTTP ${res.status}${body.message ? `: ${body.message}` : ""}).` };
+      return { ok: false, reason: redact(`The Supervisor didn't make the backup (HTTP ${res.status}${body.message ? `: ${body.message}` : ""}).`, token) };
     }
     return { ok: true, name, slug: body.data?.slug ?? null };
   } catch (e) {
     const aborted = e instanceof Error && e.name === "AbortError";
-    return { ok: false, reason: aborted ? "The backup took longer than 10 minutes." : `Couldn't reach the Supervisor: ${(e as Error).message}` };
+    // The reason is shown to the user and logged, so the token must not be in it,
+    // whatever the failing call put in its message.
+    const reason = aborted ? "The backup took longer than 10 minutes." : `Couldn't reach the Supervisor: ${(e as Error).message}`;
+    return { ok: false, reason: redact(reason, token) };
   } finally {
     clearTimeout(timer);
   }

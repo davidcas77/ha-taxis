@@ -1,0 +1,104 @@
+name: Browser scenarios
+
+# The scripts/*-browser.py scenarios drive the real UI in a headless Chromium
+# against the fake Home Assistant (scripts/mock-ha.ts). They intercept every
+# write, so nothing here touches a real Home Assistant.
+#
+# They are NOT part of CI on every pull request: they need a browser and take a
+# few minutes. They run nightly and on demand (Actions > Browser scenarios > Run
+# workflow), which is enough to catch a UI regression within a day.
+#
+# What the scripts expect, and how this workflow provides it:
+#   - the Python `playwright` package, and a Chromium whose path is in
+#     CHROMIUM_PATH (the scripts default to /usr/bin/chromium, which a runner
+#     does not have). Playwright's own Chromium is installed and its path exported.
+#   - Taxis serving the BUILT UI plus the fake Home Assistant. The scripts name
+#     different default ports (5173 for the Vite dev server, 8099 and 8101 for
+#     the server), but every one reads TAXIS_TEST_URL, so all of them are pointed
+#     at the server on 8099, which serves dist/web.
+#
+# This file has not been run on a GitHub runner by its author (the batch that
+# added it was written on a Windows machine without Python or a browser). If a
+# scenario fails here but passes locally, suspect a script that assumes the Vite
+# dev server (5173) or another port, and read the "Scenario log" artifact.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:23 UTC every night.
+    - cron: "23 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TAXIS_TEST_URL: http://localhost:8099
+      TAXIS_SCREENSHOT_DIR: output/playwright
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install Playwright and Chromium
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install playwright
+          "$RUNNER_TEMP/venv/bin/python" -m playwright install --with-deps chromium
+          chromium=$("$RUNNER_TEMP/venv/bin/python" -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()")
+          echo "CHROMIUM_PATH=$chromium" >> "$GITHUB_ENV"
+          echo "PYTHON=$RUNNER_TEMP/venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Start the fake Home Assistant and Taxis
+        run: |
+          mkdir -p output/playwright "$RUNNER_TEMP/taxis-data"
+          # The fake Home Assistant, on 8124 (the address scripts/mock.env names).
+          npx tsx scripts/mock-ha.ts > mock-ha.log 2>&1 &
+          # Taxis in development mode, serving dist/web on 8099, with its own empty database.
+          TAXIS_DATA_DIR="$RUNNER_TEMP/taxis-data" node --env-file=scripts/mock.env dist/server.js > taxis.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8099/api/hierarchy | grep -q '"ok":true'; then
+              echo "Taxis is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Taxis did not come up."
+          cat mock-ha.log taxis.log
+          exit 1
+
+      - name: Run the scenarios
+        run: |
+          failed=""
+          for script in scripts/browser-regression.py scripts/*-browser.py; do
+            echo "::group::$script"
+            if "$PYTHON" "$script"; then
+              echo "passed: $script"
+            else
+              echo "FAILED: $script"
+              failed="$failed $script"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "Failed scenarios:$failed"
+            exit 1
+          fi
+
+      - name: Scenario log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-scenarios
+          path: |
+            mock-ha.log
+            taxis.log
+            output/playwright
+          if-no-files-found: ignore

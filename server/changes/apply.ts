@@ -1,5 +1,6 @@
 import { applyLabelDiff, currentValues, isRegistryKind, isTempId, labelDiff, sameValue } from "../../shared/changes.ts";
 import type { ApplyStatus, Change, ChangeKind, Hierarchy } from "../../shared/types.ts";
+import { READS, type FreshRead } from "../ha/registry.ts";
 import type { RestApi } from "../ha/rest.ts";
 import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
 import { findReferences, searchRelated, type Related } from "../references/find.ts";
@@ -65,7 +66,14 @@ export type Writer = { write<T>(type: string, payload: Record<string, unknown>):
 
 // What the rename step needs besides the writer: reads over the WebSocket and
 // the REST client for automations, scripts and scenes.
-export type RenameIO = { ha: ReferenceIO["ha"]; rest: RestApi };
+export type RenameIO = {
+  ha: ReferenceIO["ha"];
+  rest: RestApi;
+  // Where the snapshot of what uses the old ids is read from when Apply shares
+  // its configs between steps; defaults to `rest`. Rewrites always go through
+  // `rest`, after a last read of it.
+  reads?: Pick<RestApi, "get">;
+};
 
 // A change that has to stay in the list, now as an update of `targetId`.
 export type Retarget = { changeId: number; targetId: string; after: Record<string, unknown>; before: Record<string, unknown> };
@@ -159,18 +167,23 @@ export async function applyChanges(
   // own steps and get no result here.
   all: Change[],
   ha: Writer,
-  readFresh: () => Promise<RawRegistry>,
+  readFresh: FreshRead,
   // Needed to rename entity ids with what uses them; without it a rename only
   // changes the registry.
   rename?: RenameIO,
 ): Promise<{ results: Outcome[]; appliedIds: number[]; realIds: Map<string, string>; retargets: Retarget[]; renamed: Map<string, string> }> {
   const changes = all.filter((c) => isRegistryKind(c.kind));
+  // A list of only helpers, blueprints, recipes and scripts has nothing to do
+  // here. Reading the registries to find that out used to cost a full read per Apply.
+  if (changes.length === 0) return { results: [], appliedIds: [], realIds: new Map(), retargets: [], renamed: new Map() };
   const realIds = new Map<string, string>();
   const outcome = new Map<number, Outcome>();
   const sent = new Map<number, Record<string, unknown>>();
   const fail = (c: Change, message: string) => outcome.set(c.id, { changeId: c.id, ok: false, message });
 
-  const beforeRaw = await readFresh();
+  // The hierarchy and, for a rename, the states. Not Home Assistant's name or
+  // its integration list.
+  const beforeRaw = await readFresh(READS.hierarchy);
   const before = buildHierarchy(beforeRaw, "");
 
   // A rename whose old id is gone and whose new id exists already happened (an
@@ -200,7 +213,7 @@ export async function applyChanges(
     if (c.op !== "create" && !isTempId(c.targetId) && !exists(before, c.kind, c.targetId, c.scope)) {
       return `It's no longer in Home Assistant.`;
     }
-    const now = c.op === "update" ? currentValues(before, c.kind, c.targetId, c.scope) ?? {} : {};
+    const now = c.op === "update" ? (currentValues(before, c.kind, c.targetId, c.scope) ?? {}) : {};
     const payload: Record<string, unknown> = {};
     for (const [key, wanted] of Object.entries(c.after)) {
       if (c.op === "create" && (wanted === null || wanted === undefined)) continue;
@@ -299,7 +312,7 @@ export async function applyChanges(
   const related = new Map<number, Related>();
   if (rename && renames.length > 0) {
     try {
-      snap = await snapshot({ ha: rename.ha, rest: rename.rest }, beforeRaw.states, beforeRaw.entities);
+      snap = await snapshot({ ha: rename.ha, rest: rename.reads ?? rename.rest }, beforeRaw.states, beforeRaw.entities);
       await mapLimit(renames, 6, async (c) => {
         related.set(c.id, await searchRelated(rename.ha, c.targetId));
       });
@@ -354,7 +367,10 @@ export async function applyChanges(
       }
       await run(freeing);
       if (!sent.has(freeing.id)) {
-        fail(c, `Home Assistant already has ${c.kind === "area" ? "an" : "a"} ${c.kind} named “${String(c.after.name)}”, and the change that frees the name didn't go through.`);
+        fail(
+          c,
+          `Home Assistant already has ${c.kind === "area" ? "an" : "a"} ${c.kind} named “${String(c.after.name)}”, and the change that frees the name didn't go through.`,
+        );
         continue;
       }
     }
@@ -368,7 +384,8 @@ export async function applyChanges(
   let after: RawRegistry | null = null;
   if (sent.size > 0) {
     try {
-      after = await readFresh();
+      // Did the registry edits take? Only the registries can say.
+      after = await readFresh(READS.registries);
     } catch (e) {
       for (const c of work) {
         if (!sent.has(c.id)) continue;
@@ -414,7 +431,11 @@ export async function applyChanges(
   if (rename && snap) {
     const pairs: RenamePair[] = renames.filter((c) => confirmed.has(c.id)).map((c) => renameOf.get(c.id)!);
     if (pairs.length > 0) {
-      const lines = await updateReferences({ ha: { command: (t, p) => rename.ha.command(t, p), write: (t, p) => ha.write(t, p) }, rest: rename.rest }, snap, pairs);
+      const lines = await updateReferences(
+        { ha: { command: (t, p) => rename.ha.command(t, p), write: (t, p) => ha.write(t, p) }, rest: rename.rest },
+        snap,
+        pairs,
+      );
       const areaLines = await repointAreas(ha, after ?? beforeRaw, pairs);
       pairs.forEach((r, i) => {
         const details = [...(lines.get(r.changeId) ?? []), ...(areaLines.get(r.changeId) ?? [])];
@@ -438,7 +459,13 @@ export async function applyChanges(
   }
 
   const results = changes.map((c) => outcome.get(c.id) ?? { changeId: c.id, ok: false, message: "Not sent." });
-  return { results, appliedIds: results.filter((r) => r.ok).map((r) => r.changeId), realIds, retargets, renamed: new Map([...renameOf.values()].filter(r => confirmed.has(r.changeId)).map(r => [r.oldId, r.newId])) };
+  return {
+    results,
+    appliedIds: results.filter((r) => r.ok).map((r) => r.changeId),
+    realIds,
+    retargets,
+    renamed: new Map([...renameOf.values()].filter((r) => confirmed.has(r.changeId)).map((r) => [r.oldId, r.newId])),
+  };
 }
 
 // Null when Home Assistant now shows what was sent; otherwise what's different.
@@ -462,7 +489,8 @@ export function verify(
   for (const [key, expected] of Object.entries(payload)) {
     if (key === "scope" || key === ID_KEY[c.kind as RegistryKind]) continue;
     if (key === "new_entity_id") {
-      if (item.entity_id !== expected) return `Its entity id reads ${JSON.stringify(item.entity_id ?? null)} in Home Assistant, not ${JSON.stringify(expected)}.`;
+      if (item.entity_id !== expected)
+        return `Its entity id reads ${JSON.stringify(item.entity_id ?? null)} in Home Assistant, not ${JSON.stringify(expected)}.`;
       continue;
     }
     if (key === "categories") {
@@ -529,7 +557,7 @@ async function repointAreas(ha: Writer, fresh: RawRegistry, pairs: RenamePair[])
 }
 
 function findRaw(fresh: RawRegistry, c: Change, id: string): Record<string, unknown> | undefined {
-  const find = <T,>(list: T[] | undefined, key: string) =>
+  const find = <T>(list: T[] | undefined, key: string) =>
     (list ?? []).find((x) => (x as Record<string, unknown>)[key] === id) as Record<string, unknown> | undefined;
   switch (c.kind) {
     case "floor":

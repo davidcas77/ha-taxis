@@ -40,3 +40,6 @@ export const log = {
     console.error(line("ERROR", `${message}${detail}`));
   },
 };
+
+// What the server needs of a logger, so a test can pass its own.
+export type AppLogger = typeof log;
