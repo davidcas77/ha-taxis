@@ -90,7 +90,7 @@ export function openAiProvider(cfg: { baseUrl: string; key?: string | null; fetc
 
   return {
     async listModels(): Promise<ModelInfo[]> {
-      const res = await httpJson(f, `${base}/models`, { method: "GET", headers }, { ...opts, timeoutMs: 30_000 });
+      const res = await httpJson(f, `${base}/models`, { method: "GET", headers }, { ...opts, timeoutMs: 30_000, retryTransient: true });
       if (!res.ok) throw failure(res, opts);
       const data = isRecord(res.body) ? res.body.data : undefined;
       if (!Array.isArray(data)) throw new AiError("upstream", `${host} answered, but its model list wasn't in the shape Taxis expects.`);

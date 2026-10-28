@@ -136,6 +136,14 @@ describe("openAiProvider.complete", () => {
 });
 
 describe("openAiProvider.listModels", () => {
+  it("recovers from a temporary HTML gateway timeout on the model list", async () => {
+    const t = fakeFetch((_call, index) => index === 0 ? { status: 504, text: "<!DOCTYPE html><title>Gateway time-out</title>" } : { body: { data: [{ id: "example-model" }] } });
+    const models = await openAiProvider({ baseUrl: "https://api.openai.com/v1", key: TEST_KEY, fetch: t.fetch }).listModels();
+    expect(models).toEqual([{ id: "example-model", name: "example-model" }]);
+    expect(t.calls).toHaveLength(2);
+    expect(t.calls.every(call => call.method === "GET" && call.url === "https://api.openai.com/v1/models")).toBe(true);
+  });
+
   it("reads GET /models, drops what isn't a chat model and keeps the service's order", async () => {
     const t = fakeFetch({
       body: { object: "list", data: [{ id: "qwen2.5:7b" }, { id: "text-embedding-3-small" }, { id: "llama3.2:3b" }, { id: "whisper-1" }, { id: "qwen2.5:7b" }, { id: "gpt-image-1" }] },
