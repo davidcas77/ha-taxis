@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_AI, type AiSettings, type AiSettingsView } from "./ai.ts";
-import { canonical, formDiffers, formOf, savedSettings, settingsOf } from "./ai-form.ts";
+import { canonical, formDiffers, formOf, keyReentryProblem, savedSettings, settingsOf } from "./ai-form.ts";
 
 const saved: AiSettings = {
   ...structuredClone(DEFAULT_AI),
@@ -50,5 +50,28 @@ describe("settingsOf", () => {
     expect(settingsOf({ ...f, prices: [{ model: "gpt-5", input: "1", output: "" }] })).toMatch(/both prices for gpt-5/);
     expect(settingsOf({ ...f, prices: [{ model: "gpt-5", input: "x", output: "2" }] })).toMatch(/both prices for gpt-5/);
     expect(formDiffers({ ...f, cap: "" }, saved)).toBe(true);
+  });
+});
+
+describe("keyReentryProblem", () => {
+  const base = { savedBaseUrl: "https://old.example.com/v1", newBaseUrl: "https://new.example.com/v1", compatibleKeyStored: true };
+
+  it("asks for the key again when the address changes and the key would be kept", () => {
+    expect(keyReentryProblem({ ...base, provider: "openai-compatible", change: "keep" })).toContain("Enter the key again");
+  });
+
+  it("is satisfied by a new key or by removing the key", () => {
+    expect(keyReentryProblem({ ...base, provider: "openai-compatible", change: "replace" })).toBeNull();
+    expect(keyReentryProblem({ ...base, provider: "openai-compatible", change: "remove" })).toBeNull();
+  });
+
+  it("has nothing to say when the address is the same or no key is stored", () => {
+    expect(keyReentryProblem({ ...base, newBaseUrl: base.savedBaseUrl, provider: "openai-compatible", change: "keep" })).toBeNull();
+    expect(keyReentryProblem({ ...base, compatibleKeyStored: false, provider: "openai-compatible", change: "keep" })).toBeNull();
+  });
+
+  it("still refuses when another provider is selected, since the stored key would follow the edited address", () => {
+    expect(keyReentryProblem({ ...base, provider: "anthropic", change: "keep" })).toContain("OpenAI-compatible");
+    expect(keyReentryProblem({ ...base, provider: "anthropic", change: "replace" })).toContain("OpenAI-compatible");
   });
 });

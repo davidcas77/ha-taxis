@@ -25,7 +25,7 @@ import {
   type AiUsage,
   type ModelInfo,
 } from "../../shared/ai.ts";
-import { formDiffers, formOf, savedSettings, settingsOf, type PriceRow } from "../../shared/ai-form.ts";
+import { formDiffers, formOf, keyReentryProblem, savedSettings, settingsOf, type PriceRow } from "../../shared/ai-form.ts";
 import { checkBaseUrl } from "../../shared/ai-url.ts";
 import { api } from "./api.ts";
 import { useTaxis } from "./state.tsx";
@@ -165,6 +165,14 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
   const dirty = edit !== "keep" || formDiffers(form, savedSettings(saved));
   const draftGuard = useDraftGuard(dirty);
   const urlProblem = provider === "openai-compatible" ? (() => { const c = checkBaseUrl(baseUrl); return c.ok ? null : c.error; })() : null;
+
+  // The saved key was entered for the saved address. If the address changes,
+  // the key isn't carried over: say so here, and the server refuses it too.
+  const reentry = (() => {
+    const address = checkBaseUrl(baseUrl);
+    if (!address.ok) return null;
+    return keyReentryProblem({ provider, savedBaseUrl: saved.baseUrl, newBaseUrl: address.url, compatibleKeyStored: saved.keys["openai-compatible"].set, change: edit });
+  })();
 
   const changeProvider = (p: AiProviderId) => {
     if (p === provider) return;
@@ -341,6 +349,11 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
                 )}
               </div>
             )}
+            {reentry && (
+              <p role="alert" className="text-xs text-danger">
+                {reentry}
+              </p>
+            )}
             <p className="text-[11px] text-muted">Write-only: once saved, the key can't be read back here. It is kept in this add-on's data, which Home Assistant backups of the add-on include.</p>
           </div>
 
@@ -463,7 +476,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button tone="primary" disabled={saving || !dirty || (enabled && Boolean(urlProblem))} onClick={() => void save()}>
+        <Button tone="primary" disabled={saving || !dirty || (enabled && Boolean(urlProblem)) || Boolean(reentry)} onClick={() => void save()}>
           {saving ? "Saving…" : "Save AI settings"}
         </Button>
         <Button tone="ghost" disabled={!dirty} onClick={undo}>

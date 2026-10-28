@@ -63,8 +63,19 @@ describe("ingress guard", () => {
     expect(isAllowedPeer(undefined, "app")).toBe(false);
   });
 
+  it("refuses loopback inside Home Assistant", () => {
+    expect(isAllowedPeer("127.0.0.1", "app")).toBe(false);
+    expect(isAllowedPeer("::1", "app")).toBe(false);
+    expect(isAllowedPeer("::ffff:127.0.0.1", "app")).toBe(false);
+  });
+
   it("accepts anything in development", () => {
     expect(isAllowedPeer("192.0.2.50", "dev")).toBe(true);
+  });
+
+  it("accepts loopback in development", () => {
+    expect(isAllowedPeer("127.0.0.1", "dev")).toBe(true);
+    expect(isAllowedPeer("::1", "dev")).toBe(true);
   });
 
   it("normalizes IPv4-mapped addresses", () => {

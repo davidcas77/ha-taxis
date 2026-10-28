@@ -1,4 +1,5 @@
 import { buttonInputLoop, buttonOutput, validButtonMap, type ButtonAssignment, type ButtonInventory, type ButtonMap, type ButtonMapping } from "../../shared/buttons.ts";
+import { checkButtonAction } from "../../shared/button-actions.ts";
 import type { ChangeInput } from "../../shared/types.ts";
 import { BUTTON_MARKER, buttonAutomationId, buttonHash } from "./identity.ts";
 
@@ -18,11 +19,15 @@ export function buttonConfig(id:string, alias:string, value:ButtonMap):Record<st
     action:[{choose:active.map(b=>({conditions:[{condition:'trigger',id:b.key}],sequence:[{service:b.action.service,...(b.action.entityId?{target:{entity_id:b.action.entityId}}:{}),data:b.action.service==='automation.trigger'?{skip_condition:false,...b.action.data}:b.action.data}]}))}],
   };
 }
-export function planButtonAssignment(inventory:ButtonInventory, assignment:ButtonAssignment, pending:readonly {kind:string;targetId:string;after:Record<string,unknown>}[]):ChangeInput {
+// entityIds: the enabled entities HA has, to recognise a script called directly
+// (see checkButtonAction). Left out, only entity-targeted actions can pass.
+export function planButtonAssignment(inventory:ButtonInventory, assignment:ButtonAssignment, pending:readonly {kind:string;targetId:string;after:Record<string,unknown>}[], entityIds:ReadonlySet<string>=new Set()):ChangeInput {
   if(assignment.fingerprint!==buttonInventoryFingerprint(inventory)) throw new Error('The button inventory changed. Refresh and review it before queuing.');
   const control=inventory.controls.find(c=>c.id===assignment.controlId);
   const gesture=control?.gestures.find(g=>g.key===assignment.gestureKey);
   if(!control || !gesture) throw new Error('This gesture is no longer exposed by Home Assistant.');
+  const verdict=checkButtonAction(assignment.action,entityIds);
+  if(!verdict.ok) throw new Error(verdict.reason);
   if(!inventory.services.includes(assignment.action.service)) throw new Error('That action service is not available in Home Assistant.');
   if(!assignment.action.entityId && inventory.targetServices.includes(assignment.action.service)) throw new Error('This action requires an explicit entity target. Choose the light, group or other entity.');
   const output=buttonOutput(assignment.action), id=buttonAutomationId(output);
@@ -37,6 +42,11 @@ export function planButtonAssignment(inventory:ButtonInventory, assignment:Butto
   const bindings=[...(base?.bindings??[]).filter(b=>b.key!==key),binding].sort((a,b)=>a.key.localeCompare(b.key));
   const map:ButtonMap={version:1,output,bindings,expected:queued && base?base.expected:installed?.fingerprint??null,allowExisting:assignment.allowExisting};
   if(!validButtonMap(map)) throw new Error('This target has too many mappings or invalid action data.');
+  // An installed map may still hold an action the rules now refuse. Saving the map
+  // would write it again unchanged, so refuse, unless this very button is being
+  // given a new action in its place.
+  const kept=(installed?.blocked??[]).find(b=>b.key!==key && bindings.some(x=>x.key===b.key));
+  if(kept) throw new Error(`This button automation holds an action that Taxis's safety rules no longer allow, so Taxis won't write it again. ${kept.reason} Fix it in Home Assistant, or give that button a new allowed action to replace it.`);
   const all=new Map(inventory.managed.map(m=>[m.id,m.map]));
   for(const c of pending) if(c.kind==='automation' && validButtonMap(c.after.button_map)) all.set(c.targetId,c.after.button_map);
   all.set(id,map);

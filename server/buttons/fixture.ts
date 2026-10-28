@@ -21,7 +21,7 @@ export function buttonFixture() {
   raw.entities.push({entity_id:'input_button.desk',platform:'input_button',unique_id:'desk'});
   raw.states.push({entity_id:'input_button.desk',state:'2026-10-28T00:00:00Z',attributes:{friendly_name:'Desk virtual button'}});
   const configs:Record<string,HaConfig>={};
-  const services={light:{turn_on:{target:{}},turn_off:{target:{}},toggle:{target:{}}},script:{turn_on:{target:{}},turn_off:{target:{}}},automation:{trigger:{target:{}},turn_on:{target:{}},turn_off:{target:{}}},persistent_notification:{create:{fields:{message:{}}}}};
+  const services={light:{turn_on:{target:{}},turn_off:{target:{}},toggle:{target:{}}},script:{turn_on:{target:{}},turn_off:{target:{}},goodnight:{}},automation:{trigger:{target:{}},turn_on:{target:{}},turn_off:{target:{}}},persistent_notification:{create:{fields:{message:{}}}}};
   const ha={command:vi.fn(async<T>(type:string,payload?:Record<string,unknown>):Promise<T>=>{
     if(type==='device_automation/trigger/list') return structuredClone(triggers[String(payload?.device_id)]??[]) as T;
     if(type==='get_services') return structuredClone(services) as T;

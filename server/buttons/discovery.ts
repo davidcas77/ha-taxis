@@ -1,4 +1,5 @@
 import { buttonRecord, validButtonMap, type ButtonControl, type ButtonExisting, type ButtonGesture, type ButtonInventory, type ButtonManaged, type ButtonMap } from "../../shared/buttons.ts";
+import { blockedBindings } from "../../shared/button-actions.ts";
 import { gestureSource, matchGesture, normalizeTrigger, referencesDevice, summarizeActions, type TargetNames } from "../../shared/button-match.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
@@ -185,13 +186,15 @@ async function readAutomations(raw: RawRegistry, rest: Pick<RestApi, "get">): Pr
 }
 
 // Automations Taxis wrote: the stored map must also equal what Taxis would
-// generate now, so a hand-edited one counts as external.
-function findManaged(evidence: ButtonEvidence[]): ButtonManaged[] {
+// generate now, so a hand-edited one counts as external. A map holding an action
+// the safety rules no longer allow is still read: it lists those bindings in
+// `blocked`, so the page can say so and the planner can refuse to write it again.
+function findManaged(evidence: ButtonEvidence[], entityIds: ReadonlySet<string>): ButtonManaged[] {
   const managed: ButtonManaged[] = [];
   for (const a of evidence) {
     const map = storedButtonMap(a.config);
     if (map && a.id === buttonAutomationId(map.output) && buttonHash(a.config) === buttonHash(buttonConfig(a.id, a.name, map))) {
-      managed.push({ id: a.id, alias: a.name, entityId: a.entityId, enabled: a.enabled, map, fingerprint: buttonHash(a.config) });
+      managed.push({ id: a.id, alias: a.name, entityId: a.entityId, enabled: a.enabled, map, fingerprint: buttonHash(a.config), blocked: blockedBindings(map, entityIds) });
     }
   }
   return managed;
@@ -281,7 +284,8 @@ export async function discoverButtons(ha: ButtonHa, rest: Pick<RestApi, "get">, 
   addEntityGestures(raw, h, controls);
 
   const evidence = await readAutomations(raw, rest);
-  const managed = findManaged(evidence);
+  const usable = new Set(Object.values(h.entities).filter((e) => !e.disabled).map((e) => e.entityId));
+  const managed = findManaged(evidence, usable);
   const names: TargetNames = { device: (id) => h.devices[id]?.name ?? id, area: (id) => h.areas[id]?.name ?? id };
   const ctx: MatchContext = { evidence, managed, raw, h, names };
   for (const control of controls.all.values()) {

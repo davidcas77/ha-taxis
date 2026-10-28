@@ -75,6 +75,24 @@ describe("read-only guard", () => {
     for (const t of WRITE_COMMANDS) expect(() => assertWriteCommand(t, payloadFor(t))).not.toThrow();
   });
 
+  it("never deletes a device or an entity: deletes are only for floors, areas, labels and categories", () => {
+    const removals = [...WRITE_COMMANDS].filter((t) => /(^|\/)(delete|remove)/.test(t));
+    expect(removals.sort()).toEqual([
+      "config/area_registry/delete",
+      "config/category_registry/delete",
+      "config/floor_registry/delete",
+      "config/label_registry/delete",
+    ]);
+    // A device or entity registry command may only update.
+    const registry = [...WRITE_COMMANDS].filter((t) => t.startsWith("config/device_registry/") || t.startsWith("config/entity_registry/"));
+    expect(registry.sort()).toEqual(["config/device_registry/update", "config/entity_registry/update"]);
+    // The usual names for taking a device or entity out of Home Assistant stay refused.
+    for (const t of ["config/device_registry/remove_config_entry", "config/device_registry/delete", "config/device_registry/remove", "config/entity_registry/remove", "config/entity_registry/delete", "config/entity_registry/remove_orphaned", "config_entries/delete", "call_service"]) {
+      expect(WRITE_COMMANDS.has(t), t).toBe(false);
+      expect(() => assertWriteCommand(t), t).toThrow(/doesn't make that change/);
+    }
+  });
+
   it("allows the recipe writes and the blueprint read, and no other timer, helper or blueprint command", () => {
     for (const t of ["blueprint/save", "timer/create", "timer/update", "input_boolean/create", "schedule/create", "schedule/update"]) expect(WRITE_COMMANDS.has(t), t).toBe(true);
     expect(READ_COMMANDS.has("blueprint/list")).toBe(true);

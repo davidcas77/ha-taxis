@@ -60,6 +60,26 @@ export function settingsOf(f: AiForm): AiSettings | string {
   };
 }
 
+// A saved key must never travel to an address the user did not give it for.
+// Only an OpenAI-compatible service has an address to change (Anthropic's is
+// fixed), and its key is stored on its own. So when that address changes, the
+// stored key is not carried over: the user enters it again for the new address,
+// or removes it. Returns what to tell the user, or null when nothing is wrong.
+//
+// `change` is what the save does to the key of the selected provider: "keep" it
+// (the request leaves it out), "replace" it or "remove" it. Both addresses are
+// already normalized (checkBaseUrl).
+export type KeyChange = "keep" | "replace" | "remove";
+export function keyReentryProblem(args: { provider: AiProviderId; savedBaseUrl: string; newBaseUrl: string; compatibleKeyStored: boolean; change: KeyChange }): string | null {
+  if (!args.compatibleKeyStored || args.newBaseUrl === args.savedBaseUrl) return null;
+  if (args.provider === "openai-compatible") {
+    return args.change === "keep" ? "Enter the key again for the new address, or remove the key." : null;
+  }
+  // Another provider is selected, so a change to its key says nothing about the
+  // OpenAI-compatible one, whose address was edited.
+  return "The OpenAI-compatible address was changed, and its saved key would go to the new address. Switch to OpenAI-compatible to enter the key again or remove it, or undo the address change.";
+}
+
 // The saved settings without what only the view adds.
 export function savedSettings(v: AiSettingsView): AiSettings {
   return { enabled: v.enabled, provider: v.provider, baseUrl: v.baseUrl, models: v.models, effort: v.effort, monthlyCapUsd: v.monthlyCapUsd, maxOutputTokens: v.maxOutputTokens, prices: v.prices };

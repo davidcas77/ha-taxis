@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.4
 
 - **Buttons: existing automations match the right gesture.** Event-entity gestures
   are now matched by the entity and the `event_type` the automation filters on
@@ -9,6 +9,54 @@
   per-press inputs. Enum sensors that report presses appear as gestures. Handlers
   that only reference the device are listed under the control instead of on every
   gesture, and action summaries name device and area targets.
+- **Buttons: only safe actions.** A button gesture used to accept any service that
+  needed no target, so it could be mapped to `homeassistant.restart`,
+  `hassio.host_shutdown`, a shell command or any reload, and that went into a
+  generated automation. Now a fixed list decides, shared by the page and the app
+  and checked when you add an assignment, when the change is planned and again at
+  Apply. Allowed with an entity of the same kind: lights, switches, fans, covers,
+  media players, climate, humidifiers, sirens, valves, locks (lock and unlock),
+  scenes, scripts, input booleans, buttons and input buttons, automations,
+  vacuums, numbers, selects and remotes, each with its own services. Allowed
+  without a target: calling a script that exists, and
+  `persistent_notification.create`. Never allowed: `homeassistant.*` (choose the
+  entity's own service instead), `hassio`, `shell_command`, `python_script`,
+  `pyscript`, `command_line`, `rest_command`, `recorder`, `logger`, `system_log`,
+  `backup`, `frontend`, `update`, integration administration, notify services,
+  and any service that reloads, restarts, stops, removes, deletes, purges or
+  installs. The page offers only what is allowed, and a refusal says which rule
+  applies.
+- **Buttons: older automations that hold a refused action.** A Taxis button
+  automation that already contains such an action is still read and shown,
+  marked *Blocked by Taxis's safety rules* with the reason and a link to open it
+  in Home Assistant. It is never dropped silently, and Taxis refuses to write it
+  again unchanged. Giving that same button a new, allowed action replaces it.
+  Review your button automations after updating: an existing one is not turned off.
+- **AI: a saved key stays with its address.** Changing the base URL of an
+  OpenAI-compatible service used to keep the saved key, which would then have
+  been sent to the new host. Settings now asks you to enter the key again (or
+  remove it) before saving, and the app refuses a save that would keep it. The
+  Anthropic address is fixed, and the Jev address is fixed, so neither changes.
+- **Ingress only.** Inside Home Assistant the app no longer answers requests from
+  loopback (127.0.0.1, ::1), only from the Ingress proxy, as documented. Nothing in
+  the image used loopback: there is no health check or watchdog. Development
+  mode is unchanged.
+- **Honest wording about deletes.** Comments and documentation said that nothing is
+  ever deleted. The rule is: Taxis never deletes a device or an entity; it deletes
+  floors, areas, labels and categories only when you ask, through the change list.
+  A test now checks that the allowlist has no device or entity removal.
+- **Privacy text lists every outside address.** The documentation and README
+  said Taxis talks only to Home Assistant and the AI service you chose. They now
+  list every address it can contact (Home Assistant and the Supervisor, Anthropic,
+  the OpenAI-compatible service you set, and TypeSafe for Jev), when, and what each
+  receives. Nothing new is contacted.
+- **Documentation brought up to date.** DOCS.md now covers the House guide, Buttons,
+  Ask Taxis, AI administration and Jev decisions, describes the three AI tiers
+  (Low, Medium, Strong) and asking questions, and says that floor codes are under
+  Parameters → Area codes. The README status and feature list and the handover
+  notes are current for 0.7.x.
+- **Validation.** TypeScript, production build and 1,486 unit and API tests across
+  61 files passed. Browser scenarios and live Home Assistant were not run.
 
 ## 0.7.3
 

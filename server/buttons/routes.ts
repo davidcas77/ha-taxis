@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { checkButtonAction } from '../../shared/button-actions.ts';
 import { buttonRecord, validButtonAssignment } from '../../shared/buttons.ts';
 import type { Hierarchy } from '../../shared/types.ts';
 import type { ChangeStore } from '../changes/store.ts';
@@ -22,13 +23,16 @@ export function buttonRoutes(deps:{read:(refresh:boolean)=>Promise<ButtonRead & 
     if(request.changesVersion!==deps.changes.version()) return c.json({ok:false,error:'The queued changes changed. Reload the page and review this assignment again.'},409);
     try {
       const r=await deps.read(false);
+      // The allowlist comes first, so a refused action gets its reason and a 400, not a vague conflict.
+      const usable=new Set(Object.values(r.h.entities).filter(e=>!e.disabled).map(e=>e.entityId));
+      const verdict=checkButtonAction(request.action,usable);
+      if(!verdict.ok) return c.json({ok:false,error:verdict.reason},400);
       const target=request.action.entityId && r.h.entities[request.action.entityId];
       if(request.action.entityId && (!target || target.disabled)) throw new Error('Choose an existing, enabled target entity. Apply new helper creations first.');
-      if(target && ![target.domain,'homeassistant'].includes(request.action.service.split('.')[0])) throw new Error('The action service does not match the selected target domain.');
       if(request.action.entityId && r.inventory.managed.some(m=>m.entityId===request.action.entityId)) throw new Error('A button-map automation cannot be used as a button action, which could create a loop.');
       if(deps.applying()) throw new Error('Changes are being applied. Try again afterward.');
       if(request.changesVersion!==deps.changes.version()) throw new Error('The queued changes changed. Reload the page and review this assignment again.');
-      const input=planButtonAssignment(r.inventory,request,deps.changes.list());
+      const input=planButtonAssignment(r.inventory,request,deps.changes.list(),usable);
       const error=deps.changes.add(input,r.h); if(error) throw new Error(error);
       return c.json({ok:true,changes:deps.changes.list(),version:deps.changes.version()});
     } catch(e) {return c.json({ok:false,error:deps.redact(e instanceof Error?e.message:'Could not queue button mapping.')},409);}

@@ -293,3 +293,68 @@ describe("GET /api/ai/usage", () => {
     expect(usage.month).toMatch(/^\d{4}-\d{2}$/);
   });
 });
+
+describe("changing the address of an OpenAI-compatible service", () => {
+  const OLD = "https://old.example.com/v1";
+  const NEW = "https://new.example.com/v1";
+  const compatible = (over: Partial<AiSettings> & { key?: string | null } = {}) => ({ provider: "openai-compatible" as const, baseUrl: OLD, ...over });
+
+  it("refuses a new address while the saved key would be kept, and saves nothing", async () => {
+    const s = setup();
+    expect((await s.save(compatible({ key: TEST_KEY }))).status).toBe(200);
+    const res = await s.save(compatible({ baseUrl: NEW }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("Enter the key again");
+    expect(s.settings.ai().baseUrl).toBe(OLD);
+    expect(s.settings.aiKey("openai-compatible")).toBe(TEST_KEY);
+  });
+
+  it("accepts the new address with a new key, which replaces the old one", async () => {
+    const s = setup();
+    await s.save(compatible({ key: TEST_KEY }));
+    const res = await s.save(compatible({ baseUrl: NEW, key: "sk-test-for-the-new-address-0000" }));
+    expect(res.status).toBe(200);
+    expect(s.settings.ai().baseUrl).toBe(NEW);
+    expect(s.settings.aiKey("openai-compatible")).toBe("sk-test-for-the-new-address-0000");
+  });
+
+  it("accepts the new address when the key is removed in the same save", async () => {
+    const s = setup();
+    await s.save(compatible({ key: TEST_KEY }));
+    expect((await s.save(compatible({ baseUrl: NEW, key: null }))).status).toBe(200);
+    expect(s.settings.aiKey("openai-compatible")).toBeNull();
+  });
+
+  it("accepts a new address when there is no key to carry over", async () => {
+    const s = setup();
+    await s.save(compatible());
+    expect((await s.save(compatible({ baseUrl: NEW }))).status).toBe(200);
+    expect(s.settings.ai().baseUrl).toBe(NEW);
+  });
+
+  it("keeps the key when the address is the same, spelled with a trailing slash", async () => {
+    const s = setup();
+    await s.save(compatible({ key: TEST_KEY }));
+    expect((await s.save(compatible({ baseUrl: `${OLD}/` }))).status).toBe(200);
+    expect(s.settings.aiKey("openai-compatible")).toBe(TEST_KEY);
+  });
+
+  it("does not let another provider's save carry the stored key to an edited address", async () => {
+    const s = setup();
+    await s.save(compatible({ key: TEST_KEY }));
+    const res = await s.save({ provider: "anthropic", baseUrl: NEW });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("OpenAI-compatible");
+    expect(s.settings.ai().baseUrl).toBe(OLD);
+    // Without an OpenAI-compatible key stored, the same edit is harmless.
+    const bare = setup();
+    expect((await bare.save({ provider: "anthropic", baseUrl: NEW })).status).toBe(200);
+  });
+
+  it("sends the saved key only to the saved address when listing models", async () => {
+    const s = setup({ body: { data: [] } });
+    await s.save(compatible({ key: TEST_KEY }));
+    await s.req("POST", "/api/ai/models", { provider: "openai-compatible", baseUrl: NEW });
+    for (const call of s.calls) expect(JSON.stringify(call.headers)).not.toContain(TEST_KEY);
+  });
+});

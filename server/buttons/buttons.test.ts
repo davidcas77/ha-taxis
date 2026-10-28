@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
-import { buttonInputLoop, validButtonAction, validButtonMap, type ButtonAssignment, type ButtonMap } from '../../shared/buttons.ts';
+import { buttonInputLoop, buttonOutput, validButtonAction, validButtonMap, type ButtonAction, type ButtonAssignment, type ButtonMap } from '../../shared/buttons.ts';
 import { validateInput } from '../../shared/changes.ts';
 import type { Change } from '../../shared/types.ts';
 import { DEFAULT_AI } from '../../shared/ai.ts';
@@ -222,7 +222,7 @@ describe('one automation per output',()=>{
     expect((cfg.trigger as Record<string,unknown>[])[0].variables).toEqual({taxis_button_event_type:'single_press'});
     expect(JSON.stringify(cfg.action)).toContain('"skip_condition":false');
   });
-  it('requires an explicit entity for target-based services',async()=>{const r=await buttonFixture().read();expect(()=>planButtonAssignment(r.inventory,{...assignment(r),action:{entityId:null,service:'light.turn_on',data:{}}},[])).toThrow('explicit entity');});
+  it('requires an explicit entity for target-based services',async()=>{const r=await buttonFixture().read();expect(()=>planButtonAssignment(r.inventory,{...assignment(r),action:{entityId:null,service:'light.turn_on',data:{}}},[])).toThrow('needs a light entity');});
   it('refuses self-triggering virtual buttons and cycles across separate maps',async()=>{
     const f=buttonFixture();(f.services as Record<string,unknown>).input_button={press:{target:{}}};const r=await f.read();
     const control=r.inventory.controls.find(c=>c.id==='entity:input_button.desk')!;
@@ -315,5 +315,118 @@ describe('button API and bounded AI review',()=>{
     expect((await s.req('/device%3Aremote1/ai-review',{fingerprint:'f'.repeat(64)})).status).toBe(409);
     const preview=await(await s.req('/device%3Aremote1/ai-preview')).json();s.settings.saveAi({...s.settings.ai(),enabled:false});
     expect((await s.req('/device%3Aremote1/ai-review',{fingerprint:preview.preview.fingerprint})).status).toBe(502);expect(s.provider.calls).toHaveLength(0);
+  });
+});
+
+// ---- Safety rules: which services a button may run -----------------------------
+
+const NOT_ALLOWED: { name: string; action: ButtonAction }[] = [
+  { name: 'restart Home Assistant', action: { service: 'homeassistant.restart', entityId: null, data: {} } },
+  { name: 'stop Home Assistant', action: { service: 'homeassistant.stop', entityId: null, data: {} } },
+  { name: 'shut the host down', action: { service: 'hassio.host_shutdown', entityId: null, data: {} } },
+  { name: 'run a shell command', action: { service: 'shell_command.reboot_pi', entityId: null, data: {} } },
+  { name: 'reload a domain', action: { service: 'light.reload', entityId: null, data: {} } },
+  { name: 'homeassistant.turn_on, even with an entity', action: { service: 'homeassistant.turn_on', entityId: 'light.bedroom_main', data: {} } },
+  { name: 'notify without a target', action: { service: 'notify.notify', entityId: null, data: { message: 'hi' } } },
+  { name: 'a script that does not exist', action: { service: 'script.missing', entityId: null, data: {} } },
+];
+
+// An automation of ours as it stood before the rules: remote 1 runs `light.reload` on the lamp.
+async function installAutomationWithBlockedAction(f: Fixture) {
+  const r = await f.read();
+  const change = asChange(planButtonAssignment(r.inventory, assignment(r), []));
+  const map = structuredClone(change.after.button_map as ButtonMap);
+  map.bindings[0].action = { service: 'light.reload', entityId: 'light.bedroom_main', data: {} };
+  f.addAutomation(change.targetId, buttonConfig(change.targetId, String(change.after.alias), map));
+  return { id: change.targetId, key: map.bindings[0].key };
+}
+
+describe('button action safety rules', () => {
+  it('refuses every unsafe action when queueing, with a reason, and queues nothing', async () => {
+    const s = await apiSetup();
+    for (const { name, action } of NOT_ALLOWED) {
+      const res = await s.req('/assign', { ...s.a, action });
+      expect(res.status, name).toBe(400);
+      expect((await res.json()).error, name).toMatch(/safety rules|isn't a script/);
+    }
+    expect(s.changes.list()).toHaveLength(0);
+    expect(s.rest.post).not.toHaveBeenCalled();
+    expect(s.ha.write).not.toHaveBeenCalled();
+  });
+
+  it('queues the safe target-less actions: a script by name and a persistent notification', async () => {
+    const s = await apiSetup();
+    const script = { ...s.a, action: { service: 'script.goodnight', entityId: null, data: {} } };
+    expect((await s.req('/assign', script)).status).toBe(200);
+    const notify = { ...s.a, controlId: 'device:remote2', gestureKey: (await s.read()).inventory.controls.find(c => c.id === 'device:remote2')!.gestures[0].key, changesVersion: s.changes.version(), action: { service: 'persistent_notification.create', entityId: null, data: { message: 'Doorbell' } } };
+    expect((await s.req('/assign', notify)).status).toBe(200);
+    expect(s.changes.list().map(c => c.targetId)).toHaveLength(2);
+  });
+
+  it('refuses at the planner too, not only at the route', async () => {
+    const r = await buttonFixture().read();
+    for (const { name, action } of NOT_ALLOWED) expect(() => planButtonAssignment(r.inventory, { ...assignment(r), action }, []), name).toThrow();
+  });
+
+  it('refuses at Apply, so a map that bypassed the route is never written', async () => {
+    for (const { name, action } of NOT_ALLOWED) {
+      const f = buttonFixture(), r = await f.read();
+      const change = asChange(planButtonAssignment(r.inventory, assignment(r), []));
+      (change.after.button_map as ButtonMap).bindings[0].action = action;
+      // Keep the map internally consistent so the safety rule is what stops it.
+      (change.after.button_map as ButtonMap).output = buttonOutput(action);
+      const outcome = (await applyButtonChanges([{ ...change, targetId: buttonAutomationId(buttonOutput(action)) }], { ...f, sleep: async () => {} }))[0];
+      expect(outcome.ok, name).toBe(false);
+      expect(f.rest.post, name).not.toHaveBeenCalled();
+    }
+  });
+
+  it('reads an installed map that holds a now-blocked action and marks that binding', async () => {
+    const f = buttonFixture(), { id, key } = await installAutomationWithBlockedAction(f);
+    const read = await f.read();
+    const managed = read.inventory.managed.find(m => m.id === id)!;
+    expect(managed.map.bindings).toHaveLength(1);
+    expect(managed.blocked).toEqual([{ key, reason: expect.stringContaining('safety rules') }]);
+    expect(f.rest.post).not.toHaveBeenCalled();
+  });
+
+  it('does not drop a blocked binding or hide it as an external automation', async () => {
+    const f = buttonFixture(), { id } = await installAutomationWithBlockedAction(f);
+    const read = await f.read();
+    const remote = read.inventory.controls.find(c => c.id === 'device:remote1')!;
+    const hits = Object.values(remote.existing).flat().filter(a => a.id === id);
+    expect(hits).toMatchObject([{ managed: true, match: 'exact', services: ['light.reload'] }]);
+  });
+
+  it('refuses to save a map unchanged that still holds a blocked action', async () => {
+    const f = buttonFixture(); await installAutomationWithBlockedAction(f);
+    const read = await f.read();
+    // Another button on the same output would write the blocked binding again.
+    expect(() => planButtonAssignment(read.inventory, assignment(read, 'remote2', 'light.toggle'), [])).toThrow('no longer allow');
+    // Disabling the other button's handler does not help; the blocked binding is still in the map.
+    expect(() => planButtonAssignment(read.inventory, { ...assignment(read, 'remote2', 'light.toggle'), enabled: false }, [])).toThrow('no longer allow');
+  });
+
+  it('lets the same button replace its blocked action with an allowed one', async () => {
+    const f = buttonFixture(); await installAutomationWithBlockedAction(f);
+    const read = await f.read();
+    const change = asChange(planButtonAssignment(read.inventory, assignment(read, 'remote1', 'light.toggle'), []));
+    const map = change.after.button_map as ButtonMap;
+    expect(map.bindings).toHaveLength(1);
+    expect(map.bindings[0].action.service).toBe('light.toggle');
+    const outcome = (await applyButtonChanges([change], { ...f, sleep: async () => {} }))[0];
+    expect(outcome).toMatchObject({ ok: true });
+    expect((await f.read()).inventory.managed[0].blocked).toEqual([]);
+  });
+
+  it('refuses at Apply to write over a blocked map unchanged', async () => {
+    const f = buttonFixture(), { id } = await installAutomationWithBlockedAction(f);
+    const read = await f.read();
+    const installed = read.inventory.managed.find(m => m.id === id)!;
+    const change: Change = { id: 1, kind: 'automation', op: 'update', targetId: id, scope: null, before: {}, after: { automation_id: id, alias: installed.alias, button_map: { ...installed.map, expected: installed.fingerprint } }, createdAt: '2026-10-28T00:00:00Z' };
+    const outcome = (await applyButtonChanges([change], { ...f, sleep: async () => {} }))[0];
+    expect(outcome.ok).toBe(false);
+    expect(outcome.message).toContain('safety rules');
+    expect(f.rest.post).not.toHaveBeenCalled();
   });
 });

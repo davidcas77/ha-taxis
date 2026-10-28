@@ -13,6 +13,7 @@ import {
   type AiUsageResponse,
 } from "../../shared/ai.ts";
 import { log } from "../log.ts";
+import { keyReentryProblem } from "../../shared/ai-form.ts";
 import { isAiKey, validateAi, type settingsStore } from "../settings.ts";
 import { scrub, type FetchLike } from "./http.ts";
 import type { AiLedger } from "./ledger.ts";
@@ -73,6 +74,17 @@ export function aiRoutes(deps: AiRouteDeps): Hono {
   app.put("/settings/ai", bodyLimit({ maxSize: 32 * 1024, onError: (c) => c.json<AiSettingsResponse>({ ok: false, error: "The AI settings are too large." }, 413) }), async (c) => {
     const checked = validateAi(await c.req.json().catch(() => null));
     if (!checked.ok) return c.json<AiSettingsResponse>({ ok: false, error: checked.error }, 400);
+    // The stored OpenAI-compatible key was entered for the saved address. If the
+    // address changes and the key isn't supplied again, refuse rather than send it
+    // to a host the user never gave it to. Nothing is saved.
+    const problem = keyReentryProblem({
+      provider: checked.value.provider,
+      savedBaseUrl: deps.settings.ai().baseUrl,
+      newBaseUrl: checked.value.baseUrl,
+      compatibleKeyStored: deps.settings.aiKey("openai-compatible") !== null,
+      change: checked.key === undefined ? "keep" : checked.key === null ? "remove" : "replace",
+    });
+    if (problem) return c.json<AiSettingsResponse>({ ok: false, error: problem }, 409);
     // Everything was checked above, so both writes are expected to succeed.
     deps.settings.saveAi(checked.value);
     if (checked.key !== undefined) {

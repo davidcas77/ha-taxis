@@ -9,7 +9,9 @@ export type ButtonMapping = { key: string; controlId: string; gestureKey: string
 export type ButtonMap = { version: 1; output: string; bindings: ButtonMapping[]; expected: string | null; allowExisting: boolean };
 export type ButtonExisting = { id: string; entityId: string | null; name: string; enabled: boolean | null; match: "exact" | "possible"; services: string[]; targets: string[]; managed: boolean };
 export type ButtonControl = { id: string; deviceId: string | null; name: string; areaId: string | null; manufacturer: string | null; model: string | null; integrations: string[]; gestures: ButtonGesture[]; notes: string[]; existing: Record<string, ButtonExisting[]>; related?: ButtonExisting[] };
-export type ButtonManaged = { id: string; alias: string; entityId: string | null; enabled: boolean | null; map: ButtonMap; fingerprint: string };
+// `blocked` lists the bindings of the map that Taxis's safety rules (see
+// button-actions.ts) refuse now. Such a map is still read and shown.
+export type ButtonManaged = { id: string; alias: string; entityId: string | null; enabled: boolean | null; map: ButtonMap; fingerprint: string; blocked: { key: string; reason: string }[] };
 export type ButtonInventory = { controls: ButtonControl[]; managed: ButtonManaged[]; services: string[]; targetServices: string[]; notes: string[]; coverage: { automations: number; readable: number; unreadable: number }; fetchedAt: string };
 export type ButtonInventoryResponse = { ok: true; inventory: ButtonInventory; fingerprint: string } | { ok: false; error: string };
 export type ButtonAssignment = { controlId: string; gestureKey: string; action: ButtonAction; enabled: boolean; allowExisting: boolean; fingerprint: string; changesVersion: string };
@@ -28,6 +30,9 @@ function plainJson(v: unknown, depth=0): boolean {
   if (Array.isArray(v)) return v.length<=50 && v.every(x=>plainJson(x,depth+1));
   return buttonRecord(v) && Object.keys(v).length<=40 && Object.entries(v).every(([k,x])=>!['__proto__','constructor','prototype'].includes(k) && plainJson(x,depth+1));
 }
+// The shape of an action only. Which services a button may run is a separate
+// question, answered by checkButtonAction in button-actions.ts: a stored map
+// written before those rules existed must still be readable here.
 export function validButtonAction(v: unknown): v is ButtonAction {
   return buttonRecord(v) && Object.keys(v).every(k=>['service','entityId','data'].includes(k)) &&
     typeof v.service==='string' && BUTTON_SERVICE.test(v.service) && (v.entityId===null || text(v.entityId) && ENTITY.test(v.entityId)) &&

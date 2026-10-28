@@ -1,3 +1,4 @@
+import { checkButtonAction } from "../../shared/button-actions.ts";
 import { buttonInputLoop, buttonOutput, validButtonMap } from "../../shared/buttons.ts";
 import type { Change } from "../../shared/types.ts";
 import { buildHierarchy } from "../model/hierarchy.ts";
@@ -15,6 +16,7 @@ export async function applyButtonChanges(changes:Change[],io:RecipeIO):Promise<O
   const outcomes:Outcome[]=[];
   const entities=new Set([...raw.entities.map(e=>e.entity_id),...raw.states.map(s=>s.entity_id)]);
   const disabled=new Set(raw.entities.filter(e=>e.disabled_by).map(e=>e.entity_id));
+  const usable=new Set([...entities].filter(id=>!disabled.has(id)));
   const maps=new Map(read.inventory.managed.map(m=>[m.id,m.map]));
   for(const c of changes) if(validButtonMap(c.after.button_map)) maps.set(c.targetId,c.after.button_map);
   if(buttonInputLoop([...maps.values()])) return changes.map(c=>({changeId:c.id,ok:false,message:'Button inputs form a repeated-press cycle. Review their assignments before applying.'}));
@@ -24,6 +26,9 @@ export async function applyButtonChanges(changes:Change[],io:RecipeIO):Promise<O
       if(!validButtonMap(map) || c.targetId!==buttonAutomationId(map.output)) throw new Error('Invalid button map identity.');
       if(!map.bindings.length) throw new Error('A button map must retain at least one known gesture, even when disabled.');
       for(const b of map.bindings) {
+        // The last gate: whatever the route allowed, a map is never written with an action the rules refuse.
+        const verdict=checkButtonAction(b.action,usable);
+        if(!verdict.ok) throw new Error(verdict.reason);
         if(buttonOutput(b.action)!==map.output) throw new Error('All bindings in an automation must control the same output.');
         const source=read.inventory.controls.find(s=>s.id===b.controlId);
         const gesture=source?.gestures.find(g=>g.key===b.gestureKey);
@@ -32,7 +37,6 @@ export async function applyButtonChanges(changes:Change[],io:RecipeIO):Promise<O
         if(b.action.entityId && disabled.has(b.action.entityId)) throw new Error(`The target ${b.action.entityId} is disabled. Refresh before applying.`);
         if(!read.inventory.services.includes(b.action.service)) throw new Error('An assigned action service is no longer available.');
         if(!b.action.entityId && read.inventory.targetServices.includes(b.action.service)) throw new Error('An action needs an explicit entity target.');
-        if(b.action.entityId && b.action.service.split('.')[0]!==b.action.entityId.split('.')[0] && !b.action.service.startsWith('homeassistant.')) throw new Error('The service and target entity domains do not match.');
         if(b.action.entityId && read.inventory.managed.some(m=>m.entityId===b.action.entityId)) throw new Error('A button-map automation cannot trigger another button-map automation.');
         const conflicts=(source.existing[gesture.key]??[]).filter(a=>a.id!==c.targetId && !a.managed && a.enabled!==false);
         if(b.enabled && !map.allowExisting && (conflicts.length || read.inventory.coverage.unreadable>0)) throw new Error('Existing or unreadable automations may also handle this button. Review coexistence first.');
