@@ -109,13 +109,18 @@ For Jev setup, request accounting and data boundaries, see
 
 ### Ask Taxis and AI administration
 
-The floating sparkle button opens **Ask Taxis** alongside the current page.
+The floating sparkle button opens **Ask Taxis** in a compact floating window
+above the page. It is roughly half the viewport height and keeps the page's
+layout and width unchanged. Messages scroll independently; the composer stays
+at the bottom. Context options are in the context chip; model details, settings,
+administration and Clear chat are under the three-dot menu.
 Use **Explain** (Medium), **Suggest next steps** (Strong) or **Naming help** (Low).
 These use the models configured in Settings; enable AI and test each connection
 there first. Replies are advice only: no HA tools, automatic proposals or Apply.
 
 Page data starts off. Select an area and enable it for room-specific advice;
-review the exact context before sending. Only the projected context, your question
+inspect the exact context from the context chip. Press Send (or Enter; Shift+Enter
+adds a newline) to ask a question. Only the projected context, your question
 and up to six recent messages (2,000 characters each) are sent. Room context
 includes names/IDs, roles, availability flags, capability counts, helper plans
 and the guide's equipment assessment. House scope includes counts only. Raw

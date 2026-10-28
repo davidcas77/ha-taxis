@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Floating assistant.** Ask Taxis opens in a rounded, compact floating window
+  about half the screen height, leaving the page's width unchanged. Chat messages
+  scroll above a fixed composer. Context controls move behind a chip; model,
+  usage and administration move to the three-dot menu. Send or Enter submits
+  explicitly, with Shift+Enter for a newline. Page data still starts off and
+  opening the window never calls an AI provider.
+
 ## 0.7.1
 
 - **Ask Taxis.** A floating sparkle button opens contextual AI help on every
