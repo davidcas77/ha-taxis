@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.3
 
 - **Buttons.** A new input inventory shows advertised gestures across integrations,
   existing exact/possible automation matches and discovery gaps. Assign lights or
@@ -12,6 +12,11 @@
 - **Button AI review.** Manually preview and send a selected control's bounded,
   redacted automation summary to Medium AI. AI cannot assign or Apply. Unknown
   gestures and unreadable automation configs remain explicit.
+- **Validation.** TypeScript, production build, 1,405 unit/API tests across
+  59 files and 47 isolated browser scenarios passed for the feature. A loopback
+  demo verified two remotes sharing one automation, Apply/readback and disabling
+  that same automation. Live hardware and real provider calls remain unverified.
+  Updating the app does not apply pending mappings or activate automations.
 
 ## 0.7.2
 
