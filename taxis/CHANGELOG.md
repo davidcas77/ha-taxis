@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.7.0
+
+- **House guide.** Choose each area's room type and automation goals, then work
+  through detected equipment, missing helpers, comfort settings and native
+  automations. Advice covers equipment types and placement, not brands or models.
+  Existing, excluded, disabled and unavailable sources stay distinguishable.
+  Bedrooms require an explicit matching Capabilities choice rather than silently
+  changing inventory settings. Ideas link to Reddit and Home Assistant Community
+  discussions and explain which recipes implement them.
+- **Prepare from the guide.** Review exact helper IDs, sources, prerequisites,
+  conflicting controllers and enabled automation state. Add helper and blueprint
+  proposals to Changes. Pending work and failed reads never count as installed
+  automations; all existing editing and proposal workflows remain available.
+- **Guest, away and sleep.** Review or propose native mode switches, with effective
+  per-area parameter choices. Guest can pause automatic indoor lighting and media
+  off; guests remaining override climate Away and its scheduled occupancy
+  requirement. Window, season, sleep, night and comfort-schedule rules remain in
+  force. Away suppresses automatic indoor light turn-on, and Sleep uses night
+  lighting, with only Night-role lights in bedrooms. Mode switches are manual;
+  Taxis does not infer an empty house when residents leave.
+- **Room observations.** Save a checklist and notes based on the area's chosen
+  goals and integrated modes. Relevant changes to settings, equipment identities,
+  helper members or installed recipes require a retest; routine sensor values and
+  refresh timestamps do not. Old notes and unsaved drafts are preserved. Records
+  describe behavior observed by the user, not automatic physical verification.
+- **Compact Helpers overview.** Not needed cells are blank by default. Filter by
+  capability or hide areas without entities, while keeping disabled, helper-only
+  and unrelated entities distinguishable. Wrapped, bounded cells fit smaller
+  screens. Expand an actionable cell to add its helper proposal to Changes.
+- **Pause during delayed actions.** Motion lights, media off, climate startup,
+  bathroom fan, exterior lights and appliance notifications recheck Pause at
+  delayed or queued write boundaries. Left-open reminders stop their repeat wait
+  when paused. Manual light overrides remain available.
+- **Readable AI model errors.** Model-list GETs retry one transient server/gateway
+  response within their existing timeout budget. HTML gateway pages are replaced
+  with readable errors that wrap on narrow screens. Connection/completion POSTs
+  are not retried. Existing Low/Medium/Strong settings remain supported;
+  task-facing AI features such as Ask Taxis remain unconnected.
+- **Upgrade behavior.** Installing this version does not create helpers, update
+  saved automation inputs or activate modes. Review the proposed blueprint and
+  recipe updates in Changes, then Apply only when ready. Blueprint versions are
+  Motion lights v5, Media off v2, Area climate v4, and Bathroom fan, Exterior
+  lights, Left open and Appliance done v2.
+- **Verification.** TypeScript, production build, 1,333 tests across 56 files,
+  53 dummy-data browser scenarios and both supported image architectures passed
+  before release. Live Home Assistant was not updated, restarted or controlled.
+
 ## 0.6.3
 
 - **Content-sized tables.** Columns fit their headers and rendered values, with
