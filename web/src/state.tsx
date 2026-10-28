@@ -128,29 +128,32 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const saveNamingIgnores = useCallback(async (edit: (s: NamingIgnores) => NamingIgnores) => {
-    // Never save before the real list has arrived: an empty one would overwrite it.
-    if (!namingIgnoresLoaded) return "The ignored suggestions haven't loaded yet.";
-    if (namingIgnoresBusy.current) return "Still saving the last change. Try again in a moment.";
-    const before = namingIgnoresRef.current;
-    const next = edit(before);
-    if (next === before) return null;
-    namingIgnoresBusy.current = true;
-    setNamingIgnoresSaving(true);
-    namingIgnoresRef.current = next;
-    setNamingIgnores(next);
-    const r = await api.saveNamingIgnores(next);
-    namingIgnoresBusy.current = false;
-    setNamingIgnoresSaving(false);
-    if (!r.ok) {
-      namingIgnoresRef.current = before;
-      setNamingIgnores(before);
-      return r.error;
-    }
-    namingIgnoresRef.current = r.ignores;
-    setNamingIgnores(r.ignores);
-    return null;
-  }, [namingIgnoresLoaded]);
+  const saveNamingIgnores = useCallback(
+    async (edit: (s: NamingIgnores) => NamingIgnores) => {
+      // Never save before the real list has arrived: an empty one would overwrite it.
+      if (!namingIgnoresLoaded) return "The ignored suggestions haven't loaded yet.";
+      if (namingIgnoresBusy.current) return "Still saving the last change. Try again in a moment.";
+      const before = namingIgnoresRef.current;
+      const next = edit(before);
+      if (next === before) return null;
+      namingIgnoresBusy.current = true;
+      setNamingIgnoresSaving(true);
+      namingIgnoresRef.current = next;
+      setNamingIgnores(next);
+      const r = await api.saveNamingIgnores(next);
+      namingIgnoresBusy.current = false;
+      setNamingIgnoresSaving(false);
+      if (!r.ok) {
+        namingIgnoresRef.current = before;
+        setNamingIgnores(before);
+        return r.error;
+      }
+      namingIgnoresRef.current = r.ignores;
+      setNamingIgnores(r.ignores);
+      return null;
+    },
+    [namingIgnoresLoaded],
+  );
 
   useEffect(() => {
     void api.groups().then((r) => {
@@ -162,29 +165,32 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const saveGroups = useCallback(async (edit: (g: GroupSettings) => GroupSettings) => {
-    // Never save before the real groups have arrived: defaults would overwrite them.
-    if (!groupsLoaded) return "The groups haven't loaded yet.";
-    if (groupsBusy.current) return "Still saving the last change. Try again in a moment.";
-    const before = groupsRef.current;
-    const next = edit(before);
-    if (next === before) return null;
-    groupsBusy.current = true;
-    setGroupsSaving(true);
-    groupsRef.current = next;
-    setGroups(next);
-    const r = await api.saveGroups(next);
-    groupsBusy.current = false;
-    setGroupsSaving(false);
-    if (!r.ok) {
-      groupsRef.current = before;
-      setGroups(before);
-      return r.error;
-    }
-    groupsRef.current = r.groups;
-    setGroups(r.groups);
-    return null;
-  }, [groupsLoaded]);
+  const saveGroups = useCallback(
+    async (edit: (g: GroupSettings) => GroupSettings) => {
+      // Never save before the real groups have arrived: defaults would overwrite them.
+      if (!groupsLoaded) return "The groups haven't loaded yet.";
+      if (groupsBusy.current) return "Still saving the last change. Try again in a moment.";
+      const before = groupsRef.current;
+      const next = edit(before);
+      if (next === before) return null;
+      groupsBusy.current = true;
+      setGroupsSaving(true);
+      groupsRef.current = next;
+      setGroups(next);
+      const r = await api.saveGroups(next);
+      groupsBusy.current = false;
+      setGroupsSaving(false);
+      if (!r.ok) {
+        groupsRef.current = before;
+        setGroups(before);
+        return r.error;
+      }
+      groupsRef.current = r.groups;
+      setGroups(r.groups);
+      return null;
+    },
+    [groupsLoaded],
+  );
 
   useEffect(() => {
     void api.inventory().then((r) => {
@@ -196,29 +202,32 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const saveInventory = useCallback(async (edit: (s: InventorySettings) => InventorySettings) => {
-    // Never save before the real settings have arrived: defaults would overwrite them.
-    if (!inventoryLoaded) return "The inventory settings haven't loaded yet.";
-    if (inventoryBusy.current) return "Still saving the last change. Try again in a moment.";
-    const before = inventoryRef.current;
-    const next = edit(before);
-    if (next === before) return null;
-    inventoryBusy.current = true;
-    setInventorySaving(true);
-    inventoryRef.current = next;
-    setInventory(next);
-    const r = await api.saveInventory(next);
-    inventoryBusy.current = false;
-    setInventorySaving(false);
-    if (!r.ok) {
-      inventoryRef.current = before;
-      setInventory(before);
-      return r.error;
-    }
-    inventoryRef.current = r.inventory;
-    setInventory(r.inventory);
-    return null;
-  }, [inventoryLoaded]);
+  const saveInventory = useCallback(
+    async (edit: (s: InventorySettings) => InventorySettings) => {
+      // Never save before the real settings have arrived: defaults would overwrite them.
+      if (!inventoryLoaded) return "The inventory settings haven't loaded yet.";
+      if (inventoryBusy.current) return "Still saving the last change. Try again in a moment.";
+      const before = inventoryRef.current;
+      const next = edit(before);
+      if (next === before) return null;
+      inventoryBusy.current = true;
+      setInventorySaving(true);
+      inventoryRef.current = next;
+      setInventory(next);
+      const r = await api.saveInventory(next);
+      inventoryBusy.current = false;
+      setInventorySaving(false);
+      if (!r.ok) {
+        inventoryRef.current = before;
+        setInventory(before);
+        return r.error;
+      }
+      inventoryRef.current = r.inventory;
+      setInventory(r.inventory);
+      return null;
+    },
+    [inventoryLoaded],
+  );
 
   useEffect(() => {
     void api.parameters().then((r) => {
@@ -230,29 +239,32 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const saveParameters = useCallback(async (edit: (p: ParameterSettings) => ParameterSettings) => {
-    // Never save before the real parameters have arrived: defaults would overwrite them.
-    if (!parametersLoaded) return "The parameters haven't loaded yet.";
-    if (parametersBusy.current) return "Still saving the last change. Try again in a moment.";
-    const before = parametersRef.current;
-    const next = edit(before);
-    if (next === before) return null;
-    parametersBusy.current = true;
-    setParametersSaving(true);
-    parametersRef.current = next;
-    setParameters(next);
-    const r = await api.saveParameters(next);
-    parametersBusy.current = false;
-    setParametersSaving(false);
-    if (!r.ok) {
-      parametersRef.current = before;
-      setParameters(before);
-      return r.error;
-    }
-    parametersRef.current = r.parameters;
-    setParameters(r.parameters);
-    return null;
-  }, [parametersLoaded]);
+  const saveParameters = useCallback(
+    async (edit: (p: ParameterSettings) => ParameterSettings) => {
+      // Never save before the real parameters have arrived: defaults would overwrite them.
+      if (!parametersLoaded) return "The parameters haven't loaded yet.";
+      if (parametersBusy.current) return "Still saving the last change. Try again in a moment.";
+      const before = parametersRef.current;
+      const next = edit(before);
+      if (next === before) return null;
+      parametersBusy.current = true;
+      setParametersSaving(true);
+      parametersRef.current = next;
+      setParameters(next);
+      const r = await api.saveParameters(next);
+      parametersBusy.current = false;
+      setParametersSaving(false);
+      if (!r.ok) {
+        parametersRef.current = before;
+        setParameters(before);
+        return r.error;
+      }
+      parametersRef.current = r.parameters;
+      setParameters(r.parameters);
+      return null;
+    },
+    [parametersLoaded],
+  );
 
   const saveNaming = useCallback(async (n: NamingSettings) => {
     const r = await api.saveNaming(n);
@@ -306,28 +318,42 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
         proposing.current = false;
         setBusy(false);
       }
-      setNotice(failed ? { tone: "error", text: failed } : { tone: "ok", text: inputs.length > 1 ? `${inputs.length} changes added to the list` : "Added to the list of changes" });
+      setNotice(
+        failed
+          ? { tone: "error", text: failed }
+          : { tone: "ok", text: inputs.length > 1 ? `${inputs.length} changes added to the list` : "Added to the list of changes" },
+      );
       return !failed;
     },
     [reload],
   );
 
-  const mutateQueue = useCallback(async (removeId?: number) => {
-    if (proposing.current) return;
-    proposing.current = true;
-    setBusy(true);
-    try {
-      const res = removeId === undefined ? await api.clearChanges() : await api.removeChange(removeId);
-      if (!res.ok) {
-        setNotice({ tone: "error", text: res.error });
-        return;
+  const mutateQueue = useCallback(
+    async (removeId?: number) => {
+      if (proposing.current) return;
+      proposing.current = true;
+      setBusy(true);
+      try {
+        const res = removeId === undefined ? await api.clearChanges() : await api.removeChange(removeId);
+        if (!res.ok) {
+          setNotice({ tone: "error", text: res.error });
+          return;
+        }
+        setChanges(res.changes);
+        setVersion(res.version);
+        await reload(false);
+        setNotice({
+          tone: "ok",
+          text:
+            removeId === undefined ? "Discarded the queued changes. Home Assistant was unchanged." : "Removed the queued change. Home Assistant was unchanged.",
+        });
+      } finally {
+        proposing.current = false;
+        setBusy(false);
       }
-      setChanges(res.changes);
-      setVersion(res.version);
-      await reload(false);
-      setNotice({ tone: "ok", text: removeId === undefined ? "Discarded the queued changes. Home Assistant was unchanged." : "Removed the queued change. Home Assistant was unchanged." });
-    } finally { proposing.current = false; setBusy(false); }
-  }, [reload]);
+    },
+    [reload],
+  );
   const removeChange = useCallback((id: number) => mutateQueue(id), [mutateQueue]);
   const clearChanges = useCallback(() => mutateQueue(), [mutateQueue]);
 
@@ -350,8 +376,74 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
   }, [changes]);
 
   const value = useMemo(
-    () => ({ hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, parameters, parametersLoaded, parametersSaving, saveParameters, saveNaming, namingIgnores, namingIgnoresLoaded, namingIgnoresSaving, saveNamingIgnores, reload, propose, removeChange, clearChanges, setChanges, notify: setNotice }),
-    [hierarchy, changes, version, loading, error, notice, edited, naming, namingLoaded, busy, groups, groupsLoaded, groupsSaving, saveGroups, inventory, inventoryLoaded, inventorySaving, saveInventory, parameters, parametersLoaded, parametersSaving, saveParameters, saveNaming, namingIgnores, namingIgnoresLoaded, namingIgnoresSaving, saveNamingIgnores, reload, propose, removeChange, clearChanges],
+    () => ({
+      hierarchy,
+      changes,
+      version,
+      loading,
+      error,
+      notice,
+      edited,
+      naming,
+      namingLoaded,
+      busy,
+      groups,
+      groupsLoaded,
+      groupsSaving,
+      saveGroups,
+      inventory,
+      inventoryLoaded,
+      inventorySaving,
+      saveInventory,
+      parameters,
+      parametersLoaded,
+      parametersSaving,
+      saveParameters,
+      saveNaming,
+      namingIgnores,
+      namingIgnoresLoaded,
+      namingIgnoresSaving,
+      saveNamingIgnores,
+      reload,
+      propose,
+      removeChange,
+      clearChanges,
+      setChanges,
+      notify: setNotice,
+    }),
+    [
+      hierarchy,
+      changes,
+      version,
+      loading,
+      error,
+      notice,
+      edited,
+      naming,
+      namingLoaded,
+      busy,
+      groups,
+      groupsLoaded,
+      groupsSaving,
+      saveGroups,
+      inventory,
+      inventoryLoaded,
+      inventorySaving,
+      saveInventory,
+      parameters,
+      parametersLoaded,
+      parametersSaving,
+      saveParameters,
+      saveNaming,
+      namingIgnores,
+      namingIgnoresLoaded,
+      namingIgnoresSaving,
+      saveNamingIgnores,
+      reload,
+      propose,
+      removeChange,
+      clearChanges,
+    ],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -369,12 +461,38 @@ export type AreaTab = (typeof AREA_TABS)[number];
 // What the Organize page lists. In "spaces" an id reads "floor:<id>" or "area:<id>".
 // Home Assistant keeps one category list per scope, so each scope is its own
 // type.
-export const ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers", "zones", "automations", "blueprints", "devices", "entities", "helpers"] as const;
+export const ORGANIZE_TYPES = [
+  "spaces",
+  "labels",
+  "category-automation",
+  "category-script",
+  "category-scene",
+  "category-helpers",
+  "zones",
+  "automations",
+  "blueprints",
+  "devices",
+  "entities",
+  "helpers",
+] as const;
 export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
 const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
 
 // The sub-tabs of the Parameters page. Later stages add more.
-export const PARAMETER_TABS = ["capabilities", "helpers", "area-codes", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety"] as const;
+export const PARAMETER_TABS = [
+  "capabilities",
+  "helpers",
+  "area-codes",
+  "house",
+  "occupancy",
+  "lighting",
+  "media",
+  "climate",
+  "fan",
+  "exterior",
+  "covers",
+  "safety",
+] as const;
 export type ParameterTab = (typeof PARAMETER_TABS)[number];
 
 export type Route =
@@ -389,12 +507,7 @@ export type Route =
   | { page: "ai-admin" }
   | { page: "buttons"; controlId: string | null };
 
-export type Selection =
-  | { kind: "home" }
-  | { kind: "floor"; id: string }
-  | { kind: "area"; id: string }
-  | { kind: "unassigned" }
-  | { kind: "loose" };
+export type Selection = { kind: "home" } | { kind: "floor"; id: string } | { kind: "area"; id: string } | { kind: "unassigned" } | { kind: "loose" };
 
 const HOME: Route = { page: "areas", sel: { kind: "home" }, tab: "overview" };
 
@@ -456,7 +569,7 @@ export function toHash(r: Route): string {
     case "guide":
       return r.areaId ? `#guide/${enc(r.areaId)}` : "#guide";
     case "buttons":
-      return r.controlId ? `#buttons/${enc(r.controlId)}` : '#buttons';
+      return r.controlId ? `#buttons/${enc(r.controlId)}` : "#buttons";
     case "recipes":
     case "health":
     case "changes":

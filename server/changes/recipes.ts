@@ -1,10 +1,11 @@
 import {
-  ANNOUNCE_SCRIPT_ID,
+  SCRIPT_IDS,
   blueprintByPath,
   blueprintForRecipe,
   blueprintVersion,
   BLUEPRINTS,
   inputEntityIds,
+  isHouseRecipe,
   mapInputEntities,
   type RecipeKey,
 } from "../../shared/blueprints.ts";
@@ -27,7 +28,9 @@ import type { Outcome } from "./apply.ts";
 //   automation  one per area and recipe, created or replaced through the REST
 //               config API as a use of the blueprint with its inputs. Run after
 //               the helpers, because its inputs name them.
-//   script      the same for taxis_announce, the one script Taxis makes.
+//   script      the same for taxis_announce and taxis_goodbye, the scripts Taxis makes.
+//               A house recipe (shared/recipes-house.ts) has no area: its automation
+//               is checked like the others, minus the area.
 //
 // All are checked against a fresh read: the blueprint has to be listed with the
 // version Taxis wrote, the automation's or script's stored config has to be what
@@ -237,7 +240,7 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
       outcome.set(c.id, fail(c, "Taxis has no blueprint at that path any more."));
       continue;
     }
-    if (kind === "automation" && !fresh.areas.some((a) => a.area_id === c.after.area_id)) {
+    if (kind === "automation" && !isHouseRecipe(c.after.recipe) && !fresh.areas.some((a) => a.area_id === c.after.area_id)) {
       outcome.set(c.id, fail(c, "The area it is for is no longer in Home Assistant."));
       continue;
     }
@@ -346,10 +349,11 @@ export async function readInstalled(
     out.automations[id] = installedOf(config);
   });
 
-  // The announce script, when Home Assistant lists one under its id.
-  if (raw.states.some((s) => s.entity_id === `script.${ANNOUNCE_SCRIPT_ID}`)) {
-    const config = await io.rest.get("script", ANNOUNCE_SCRIPT_ID);
-    if (config) out.scripts[ANNOUNCE_SCRIPT_ID] = installedOf(config);
+  // The scripts Taxis makes (announce, goodbye), when Home Assistant lists one under its id.
+  for (const scriptId of SCRIPT_IDS) {
+    if (!raw.states.some((s) => s.entity_id === `script.${scriptId}`)) continue;
+    const config = await io.rest.get("script", scriptId);
+    if (config) out.scripts[scriptId] = installedOf(config);
   }
 
   // Other automations that already use an area's light group or a thermostat:

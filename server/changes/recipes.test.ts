@@ -34,8 +34,10 @@ function setup(home = buildMockRegistry()) {
   const store = changeStore(db);
   const fake = fakeHa(home);
   const live = () => buildHierarchy(structuredClone(fake.home), "now");
-  const installed = () => readInstalled({ ha: fake.ha, rest: fake.api }, fake.home as RawRegistry, canonicalLightGroups(live(), DEFAULT_NAMING), areaThermostats(live()));
-  const plan = async (params: ParameterSettings = EMPTY_PARAMETERS) => planRecipes(live(), EMPTY_INVENTORY, DEFAULT_NAMING, params, await installed(), store.list());
+  const installed = () =>
+    readInstalled({ ha: fake.ha, rest: fake.api }, fake.home as RawRegistry, canonicalLightGroups(live(), DEFAULT_NAMING), areaThermostats(live()));
+  const plan = async (params: ParameterSettings = EMPTY_PARAMETERS) =>
+    planRecipes(live(), EMPTY_INVENTORY, DEFAULT_NAMING, params, await installed(), store.list());
   const add = (inputs: ChangeInput[]) => {
     for (const input of inputs) {
       expect(validateInput(input), JSON.stringify(input).slice(0, 100)).toBeNull();
@@ -69,7 +71,10 @@ describe("installing occupancy", () => {
     ]);
 
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true, true, true, true]);
+    expect(
+      results.map((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toEqual([true, true, true, true, true]);
 
     // The order: blueprint, timer and toggle, the template flow, the automation.
     const at = (call: string) => t.index(call);
@@ -99,7 +104,10 @@ describe("installing occupancy", () => {
     // No initial state: it starts off, so the area's recipes run.
     expect(t.state("input_boolean.study_paused")!.state).toBe("off");
     expect(t.entity("binary_sensor.study_occupied")).toMatchObject({ platform: "template", area_id: "study" });
-    expect(t.fake.home.configEntries.find((e) => e.entry_id === t.entity("binary_sensor.study_occupied")!.config_entry_id)).toMatchObject({ domain: "template", device_class: "occupancy" });
+    expect(t.fake.home.configEntries.find((e) => e.entry_id === t.entity("binary_sensor.study_occupied")!.config_entry_id)).toMatchObject({
+      domain: "template",
+      device_class: "occupancy",
+    });
     expect(t.fake.home.automations.taxis_occupancy_study).toMatchObject({
       id: "taxis_occupancy_study",
       alias: "Study – Occupancy (Taxis)",
@@ -134,7 +142,10 @@ describe("installing occupancy", () => {
     const before = { ws: t.fake.ws.length, rest: t.fake.rest.length };
 
     const second = await t.apply(changes);
-    expect(second.results.map((r) => r.ok), second.results.map((r) => r.message).join(" | ")).toEqual([true, true, true, true, true]);
+    expect(
+      second.results.map((r) => r.ok),
+      second.results.map((r) => r.message).join(" | "),
+    ).toEqual([true, true, true, true, true]);
     const fresh = t.fake.ws.slice(before.ws).filter((x) => x.kind === "write");
     // No blueprint, no timer, no toggle, no flow, no automation write.
     expect(fresh.map((x) => x.type)).toEqual([]);
@@ -163,8 +174,16 @@ describe("installing occupancy", () => {
     expect(t.store.list().map((x) => `${x.kind}:${x.op}`)).toEqual(["helper:update", "automation:update"]);
     const mark = t.fake.ws.length;
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true]);
-    expect(t.fake.ws.slice(mark).filter((x) => x.kind === "write").map((x) => [x.type, x.payload])).toEqual([["timer/update", { timer_id: "study_hold", duration: "00:08:00" }]]);
+    expect(
+      results.map((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toEqual([true, true]);
+    expect(
+      t.fake.ws
+        .slice(mark)
+        .filter((x) => x.kind === "write")
+        .map((x) => [x.type, x.payload]),
+    ).toEqual([["timer/update", { timer_id: "study_hold", duration: "00:08:00" }]]);
     expect(t.state("timer.study_hold")!.attributes).toMatchObject({ duration: "0:08:00" });
     expect((t.fake.home.automations.taxis_occupancy_study.use_blueprint as { input: { hold_minutes: number } }).input.hold_minutes).toBe(8);
     t.store.list().forEach((x) => t.store.done(x.id));
@@ -211,7 +230,10 @@ describe("installing motion lights", () => {
     ]);
 
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual(Array(9).fill(true));
+    expect(
+      results.map((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toEqual(Array(9).fill(true));
     const flowAt = t.index("POST /config/config_entries/flow");
     expect(flowAt).toBeGreaterThan(-1);
     // Both blueprints before any helper; both automations after every helper; occupancy's first.
@@ -277,7 +299,10 @@ describe("installing media off, and the override timer", () => {
       "automation:create:taxis_media_off_kitchen",
     ]);
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true, true]);
+    expect(
+      results.map((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toEqual([true, true, true]);
     expect(t.fake.home.blueprints[MEDIA.path]).toBe(MEDIA.yaml);
     expect(t.fake.home.automations.taxis_media_off_living).toMatchObject({
       alias: "Living room – Media off (Taxis)",
@@ -293,7 +318,10 @@ describe("installing media off, and the override timer", () => {
         },
       },
     });
-    expect((t.fake.home.automations.taxis_media_off_kitchen.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({ speaker_entities: ["media_player.kitchen_speaker"], tv_entities: [] });
+    expect((t.fake.home.automations.taxis_media_off_kitchen.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({
+      speaker_entities: ["media_player.kitchen_speaker"],
+      tv_entities: [],
+    });
     // No helper of its own: it uses Occupancy's. Only the allowed writes, and nothing deleted.
     const writes = t.fake.ws.filter((x) => x.kind === "write");
     expect(writes.map((x) => x.type)).toEqual(["blueprint/save"]);
@@ -317,7 +345,10 @@ describe("installing media off, and the override timer", () => {
     t.add(recipeChangeInputs([c]));
     const mark = t.fake.ws.length;
     const { results } = await t.apply();
-    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(
+      results.every((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toBe(true);
     expect(t.fake.ws.slice(mark).filter((x) => x.kind === "write")).toEqual([]);
     expect((t.fake.home.automations.taxis_media_off_living.use_blueprint as { input: { tv_minutes: number } }).input.tv_minutes).toBe(45);
   });
@@ -326,7 +357,9 @@ describe("installing media off, and the override timer", () => {
     const t = demo();
     t.add(recipeChangeInputs([cell(await t.plan(), "motion_lights", "living_room")!]));
     expect((await t.apply()).results.every((r) => r.ok)).toBe(true);
-    expect(t.fake.ws.filter((x) => x.type === "timer/create").map((x) => x.payload)).toEqual([{ name: "Living room override", duration: "01:00:00", restore: true }]);
+    expect(t.fake.ws.filter((x) => x.type === "timer/create").map((x) => x.payload)).toEqual([
+      { name: "Living room override", duration: "01:00:00", restore: true },
+    ]);
     expect(t.entity("timer.living_override")).toMatchObject({ platform: "timer", area_id: "living_room" });
     t.store.list().forEach((x) => t.store.done(x.id));
     expect(cell(await t.plan(), "motion_lights", "living_room")).toMatchObject({ status: "installed", inputs: [] });
@@ -337,8 +370,16 @@ describe("installing media off, and the override timer", () => {
     t.add(recipeChangeInputs([c]));
     const mark = t.fake.ws.length;
     const { results } = await t.apply();
-    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
-    expect(t.fake.ws.slice(mark).filter((x) => x.kind === "write").map((x) => [x.type, x.payload])).toEqual([["timer/update", { timer_id: "living_room_override", duration: "00:30:00" }]]);
+    expect(
+      results.every((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toBe(true);
+    expect(
+      t.fake.ws
+        .slice(mark)
+        .filter((x) => x.kind === "write")
+        .map((x) => [x.type, x.payload]),
+    ).toEqual([["timer/update", { timer_id: "living_room_override", duration: "00:30:00" }]]);
     expect((t.fake.home.automations.taxis_motion_lights_living.use_blueprint as { input: { override_minutes: number } }).input.override_minutes).toBe(30);
     t.store.list().forEach((x) => t.store.done(x.id));
     expect(cell(await t.plan(params), "motion_lights", "living_room")!.status).toBe("installed");
@@ -363,7 +404,10 @@ describe("installing media off, and the override timer", () => {
     t.add(recipeChangeInputs([c]));
     expect(t.store.list().map((x) => `${x.kind}:${x.op}`)).toEqual(["blueprint:update", "automation:update"]);
     const { results } = await t.apply();
-    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(
+      results.every((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toBe(true);
     expect(t.fake.home.blueprints[OCC.path]).toBe(OCC.yaml);
     expect((t.fake.home.automations.taxis_occupancy_living.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({
       occupied_entity: "binary_sensor.living_occupied",
@@ -385,7 +429,7 @@ describe("when a step fails", () => {
     t.add(recipeChangeInputs([t.cell(await t.plan(), "occupancy", "study")]));
     const ha = {
       command: t.fake.ha.command,
-      write: async <T,>(type: string, payload: Record<string, unknown>): Promise<T> => {
+      write: async <T>(type: string, payload: Record<string, unknown>): Promise<T> => {
         if (type === "blueprint/save") throw new Error("disk full");
         return t.fake.ha.write<T>(type, payload);
       },
@@ -438,7 +482,7 @@ describe("when a step fails", () => {
     // A retry with matching stored configuration must still check HA's state.
     const retry = await t.apply();
     expect(retry.results[4]).toMatchObject({ ok: false, message: expect.stringContaining("couldn't load it") });
-    t.fake.home.states.find(s => s.attributes?.id === "taxis_occupancy_study")!.state = "on";
+    t.fake.home.states.find((s) => s.attributes?.id === "taxis_occupancy_study")!.state = "on";
     expect((await t.apply()).results[4]).toMatchObject({ ok: true, status: "loaded" });
   });
 
@@ -455,10 +499,24 @@ describe("when a step fails", () => {
   it("follows a sensor that is renamed in the same Apply", async () => {
     const t = setup();
     t.add(recipeChangeInputs([t.cell(await t.plan(), "occupancy", "study")]));
-    const rename: Change = { id: 900, kind: "entity", op: "update", targetId: "binary_sensor.study_presence", scope: null, before: { new_entity_id: "binary_sensor.study_presence" }, after: { new_entity_id: "binary_sensor.study_mmwave" }, createdAt: "" };
+    const rename: Change = {
+      id: 900,
+      kind: "entity",
+      op: "update",
+      targetId: "binary_sensor.study_presence",
+      scope: null,
+      before: { new_entity_id: "binary_sensor.study_presence" },
+      after: { new_entity_id: "binary_sensor.study_mmwave" },
+      createdAt: "",
+    };
     const { results } = await t.apply([rename, ...t.store.list()]);
-    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
-    expect((t.fake.home.automations.taxis_occupancy_study.use_blueprint as { input: { starts_entities: string[] } }).input.starts_entities).toEqual(["binary_sensor.study_mmwave"]);
+    expect(
+      results.every((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toBe(true);
+    expect((t.fake.home.automations.taxis_occupancy_study.use_blueprint as { input: { starts_entities: string[] } }).input.starts_entities).toEqual([
+      "binary_sensor.study_mmwave",
+    ]);
   });
 });
 
@@ -486,17 +544,33 @@ describe("the change list", () => {
 
   it("refuses an automation for an area that is gone, and a duration for something that isn't a UI timer", async () => {
     const t = setup(withRecipeDemo(buildMockRegistry()));
-    const auto = (t.cell(await t.plan(), "occupancy", "study").inputs.find((i) => i.kind === "automation"))!;
+    const auto = t.cell(await t.plan(), "occupancy", "study").inputs.find((i) => i.kind === "automation")!;
     expect(t.store.add({ ...auto, fields: { ...auto.fields, area_id: "nowhere" } }, t.live())).toBe("That area isn't in Home Assistant any more.");
-    expect(t.store.add({ kind: "helper", op: "update", targetId: "timer.nowhere", fields: { duration: 600 } }, t.live())).toBe("That timer isn't in Home Assistant any more.");
-    expect(t.store.add({ kind: "helper", op: "update", targetId: "light.desk", fields: { duration: 600 } }, t.live())).toBe("Taxis only changes the duration of a timer.");
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "timer.nowhere", fields: { duration: 600 } }, t.live())).toBe(
+      "That timer isn't in Home Assistant any more.",
+    );
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "light.desk", fields: { duration: 600 } }, t.live())).toBe(
+      "Taxis only changes the duration of a timer.",
+    );
     // A timer written in YAML has no registry entry.
     t.fake.home.states.push({ entity_id: "timer.yaml_one", state: "idle", attributes: { duration: "0:05:00" } });
-    expect(t.store.add({ kind: "helper", op: "update", targetId: "timer.yaml_one", fields: { duration: 600 } }, t.live())).toMatch(/isn't set up in the Home Assistant UI/);
-    expect(t.store.add({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 600 } }, buildHierarchy(structuredClone(t.fake.home), "now"))).toBeNull();
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "timer.yaml_one", fields: { duration: 600 } }, t.live())).toMatch(
+      /isn't set up in the Home Assistant UI/,
+    );
+    expect(
+      t.store.add(
+        { kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 600 } },
+        buildHierarchy(structuredClone(t.fake.home), "now"),
+      ),
+    ).toBeNull();
     // A second edit of the same timer replaces the first.
     expect(t.store.add({ kind: "helper", op: "update", targetId: "timer.living_hold", fields: { duration: 900 } }, t.live())).toBeNull();
-    expect(t.store.list().filter((x) => x.targetId === "timer.living_hold").map((x) => x.after)).toEqual([{ duration: 900 }]);
+    expect(
+      t.store
+        .list()
+        .filter((x) => x.targetId === "timer.living_hold")
+        .map((x) => x.after),
+    ).toEqual([{ duration: 900 }]);
   });
 });
 
@@ -517,6 +591,12 @@ describe("what Taxis reads to plan the recipes", () => {
       "taxis/left_open.yaml": null,
       "taxis/appliance_done.yaml": null,
       "taxis/announce.yaml": null,
+      "taxis/leak_alert.yaml": null,
+      "taxis/covers_sun.yaml": null,
+      "taxis/battery_low.yaml": null,
+      "taxis/unavailable_watch.yaml": null,
+      "taxis/house_presence.yaml": null,
+      "taxis/goodbye.yaml": null,
     });
     expect(installed.scripts).toEqual({});
     expect(Object.keys(installed.automations).sort()).toEqual(["taxis_occupancy_kitchen", "taxis_occupancy_living"]);
@@ -530,7 +610,9 @@ describe("what Taxis reads to plan the recipes", () => {
     });
     expect(t.fake.writes()).toEqual({ ws: [], rest: [] });
     // Only GETs of automations Taxis made: nothing else was read over REST.
-    expect(t.fake.rest.map((x) => x.path)).toEqual(expect.arrayContaining(["/api/config/automation/config/taxis_occupancy_living", "/api/config/automation/config/taxis_occupancy_kitchen"]));
+    expect(t.fake.rest.map((x) => x.path)).toEqual(
+      expect.arrayContaining(["/api/config/automation/config/taxis_occupancy_living", "/api/config/automation/config/taxis_occupancy_kitchen"]),
+    );
     expect(t.fake.rest.every((x) => /^\/api\/config\/automation\/config\/taxis_/.test(x.path))).toBe(true);
   });
 
@@ -566,9 +648,14 @@ describe("what Taxis reads to plan the recipes", () => {
       "automation:create:taxis_motion_lights_living",
     ]);
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true, true]);
+    expect(
+      results.map((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toEqual([true, true, true]);
     expect(Object.keys(t.fake.home.blueprints).sort()).toEqual([MOT.path, OCC.path].sort());
-    expect(t.fake.home.automations.taxis_motion_lights_living.use_blueprint).toMatchObject({ input: { override_timer: "timer.living_override", main_lights: ["light.living_lamp", "light.living_spots"] } });
+    expect(t.fake.home.automations.taxis_motion_lights_living.use_blueprint).toMatchObject({
+      input: { override_timer: "timer.living_override", main_lights: ["light.living_lamp", "light.living_spots"] },
+    });
   });
 });
 
@@ -592,7 +679,10 @@ describe("installing area climate", () => {
     ]);
 
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true, true, true, true]);
+    expect(
+      results.map((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toEqual([true, true, true, true, true]);
 
     // The order: the blueprint, the toggles, the schedule, the automation.
     const at = (call: string) => t.index(call);
@@ -609,11 +699,26 @@ describe("installing area climate", () => {
     ]);
     expect(w.find((x) => x.type === "schedule/create")!.payload).toEqual({
       name: "Living room climate",
-      monday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
-      tuesday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
-      wednesday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
-      thursday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
-      friday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:00:00" }],
+      monday: [
+        { from: "06:30:00", to: "08:30:00" },
+        { from: "17:00:00", to: "23:00:00" },
+      ],
+      tuesday: [
+        { from: "06:30:00", to: "08:30:00" },
+        { from: "17:00:00", to: "23:00:00" },
+      ],
+      wednesday: [
+        { from: "06:30:00", to: "08:30:00" },
+        { from: "17:00:00", to: "23:00:00" },
+      ],
+      thursday: [
+        { from: "06:30:00", to: "08:30:00" },
+        { from: "17:00:00", to: "23:00:00" },
+      ],
+      friday: [
+        { from: "06:30:00", to: "08:30:00" },
+        { from: "17:00:00", to: "23:00:00" },
+      ],
       saturday: [{ from: "08:00:00", to: "23:00:00" }],
       sunday: [{ from: "08:00:00", to: "23:00:00" }],
     });
@@ -660,7 +765,7 @@ describe("installing area climate", () => {
     // A Home Assistant that stores less than it was sent.
     const ha = {
       command: t.fake.ha.command,
-      write: async <T,>(type: string, payload: Record<string, unknown>) => {
+      write: async <T>(type: string, payload: Record<string, unknown>) => {
         const answer = await t.fake.ha.write<Record<string, unknown>>(type, payload);
         return (type === "schedule/create" ? { ...answer, monday: [] } : answer) as T;
       },
@@ -684,18 +789,26 @@ describe("installing area climate", () => {
     expect(c.status).toBe("out-of-date");
     expect(c.reasons).toEqual([`Comfort periods: ${PERIODS} → Mon-Fri 18:00-22:00`]);
     t.add(c.inputs);
-    expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual(["helper:update:schedule.living_climate", "automation:update:taxis_area_climate_living"]);
+    expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual([
+      "helper:update:schedule.living_climate",
+      "automation:update:taxis_area_climate_living",
+    ]);
 
     const before = t.fake.ws.length;
     const { results } = await t.apply();
-    expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual([true, true]);
+    expect(
+      results.map((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toEqual([true, true]);
     const w = t.fake.ws.slice(before).filter((x) => x.kind === "write");
     expect(w.map((x) => x.type)).toEqual(["schedule/update"]);
     expect(w[0].payload).toMatchObject({ schedule_id: "living_room_climate", name: "Living room climate" });
     expect(w[0].payload.monday).toEqual([{ from: "18:00:00", to: "22:00:00" }]);
     expect(w[0].payload.saturday).toEqual([]);
     expect(t.fake.home.schedules.living_room_climate.monday).toEqual([{ from: "18:00:00", to: "22:00:00" }]);
-    expect((t.fake.home.automations.taxis_area_climate_living.use_blueprint as { input: Record<string, unknown> }).input.comfort_periods).toBe("Mon-Fri 18:00-22:00");
+    expect((t.fake.home.automations.taxis_area_climate_living.use_blueprint as { input: Record<string, unknown> }).input.comfort_periods).toBe(
+      "Mon-Fri 18:00-22:00",
+    );
 
     t.store.list().forEach((x) => t.store.done(x.id));
     expect(t.cell(await t.plan(p), "area_climate", "living_room").status).toBe("installed");
@@ -704,37 +817,67 @@ describe("installing area climate", () => {
   it("refuses to change a schedule that isn't a Home Assistant UI helper, and one that is gone", async () => {
     const t = demo();
     t.fake.home.states.push({ entity_id: "schedule.yaml_one", state: "off", attributes: { friendly_name: "YAML schedule" } });
-    expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.yaml_one", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toMatch(/isn't set up in the Home Assistant UI/);
-    expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.nowhere", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toBe("That schedule isn't in Home Assistant any more.");
-    expect(t.store.add({ kind: "helper", op: "update", targetId: "light.desk", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toBe("Taxis only changes the periods of a schedule.");
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.yaml_one", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toMatch(
+      /isn't set up in the Home Assistant UI/,
+    );
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.nowhere", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toBe(
+      "That schedule isn't in Home Assistant any more.",
+    );
+    expect(t.store.add({ kind: "helper", op: "update", targetId: "light.desk", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toBe(
+      "Taxis only changes the periods of a schedule.",
+    );
     // A second edit of the same schedule replaces the first.
     t.fake.home.entities.push({ entity_id: "schedule.mine", platform: "schedule", unique_id: "mine", original_name: "Mine" });
     t.fake.home.states.push({ entity_id: "schedule.mine", state: "off", attributes: { friendly_name: "Mine" } });
     expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.mine", fields: { periods: "Mon 08:00-09:00" } }, t.live())).toBeNull();
     expect(t.store.add({ kind: "helper", op: "update", targetId: "schedule.mine", fields: { periods: "Tue 08:00-09:00" } }, t.live())).toBeNull();
-    expect(t.store.list().filter((x) => x.targetId === "schedule.mine").map((x) => x.after)).toEqual([{ periods: "Tue 08:00-09:00" }]);
+    expect(
+      t.store
+        .list()
+        .filter((x) => x.targetId === "schedule.mine")
+        .map((x) => x.after),
+    ).toEqual([{ periods: "Tue 08:00-09:00" }]);
   });
 
   it("uses a schedule and switches that are already there, and writes nothing into them", async () => {
     const t = demo();
-    for (const [id, platform] of [["schedule.living_climate", "schedule"], ["input_boolean.my_away", "input_boolean"], ["input_boolean.my_sleep", "input_boolean"]] as const) {
+    for (const [id, platform] of [
+      ["schedule.living_climate", "schedule"],
+      ["input_boolean.my_away", "input_boolean"],
+      ["input_boolean.my_sleep", "input_boolean"],
+    ] as const) {
       t.fake.home.entities.push({ entity_id: id, platform, unique_id: id.split(".")[1], original_name: id });
       t.fake.home.states.push({ entity_id: id, state: "off", attributes: { friendly_name: id } });
     }
-    const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "away_mode_entity", "input_boolean.my_away"), { level: "house" }, "sleep_mode_entity", "input_boolean.my_sleep");
+    const p = setParameter(
+      setParameter(EMPTY_PARAMETERS, { level: "house" }, "away_mode_entity", "input_boolean.my_away"),
+      { level: "house" },
+      "sleep_mode_entity",
+      "input_boolean.my_sleep",
+    );
     const c = t.cell(await t.plan(p), "area_climate", "living_room");
     expect(c.inputs.map((i) => i.kind)).toEqual(["blueprint", "automation"]);
     t.add(c.inputs);
     const { results } = await t.apply();
-    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(
+      results.every((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toBe(true);
     expect(written(t).map((x) => x.type)).toEqual(["blueprint/save"]);
     expect(t.fake.home.schedules).toEqual({});
-    expect((t.fake.home.automations.taxis_area_climate_living.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({ away_entity: "input_boolean.my_away", sleep_entity: "input_boolean.my_sleep", comfort_periods: "" });
+    expect((t.fake.home.automations.taxis_area_climate_living.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({
+      away_entity: "input_boolean.my_away",
+      sleep_entity: "input_boolean.my_sleep",
+      comfort_periods: "",
+    });
   });
 
   it("installs a bedroom that has presets and no Occupancy: the pause switch is made here", async () => {
     const t = demo();
-    const presets = ["comfort", "eco", "away", "sleep"].reduce((p, k) => setParameter(p, { level: "house" }, `preset_${k}` as "preset_eco", k), EMPTY_PARAMETERS);
+    const presets = ["comfort", "eco", "away", "sleep"].reduce(
+      (p, k) => setParameter(p, { level: "house" }, `preset_${k}` as "preset_eco", k),
+      EMPTY_PARAMETERS,
+    );
     const c = t.cell(await t.plan(presets), "area_climate", "bedroom");
     expect(c.status).toBe("ready");
     // The thermostat offers all four.
@@ -751,7 +894,10 @@ describe("installing area climate", () => {
       "automation:create:taxis_area_climate_bedroom",
     ]);
     const { results } = await t.apply();
-    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(
+      results.every((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toBe(true);
     expect(t.entity("input_boolean.bedroom_paused")).toMatchObject({ area_id: "bedroom" });
     expect((t.fake.home.automations.taxis_area_climate_bedroom.use_blueprint as { input: Record<string, unknown> }).input).toMatchObject({
       climate_entities: ["climate.bedroom"],
@@ -767,7 +913,10 @@ describe("installing area climate", () => {
     t.add(recipeChangeInputs([t.cell(cells, "area_climate", "living_room"), t.cell(cells, "area_climate", "bedroom")]));
     expect(t.store.list().filter((x) => x.targetId === "input_boolean.taxis_away")).toHaveLength(1);
     const { results } = await t.apply();
-    expect(results.every((r) => r.ok), results.map((r) => r.message).join(" | ")).toBe(true);
+    expect(
+      results.every((r) => r.ok),
+      results.map((r) => r.message).join(" | "),
+    ).toBe(true);
     expect(t.fake.home.entities.filter((e) => e.entity_id === "input_boolean.taxis_away")).toHaveLength(1);
   });
 
@@ -805,7 +954,16 @@ describe("blueprints and automations on their own", () => {
   it("refuses to write a blueprint Taxis does not hold, and one with a version it no longer has", async () => {
     const t = setup();
     const io = { ha: t.fake.ha, rest: t.fake.api, readFresh: t.fake.readFresh, sleep: async () => {} };
-    const odd: Change = { id: 1, kind: "blueprint", op: "create", targetId: "taxis/other.yaml", scope: null, before: {}, after: { path: "taxis/other.yaml", version: 1 }, createdAt: "" };
+    const odd: Change = {
+      id: 1,
+      kind: "blueprint",
+      op: "create",
+      targetId: "taxis/other.yaml",
+      scope: null,
+      before: {},
+      after: { path: "taxis/other.yaml", version: 1 },
+      createdAt: "",
+    };
     expect(await applyBlueprintChanges([odd], io)).toEqual([{ changeId: 1, ok: false, message: "Taxis has no blueprint at that path any more." }]);
     expect(t.fake.ws.filter((x) => x.kind === "write")).toEqual([]);
   });

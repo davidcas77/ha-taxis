@@ -21,6 +21,7 @@ const TABS: { key: ParameterTab; label: string }[] = [
   { key: "climate", label: "Climate" },
   { key: "fan", label: "Bathroom fan" },
   { key: "exterior", label: "Exterior" },
+  { key: "covers", label: "Covers" },
   { key: "safety", label: "Safety" },
 ];
 

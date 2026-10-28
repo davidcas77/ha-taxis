@@ -1,4 +1,4 @@
-import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeKey, type RecipeKey } from "./blueprints.ts";
+import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeKey, type HouseRecipeKey, type RecipeKey } from "./blueprints.ts";
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
 import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID, kindRunsIn, type Season } from "./climate.ts";
 import { RECIPE_HELPER_SUFFIX, areaCodeConflicts, canonicalId, helperSuffixes, helperExclusions } from "./helpers.ts";
@@ -26,9 +26,20 @@ export const RECIPES: readonly { key: AreaRecipeKey; label: string }[] = [
   { key: "exterior_lights", label: "Exterior lights" },
   { key: "left_open", label: "Left open" },
   { key: "appliance_done", label: "Appliance done" },
+  { key: "leak_alert", label: "Leak alert" },
+  { key: "covers_sun", label: "Covers and sun" },
 ];
 
-export const RECIPE_LABEL = { ...Object.fromEntries(RECIPES.map((r) => [r.key, r.label])), announce: "Announce" } as Record<RecipeKey, string>;
+// The recipes of the house, one cell each (shared/recipes-house.ts), with the label they show.
+export const HOUSE_RECIPE_LABEL: Record<HouseRecipeKey, string> = {
+  announce: "Announce",
+  goodbye: "Goodbye",
+  house_presence: "House presence",
+  battery_low: "Low batteries",
+  unavailable_watch: "Not reporting",
+};
+
+export const RECIPE_LABEL = { ...Object.fromEntries(RECIPES.map((r) => [r.key, r.label])), ...HOUSE_RECIPE_LABEL } as Record<RecipeKey, string>;
 
 export const ANNOUNCE_ALIAS = "Announce (Taxis)";
 
@@ -217,9 +228,27 @@ const INPUT_LABEL: Record<string, string> = {
   preset_eco: "Eco preset",
   preset_away: "Away preset",
   preset_sleep: "Sleep preset",
+  leak_entities: "Leak sensors",
+  valve_entity: "Water valve",
+  cover_entities: "Covers",
+  sun_elevation: "Close when the sun is above (°)",
+  temperature_above: "and it is warmer than (°)",
+  window_start: "Close from",
+  window_end: "Close until",
+  open_time: "Open at",
+  open_at_sunrise: "Open at sunrise",
+  sunrise_offset: "Sunrise offset (s)",
+  threshold: "Battery low below (%)",
+  report_time: "Report at",
+  watch_entities: "Watched entities",
+  unavailable_minutes: "Not reporting for (min)",
+  away_after_minutes: "Away after (min)",
+  end_on_return: "Away ends when someone returns",
+  media_entities: "Media players",
 };
 
-const show = (v: unknown): string => (v === undefined || v === null || v === "" ? "none" : Array.isArray(v) ? (v.length ? v.join(", ") : "none") : String(v));
+export const show = (v: unknown): string =>
+  v === undefined || v === null || v === "" ? "none" : Array.isArray(v) ? (v.length ? v.join(", ") : "none") : String(v);
 
 // Nothing, an empty list and an empty string are all "none": a blueprint takes
 // the same default for each.
@@ -227,7 +256,7 @@ const none = (v: unknown) => v === undefined || v === null || v === "" || (Array
 
 // What differs between the inputs an automation has and the ones Taxis would
 // send, in words.
-function inputDifferences(was: Record<string, unknown>, now: Record<string, unknown>): string[] {
+export function inputDifferences(was: Record<string, unknown>, now: Record<string, unknown>): string[] {
   const out: string[] = [];
   for (const key of Object.keys(INPUT_LABEL)) {
     const a = was[key];
@@ -244,19 +273,23 @@ function inputDifferences(was: Record<string, unknown>, now: Record<string, unkn
 // What is already in the change list.
 // ---------------------------------------------------------------------------
 
-const pendingHelper = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "helper" && (c.targetId === id || c.after.entity_id === id));
-const pendingRename = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "entity" && c.after.new_entity_id === id);
-const pendingDuration = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "helper" && c.op === "update" && c.targetId === id && "duration" in c.after);
-const pendingPeriods = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "helper" && c.op === "update" && c.targetId === id && "periods" in c.after);
-const pendingAutomation = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "automation" && c.targetId === id);
-const pendingScript = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "script" && c.targetId === id);
-const pendingBlueprint = (changes: readonly Change[], path: string, version: number) => changes.some((c) => c.kind === "blueprint" && c.targetId === path && c.after.version === version);
+export const pendingHelper = (changes: readonly Change[], id: string) =>
+  changes.some((c) => c.kind === "helper" && (c.targetId === id || c.after.entity_id === id));
+export const pendingRename = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "entity" && c.after.new_entity_id === id);
+const pendingDuration = (changes: readonly Change[], id: string) =>
+  changes.some((c) => c.kind === "helper" && c.op === "update" && c.targetId === id && "duration" in c.after);
+const pendingPeriods = (changes: readonly Change[], id: string) =>
+  changes.some((c) => c.kind === "helper" && c.op === "update" && c.targetId === id && "periods" in c.after);
+export const pendingAutomation = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "automation" && c.targetId === id);
+export const pendingScript = (changes: readonly Change[], id: string) => changes.some((c) => c.kind === "script" && c.targetId === id);
+export const pendingBlueprint = (changes: readonly Change[], path: string, version: number) =>
+  changes.some((c) => c.kind === "blueprint" && c.targetId === path && c.after.version === version);
 
 // A helper of the recipes in Home Assistant: absent, as it should be, or the
 // id is held by something Taxis can't use.
-type Held = { state: "absent" } | { state: "ok" } | { state: "taken"; name: string };
+export type Held = { state: "absent" } | { state: "ok" } | { state: "taken"; name: string };
 
-function heldBy(h: Hierarchy, id: string, domain: string, platform?: string): Held {
+export function heldBy(h: Hierarchy, id: string, domain: string, platform?: string): Held {
   const e = h.entities[id];
   if (!e) return { state: "absent" };
   // A timer or a toggle has to be set up in the UI to be edited; a template
@@ -265,7 +298,7 @@ function heldBy(h: Hierarchy, id: string, domain: string, platform?: string): He
   return mine ? { state: "ok" } : { state: "taken", name: e.name };
 }
 
-const taken = (id: string, held: Held) => (held.state === "taken" ? `${id} is already used by “${held.name}”` : null);
+export const taken = (id: string, held: Held) => (held.state === "taken" ? `${id} is already used by “${held.name}”` : null);
 
 // ---------------------------------------------------------------------------
 // The cells.
@@ -291,13 +324,15 @@ export function planRecipes(
     const values = resolveAll(params, h, inventory, area.id);
     const houseModes = planHouseModes(h, params, inventory, changes, area.id);
     const modes = recipeHouseModes(houseModes);
-    const modeProblems = (keys: string[]) => houseModes.filter((row) => keys.includes(row.key) && row.status === "review").map((row) => `${row.label} mode: ${row.detail} (${row.id})`);
+    const modeProblems = (keys: string[]) =>
+      houseModes.filter((row) => keys.includes(row.key) && row.status === "review").map((row) => `${row.label} mode: ${row.detail} (${row.id})`);
     const guestInput = modes.guest ? { guest_entity: modes.guest } : {};
     const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
     const usable = [ids.timer, ids.occupied, ids.switch, ids.override, ids.schedule, ids.rate].every((id) => ENTITY_ID_RE.test(id));
 
     // Optional helpers: used when they are in place or already in the change list.
-    const groupThere = (id: string, platform: string) => h.entities[id]?.platform === platform || (!h.entities[id] && (pendingHelper(changes, id) || pendingRename(changes, id)));
+    const groupThere = (id: string, platform: string) =>
+      h.entities[id]?.platform === platform || (!h.entities[id] && (pendingHelper(changes, id) || pendingRename(changes, id)));
 
     const occupancyId = automationIdFor("occupancy", code);
     const motionId = automationIdFor("motion_lights", code);
@@ -324,7 +359,13 @@ export function planRecipes(
     const automationInput = (recipe: RecipeKey, id: string, input: Record<string, unknown>): ChangeInput => ({
       kind: "automation",
       op: installed.automations[id] ? "update" : "create",
-      fields: { automation_id: id, recipe, area_id: area.id, alias: automationAlias(area.name, recipe), use_blueprint: { path: blueprintForRecipe(recipe).path, input } },
+      fields: {
+        automation_id: id,
+        recipe,
+        area_id: area.id,
+        alias: automationAlias(area.name, recipe),
+        use_blueprint: { path: blueprintForRecipe(recipe).path, input },
+      },
     });
 
     // How an installed automation differs from what Taxis would write now.
@@ -352,7 +393,8 @@ export function planRecipes(
 
     // A timer that exists but is not as long as it should be.
     const timerNow = (id: string) => installed.timers[id] ?? null;
-    const durationDiffers = (id: string, held: Held, seconds: number) => held.state === "ok" && timerNow(id) !== null && timerNow(id) !== seconds && !pendingDuration(changes, id);
+    const durationDiffers = (id: string, held: Held, seconds: number) =>
+      held.state === "ok" && timerNow(id) !== null && timerNow(id) !== seconds && !pendingDuration(changes, id);
 
     const timerCreate = (name: string, id: string, seconds: number): ChangeInput => ({
       kind: "helper",
@@ -363,13 +405,22 @@ export function planRecipes(
 
     // The sensors of the area that sleep is read from: bed sensors, in a bedroom.
     const bedSensors = areaChoice(inventory, area.id).bedroom
-      ? inv.presence.filter((r) => r.counts && r.bed).map((r) => r.entityId).sort()
+      ? inv.presence
+          .filter((r) => r.counts && r.bed)
+          .map((r) => r.entityId)
+          .sort()
       : [];
 
     // ---- Occupancy --------------------------------------------------------
     const sources = [...inv.motion, ...inv.presence].filter((r) => r.counts);
-    const starts = sources.filter((r) => r.role === "starts").map((r) => r.entityId).sort();
-    const holds = sources.filter((r) => r.role === "holds").map((r) => r.entityId).sort();
+    const starts = sources
+      .filter((r) => r.role === "starts")
+      .map((r) => r.entityId)
+      .sort();
+    const holds = sources
+      .filter((r) => r.role === "holds")
+      .map((r) => r.entityId)
+      .sort();
     const holdMinutes = values.hold_timeout as number;
     const holdSeconds = holdMinutes * 60;
     const occupancyInput = {
@@ -388,7 +439,8 @@ export function planRecipes(
     };
 
     const occMissing: string[] = [];
-    if (starts.length === 0) occMissing.push(sources.length === 0 ? "A motion or presence sensor" : "A sensor that starts occupancy (the counted ones are all set to hold)");
+    if (starts.length === 0)
+      occMissing.push(sources.length === 0 ? "A motion or presence sensor" : "A sensor that starts occupancy (the counted ones are all set to hold)");
     if (!usable) occMissing.push("An area code that makes valid entity ids (Settings)");
     else for (const m of [taken(ids.timer, timer), taken(ids.occupied, occupied), taken(ids.switch, toggle)]) if (m) occMissing.push(m);
 
@@ -414,13 +466,30 @@ export function planRecipes(
         occInputs.push(timerUpdate(ids.timer, holdSeconds));
       }
       if (toggle.state === "absent" && !pendingHelper(changes, ids.switch)) {
-        occInputs.push({ kind: "helper", op: "create", fields: { helper: "input_boolean", name: `${area.name} automations paused`, entity_id: ids.switch, area_id: area.id, icon: "mdi:pause-circle-outline" } });
+        occInputs.push({
+          kind: "helper",
+          op: "create",
+          fields: {
+            helper: "input_boolean",
+            name: `${area.name} automations paused`,
+            entity_id: ids.switch,
+            area_id: area.id,
+            icon: "mdi:pause-circle-outline",
+          },
+        });
       }
       if (occupied.state === "absent" && !pendingHelper(changes, ids.occupied)) {
         occInputs.push({
           kind: "helper",
           op: "create",
-          fields: { helper: "template", name: `${area.name} occupied`, entity_id: ids.occupied, area_id: area.id, state_template: `{{ is_state('${ids.timer}','active') }}`, device_class: "occupancy" },
+          fields: {
+            helper: "template",
+            name: `${area.name} occupied`,
+            entity_id: ids.occupied,
+            area_id: area.id,
+            state_template: `{{ is_state('${ids.timer}','active') }}`,
+            device_class: "occupancy",
+          },
         });
       }
       occInputs.push(automationInput("occupancy", occupancyId, occupancyInput));
@@ -444,7 +513,12 @@ export function planRecipes(
     const needsOccupancy = (): string[] => {
       if (!(occInstalled || pendingAutomation(changes, occupancyId))) return ["Occupancy (install it first)"];
       if (!usable) return ["An area code that makes valid entity ids (Settings)"];
-      return ([[ids.occupied, occupied], [ids.switch, toggle]] as const)
+      return (
+        [
+          [ids.occupied, occupied],
+          [ids.switch, toggle],
+        ] as const
+      )
         .filter(([id, held]) => held.state === "absent" && !pendingHelper(changes, id))
         .map(([id]) => `${id} is missing (the Occupancy recipe makes it)`);
     };
@@ -457,7 +531,11 @@ export function planRecipes(
     const lux = h.entities[luxId]?.platform === "min_max" ? luxId : null;
     // The counted lights by role. Task lights are never switched on by the
     // recipe; the light group still turns them off.
-    const lightsOf = (role: LightRole) => inv.lights.filter((r) => r.counts && r.light === role).map((r) => r.entityId).sort();
+    const lightsOf = (role: LightRole) =>
+      inv.lights
+        .filter((r) => r.counts && r.light === role)
+        .map((r) => r.entityId)
+        .sort();
     const mainLights = lightsOf("main");
     // The lights that come on by day: the chosen entry lights, else the only light
     // of the area, else its main lights.
@@ -514,7 +592,8 @@ export function planRecipes(
       if (overrideTimer.state === "absent" && !pendingHelper(changes, ids.override)) motionReasons.push(`${ids.override} is missing`);
     }
     const overrideDiffers = durationDiffers(ids.override, overrideTimer, overrideSeconds);
-    if (motionInstalled && overrideDiffers) motionReasons.push(`The override timer is ${timerNow(ids.override)! / 60} min, the override setting says ${overrideSeconds / 60}`);
+    if (motionInstalled && overrideDiffers)
+      motionReasons.push(`The override timer is ${timerNow(ids.override)! / 60} min, the override setting says ${overrideSeconds / 60}`);
     const motionStatus = statusOf(motionId, lightMissing, motionReasons);
     const motionInputs: ChangeInput[] = [];
     if (motionStatus === "ready" || motionStatus === "out-of-date") {
@@ -545,18 +624,25 @@ export function planRecipes(
       missing: motionStatus === "missing" ? lightMissing : [],
       reasons: motionStatus === "out-of-date" ? motionReasons : [],
       notes: motionStatus === "missing" ? [] : notes,
-      controlledBy: motionStatus === "missing" ? [] : installed.controllers[lightsId] ?? [],
+      controlledBy: motionStatus === "missing" ? [] : (installed.controllers[lightsId] ?? []),
       controls: "lights",
       inputs: motionInputs,
       actionable: motionInputs.length > 0,
     });
 
     // ---- Media off --------------------------------------------------------
-    const speakers = inv.speaker.filter((r) => r.counts).map((r) => r.entityId).sort();
-    const tvs = inv.tv.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const speakers = inv.speaker
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
+    const tvs = inv.tv
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
     const mediaId = canonicalId("media_player", code, suffix.media);
     const media = h.entities[mediaId];
-    const mediaThere = (media?.domain === "media_player" && media.platform === "group") || (!media && (pendingHelper(changes, mediaId) || pendingRename(changes, mediaId)));
+    const mediaThere =
+      (media?.domain === "media_player" && media.platform === "group") || (!media && (pendingHelper(changes, mediaId) || pendingRename(changes, mediaId)));
     // The media group takes the place of the players when the area has one kind
     // only: with speakers and TVs the two need their own times.
     const oneKind = speakers.length + tvs.length >= 2 && (speakers.length === 0 || tvs.length === 0);
@@ -577,7 +663,8 @@ export function planRecipes(
     if (installed.automations[mediaOffId]) mediaReasons.push(...blueprintReason("media_off"));
     const mediaStatus = statusOf(mediaOffId, mediaMissing, mediaReasons);
     const mediaInputs: ChangeInput[] = [];
-    if (mediaStatus === "ready" || mediaStatus === "out-of-date") mediaInputs.push(...blueprintInput("media_off"), automationInput("media_off", mediaOffId, mediaInput));
+    if (mediaStatus === "ready" || mediaStatus === "out-of-date")
+      mediaInputs.push(...blueprintInput("media_off"), automationInput("media_off", mediaOffId, mediaInput));
     out.push({
       areaId: area.id,
       areaName: area.name,
@@ -597,7 +684,10 @@ export function planRecipes(
     // An AC runs in both seasons, heating and radiator valves in the heating season only.
     const season = values.season as Season;
     const climateCounted = inv.thermostat.filter((r) => r.counts);
-    const thermostats = climateCounted.filter((r) => kindRunsIn(r.climate ?? "heating", season)).map((r) => r.entityId).sort();
+    const thermostats = climateCounted
+      .filter((r) => kindRunsIn(r.climate ?? "heating", season))
+      .map((r) => r.entityId)
+      .sort();
     const climateSkipped = climateCounted.filter((r) => !thermostats.includes(r.entityId));
     const bedroom = areaChoice(inventory, area.id).bedroom;
     const text = (k: "away_mode_entity" | "sleep_mode_entity" | "preset_comfort" | "preset_eco" | "preset_away" | "preset_sleep") => String(values[k] ?? "");
@@ -640,7 +730,9 @@ export function planRecipes(
     const doorId = canonicalId("binary_sensor", code, suffix.door);
     const tempId = canonicalId("sensor", code, suffix.temperature);
     const doorsCount = values.doors_open_count === true;
-    const openings = [groupThere(windowId, "group") ? windowId : null, doorsCount && groupThere(doorId, "group") ? doorId : null].filter((x): x is string => x !== null);
+    const openings = [groupThere(windowId, "group") ? windowId : null, doorsCount && groupThere(doorId, "group") ? doorId : null].filter(
+      (x): x is string => x !== null,
+    );
     const tempThere = groupThere(tempId, "min_max");
     const occupiedThere = (occInstalled || pendingAutomation(changes, occupancyId)) && (occupied.state === "ok" || pendingHelper(changes, ids.occupied));
     // A bedroom that hasn't been given a choice doesn't need anyone in it for comfort.
@@ -717,10 +809,24 @@ export function planRecipes(
     if (climateStatus === "ready" || climateStatus === "out-of-date") {
       climateInputs.push(...blueprintInput("area_climate"), ...houseInputs);
       if (toggle.state === "absent" && !pendingHelper(changes, ids.switch)) {
-        climateInputs.push({ kind: "helper", op: "create", fields: { helper: "input_boolean", name: `${area.name} automations paused`, entity_id: ids.switch, area_id: area.id, icon: "mdi:pause-circle-outline" } });
+        climateInputs.push({
+          kind: "helper",
+          op: "create",
+          fields: {
+            helper: "input_boolean",
+            name: `${area.name} automations paused`,
+            entity_id: ids.switch,
+            area_id: area.id,
+            icon: "mdi:pause-circle-outline",
+          },
+        });
       }
       if (scheduleCreate) {
-        climateInputs.push({ kind: "helper", op: "create", fields: { helper: "schedule", name: `${area.name} climate`, entity_id: ids.schedule, area_id: area.id, periods } });
+        climateInputs.push({
+          kind: "helper",
+          op: "create",
+          fields: { helper: "schedule", name: `${area.name} climate`, entity_id: ids.schedule, area_id: area.id, periods },
+        });
       } else if (schedule.state === "ok" && managed && wrote !== "" && wrote !== periods && !pendingPeriods(changes, ids.schedule)) {
         climateInputs.push({ kind: "helper", op: "update", targetId: ids.schedule, fields: { periods } });
       }
@@ -739,22 +845,27 @@ export function planRecipes(
       const offered = h.entities[id]?.presetModes ?? [];
       const using = mapped.filter(([, p]) => p !== "" && offered.includes(p)).map(([k]) => k);
       const how =
-        using.length === 0
-          ? "temperatures"
-          : using.length === mapped.length
-            ? "presets"
-            : `presets for ${using.join(", ")}, temperatures for the rest`;
+        using.length === 0 ? "temperatures" : using.length === mapped.length ? "presets" : `presets for ${using.join(", ")}, temperatures for the rest`;
       climateNotes.push(`${h.entities[id]?.name ?? id}: ${how}`);
       const unknown = mapped.filter(([, p]) => p !== "" && !offered.includes(p));
-      if (offered.length > 0 && unknown.length > 0) climateNotes.push(`${h.entities[id]?.name ?? id} doesn't offer ${unknown.map(([k, p]) => `“${p}” (${k})`).join(", ")}; it gets temperatures for ${unknown.length === 1 ? "that" : "those"}`);
+      if (offered.length > 0 && unknown.length > 0)
+        climateNotes.push(
+          `${h.entities[id]?.name ?? id} doesn't offer ${unknown.map(([k, p]) => `“${p}” (${k})`).join(", ")}; it gets temperatures for ${unknown.length === 1 ? "that" : "those"}`,
+        );
     }
-    if (climateSkipped.length > 0) climateNotes.push(`Not run while cooling: ${climateSkipped.map((r) => `${r.name} (${CLIMATE_KIND_LABEL[r.climate ?? "heating"].toLowerCase()})`).join(", ")}`);
+    if (climateSkipped.length > 0)
+      climateNotes.push(
+        `Not run while cooling: ${climateSkipped.map((r) => `${r.name} (${CLIMATE_KIND_LABEL[r.climate ?? "heating"].toLowerCase()})`).join(", ")}`,
+      );
     if (values.season === "off") climateNotes.push("The season is off, so the recipe does nothing");
     if (!occupiedThere) climateNotes.push("No Occupancy yet, so comfort follows the schedule alone");
     if (bedroom && needsResolved.source.level === "default") climateNotes.push("A bedroom: comfort doesn't need anyone in the room unless you set it to");
-    if (inv.window.some((r) => r.counts) && !openings.includes(windowId)) climateNotes.push("The window group isn't made yet, so open windows are not seen (Helpers tab)");
-    if (doorsCount && inv.door.some((r) => r.counts) && !openings.includes(doorId)) climateNotes.push("The door group isn't made yet, so open doors are not seen (Helpers tab)");
-    if (!tempThere && values.auto_hvac_on === true) climateNotes.push("No temperature helper yet, so a thermostat is switched on without checking the room (Helpers tab)");
+    if (inv.window.some((r) => r.counts) && !openings.includes(windowId))
+      climateNotes.push("The window group isn't made yet, so open windows are not seen (Helpers tab)");
+    if (doorsCount && inv.door.some((r) => r.counts) && !openings.includes(doorId))
+      climateNotes.push("The door group isn't made yet, so open doors are not seen (Helpers tab)");
+    if (!tempThere && values.auto_hvac_on === true)
+      climateNotes.push("No temperature helper yet, so a thermostat is switched on without checking the room (Helpers tab)");
     const climateControlled = [...new Map(thermostats.flatMap((id) => installed.controllers[id] ?? []).map((c) => [c.entityId, c])).values()];
     out.push({
       areaId: area.id,
@@ -773,7 +884,15 @@ export function planRecipes(
     // ---- The recipes that follow ----------------------------------------------
     // One cell from what a recipe found: its status, and the changes (built only
     // when it can be added) in the order they have to be applied.
-    const finish = (recipe: AreaRecipeKey, id: string, missing: string[], reasons: string[], notes: string[], build: () => ChangeInput[], controlledBy: RecipeCell["controlledBy"] = []): void => {
+    const finish = (
+      recipe: AreaRecipeKey,
+      id: string,
+      missing: string[],
+      reasons: string[],
+      notes: string[],
+      build: () => ChangeInput[],
+      controlledBy: RecipeCell["controlledBy"] = [],
+    ): void => {
       const status = statusOf(id, missing, reasons);
       const inputs = status === "ready" || status === "out-of-date" ? build() : [];
       out.push({
@@ -793,15 +912,31 @@ export function planRecipes(
     // The area's pause switch, when nothing has made it yet.
     const pauseSwitch = (): ChangeInput[] =>
       toggle.state === "absent" && !pendingHelper(changes, ids.switch)
-        ? [{ kind: "helper", op: "create", fields: { helper: "input_boolean", name: `${area.name} automations paused`, entity_id: ids.switch, area_id: area.id, icon: "mdi:pause-circle-outline" } }]
+        ? [
+            {
+              kind: "helper",
+              op: "create",
+              fields: {
+                helper: "input_boolean",
+                name: `${area.name} automations paused`,
+                entity_id: ids.switch,
+                area_id: area.id,
+                icon: "mdi:pause-circle-outline",
+              },
+            },
+          ]
         : [];
-    const switchGone = (installedHere: boolean): string[] => (installedHere && toggle.state === "absent" && !pendingHelper(changes, ids.switch) ? [`${ids.switch} is missing`] : []);
+    const switchGone = (installedHere: boolean): string[] =>
+      installedHere && toggle.state === "absent" && !pendingHelper(changes, ids.switch) ? [`${ids.switch} is missing`] : [];
     const notifyTargets = values.notify_targets as string[];
     const noTargets = "No notify services are set (Parameters, House), so the message appears in Home Assistant's notifications";
 
     // ---- Bathroom fan -----------------------------------------------------
     const fanId = automationIdFor("bathroom_fan", code);
-    const fans = inv.fan.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const fans = inv.fan
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
     const humidityId = canonicalId("sensor", code, suffix.humidity);
     const rate = heldBy(h, ids.rate, "sensor", "derivative");
     const suppress = values.fan_suppress_in_sleep === true;
@@ -837,7 +972,10 @@ export function planRecipes(
       if (rate.state === "absent" && !pendingHelper(changes, ids.rate)) fanReasons.push(`${ids.rate} is missing`);
     }
     const fanNotes: string[] = [];
-    if (!reference) fanNotes.push("No reference humidity sensor, so the fan starts on the rise rate and the humidity level only, and stops when the humidity is back near where it started (Parameters, Bathroom fan)");
+    if (!reference)
+      fanNotes.push(
+        "No reference humidity sensor, so the fan starts on the rise rate and the humidity level only, and stops when the humidity is back near where it started (Parameters, Bathroom fan)",
+      );
     if (values.humidity_hold_rate === 0) fanNotes.push("A shower doesn't hold the area occupied yet (Parameters, Occupancy)");
     finish("bathroom_fan", fanId, fanMissing, fanReasons, fanNotes, () => [
       ...blueprintInput("bathroom_fan"),
@@ -845,7 +983,13 @@ export function planRecipes(
       ...fanSleepSwitch,
       // The rate of the humidity helper, per second, smoothed over two minutes.
       ...(rate.state === "absent" && !pendingHelper(changes, ids.rate)
-        ? [{ kind: "helper" as const, op: "create" as const, fields: { helper: "derivative", name: `${area.name} humidity rate`, entity_id: ids.rate, entities: [humidityId], area_id: area.id } }]
+        ? [
+            {
+              kind: "helper" as const,
+              op: "create" as const,
+              fields: { helper: "derivative", name: `${area.name} humidity rate`, entity_id: ids.rate, entities: [humidityId], area_id: area.id },
+            },
+          ]
         : []),
       automationInput("bathroom_fan", fanId, fanInput),
     ]);
@@ -861,8 +1005,14 @@ export function planRecipes(
     }
     if (!usable) exteriorMissing.push("An area code that makes valid entity ids (Settings)");
     else for (const m of [taken(ids.switch, toggle), overrideTaken]) if (m) exteriorMissing.push(m);
-    const watchers = [...inv.motion, ...inv.presence].filter((r) => r.counts).map((r) => r.entityId).sort();
-    const people = Object.values(h.entities).filter((e) => e.domain === "person" && !e.disabled).map((e) => e.entityId).sort();
+    const watchers = [...inv.motion, ...inv.presence]
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
+    const people = Object.values(h.entities)
+      .filter((e) => e.domain === "person" && !e.disabled)
+      .map((e) => e.entityId)
+      .sort();
     const exteriorInput: Record<string, unknown> = {
       light_target: lightsId,
       motion_entities: watchers,
@@ -881,9 +1031,11 @@ export function planRecipes(
       if (overrideDiffers) exteriorReasons.push(`The override timer is ${timerNow(ids.override)! / 60} min, the override setting says ${overrideSeconds / 60}`);
     }
     const exteriorNotes: string[] = [];
-    if (watchers.length === 0) exteriorNotes.push("No motion sensor counts here (a camera's counts when you say so), so only sunset and a person arriving keep the lights on");
+    if (watchers.length === 0)
+      exteriorNotes.push("No motion sensor counts here (a camera's counts when you say so), so only sunset and a person arriving keep the lights on");
     if (people.length === 0) exteriorNotes.push("Home Assistant has no person, so arriving home turns nothing on");
-    if (motionInstalled || pendingAutomation(changes, motionId)) exteriorNotes.push("Motion lights is installed for this area too, and both switch its lights: one of them is enough");
+    if (motionInstalled || pendingAutomation(changes, motionId))
+      exteriorNotes.push("Motion lights is installed for this area too, and both switch its lights: one of them is enough");
     finish(
       "exterior_lights",
       exteriorId,
@@ -893,7 +1045,11 @@ export function planRecipes(
       () => [
         ...blueprintInput("exterior_lights"),
         ...pauseSwitch(),
-        ...(overrideTimer.state === "absent" && !pendingHelper(changes, ids.override) ? [timerCreate(`${area.name} override`, ids.override, overrideSeconds)] : overrideDiffers ? [timerUpdate(ids.override, overrideSeconds)] : []),
+        ...(overrideTimer.state === "absent" && !pendingHelper(changes, ids.override)
+          ? [timerCreate(`${area.name} override`, ids.override, overrideSeconds)]
+          : overrideDiffers
+            ? [timerUpdate(ids.override, overrideSeconds)]
+            : []),
         automationInput("exterior_lights", exteriorId, exteriorInput),
       ],
       installed.controllers[lightsId] ?? [],
@@ -901,8 +1057,14 @@ export function planRecipes(
 
     // ---- Left open --------------------------------------------------------
     const leftId = automationIdFor("left_open", code);
-    const doors = inv.door.filter((r) => r.counts).map((r) => r.entityId).sort();
-    const windows = inv.window.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const doors = inv.door
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
+    const windows = inv.window
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
     const leftMissing: string[] = [];
     if (doors.length + windows.length === 0) leftMissing.push("A door or window that counts (Capabilities)");
     if (!usable) leftMissing.push("An area code that makes valid entity ids (Settings)");
@@ -930,7 +1092,10 @@ export function planRecipes(
 
     // ---- Appliance done ---------------------------------------------------
     const applianceId = automationIdFor("appliance_done", code);
-    const appliances = inv.power.filter((r) => r.counts && r.appliance).map((r) => r.entityId).sort();
+    const appliances = inv.power
+      .filter((r) => r.counts && r.appliance)
+      .map((r) => r.entityId)
+      .sort();
     const applianceMissing: string[] = [];
     if (appliances.length === 0) applianceMissing.push("A power sensor that counts and is marked as an appliance (Capabilities)");
     if (!usable) applianceMissing.push("An area code that makes valid entity ids (Settings)");
@@ -938,7 +1103,8 @@ export function planRecipes(
       const m = taken(ids.switch, toggle);
       if (m) applianceMissing.push(m);
     }
-    if ((values.appliance_run_watts as number) <= (values.appliance_idle_watts as number)) applianceMissing.push("Running above is not higher than Done below (Parameters, Safety)");
+    if ((values.appliance_run_watts as number) <= (values.appliance_idle_watts as number))
+      applianceMissing.push("Running above is not higher than Done below (Parameters, Safety)");
     const applianceInput: Record<string, unknown> = {
       power_entities: appliances,
       run_watts: values.appliance_run_watts,
@@ -952,11 +1118,95 @@ export function planRecipes(
     const applianceReasons = automationReasons("appliance_done", applianceId, applianceInput);
     if (installed.automations[applianceId]) applianceReasons.push(...blueprintReason("appliance_done"), ...switchGone(true));
     const applianceNotes = notifyTargets.length === 0 ? [noTargets] : [];
-    if (appliances.some((id) => h.entities[id]?.unit === "kW")) applianceNotes.push("A sensor reports kW; the levels are in watts, so set them in kW or use a sensor in W");
+    if (appliances.some((id) => h.entities[id]?.unit === "kW"))
+      applianceNotes.push("A sensor reports kW; the levels are in watts, so set them in kW or use a sensor in W");
     finish("appliance_done", applianceId, applianceMissing, applianceReasons, applianceNotes, () => [
       ...blueprintInput("appliance_done"),
       ...pauseSwitch(),
       automationInput("appliance_done", applianceId, applianceInput),
+    ]);
+
+    // ---- Leak alert -------------------------------------------------------
+    const leakId = automationIdFor("leak_alert", code);
+    const leaks = inv.leak
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
+    const valve = String(resolveIn(params, [{ level: "house" }], "leak_valve_entity").value ?? "");
+    const leakMissing: string[] = [];
+    if (leaks.length === 0) leakMissing.push("A leak (moisture) sensor that counts (Capabilities)");
+    if (!usable) leakMissing.push("An area code that makes valid entity ids (Settings)");
+    else {
+      const m = taken(ids.switch, toggle);
+      if (m) leakMissing.push(m);
+    }
+    if (valve && !h.entities[valve]) leakMissing.push(`The water valve “${valve}” isn't in Home Assistant (Parameters, Safety)`);
+    const leakInput: Record<string, unknown> = {
+      leak_entities: leaks,
+      notify_targets: notifyTargets,
+      repeat_minutes: values.leak_repeat,
+      ...(valve ? { valve_entity: valve } : {}),
+      area_name: area.name,
+      pause_switch: ids.switch,
+    };
+    const leakReasons = automationReasons("leak_alert", leakId, leakInput);
+    if (installed.automations[leakId]) leakReasons.push(...blueprintReason("leak_alert"), ...switchGone(true));
+    const leakNotes = notifyTargets.length === 0 ? [noTargets] : [];
+    if (!valve) leakNotes.push("No water valve is set (Parameters, Safety), so nothing is shut off");
+    leakNotes.push("Pausing this area's automations silences its leak alert too");
+    finish("leak_alert", leakId, leakMissing, leakReasons, leakNotes, () => [
+      ...blueprintInput("leak_alert"),
+      ...pauseSwitch(),
+      automationInput("leak_alert", leakId, leakInput),
+    ]);
+
+    // ---- Covers and sun ---------------------------------------------------
+    const coversId = automationIdFor("covers_sun", code);
+    const covers = inv.cover
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
+    const coverWindows =
+      values.covers_block_if_window_open === true
+        ? inv.window
+            .filter((r) => r.counts)
+            .map((r) => r.entityId)
+            .sort()
+        : [];
+    const outdoor = String(resolveIn(params, [{ level: "house" }], "outdoor_temperature_entity").value ?? "");
+    const coversMissing: string[] = [];
+    if (covers.length === 0) coversMissing.push("A cover that counts (Capabilities)");
+    if (!usable) coversMissing.push("An area code that makes valid entity ids (Settings)");
+    else {
+      const m = taken(ids.switch, toggle);
+      if (m) coversMissing.push(m);
+    }
+    if (outdoor && !h.entities[outdoor]) coversMissing.push(`The outdoor temperature sensor “${outdoor}” isn't in Home Assistant (Parameters, House)`);
+    if ((values.covers_window_start as string) >= (values.covers_window_end as string))
+      coversMissing.push("Close from is not before Close until (Parameters, Covers)");
+    const coversInput: Record<string, unknown> = {
+      cover_entities: covers,
+      window_entities: coverWindows,
+      ...(outdoor ? { temperature_entity: outdoor } : {}),
+      sun_elevation: values.covers_sun_elevation,
+      temperature_above: values.covers_temp_above,
+      window_start: withSeconds(values.covers_window_start as string),
+      window_end: withSeconds(values.covers_window_end as string),
+      open_time: withSeconds(values.covers_open_time as string),
+      open_at_sunrise: values.covers_open_at_sunrise,
+      sunrise_offset: (values.covers_sunrise_offset as number) * 60,
+      pause_switch: ids.switch,
+    };
+    const coversReasons = automationReasons("covers_sun", coversId, coversInput);
+    if (installed.automations[coversId]) coversReasons.push(...blueprintReason("covers_sun"), ...switchGone(true));
+    const coversNotes: string[] = [];
+    if (!outdoor) coversNotes.push("No outdoor temperature sensor is set (Parameters, House), so the covers close on the sun alone");
+    if (values.covers_block_if_window_open === true && inv.window.every((r) => !r.counts))
+      coversNotes.push("No window counts here, so nothing stops the covers closing");
+    finish("covers_sun", coversId, coversMissing, coversReasons, coversNotes, () => [
+      ...blueprintInput("covers_sun"),
+      ...pauseSwitch(),
+      automationInput("covers_sun", coversId, coversInput),
     ]);
   }
   return out;
@@ -992,10 +1242,17 @@ export function planAnnounce(
   const noOccupancy: string[] = [];
   for (const area of Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))) {
     const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
-    const speakers = inv.speaker.filter((r) => r.counts).map((r) => r.entityId).sort();
+    const speakers = inv.speaker
+      .filter((r) => r.counts)
+      .map((r) => r.entityId)
+      .sort();
     if (speakers.length === 0) continue;
     const conflict = conflicts.get(area.id);
-    if (conflict) { hasConflictingSpeaker = true; if (!missing.includes(conflict)) missing.push(conflict); continue; }
+    if (conflict) {
+      hasConflictingSpeaker = true;
+      if (!missing.includes(conflict)) missing.push(conflict);
+      continue;
+    }
     const code = codes[area.id].code;
     const ids = runtimeIds(code);
     const occupancyId = automationIdFor("occupancy", code);
@@ -1009,7 +1266,12 @@ export function planAnnounce(
       noOccupancy.push(area.name);
       continue;
     }
-    const beds = areaChoice(inventory, area.id).bedroom ? inv.presence.filter((r) => r.counts && r.bed).map((r) => r.entityId).sort() : [];
+    const beds = areaChoice(inventory, area.id).bedroom
+      ? inv.presence
+          .filter((r) => r.counts && r.bed)
+          .map((r) => r.entityId)
+          .sort()
+      : [];
     areas.push({ occupied: ids.occupied, paused: ids.switch, bed: beds, speakers });
   }
 
@@ -1020,7 +1282,8 @@ export function planAnnounce(
   if (areas.length === 0) missing.push("A speaker that counts in an area that has Occupancy (Capabilities, Recipes)");
   const held = h.entities[`script.${ANNOUNCE_SCRIPT_ID}`];
   const there = installed.scripts[ANNOUNCE_SCRIPT_ID] ?? null;
-  if (held && !there && !pendingScript(changes, ANNOUNCE_SCRIPT_ID)) missing.push(`script.${ANNOUNCE_SCRIPT_ID} is already used by “${held.name}”, which Taxis didn't make or can't edit`);
+  if (held && !there && !pendingScript(changes, ANNOUNCE_SCRIPT_ID))
+    missing.push(`script.${ANNOUNCE_SCRIPT_ID} is already used by “${held.name}”, which Taxis didn't make or can't edit`);
 
   const input: Record<string, unknown> = { areas, tts_entity: tts, default_volume: house("announce_volume") };
   const alias = ANNOUNCE_ALIAS;
@@ -1051,10 +1314,23 @@ export function planAnnounce(
     else if (version !== bp.version) reasons.push(`The blueprint is version ${version}, Taxis has ${bp.version}`);
   }
 
-  if (noOccupancy.length > 0) notes.push(`${noOccupancy.join(", ")} ${noOccupancy.length === 1 ? "has" : "have"} speakers but no Occupancy yet, so ${noOccupancy.length === 1 ? "it is" : "they are"} left out`);
+  if (noOccupancy.length > 0)
+    notes.push(
+      `${noOccupancy.join(", ")} ${noOccupancy.length === 1 ? "has" : "have"} speakers but no Occupancy yet, so ${noOccupancy.length === 1 ? "it is" : "they are"} left out`,
+    );
   notes.push("The volume is set before speaking and is not put back");
 
-  const status: RecipeStatus = hasConflictingSpeaker ? "missing" : pendingScript(changes, ANNOUNCE_SCRIPT_ID) ? "in-changes" : missing.length > 0 ? "missing" : there ? (reasons.length === 0 ? "installed" : "out-of-date") : "ready";
+  const status: RecipeStatus = hasConflictingSpeaker
+    ? "missing"
+    : pendingScript(changes, ANNOUNCE_SCRIPT_ID)
+      ? "in-changes"
+      : missing.length > 0
+        ? "missing"
+        : there
+          ? reasons.length === 0
+            ? "installed"
+            : "out-of-date"
+          : "ready";
   const inputs: ChangeInput[] = [];
   if (status === "ready" || status === "out-of-date") {
     const bp = blueprintForRecipe("announce");
@@ -1062,7 +1338,11 @@ export function planAnnounce(
     if (version !== bp.version && !pendingBlueprint(changes, bp.path, bp.version)) {
       inputs.push({ kind: "blueprint", op: version === null ? "create" : "update", fields: { path: bp.path, version: bp.version } });
     }
-    inputs.push({ kind: "script", op: there ? "update" : "create", fields: { script_id: ANNOUNCE_SCRIPT_ID, alias, use_blueprint: { path: ANNOUNCE_PATH, input } } });
+    inputs.push({
+      kind: "script",
+      op: there ? "update" : "create",
+      fields: { script_id: ANNOUNCE_SCRIPT_ID, alias, use_blueprint: { path: ANNOUNCE_PATH, input } },
+    });
   }
   return {
     areaId: "",
@@ -1086,7 +1366,12 @@ export function recipeChangeInputs(cells: readonly RecipeCell[]): ChangeInput[] 
   for (const cell of cells) {
     for (const input of cell.inputs) {
       // Once per blueprint, and once per helper two areas both ask for (the house switches).
-      const key = input.kind === "blueprint" ? `blueprint:${String(input.fields?.path)}` : input.kind === "helper" && input.op === "create" ? `helper:${String(input.fields?.entity_id)}` : null;
+      const key =
+        input.kind === "blueprint"
+          ? `blueprint:${String(input.fields?.path)}`
+          : input.kind === "helper" && input.op === "create"
+            ? `helper:${String(input.fields?.entity_id)}`
+            : null;
       if (key) {
         if (seen.has(key)) continue;
         seen.add(key);

@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { ANNOUNCE_PATH, BLUEPRINTS, BLUEPRINT_PATH_RE, RECIPE_KEYS, blueprintByPath, blueprintForRecipe, blueprintVersion, checkBlueprintInput, inputEntityIds, mapInputEntities } from "./blueprints.ts";
+import {
+  ANNOUNCE_PATH,
+  BLUEPRINTS,
+  GOODBYE_PATH,
+  BLUEPRINT_PATH_RE,
+  RECIPE_KEYS,
+  blueprintByPath,
+  blueprintForRecipe,
+  blueprintVersion,
+  checkBlueprintInput,
+  inputEntityIds,
+  mapInputEntities,
+} from "./blueprints.ts";
 import { ENTITY_ID_RE } from "./changes.ts";
 import { PRECEDENCE } from "./climate.ts";
 
@@ -125,7 +137,9 @@ describe("the blueprint texts", () => {
         const selector = obj(d.selector);
         const type = Object.keys(selector)[0];
         // Notify services are a text box that takes several; a list of objects is the object selector.
-        expect(type, key).toBe(spec.kind === "entity" || spec.kind === "entities" ? "entity" : spec.kind === "services" ? "text" : spec.kind === "objects" ? "object" : spec.kind);
+        expect(type, key).toBe(
+          spec.kind === "entity" || spec.kind === "entities" ? "entity" : spec.kind === "services" ? "text" : spec.kind === "objects" ? "object" : spec.kind,
+        );
         if (spec.kind === "entities") expect(obj(selector.entity).multiple).toBe(true);
         if (spec.kind === "services") expect(obj(selector.text).multiple).toBe(true);
         if (spec.kind === "number") {
@@ -140,7 +154,10 @@ describe("the blueprint texts", () => {
         // ... and the registry's domain is the one the filter names.
         if (spec.kind === "entity" || spec.kind === "entities") {
           const filter = list(obj(selector.entity).filter).map(obj);
-          expect(filter.map((f) => f.domain), key).toEqual([spec.domain].flat());
+          expect(
+            filter.map((f) => f.domain),
+            key,
+          ).toEqual([spec.domain].flat());
         }
       }
     }
@@ -184,7 +201,8 @@ describe("the blueprint texts", () => {
     for (const b of BLUEPRINTS) {
       const tree = parsed(b.path);
       // A script has a sequence in place of the triggers, conditions and actions.
-      for (const key of b.domain === "script" ? ["sequence", "mode"] : ["triggers", "conditions", "actions", "mode"]) expect(Object.hasOwn(tree, key), `${b.path} ${key}`).toBe(true);
+      for (const key of b.domain === "script" ? ["sequence", "mode"] : ["triggers", "conditions", "actions", "mode"])
+        expect(Object.hasOwn(tree, key), `${b.path} ${key}`).toBe(true);
       for (const o of everyObject(tree)) {
         expect(Object.hasOwn(o, "service"), "service").toBe(false);
         expect(Object.hasOwn(o, "platform"), "platform").toBe(false);
@@ -268,7 +286,16 @@ describe("occupancy", () => {
     expect(extended).toMatch(/is_state\(occupied_entity, 'on'\)/);
     expect(extended).toMatch(/states\[occupied_entity\]\.last_changed/);
     expect(extended).toMatch(/extended_after \| float\) \* 60/);
-    for (const name of ["hold_minutes", "extended_after", "extended_hold", "sleep_hold", "starts_entities", "holds_entities", "bed_entities", "occupied_entity"]) {
+    for (const name of [
+      "hold_minutes",
+      "extended_after",
+      "extended_hold",
+      "sleep_hold",
+      "starts_entities",
+      "holds_entities",
+      "bed_entities",
+      "occupied_entity",
+    ]) {
       expect(variable(tree, name)).toEqual({ input: name });
     }
   });
@@ -315,8 +342,17 @@ describe("occupancy", () => {
 describe("motion lights", () => {
   const tree = parsed("taxis/motion_lights.yaml");
   const triggers = list(tree.triggers).map(obj);
-  const branches = list(list(tree.actions).map(obj).find((step) => step.choose)!.choose).map(obj);
-  const branch = (id: string) => branches.find((b) => list(b.conditions).map(obj).some((condition) => condition.condition === "trigger" && condition.id === id))!;
+  const branches = list(
+    list(tree.actions)
+      .map(obj)
+      .find((step) => step.choose)!.choose,
+  ).map(obj);
+  const branch = (id: string) =>
+    branches.find((b) =>
+      list(b.conditions)
+        .map(obj)
+        .some((condition) => condition.condition === "trigger" && condition.id === id),
+    )!;
   const sequence = (id: string) => list(branch(id).sequence).map(obj);
 
   it("restarts when it is triggered again", () => {
@@ -328,7 +364,13 @@ describe("motion lights", () => {
     expect(triggers[0]).toEqual({ trigger: "state", id: "occupied", entity_id: { input: "occupied_entity" }, from: "off", to: "on" });
     // Clear waits a moment, so the occupied sensor blinking when the hold timer restarts isn't a clear.
     expect(triggers[1]).toEqual({ trigger: "state", id: "clear", entity_id: { input: "occupied_entity" }, from: "on", to: "off", for: { seconds: 2 } });
-    expect(triggers[2]).toEqual({ trigger: "state", id: "extended", entity_id: { input: "occupied_entity" }, to: "on", for: { minutes: { input: "extended_after" } } });
+    expect(triggers[2]).toEqual({
+      trigger: "state",
+      id: "extended",
+      entity_id: { input: "occupied_entity" },
+      to: "on",
+      for: { minutes: { input: "extended_after" } },
+    });
     // Any change of the group, state or attribute: the conditions pick the manual ones.
     expect(triggers[3]).toEqual({ trigger: "state", id: "manual", entity_id: { input: "light_target" } });
     expect(triggers[4]).toEqual({ trigger: "event", id: "override_end", event_type: "timer.finished", event_data: { entity_id: { input: "override_timer" } } });
@@ -367,7 +409,9 @@ describe("motion lights", () => {
     expect(String(variable(tree, "profile"))).toBe("{{ 'sleep' if asleep else ('night' if in_night else 'day') }}");
     expect(String(variable(tree, "asleep"))).toMatch(/bed_entities \| select\('is_state', 'on'\)/);
     // The night window, across midnight or not.
-    expect(String(variable(tree, "in_night"))).toMatch(/\(t >= night_start or t < night_end\) if night_start > night_end else \(night_start <= t < night_end\)/);
+    expect(String(variable(tree, "in_night"))).toMatch(
+      /\(t >= night_start or t < night_end\) if night_start > night_end else \(night_start <= t < night_end\)/,
+    );
     // The lights: night lights while asleep, or at night when there are some; by day the
     // entry lights, and the main lights when there are none (also at night with no night lights).
     expect(String(variable(tree, "profile_lights"))).toBe(
@@ -375,7 +419,19 @@ describe("motion lights", () => {
     );
     expect(String(variable(tree, "brightness"))).toMatch(/day_brightness if profile == 'day' else night_brightness/);
     expect(String(variable(tree, "kelvin"))).toMatch(/day_kelvin if profile == 'day' else night_kelvin/);
-    for (const name of ["entry_lights", "main_lights", "accent_lights", "night_lights", "bed_entities", "night_start", "night_end", "day_brightness", "day_kelvin", "night_brightness", "night_kelvin"]) {
+    for (const name of [
+      "entry_lights",
+      "main_lights",
+      "accent_lights",
+      "night_lights",
+      "bed_entities",
+      "night_start",
+      "night_end",
+      "day_brightness",
+      "day_kelvin",
+      "night_brightness",
+      "night_kelvin",
+    ]) {
       expect(variable(tree, name)).toEqual({ input: name });
     }
   });
@@ -389,7 +445,9 @@ describe("motion lights", () => {
     // By day, with entry lights, only they go on at the start: the main lights are the fallback.
     expect(String(variable(tree, "profile_lights"))).toContain("(entry_lights if (profile == 'day' and (entry_lights | count) > 0) else main_lights)");
     // Night and sleep are unchanged: the night lights, or the main lights at night when there are none.
-    expect(String(variable(tree, "profile_lights"))).toContain("night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else");
+    expect(String(variable(tree, "profile_lights"))).toContain(
+      "night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else",
+    );
     expect(String(variable(tree, "brightness"))).toMatch(/day_brightness if profile == 'day' else night_brightness/);
   });
 
@@ -448,7 +506,11 @@ describe("motion lights", () => {
     expect(on).toEqual({ condition: "state", entity_id: { input: "light_target" }, state: "on" });
     expect(turnOn.action).toBe("light.turn_on");
     expect(obj(turnOn.target).entity_id).toEqual({ input: "accent_lights" });
-    expect(obj(turnOn.data)).toEqual({ brightness_pct: { input: "day_brightness" }, color_temp_kelvin: { input: "day_kelvin" }, transition: { input: "transition" } });
+    expect(obj(turnOn.data)).toEqual({
+      brightness_pct: { input: "day_brightness" },
+      color_temp_kelvin: { input: "day_kelvin" },
+      transition: { input: "transition" },
+    });
   });
 
   it("when the override timer runs out: turns the group off if the area is clear", () => {
@@ -477,8 +539,15 @@ describe("motion lights", () => {
     for (const id of ["occupied", "clear", "extended", "override_end"]) {
       const conditions = list(branch(id).conditions).map(obj);
       expect(conditions[0]).toEqual({ condition: "trigger", id });
-      expect(conditions[1]).toEqual({ condition: "template", value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}" });
-      if (id === "occupied" || id === "extended") expect(conditions[2]).toEqual({ condition: "template", value_template: "{{ away_entity == '' or is_state(away_entity, 'off') or is_state(guest_entity, 'on') }}" });
+      expect(conditions[1]).toEqual({
+        condition: "template",
+        value_template: "{{ not guest_pause_lighting or guest_entity == '' or is_state(guest_entity, 'off') }}",
+      });
+      if (id === "occupied" || id === "extended")
+        expect(conditions[2]).toEqual({
+          condition: "template",
+          value_template: "{{ away_entity == '' or is_state(away_entity, 'off') or is_state(guest_entity, 'on') }}",
+        });
       else expect(conditions).toHaveLength(2);
     }
     expect(branch("manual").conditions).toEqual([{ condition: "trigger", id: "manual" }]);
@@ -494,7 +563,11 @@ describe("motion lights", () => {
 
 describe("media off", () => {
   const tree = parsed("taxis/media_off.yaml");
-  const branches = list(list(tree.actions).map(obj).find((step) => step.choose)!.choose).map(obj);
+  const branches = list(
+    list(tree.actions)
+      .map(obj)
+      .find((step) => step.choose)!.choose,
+  ).map(obj);
 
   it("runs queued, so two triggers at the same moment both run", () => {
     expect(tree.mode).toBe("queued");
@@ -514,10 +587,17 @@ describe("media off", () => {
 
   it("turns off the speakers for one trigger and the TVs for the other, only those that are on, and only that", () => {
     expect(branches.map((b) => b.conditions)).toEqual([[{ condition: "trigger", id: "speakers" }], [{ condition: "trigger", id: "tvs" }]]);
-    for (const [i, name] of [[0, "speaker_entities"], [1, "tv_entities"]] as const) {
+    for (const [i, name] of [
+      [0, "speaker_entities"],
+      [1, "tv_entities"],
+    ] as const) {
       const [vars, any, off] = list(branches[i].sequence).map(obj);
       const targets = String(obj(vars.variables).targets);
-      expect(targets).toMatch(new RegExp(`^\\{\\{ ${name} \\| reject\\('is_state', 'off'\\) \\| reject\\('is_state', 'unavailable'\\) \\| reject\\('is_state', 'unknown'\\) \\| list \\}\\}$`));
+      expect(targets).toMatch(
+        new RegExp(
+          `^\\{\\{ ${name} \\| reject\\('is_state', 'off'\\) \\| reject\\('is_state', 'unavailable'\\) \\| reject\\('is_state', 'unknown'\\) \\| list \\}\\}$`,
+        ),
+      );
       expect(String(any.value_template)).toBe("{{ (targets | count) > 0 }}");
       expect(off).toMatchObject({ action: "media_player.turn_off", continue_on_error: true, target: { entity_id: "{{ targets }}" } });
     }
@@ -610,7 +690,9 @@ describe("area climate", () => {
     // Window: open for the delay. Pending: open for less, or closed less than the restore delay ago.
     expect(text("window_rule")).toBe("{{ (open_now | count) > 0 and (open_seconds | float(0)) >= (window_delay | float(0)) * 60 }}");
     expect(text("window_pending")).toMatch(/\(open_seconds \| float\(0\)\) < \(window_delay \| float\(0\)\) \* 60/);
-    expect(text("window_pending")).toMatch(/\(open_now \| count\) == 0 and \(shut_now \| count\) > 0 and \(shut_seconds \| float\(0\)\) < \(restore_delay \| float\(0\)\) \* 60/);
+    expect(text("window_pending")).toMatch(
+      /\(open_now \| count\) == 0 and \(shut_now \| count\) > 0 and \(shut_seconds \| float\(0\)\) < \(restore_delay \| float\(0\)\) \* 60/,
+    );
     // The longest an opening has been open; the shortest one has been closed.
     expect(text("open_seconds")).toMatch(/if s > ns\.v %\}\{% set ns\.v = s/);
     expect(text("shut_seconds")).toMatch(/if s < ns\.v %\}\{% set ns\.v = s/);
@@ -632,8 +714,12 @@ describe("area climate", () => {
       "{{ none if base_temp is none else (base_temp | float(0) if season == 'cooling' else ([[base_temp | float(0), min_temp | float(0)] | max, max_temp | float(0)] | min)) }}",
     );
     // Cooling: the cooling temperatures, sleep with the night one. Heating: the heating ones.
-    expect(text("base_temp")).toMatch(/^\{\{ \(\{'comfort': cool_comfort_temp, 'eco': cool_eco_temp, 'night': cool_night_temp, 'sleep': cool_night_temp, 'away': cool_away_temp\} if season == 'cooling' else /);
-    expect(text("base_temp")).toMatch(/else \{'comfort': comfort_temp, 'eco': eco_temp, 'night': night_temp, 'sleep': sleep_temp, 'away': away_temp\}\)\[decision\]/);
+    expect(text("base_temp")).toMatch(
+      /^\{\{ \(\{'comfort': cool_comfort_temp, 'eco': cool_eco_temp, 'night': cool_night_temp, 'sleep': cool_night_temp, 'away': cool_away_temp\} if season == 'cooling' else /,
+    );
+    expect(text("base_temp")).toMatch(
+      /else \{'comfort': comfort_temp, 'eco': eco_temp, 'night': night_temp, 'sleep': sleep_temp, 'away': away_temp\}\)\[decision\]/,
+    );
     // A window and the others that set no temperature have none.
     expect(text("base_temp")).toMatch(/if decision in \['comfort', 'eco', 'night', 'sleep', 'away'\] else none \}\}$/);
     // Night uses the sleep preset.
@@ -662,8 +748,10 @@ describe("area climate", () => {
     expect(String(each.use_preset)).toBe("{{ preset_name != '' and preset_name in presets }}");
     expect(String(each.presets)).toMatch(/state_attr\(t, 'preset_modes'\) or \[\]/);
     expect(String(each.opposite_mode)).toBe("{{ (st == 'heat' and mode_wanted == 'cool') or (st == 'cool' and mode_wanted == 'heat') }}");
-    expect(BLUEPRINTS.find(b => b.path === "taxis/area_climate.yaml")!.version).toBe(4);
-    expect(String(each.on_ok)).toBe("{{ (not opposite_mode or (auto_hvac_on and mode_wanted in modes)) and (st != 'off' or (mode_wanted in modes and (reference is none or (reference > goal if season == 'cooling' else reference < goal)))) }}");
+    expect(BLUEPRINTS.find((b) => b.path === "taxis/area_climate.yaml")!.version).toBe(4);
+    expect(String(each.on_ok)).toBe(
+      "{{ (not opposite_mode or (auto_hvac_on and mode_wanted in modes)) and (st != 'off' or (mode_wanted in modes and (reference is none or (reference > goal if season == 'cooling' else reference < goal)))) }}",
+    );
   });
 
   it("calls climate services only, each tolerant of a thermostat that refuses, on the one thermostat", () => {
@@ -692,7 +780,9 @@ describe("area climate", () => {
     expect(json).not.toMatch(/set_preset_mode/);
     // On: only a thermostat on_ok lets through; a thermostat that is off got this far only because the switch is on.
     expect(JSON.stringify(normal.conditions)).toBe(JSON.stringify([{ condition: "template", value_template: "{{ on_ok }}" }]));
-    expect(JSON.stringify(normal)).toMatch(/"value_template":"\{\{ st == 'off' or opposite_mode \}\}"\}\],"then":\[\{"action":"climate\.set_hvac_mode"[^]*"hvac_mode":"\{\{ mode_wanted \}\}"/);
+    expect(JSON.stringify(normal)).toMatch(
+      /"value_template":"\{\{ st == 'off' or opposite_mode \}\}"\}\],"then":\[\{"action":"climate\.set_hvac_mode"[^]*"hvac_mode":"\{\{ mode_wanted \}\}"/,
+    );
     expect(JSON.stringify(perThermostat[1])).toMatch(/^\{"if":\[\{"condition":"template","value_template":"\{\{ not skip \}\}"\}\]/);
   });
 
@@ -781,7 +871,11 @@ describe("bathroom fan", () => {
 describe("exterior lights", () => {
   const tree = parsed("taxis/exterior_lights.yaml");
   const triggers = list(tree.triggers).map(obj);
-  const branches = list(list(tree.actions).map(obj).find((step) => step.choose)!.choose).map(obj);
+  const branches = list(
+    list(tree.actions)
+      .map(obj)
+      .find((step) => step.choose)!.choose,
+  ).map(obj);
   const dflt = list(obj(list(tree.actions)[0]).default).map(obj);
 
   it("restarts when it is triggered again, so the clock starts again", () => {
@@ -838,13 +932,17 @@ describe("exterior lights", () => {
     expect(list(on.if).map(obj)).toEqual([{ condition: "state", entity_id: { input: "light_target" }, state: "off" }]);
     expect(obj(list(on.then)[0]).action).toBe("light.turn_on");
     expect(delay).toEqual({ delay: { minutes: { input: "clock_minutes" } } });
-    expect(list(off.if).map(obj)).toEqual([{ condition: "state", entity_id: { input: "pause_switch" }, state: "off" }, { condition: "state", entity_id: { input: "light_target" }, state: "on" }]);
+    expect(list(off.if).map(obj)).toEqual([
+      { condition: "state", entity_id: { input: "pause_switch" }, state: "off" },
+      { condition: "state", entity_id: { input: "light_target" }, state: "on" },
+    ]);
     expect(obj(list(off.then)[0]).action).toBe("light.turn_off");
   });
 
   it("calls light and timer services only, on the light group", () => {
     expect(servicesOf(tree)).toEqual(["light.turn_off", "light.turn_on", "timer.cancel", "timer.start"]);
-    for (const o of everyObject(tree).filter((x) => x.action === "light.turn_on" || x.action === "light.turn_off")) expect(obj(o.target).entity_id).toEqual({ input: "light_target" });
+    for (const o of everyObject(tree).filter((x) => x.action === "light.turn_on" || x.action === "light.turn_off"))
+      expect(obj(o.target).entity_id).toEqual({ input: "light_target" });
   });
 });
 
@@ -905,7 +1003,13 @@ describe("appliance done", () => {
 
   it("is running once the power has been above the run level for the run time", () => {
     expect(list(tree.triggers).map(obj)).toEqual([
-      { trigger: "numeric_state", id: "running", entity_id: { input: "power_entities" }, above: { input: "run_watts" }, for: { minutes: { input: "run_minutes" } } },
+      {
+        trigger: "numeric_state",
+        id: "running",
+        entity_id: { input: "power_entities" },
+        above: { input: "run_watts" },
+        for: { minutes: { input: "run_minutes" } },
+      },
     ]);
     expect(list(tree.conditions).map(obj)).toEqual([{ condition: "state", entity_id: { input: "pause_switch" }, state: "off" }]);
   });
@@ -967,8 +1071,312 @@ describe("announce", () => {
     const [gate] = list(sequence[2].if).map(obj);
     expect(gate.value_template).toBe("{{ level > 0 }}");
     expect(obj(list(sequence[2].then)[0])).toMatchObject({ action: "media_player.volume_set", continue_on_error: true });
-    expect(sequence[3]).toMatchObject({ action: "tts.speak", target: { entity_id: { input: "tts_entity" } }, data: { media_player_entity_id: "{{ speakers }}", message: "{{ message }}" } });
+    expect(sequence[3]).toMatchObject({
+      action: "tts.speak",
+      target: { entity_id: { input: "tts_entity" } },
+      data: { media_player_entity_id: "{{ speakers }}", message: "{{ message }}" },
+    });
     expect(servicesOf(tree)).toEqual(["media_player.volume_set", "tts.speak"]);
+  });
+});
+
+const PAUSED_OFF = { condition: "state", entity_id: { input: "pause_switch" }, state: "off" };
+
+// The recipes of the 0.7.7 batch never trigger on the start of Home Assistant:
+// a restart must not fire any of them.
+describe("the leak, covers, battery, unavailable, presence and goodbye blueprints", () => {
+  it("never trigger on the start of Home Assistant, and keep their state triggers to explicit states", () => {
+    for (const path of [
+      "taxis/leak_alert.yaml",
+      "taxis/covers_sun.yaml",
+      "taxis/battery_low.yaml",
+      "taxis/unavailable_watch.yaml",
+      "taxis/house_presence.yaml",
+    ]) {
+      const triggers = list(parsed(path).triggers).map(obj);
+      expect(triggers.length, path).toBeGreaterThan(0);
+      for (const t of triggers) {
+        expect(t.trigger, path).not.toBe("homeassistant");
+        if (t.trigger === "state") expect(Object.hasOwn(t, "to") || Object.hasOwn(t, "from"), `${path} ${String(t.id)}`).toBe(true);
+      }
+    }
+  });
+});
+
+describe("leak alert", () => {
+  const tree = parsed("taxis/leak_alert.yaml");
+  const actions = list(tree.actions).map(obj);
+
+  it("runs one alert per sensor, in parallel", () => {
+    expect(tree.mode).toBe("parallel");
+    expect(tree.max).toBe(20);
+    expect(tree.max_exceeded).toBe("silent");
+  });
+
+  it("triggers whenever a sensor becomes wet, also when it comes back from unavailable already wet, and does nothing while paused", () => {
+    expect(list(tree.triggers).map(obj)).toEqual([{ trigger: "state", id: "leak", entity_id: { input: "leak_entities" }, not_from: "on", to: "on" }]);
+    expect(list(tree.conditions).map(obj)).toEqual([PAUSED_OFF]);
+  });
+
+  it("names the sensor, the title and a notification id of its own", () => {
+    const v = obj(obj(actions[0]).variables);
+    expect(v.leak).toBe("{{ trigger.entity_id }}");
+    expect(v.title).toBe("{{ area_name if area_name != '' else 'Taxis' }}: water leak");
+    expect(v.notification).toBe("taxis_leak_{{ trigger.entity_id | replace('.', '_') }}");
+  });
+
+  it("closes the water valve only when one is given: a valve with valve.close_valve, a switch with switch.turn_off", () => {
+    const valve = actions[1];
+    expect(String(obj(list(valve.if)[0]).value_template)).toBe("{{ valve_entity != '' }}");
+    const choose = obj(list(obj(list(valve.then)[0]).choose)[0]);
+    expect(String(obj(list(choose.conditions)[0]).value_template)).toBe("{{ valve_entity.startswith('valve.') }}");
+    expect(obj(list(choose.sequence)[0])).toMatchObject({ action: "valve.close_valve", continue_on_error: true, target: { entity_id: "{{ valve_entity }}" } });
+    expect(obj(list(obj(list(valve.then)[0]).default)[0])).toMatchObject({
+      action: "switch.turn_off",
+      continue_on_error: true,
+      target: { entity_id: "{{ valve_entity }}" },
+    });
+  });
+
+  it("sends the message to each notify service and always to Home Assistant, again every repeat time while wet, and once with 0", () => {
+    const repeat = obj(obj(actions[2]).repeat);
+    expect(repeat.until).toBe("{{ (repeat_minutes | int(0)) == 0 or not is_state(leak, 'on') or not is_state(pause_switch, 'off') }}");
+    const [pause, vars, notify, create, again] = list(repeat.sequence).map(obj);
+    expect(pause).toEqual(PAUSED_OFF);
+    expect(String(obj(vars.variables).text)).toMatch(/reports water\.$/);
+    const choose = obj(list(notify.choose)[0]);
+    expect(String(obj(list(choose.conditions)[0]).value_template)).toBe("{{ (notify_targets | count) > 0 }}");
+    const each = obj(obj(list(choose.sequence)[0]).repeat);
+    expect(each.for_each).toBe("{{ notify_targets }}");
+    expect(obj(list(each.sequence)[0])).toMatchObject({ action: "{{ repeat.item }}", continue_on_error: true });
+    expect(create.action).toBe("persistent_notification.create");
+    expect(obj(create.data).notification_id).toBe("{{ notification }}");
+    expect(String(obj(list(again.if)[0]).value_template)).toBe("{{ (repeat_minutes | int(0)) > 0 }}");
+    const waiting = obj(list(again.then)[0]);
+    expect(waiting.wait_template).toBe("{{ not is_state(leak, 'on') or not is_state(pause_switch, 'off') }}");
+    expect(waiting.continue_on_timeout).toBe(true);
+  });
+
+  it("takes the notification away when the sensor is dry, and only then", () => {
+    expect(obj(actions[3]).wait_template).toBe("{{ not is_state(leak, 'on') }}");
+    expect(String(obj(list(actions[4].if)[0]).value_template)).toBe("{{ not is_state(leak, 'on') }}");
+    expect(obj(list(actions[4].then)[0])).toMatchObject({ action: "persistent_notification.dismiss", data: { notification_id: "{{ notification }}" } });
+  });
+
+  it("switches nothing but the valve: never a light, never anything else", () => {
+    const services = servicesOf(tree).filter((s) => !s.startsWith("{{"));
+    expect(services).toEqual(["persistent_notification.create", "persistent_notification.dismiss", "switch.turn_off", "valve.close_valve"]);
+    expect(services.some((s) => s.startsWith("light."))).toBe(false);
+  });
+});
+
+describe("covers and sun", () => {
+  const tree = parsed("taxis/covers_sun.yaml");
+  const choose = list(obj(list(tree.actions)[0]).choose).map(obj);
+
+  it("restarts when it is triggered again", () => {
+    expect(tree.mode).toBe("restart");
+  });
+
+  it("triggers on the sun rising above the elevation, the temperature rising above the level, the window start, the open time and sunrise", () => {
+    const triggers = list(tree.triggers).map(obj);
+    expect(triggers.map((t) => t.id)).toEqual(["sun", "temperature", "window_start", "open_time", "sunrise"]);
+    expect(triggers[0]).toEqual({ trigger: "numeric_state", id: "sun", entity_id: "sun.sun", attribute: "elevation", above: { input: "sun_elevation" } });
+    expect(triggers[2]).toEqual({ trigger: "time", id: "window_start", at: { input: "window_start" } });
+    expect(triggers[3]).toEqual({ trigger: "time", id: "open_time", at: { input: "open_time" } });
+    expect(triggers[4]).toEqual({ trigger: "sun", id: "sunrise", event: "sunrise", offset: { input: "sunrise_offset" } });
+    checkTriggerIds(tree);
+  });
+
+  it("makes the temperature trigger false without a sensor, with the sensor and the level as trigger variables", () => {
+    const t = obj(list(tree.triggers)[1]);
+    expect(t.trigger).toBe("template");
+    expect(String(t.value_template)).toMatch(/^\{\{ temperature_entity != '' and /);
+    expect(String(t.value_template)).toMatch(/states\(temperature_entity\) \| float\(-100\)/);
+    const vars = obj(tree.trigger_variables);
+    for (const name of ["temperature_entity", "temperature_above"]) expect(vars[name]).toEqual({ input: name });
+  });
+
+  it("does nothing while paused", () => {
+    expect(list(tree.conditions).map(obj)).toEqual([PAUSED_OFF]);
+  });
+
+  it("closes only inside the window, with the sun high, above the temperature, and no window of the area open", () => {
+    const conditions = list(choose[0].conditions).map(obj);
+    expect(list(conditions[0].conditions).map((c) => obj(c).id)).toEqual(["sun", "temperature", "window_start"]);
+    expect(conditions[1]).toEqual({ condition: "time", after: { input: "window_start" }, before: { input: "window_end" } });
+    expect(String(conditions[2].value_template)).toBe("{{ (state_attr('sun.sun', 'elevation') | float(-90)) > (sun_elevation | float(0)) }}");
+    expect(String(conditions[3].value_template)).toBe(
+      "{{ temperature_entity == '' or (states(temperature_entity) | float(-100)) > (temperature_above | float(0)) }}",
+    );
+    expect(String(conditions[4].value_template)).toBe("{{ (window_entities | select('is_state', 'on') | list | count) == 0 }}");
+    expect(obj(list(choose[0].sequence)[0])).toEqual({
+      action: "cover.close_cover",
+      continue_on_error: true,
+      target: { entity_id: { input: "cover_entities" } },
+    });
+  });
+
+  it("opens at the open time, or at sunrise when that is chosen, never both", () => {
+    const or = obj(list(choose[1].conditions)[0]);
+    const [atTime, atSun] = list(or.conditions)
+      .map(obj)
+      .map((c) => list(c.conditions).map(obj));
+    expect(atTime[0].id).toBe("open_time");
+    expect(String(atTime[1].value_template)).toBe("{{ not open_at_sunrise }}");
+    expect(atSun[0].id).toBe("sunrise");
+    expect(String(atSun[1].value_template)).toBe("{{ open_at_sunrise }}");
+    expect(obj(list(choose[1].sequence)[0])).toMatchObject({ action: "cover.open_cover", continue_on_error: true });
+  });
+
+  it("calls cover services only", () => {
+    expect(servicesOf(tree)).toEqual(["cover.close_cover", "cover.open_cover"]);
+  });
+});
+
+describe("low batteries", () => {
+  const tree = parsed("taxis/battery_low.yaml");
+  const actions = list(tree.actions).map(obj);
+
+  it("runs once a day at the report time, one at a time, and not while paused", () => {
+    expect(tree.mode).toBe("single");
+    expect(list(tree.triggers).map(obj)).toEqual([{ trigger: "time", id: "report", at: { input: "report_time" } }]);
+    expect(list(tree.conditions).map(obj)).toEqual([PAUSED_OFF]);
+  });
+
+  it("lists the battery sensors below the threshold and the binary ones that are on, sorted by name, ignoring unreadable levels", () => {
+    const t = String(obj(obj(actions[0]).variables).low_items);
+    expect(t).toMatch(/states\.sensor \| selectattr\('attributes\.device_class', 'eq', 'battery'\)/);
+    expect(t).toMatch(/states\.binary_sensor \| selectattr\('attributes\.device_class', 'eq', 'battery'\) \| selectattr\('state', 'eq', 'on'\)/);
+    expect(t).toMatch(/s\.state \| float\(-1\)/);
+    expect(t).toMatch(/v >= 0 and v < \(threshold \| float\(15\)\)/);
+    expect(t).toMatch(/sort\(attribute='name'\)/);
+  });
+
+  it("does nothing when none is low", () => {
+    expect(actions[1]).toEqual({ condition: "template", value_template: "{{ (low_items | count) > 0 }}" });
+  });
+
+  it("sends one summary to each notify service, or to Home Assistant when there are none", () => {
+    expect(String(obj(obj(actions[2]).variables).text)).toBe("Low batteries ({{ low_items | count }}): {{ low_items | join(', ') }}");
+    expect(obj(obj(actions[2]).variables).title).toBe("Taxis: low batteries");
+    const branch = obj(list(obj(actions[3]).choose)[0]);
+    expect(String(obj(list(branch.conditions)[0]).value_template)).toBe("{{ (notify_targets | count) > 0 }}");
+    expect(obj(list(obj(obj(list(branch.sequence)[0]).repeat).sequence)[0])).toMatchObject({ action: "{{ repeat.item }}", continue_on_error: true });
+    const fallback = obj(list(obj(actions[3]).default)[0]);
+    expect(fallback.action).toBe("persistent_notification.create");
+    expect(obj(fallback.data).notification_id).toBe("taxis_battery_low");
+    expect(servicesOf(tree).filter((s) => !s.startsWith("{{"))).toEqual(["persistent_notification.create"]);
+  });
+});
+
+describe("unavailable watch", () => {
+  const tree = parsed("taxis/unavailable_watch.yaml");
+  const actions = list(tree.actions).map(obj);
+  const choose = list(actions[1].choose).map(obj);
+
+  it("runs one message per entity, in parallel", () => {
+    expect(tree.mode).toBe("parallel");
+    expect(tree.max).toBe(50);
+    expect(tree.max_exceeded).toBe("silent");
+  });
+
+  it("reports an entity that stayed unavailable or unknown for the time, and notices when it leaves either", () => {
+    const entity = { input: "watch_entities" };
+    expect(list(tree.triggers).map(obj)).toEqual([
+      { trigger: "state", id: "down", entity_id: entity, to: "unavailable", for: { minutes: { input: "unavailable_minutes" } } },
+      { trigger: "state", id: "down", entity_id: entity, to: "unknown", for: { minutes: { input: "unavailable_minutes" } } },
+      { trigger: "state", id: "back", entity_id: entity, from: "unavailable" },
+      { trigger: "state", id: "back", entity_id: entity, from: "unknown" },
+    ]);
+    expect(list(tree.conditions)).toEqual([]);
+    checkTriggerIds(tree);
+  });
+
+  it("names the entity and keeps one notification id per entity", () => {
+    const v = obj(obj(actions[0]).variables);
+    expect(v.notification).toBe("taxis_unavailable_{{ trigger.entity_id | replace('.', '_') }}");
+    expect(v.label).toBe("{{ state_attr(trigger.entity_id, 'friendly_name') or trigger.entity_id }}");
+  });
+
+  it("sends the message only while not paused, to each notify service and to Home Assistant", () => {
+    const conditions = list(choose[0].conditions).map(obj);
+    expect(conditions[0]).toEqual({ condition: "trigger", id: "down" });
+    expect(conditions[1]).toEqual(PAUSED_OFF);
+    const [vars, notify, create] = list(choose[0].sequence).map(obj);
+    expect(String(obj(vars.variables).text)).toMatch(/has been \{\{ trigger\.to_state\.state \}\} for \{\{ unavailable_minutes \}\} minutes\.$/);
+    expect(obj(obj(list(obj(list(notify.choose)[0]).sequence)[0]).repeat).for_each).toBe("{{ notify_targets }}");
+    expect(create.action).toBe("persistent_notification.create");
+    expect(obj(create.data).notification_id).toBe("{{ notification }}");
+  });
+
+  it("dismisses the notification when the entity is back in a real state, even while paused, and sends nothing", () => {
+    const conditions = list(choose[1].conditions).map(obj);
+    expect(conditions[0]).toEqual({ condition: "trigger", id: "back" });
+    expect(String(conditions[1].value_template)).toBe("{{ trigger.to_state.state not in ['unavailable', 'unknown'] }}");
+    expect(conditions.some((c) => c.condition === "state")).toBe(false);
+    expect(list(choose[1].sequence).map(obj)).toEqual([{ action: "persistent_notification.dismiss", data: { notification_id: "{{ notification }}" } }]);
+  });
+});
+
+describe("house presence", () => {
+  const tree = parsed("taxis/house_presence.yaml");
+  const choose = list(obj(list(tree.actions)[0]).choose).map(obj);
+
+  it("runs one at a time and not while paused", () => {
+    expect(tree.mode).toBe("single");
+    expect(list(tree.conditions).map(obj)).toEqual([PAUSED_OFF]);
+  });
+
+  it("triggers when the house has been empty for the time, and when it is occupied again, from and to real states", () => {
+    expect(list(tree.triggers).map(obj)).toEqual([
+      { trigger: "state", id: "left", entity_id: { input: "occupied_entity" }, from: "on", to: "off", for: { minutes: { input: "away_after_minutes" } } },
+      { trigger: "state", id: "back", entity_id: { input: "occupied_entity" }, from: "off", to: "on" },
+    ]);
+    checkTriggerIds(tree);
+  });
+
+  it("turns away mode on after everyone left, only when it is off and guest mode is not on", () => {
+    const conditions = list(choose[0].conditions).map(obj);
+    expect(conditions[0]).toEqual({ condition: "trigger", id: "left" });
+    expect(conditions[1]).toEqual({ condition: "state", entity_id: { input: "away_entity" }, state: "off" });
+    expect(String(conditions[2].value_template)).toBe("{{ guest_entity == '' or not is_state(guest_entity, 'on') }}");
+    expect(list(choose[0].sequence).map(obj)).toEqual([{ action: "input_boolean.turn_on", target: { entity_id: { input: "away_entity" } } }]);
+  });
+
+  it("turns away mode off on return only when the option says so and it is on", () => {
+    const conditions = list(choose[1].conditions).map(obj);
+    expect(conditions[0]).toEqual({ condition: "trigger", id: "back" });
+    expect(String(conditions[1].value_template)).toBe("{{ end_on_return }}");
+    expect(conditions[2]).toEqual({ condition: "state", entity_id: { input: "away_entity" }, state: "on" });
+    expect(list(choose[1].sequence).map(obj)).toEqual([{ action: "input_boolean.turn_off", target: { entity_id: { input: "away_entity" } } }]);
+  });
+});
+
+describe("goodbye", () => {
+  const tree = parsed("taxis/goodbye.yaml");
+  const sequence = list(tree.sequence).map(obj);
+
+  it("is a script blueprint that runs one call at a time", () => {
+    expect(obj(tree.blueprint).domain).toBe("script");
+    expect(tree.mode).toBe("single");
+    expect(Object.hasOwn(tree, "triggers")).toBe(false);
+  });
+
+  it("turns off the house light group when one is given", () => {
+    expect(String(obj(list(sequence[0].if)[0]).value_template)).toBe("{{ light_target != '' }}");
+    expect(obj(list(sequence[0].then)[0])).toEqual({ action: "light.turn_off", continue_on_error: true, target: { entity_id: "{{ light_target }}" } });
+  });
+
+  it("turns off only the media players that are not already off or unavailable", () => {
+    expect(String(obj(sequence[1].variables).playing)).toBe("{{ media_entities | reject('is_state', 'off') | reject('is_state', 'unavailable') | list }}");
+    expect(String(obj(list(sequence[2].if)[0]).value_template)).toBe("{{ (playing | count) > 0 }}");
+    expect(obj(list(sequence[2].then)[0])).toEqual({ action: "media_player.turn_off", continue_on_error: true, target: { entity_id: "{{ playing }}" } });
+  });
+
+  it("ends by turning the away mode switch on, and calls nothing else", () => {
+    expect(sequence[3]).toEqual({ action: "input_boolean.turn_on", target: { entity_id: { input: "away_entity" } } });
+    expect(servicesOf(tree)).toEqual(["input_boolean.turn_on", "light.turn_off", "media_player.turn_off"]);
   });
 });
 
@@ -999,10 +1407,26 @@ describe("checkBlueprintInput", () => {
 
   it("accepts an input with every required key, optional ones left out", () => {
     expect(checkBlueprintInput("taxis/occupancy.yaml", occupancy, isId)).toBeNull();
-    expect(checkBlueprintInput("taxis/occupancy.yaml", { ...occupancy, holds_entities: [], bed_entities: [], hold_minutes: 5, extended_after: 30, extended_hold: 15, sleep_hold: 60 }, isId)).toBeNull();
-    expect(checkBlueprintInput("taxis/motion_lights.yaml", { ...motionRequired, night_start: "23:00:00", dim_level: 30, main_lights: ["light.k_a"], night_lights: [], override_minutes: 0 }, isId)).toBeNull();
     expect(
-      checkBlueprintInput("taxis/media_off.yaml", { occupied_entity: "binary_sensor.k_occupied", pause_switch: "input_boolean.k_paused", speaker_entities: ["media_player.k_speaker"], tv_minutes: 30 }, isId),
+      checkBlueprintInput(
+        "taxis/occupancy.yaml",
+        { ...occupancy, holds_entities: [], bed_entities: [], hold_minutes: 5, extended_after: 30, extended_hold: 15, sleep_hold: 60 },
+        isId,
+      ),
+    ).toBeNull();
+    expect(
+      checkBlueprintInput(
+        "taxis/motion_lights.yaml",
+        { ...motionRequired, night_start: "23:00:00", dim_level: 30, main_lights: ["light.k_a"], night_lights: [], override_minutes: 0 },
+        isId,
+      ),
+    ).toBeNull();
+    expect(
+      checkBlueprintInput(
+        "taxis/media_off.yaml",
+        { occupied_entity: "binary_sensor.k_occupied", pause_switch: "input_boolean.k_paused", speaker_entities: ["media_player.k_speaker"], tv_minutes: 30 },
+        isId,
+      ),
     ).toBeNull();
   });
 
@@ -1096,12 +1520,29 @@ describe("checkBlueprintInput", () => {
   });
 
   describe("the recipes after area climate", () => {
-    const fan = { humidity_entity: "sensor.bath_humidity", rate_entity: "sensor.bath_humidity_rate", fan_entities: ["fan.bath_extractor"], pause_switch: "input_boolean.bath_paused" };
+    const fan = {
+      humidity_entity: "sensor.bath_humidity",
+      rate_entity: "sensor.bath_humidity_rate",
+      fan_entities: ["fan.bath_extractor"],
+      pause_switch: "input_boolean.bath_paused",
+    };
 
     it("accepts a fan that is a fan or a switch, and refuses another domain", () => {
       const path = "taxis/bathroom_fan.yaml";
       expect(checkBlueprintInput(path, fan, isId)).toBeNull();
-      expect(checkBlueprintInput(path, { ...fan, fan_entities: ["switch.bath_fan", "fan.bath_extractor"], reference_entity: "sensor.house_humidity", rate_on: 0.03, suppress_in_sleep: true }, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(
+          path,
+          {
+            ...fan,
+            fan_entities: ["switch.bath_fan", "fan.bath_extractor"],
+            reference_entity: "sensor.house_humidity",
+            rate_on: 0.03,
+            suppress_in_sleep: true,
+          },
+          isId,
+        ),
+      ).toBeNull();
       expect(checkBlueprintInput(path, { ...fan, fan_entities: ["light.bath"] }, isId)).toMatch(/fan_entities/);
       expect(checkBlueprintInput(path, { ...fan, rate_on: "0.03" }, isId)).toMatch(/rate_on/);
       const { rate_entity: _r, ...noRate } = fan;
@@ -1111,19 +1552,42 @@ describe("checkBlueprintInput", () => {
     it("exterior lights take people and motion sensors", () => {
       const path = "taxis/exterior_lights.yaml";
       const base = { light_target: "light.garden_all", override_timer: "timer.garden_override", pause_switch: "input_boolean.garden_paused" };
-      expect(checkBlueprintInput(path, { ...base, person_entities: ["person.alex"], motion_entities: [], sunset_offset: -1800, clock_minutes: 120 }, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(path, { ...base, person_entities: ["person.alex"], motion_entities: [], sunset_offset: -1800, clock_minutes: 120 }, isId),
+      ).toBeNull();
       expect(checkBlueprintInput(path, { ...base, person_entities: ["device_tracker.phone"] }, isId)).toMatch(/person_entities/);
     });
 
     it("takes notify services as service names, not entities, up to twenty, each once", () => {
       const path = "taxis/left_open.yaml";
       const base = { pause_switch: "input_boolean.k_paused" };
-      expect(checkBlueprintInput(path, { ...base, notify_targets: ["notify.mobile_app_phone", "notify.notify"], door_entities: ["binary_sensor.front_door"], area_name: "Hall" }, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(
+          path,
+          { ...base, notify_targets: ["notify.mobile_app_phone", "notify.notify"], door_entities: ["binary_sensor.front_door"], area_name: "Hall" },
+          isId,
+        ),
+      ).toBeNull();
       expect(checkBlueprintInput(path, { ...base, notify_targets: [] }, isId)).toBeNull();
-      for (const bad of [["mobile_app_phone"], ["notify.Phone"], ["light.x"], ["notify.a", "notify.a"], "notify.a", [5], Array.from({ length: 21 }, (_, i) => `notify.n${i}`), ["notify."]]) {
+      for (const bad of [
+        ["mobile_app_phone"],
+        ["notify.Phone"],
+        ["light.x"],
+        ["notify.a", "notify.a"],
+        "notify.a",
+        [5],
+        Array.from({ length: 21 }, (_, i) => `notify.n${i}`),
+        ["notify."],
+      ]) {
         expect(checkBlueprintInput(path, { ...base, notify_targets: bad }, isId), JSON.stringify(bad)).toMatch(/notify_targets/);
       }
-      expect(checkBlueprintInput("taxis/appliance_done.yaml", { ...base, power_entities: ["sensor.washer_power"], notify_targets: ["notify.phone"], run_watts: 10 }, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(
+          "taxis/appliance_done.yaml",
+          { ...base, power_entities: ["sensor.washer_power"], notify_targets: ["notify.phone"], run_watts: 10 },
+          isId,
+        ),
+      ).toBeNull();
       expect(checkBlueprintInput("taxis/appliance_done.yaml", { ...base, power_entities: [] }, isId)).toBeNull();
       expect(checkBlueprintInput("taxis/appliance_done.yaml", base, isId)).toMatch(/“power_entities” is missing/);
     });
@@ -1152,6 +1616,94 @@ describe("checkBlueprintInput", () => {
     });
   });
 
+  describe("the leak, covers, battery, unavailable, presence and goodbye recipes", () => {
+    const pause = "input_boolean.k_paused";
+
+    it("leak alert takes water sensors, notify services and a valve that is a valve or a switch", () => {
+      const path = "taxis/leak_alert.yaml";
+      const base = { leak_entities: ["binary_sensor.kitchen_leak"], pause_switch: pause };
+      expect(checkBlueprintInput(path, base, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(
+          path,
+          { ...base, notify_targets: ["notify.phone"], repeat_minutes: 10, valve_entity: "valve.main_water", area_name: "Kitchen" },
+          isId,
+        ),
+      ).toBeNull();
+      expect(checkBlueprintInput(path, { ...base, valve_entity: "switch.water_cutoff" }, isId)).toBeNull();
+      expect(checkBlueprintInput(path, { ...base, valve_entity: "light.hall" }, isId)).toMatch(/valve_entity/);
+      expect(checkBlueprintInput(path, { ...base, leak_entities: ["sensor.kitchen_leak"] }, isId)).toMatch(/leak_entities/);
+      expect(checkBlueprintInput(path, { ...base, repeat_minutes: "10" }, isId)).toMatch(/repeat_minutes/);
+      expect(checkBlueprintInput(path, { pause_switch: pause }, isId)).toMatch(/“leak_entities” is missing/);
+    });
+
+    it("covers and sun take covers, windows, an outdoor sensor, numbers, times and a boolean", () => {
+      const path = "taxis/covers_sun.yaml";
+      const base = { cover_entities: ["cover.living_blind"], pause_switch: pause };
+      expect(checkBlueprintInput(path, base, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(
+          path,
+          {
+            ...base,
+            window_entities: ["binary_sensor.living_window"],
+            temperature_entity: "sensor.outdoor_temperature",
+            sun_elevation: 25,
+            temperature_above: 24,
+            window_start: "10:00:00",
+            window_end: "20:00:00",
+            open_time: "08:00:00",
+            open_at_sunrise: true,
+            sunrise_offset: 1800,
+          },
+          isId,
+        ),
+      ).toBeNull();
+      expect(checkBlueprintInput(path, { ...base, cover_entities: ["light.living"] }, isId)).toMatch(/cover_entities/);
+      expect(checkBlueprintInput(path, { ...base, window_start: "10:00" }, isId)).toMatch(/window_start/);
+      expect(checkBlueprintInput(path, { ...base, open_at_sunrise: "yes" }, isId)).toMatch(/open_at_sunrise/);
+      expect(checkBlueprintInput(path, { ...base, temperature_entity: "binary_sensor.x" }, isId)).toMatch(/temperature_entity/);
+    });
+
+    it("low batteries and unavailable watch take notify services, a time and the entities to watch", () => {
+      expect(checkBlueprintInput("taxis/battery_low.yaml", { pause_switch: "input_boolean.taxis_paused" }, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(
+          "taxis/battery_low.yaml",
+          { pause_switch: "input_boolean.taxis_paused", threshold: 15, report_time: "09:00:00", notify_targets: ["notify.phone"] },
+          isId,
+        ),
+      ).toBeNull();
+      expect(checkBlueprintInput("taxis/battery_low.yaml", { pause_switch: "input_boolean.taxis_paused", report_time: "9:00" }, isId)).toMatch(/report_time/);
+      const path = "taxis/unavailable_watch.yaml";
+      const base = { watch_entities: ["binary_sensor.hall_motion", "sensor.hall_temperature", "climate.hall"], pause_switch: "input_boolean.taxis_paused" };
+      expect(checkBlueprintInput(path, base, isId)).toBeNull();
+      expect(checkBlueprintInput(path, { ...base, unavailable_minutes: 60, notify_targets: ["notify.phone"] }, isId)).toBeNull();
+      expect(checkBlueprintInput(path, { ...base, watch_entities: ["light.hall"] }, isId)).toMatch(/watch_entities/);
+      expect(checkBlueprintInput(path, { pause_switch: base.pause_switch }, isId)).toMatch(/“watch_entities” is missing/);
+    });
+
+    it("house presence and goodbye take the occupied sensor and the away switch; goodbye also a light group and media players", () => {
+      const presence = { occupied_entity: "binary_sensor.taxis_occupied", away_entity: "input_boolean.taxis_away", pause_switch: "input_boolean.taxis_paused" };
+      expect(checkBlueprintInput("taxis/house_presence.yaml", presence, isId)).toBeNull();
+      expect(
+        checkBlueprintInput(
+          "taxis/house_presence.yaml",
+          { ...presence, guest_entity: "input_boolean.taxis_guest", away_after_minutes: 30, end_on_return: true },
+          isId,
+        ),
+      ).toBeNull();
+      expect(checkBlueprintInput("taxis/house_presence.yaml", { ...presence, end_on_return: "true" }, isId)).toMatch(/end_on_return/);
+      expect(checkBlueprintInput("taxis/house_presence.yaml", { ...presence, occupied_entity: "sensor.x" }, isId)).toMatch(/occupied_entity/);
+      const goodbye = { away_entity: "input_boolean.taxis_away" };
+      expect(checkBlueprintInput(GOODBYE_PATH, goodbye, isId)).toBeNull();
+      expect(checkBlueprintInput(GOODBYE_PATH, { ...goodbye, light_target: "light.all", media_entities: ["media_player.kitchen_speaker"] }, isId)).toBeNull();
+      expect(checkBlueprintInput(GOODBYE_PATH, { ...goodbye, media_entities: ["light.a"] }, isId)).toMatch(/media_entities/);
+      expect(checkBlueprintInput(GOODBYE_PATH, {}, isId)).toMatch(/“away_entity” is missing/);
+      expect(checkBlueprintInput(GOODBYE_PATH, { ...goodbye, pause_switch: pause }, isId)).toMatch(/isn't an input/);
+    });
+  });
+
   it("refuses inputs that are not an object, and a path with no blueprint", () => {
     for (const bad of [null, "x", 5, [], undefined]) expect(checkBlueprintInput("taxis/occupancy.yaml", bad, isId)).toMatch(/weren't readable/);
     expect(checkBlueprintInput("taxis/other.yaml", occupancy, isId)).toMatch(/no Taxis blueprint/);
@@ -1162,19 +1714,44 @@ describe("checkBlueprintInput", () => {
 describe("the entities in an input", () => {
   it("are every entity id of an entity, entities or objects input, and nothing else", () => {
     const input = {
-      areas: [{ occupied: "binary_sensor.a_occupied", paused: "input_boolean.a_paused", bed: ["binary_sensor.a_bed"], speakers: ["media_player.a", "media_player.b"] }],
+      areas: [
+        {
+          occupied: "binary_sensor.a_occupied",
+          paused: "input_boolean.a_paused",
+          bed: ["binary_sensor.a_bed"],
+          speakers: ["media_player.a", "media_player.b"],
+        },
+      ],
       tts_entity: "tts.cloud",
       default_volume: 40,
     };
-    expect(inputEntityIds(ANNOUNCE_PATH, input).sort()).toEqual(["binary_sensor.a_bed", "binary_sensor.a_occupied", "input_boolean.a_paused", "media_player.a", "media_player.b", "tts.cloud"]);
+    expect(inputEntityIds(ANNOUNCE_PATH, input).sort()).toEqual([
+      "binary_sensor.a_bed",
+      "binary_sensor.a_occupied",
+      "input_boolean.a_paused",
+      "media_player.a",
+      "media_player.b",
+      "tts.cloud",
+    ]);
     // Notify services look like entity ids and are not.
-    expect(inputEntityIds("taxis/left_open.yaml", { notify_targets: ["notify.mobile_app_phone"], door_entities: ["binary_sensor.d"], pause_switch: "input_boolean.p", area_name: "light.not_an_input_of_this_kind" })).toEqual(["binary_sensor.d", "input_boolean.p"]);
+    expect(
+      inputEntityIds("taxis/left_open.yaml", {
+        notify_targets: ["notify.mobile_app_phone"],
+        door_entities: ["binary_sensor.d"],
+        pause_switch: "input_boolean.p",
+        area_name: "light.not_an_input_of_this_kind",
+      }),
+    ).toEqual(["binary_sensor.d", "input_boolean.p"]);
     // An optional entity left empty is none.
     expect(inputEntityIds("taxis/bathroom_fan.yaml", { reference_entity: "", humidity_entity: "sensor.h" })).toEqual(["sensor.h"]);
   });
 
   it("can be rewritten, objects included, without touching the rest", () => {
-    const input = { areas: [{ occupied: "binary_sensor.a", paused: "input_boolean.p", bed: [], speakers: ["media_player.a"] }], tts_entity: "tts.cloud", default_volume: 40 };
+    const input = {
+      areas: [{ occupied: "binary_sensor.a", paused: "input_boolean.p", bed: [], speakers: ["media_player.a"] }],
+      tts_entity: "tts.cloud",
+      default_volume: 40,
+    };
     const out = mapInputEntities(ANNOUNCE_PATH, input, (id) => (id === "media_player.a" ? "media_player.b" : id));
     expect(out).toEqual({ ...input, areas: [{ occupied: "binary_sensor.a", paused: "input_boolean.p", bed: [], speakers: ["media_player.b"] }] });
     expect(input.areas[0].speakers).toEqual(["media_player.a"]);
@@ -1184,8 +1761,38 @@ describe("the entities in an input", () => {
 
 describe("blueprint paths", () => {
   it("allow taxis/<lower-case name>.yaml and nothing else", () => {
-    for (const ok of ["taxis/occupancy.yaml", "taxis/motion_lights.yaml", "taxis/media_off.yaml", "taxis/area_climate.yaml", "taxis/bathroom_fan.yaml", "taxis/exterior_lights.yaml", "taxis/left_open.yaml", "taxis/appliance_done.yaml", "taxis/announce.yaml", "taxis/a1.yaml"]) expect(ok).toMatch(BLUEPRINT_PATH_RE);
-    for (const bad of ["taxis/Occupancy.yaml", "taxis/sub/x.yaml", "taxis/../x.yaml", "taxis/x.yml", "taxis/.yaml", "other/x.yaml", "/taxis/x.yaml", "taxis/x.yaml\n", "taxis/x y.yaml", "taxis/x.yaml/", "taxis/x-y.yaml"]) {
+    for (const ok of [
+      "taxis/occupancy.yaml",
+      "taxis/motion_lights.yaml",
+      "taxis/media_off.yaml",
+      "taxis/area_climate.yaml",
+      "taxis/bathroom_fan.yaml",
+      "taxis/exterior_lights.yaml",
+      "taxis/left_open.yaml",
+      "taxis/appliance_done.yaml",
+      "taxis/announce.yaml",
+      "taxis/leak_alert.yaml",
+      "taxis/covers_sun.yaml",
+      "taxis/battery_low.yaml",
+      "taxis/unavailable_watch.yaml",
+      "taxis/house_presence.yaml",
+      "taxis/goodbye.yaml",
+      "taxis/a1.yaml",
+    ])
+      expect(ok).toMatch(BLUEPRINT_PATH_RE);
+    for (const bad of [
+      "taxis/Occupancy.yaml",
+      "taxis/sub/x.yaml",
+      "taxis/../x.yaml",
+      "taxis/x.yml",
+      "taxis/.yaml",
+      "other/x.yaml",
+      "/taxis/x.yaml",
+      "taxis/x.yaml\n",
+      "taxis/x y.yaml",
+      "taxis/x.yaml/",
+      "taxis/x-y.yaml",
+    ]) {
       expect(bad, bad).not.toMatch(BLUEPRINT_PATH_RE);
     }
   });

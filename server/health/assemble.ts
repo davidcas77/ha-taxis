@@ -1,5 +1,5 @@
 import type { HealthItem, HealthSnapshot, HealthState } from "../../shared/health.ts";
-import { ANNOUNCE_SCRIPT_ID } from "../../shared/blueprints.ts";
+import { SCRIPT_IDS } from "../../shared/blueprints.ts";
 import { parseDuration, type RecipeInstalled } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { blueprintVersions, installedOf, type RecipeWs } from "../changes/recipes.ts";
@@ -47,12 +47,17 @@ export function installedFrom(states: readonly RawState[], snap: Snapshot, bluep
   for (const item of snap.items) {
     if (!item.id.startsWith("taxis_") || !item.config || typeof item.config !== "object") continue;
     if (item.kind === "automation") out.automations[item.id] = installedOf(item.config as Record<string, unknown>);
-    else if (item.kind === "script" && item.id === ANNOUNCE_SCRIPT_ID) out.scripts[item.id] = installedOf(item.config as Record<string, unknown>);
+    else if (item.kind === "script" && SCRIPT_IDS.includes(item.id)) out.scripts[item.id] = installedOf(item.config as Record<string, unknown>);
   }
   return out;
 }
 
-export function healthSnapshot(raw: Pick<RawRegistry, "states">, hierarchy: Hierarchy, snap: Snapshot, blueprints: Record<string, number | null> | null): HealthSnapshot {
+export function healthSnapshot(
+  raw: Pick<RawRegistry, "states">,
+  hierarchy: Hierarchy,
+  snap: Snapshot,
+  blueprints: Record<string, number | null> | null,
+): HealthSnapshot {
   const items: HealthItem[] = snap.items.map((i) => ({ kind: i.kind, id: i.id, entityId: i.entityId, name: i.name, config: i.config, yaml: i.yaml }));
   return {
     hierarchy,

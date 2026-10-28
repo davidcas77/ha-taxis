@@ -9,7 +9,7 @@ import type { Hierarchy } from "./types.ts";
 // only; nothing is written to Home Assistant until a recipe is installed. Pure
 // functions, no side effects.
 
-export const PARAM_TABS = ["house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety"] as const;
+export const PARAM_TABS = ["house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "covers", "safety"] as const;
 export type ParamTab = (typeof PARAM_TABS)[number];
 
 export const PARAM_TAB_LABEL: Record<ParamTab, string> = {
@@ -20,6 +20,7 @@ export const PARAM_TAB_LABEL: Record<ParamTab, string> = {
   climate: "Climate",
   fan: "Bathroom fan",
   exterior: "Exterior",
+  covers: "Covers",
   safety: "Safety",
 };
 
@@ -46,6 +47,8 @@ export type ParamDef = {
   options?: readonly string[];
   // entity and entities: the domain its entity ids have to be in.
   domain?: string;
+  // entity: more than one domain is accepted (domain is the first of them).
+  domains?: readonly string[];
   // Set for one area only: it is not inherited from a floor, the interior or
   // exterior areas or the house, and the other levels can't set it.
   areaOnly?: boolean;
@@ -65,6 +68,9 @@ export const PARAM_KEYS = [
   "guest_pause_media",
   "notify_targets",
   "tts_entity",
+  "outdoor_temperature_entity",
+  "everyone_left_minutes",
+  "away_ends_on_return",
   "hold_timeout",
   "extended_after",
   "extended_hold",
@@ -124,6 +130,19 @@ export const PARAM_KEYS = [
   "appliance_run_minutes",
   "appliance_idle_watts",
   "appliance_idle_minutes",
+  "leak_repeat",
+  "leak_valve_entity",
+  "battery_threshold",
+  "battery_report_time",
+  "unavailable_watch_minutes",
+  "covers_sun_elevation",
+  "covers_temp_above",
+  "covers_window_start",
+  "covers_window_end",
+  "covers_open_time",
+  "covers_open_at_sunrise",
+  "covers_sunrise_offset",
+  "covers_block_if_window_open",
 ] as const;
 export type ParamKey = (typeof PARAM_KEYS)[number];
 
@@ -141,6 +160,32 @@ export const PARAMS: readonly ParamDef[] = [
   { key: "notify_targets", tab: "house", label: "Notify services", unit: null, kind: "services", domain: "notify", houseOnly: true, default: [] },
   // The text-to-speech entity the announce script speaks with.
   { key: "tts_entity", tab: "house", label: "Text-to-speech", unit: null, kind: "entity", domain: "tts", houseOnly: true, default: "" },
+  // The outdoor temperature sensor Covers and sun reads. Empty: covers close on the sun alone.
+  {
+    key: "outdoor_temperature_entity",
+    tab: "house",
+    label: "Outdoor temperature sensor",
+    unit: null,
+    kind: "entity",
+    domain: "sensor",
+    houseOnly: true,
+    default: "",
+  },
+  // House presence: how long nobody is home or in any area before away mode is switched on.
+  {
+    key: "everyone_left_minutes",
+    tab: "house",
+    label: "Away after everyone left for",
+    unit: "min",
+    kind: "number",
+    min: 1,
+    max: 1440,
+    step: 1,
+    houseOnly: true,
+    default: 30,
+  },
+  // Whether away mode is switched off again when somebody comes back.
+  { key: "away_ends_on_return", tab: "house", label: "Away ends when someone returns", unit: null, kind: "bool", houseOnly: true, default: false },
   { key: "hold_timeout", tab: "occupancy", label: "Hold timeout", unit: "min", kind: "number", min: 1, max: 240, step: 1, default: 5 },
   { key: "extended_after", tab: "occupancy", label: "Extended after", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 30 },
   { key: "extended_hold", tab: "occupancy", label: "Extended hold timeout", unit: "min", kind: "number", min: 1, max: 240, step: 1, default: 15 },
@@ -214,6 +259,45 @@ export const PARAMS: readonly ParamDef[] = [
   { key: "appliance_run_minutes", tab: "safety", label: "Running for", unit: "min", kind: "number", min: 1, max: 120, step: 1, default: 2 },
   { key: "appliance_idle_watts", tab: "safety", label: "Done below", unit: "W", kind: "number", min: 0, max: 10000, step: 1, default: 5 },
   { key: "appliance_idle_minutes", tab: "safety", label: "Done for", unit: "min", kind: "number", min: 1, max: 120, step: 1, default: 3 },
+  // Leak alert. 0: the message is sent once.
+  { key: "leak_repeat", tab: "safety", label: "Leak: repeat every", unit: "min", kind: "number", min: 0, max: 1440, step: 1, default: 10 },
+  // A water valve (or a switch that shuts the water) closed when a leak is found. Empty: nothing is closed.
+  {
+    key: "leak_valve_entity",
+    tab: "safety",
+    label: "Leak: water valve",
+    unit: null,
+    kind: "entity",
+    domain: "valve",
+    domains: ["valve", "switch"],
+    houseOnly: true,
+    default: "",
+  },
+  // Low batteries: one summary a day.
+  { key: "battery_threshold", tab: "safety", label: "Battery low below", unit: "%", kind: "number", min: 1, max: 99, step: 1, houseOnly: true, default: 15 },
+  { key: "battery_report_time", tab: "safety", label: "Battery report at", unit: null, kind: "time", houseOnly: true, default: "09:00" },
+  // Entities Taxis relies on that stayed unavailable or unknown this long are reported.
+  {
+    key: "unavailable_watch_minutes",
+    tab: "safety",
+    label: "Not reporting for",
+    unit: "min",
+    kind: "number",
+    min: 1,
+    max: 1440,
+    step: 1,
+    houseOnly: true,
+    default: 60,
+  },
+  // Covers and sun.
+  { key: "covers_sun_elevation", tab: "covers", label: "Close when the sun is above", unit: "°", kind: "number", min: 0, max: 90, step: 1, default: 25 },
+  { key: "covers_temp_above", tab: "covers", label: "and it is warmer outside than", unit: "°", kind: "number", min: -20, max: 60, step: 0.5, default: 24 },
+  { key: "covers_window_start", tab: "covers", label: "Close from", unit: null, kind: "time", default: "10:00" },
+  { key: "covers_window_end", tab: "covers", label: "Close until", unit: null, kind: "time", default: "20:00" },
+  { key: "covers_open_time", tab: "covers", label: "Open at", unit: null, kind: "time", default: "08:00" },
+  { key: "covers_open_at_sunrise", tab: "covers", label: "Open at sunrise instead", unit: null, kind: "bool", default: false },
+  { key: "covers_sunrise_offset", tab: "covers", label: "Sunrise offset", unit: "min", kind: "number", min: -120, max: 120, step: 5, default: 30 },
+  { key: "covers_block_if_window_open", tab: "covers", label: "Not while a window is open", unit: null, kind: "bool", default: true },
 ];
 
 export const PARAM_DEF = Object.fromEntries(PARAMS.map((p) => [p.key, p])) as Record<ParamKey, ParamDef>;
@@ -238,9 +322,16 @@ export function checkValue(def: ParamDef, value: unknown): string | null {
     case "bool":
       return typeof value === "boolean" ? null : `${def.label} must be yes or no.`;
     case "text":
-      return typeof value === "string" && (value === "" || PRESET_NAME_RE.test(value)) ? null : `${def.label} must be a name of up to 40 letters, digits and spaces.`;
-    case "entity":
-      return typeof value === "string" && (value === "" || (value.length <= 255 && INVENTORY_ENTITY_ID.test(value) && value.startsWith(`${def.domain}.`))) ? null : `${def.label} must be an ${def.domain} entity id.`;
+      return typeof value === "string" && (value === "" || PRESET_NAME_RE.test(value))
+        ? null
+        : `${def.label} must be a name of up to 40 letters, digits and spaces.`;
+    case "entity": {
+      const domains = def.domains ?? [def.domain];
+      return typeof value === "string" &&
+        (value === "" || (value.length <= 255 && INVENTORY_ENTITY_ID.test(value) && domains.some((d) => value.startsWith(`${d}.`))))
+        ? null
+        : `${def.label} must be ${domains.length > 1 ? `a ${domains.slice(0, -1).join(", ")} or ${domains[domains.length - 1]}` : `an ${domains[0]}`} entity id.`;
+    }
     case "entities":
       return Array.isArray(value) &&
         value.length >= 1 &&
@@ -250,7 +341,11 @@ export function checkValue(def: ParamDef, value: unknown): string | null {
         ? null
         : `${def.label} must be a list of 1 to ${MAX_ENTITY_LIST} ${def.domain} entity ids.`;
     case "services":
-      return Array.isArray(value) && value.length >= 1 && value.length <= MAX_ENTITY_LIST && new Set(value).size === value.length && value.every((v) => typeof v === "string" && NOTIFY_SERVICE_RE.test(v))
+      return Array.isArray(value) &&
+        value.length >= 1 &&
+        value.length <= MAX_ENTITY_LIST &&
+        new Set(value).size === value.length &&
+        value.every((v) => typeof v === "string" && NOTIFY_SERVICE_RE.test(v))
         ? null
         : `${def.label} must be a list of 1 to ${MAX_ENTITY_LIST} notify services, like notify.mobile_app_phone.`;
     case "periods": {
@@ -480,7 +575,12 @@ export type EntryLights = {
 export function entryLights(p: ParameterSettings, areaId: string, rows: readonly Pick<InventoryRow, "entityId" | "counts" | "light">[]): EntryLights {
   const counted = rows.filter((r) => r.counts);
   const only = counted.length === 1;
-  const suggested = only ? [counted[0].entityId] : counted.filter((r) => r.light === "main").map((r) => r.entityId).sort();
+  const suggested = only
+    ? [counted[0].entityId]
+    : counted
+        .filter((r) => r.light === "main")
+        .map((r) => r.entityId)
+        .sort();
   const stored = ownValue(p, { level: "area", id: areaId }, "entry_lights");
   const set = Array.isArray(stored) ? stored : null;
   const valid = set ? set.filter((id) => counted.some((r) => r.entityId === id)).sort() : [];

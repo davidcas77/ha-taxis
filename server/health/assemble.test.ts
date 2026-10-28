@@ -92,9 +92,18 @@ describe("the demo house", () => {
     expect(report.findings.some((f) => f.check === "lights" && f.area === "living_room")).toBe(true);
     // Climate: the valve is down, the room has no temperature helper, and "Heating schedule" sets the same valve.
     expect(ids).toEqual(
-      expect.arrayContaining(["climate:thermostat:living_room", "climate:reference:living_room", "climate:competing:automation:1700000000004+automation:taxis_area_climate_living"]),
+      expect.arrayContaining([
+        "climate:thermostat:living_room",
+        "climate:reference:living_room",
+        "climate:competing:automation:1700000000004+automation:taxis_area_climate_living",
+      ]),
     );
-    expect(report.findings.filter((f) => f.check === "climate").map((f) => f.severity).sort()).toEqual(["info", "warning", "warning"]);
+    expect(
+      report.findings
+        .filter((f) => f.check === "climate")
+        .map((f) => f.severity)
+        .sort(),
+    ).toEqual(["info", "warning", "warning"]);
     expect(report.findings.find((f) => f.id === "climate:thermostat:living_room")!.detail).toContain("Living valve for 3 hours");
     // The Hall PIR is used by an automation, so it is an error; the attic sensor is not used.
     expect(report.findings.find((f) => f.id === "unavailable:device:hallway_1")!.severity).toBe("error");
@@ -149,7 +158,12 @@ describe("assembling the snapshot", () => {
       { entity_id: "sensor.b", state: "unavailable", attributes: { restored: true } },
       { entity_id: "sensor.c", state: "5", last_changed: "", attributes: { last_triggered: 7 } },
     ]);
-    expect(states["automation.a"]).toEqual({ state: "on", lastChanged: "2026-10-01T10:00:00+00:00", lastTriggered: "2026-10-02T10:00:00+00:00", restored: false });
+    expect(states["automation.a"]).toEqual({
+      state: "on",
+      lastChanged: "2026-10-01T10:00:00+00:00",
+      lastTriggered: "2026-10-02T10:00:00+00:00",
+      restored: false,
+    });
     expect(states["sensor.b"]).toEqual({ state: "unavailable", lastChanged: null, lastTriggered: null, restored: true });
     expect(states["sensor.c"]).toMatchObject({ lastChanged: null, lastTriggered: null });
   });

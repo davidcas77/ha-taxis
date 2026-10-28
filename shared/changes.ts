@@ -1,5 +1,14 @@
-import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, BLUEPRINT_PATH_RE, blueprintByPath, blueprintForRecipe, checkBlueprintInput, isRecipeKey } from "./blueprints.ts";
-import { HOUSE_HELPER_IDS } from "./climate.ts";
+import {
+  BLUEPRINT_PATH_RE,
+  SCRIPT_BLUEPRINTS,
+  SCRIPT_IDS,
+  blueprintByPath,
+  blueprintForRecipe,
+  checkBlueprintInput,
+  isHouseRecipe,
+  isRecipeKey,
+} from "./blueprints.ts";
+import { HOUSE_AREAS_OCCUPIED_ID, HOUSE_HELPER_IDS, HOUSE_OCCUPIED_ID, HOUSE_OCCUPIED_TEMPLATE } from "./climate.ts";
 import { BUTTON_AUTOMATION_ID, validButtonMap } from "./buttons.ts";
 import { deviceClassError } from "./device-classes.ts";
 import { checkPeriods } from "./periods.ts";
@@ -14,8 +23,14 @@ export const isTempId = (id: unknown): id is string => typeof id === "string" &&
 export const tempId = (kind: ChangeKind, changeId: number) => `${TEMP_PREFIX}${kind}:${changeId}`;
 
 type Check = (v: unknown) => boolean;
-const str = (max = 255): Check => (v) => typeof v === "string" && v.trim().length > 0 && v.length <= max;
-const strOrNull = (max = 255): Check => (v) => v === null || str(max)(v);
+const str =
+  (max = 255): Check =>
+  (v) =>
+    typeof v === "string" && v.trim().length > 0 && v.length <= max;
+const strOrNull =
+  (max = 255): Check =>
+  (v) =>
+    v === null || str(max)(v);
 const id: Check = (v) => typeof v === "string" && v.length > 0 && v.length <= 255;
 const idOrNull: Check = (v) => v === null || id(v);
 const ids: Check = (v) => Array.isArray(v) && v.length <= 200 && v.every(id);
@@ -28,19 +43,29 @@ export const ENTITY_ID_RE = /^(?!.*__)(?!_)[a-z0-9_]+(?<!_)\.(?!_)[a-z0-9_]+(?<!
 const entityIdCheck: Check = (v) => typeof v === "string" && v.length <= 255 && ENTITY_ID_RE.test(v);
 const entityIdOrNull: Check = (v) => v === null || entityIdCheck(v);
 const entityIdList: Check = (v) => Array.isArray(v) && v.length >= 1 && v.length <= 500 && v.every(entityIdCheck) && new Set(v).size === v.length;
-const oneOf = (...values: string[]): Check => (v) => typeof v === "string" && values.includes(v);
-const positiveInt = (max: number): Check => (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= max;
+const oneOf =
+  (...values: string[]): Check =>
+  (v) =>
+    typeof v === "string" && values.includes(v);
+const positiveInt =
+  (max: number): Check =>
+  (v) =>
+    Number.isInteger(v) && (v as number) >= 1 && (v as number) <= max;
 // A recipe's automations: taxis_<recipe>_<area code>.
 export const AUTOMATION_ID_RE = /^taxis_[a-z0-9_]{1,200}$/;
 // The only template Taxis puts in a helper: the area's hold timer is running.
 export const OCCUPIED_TEMPLATE_RE = /^\{\{ is_state\('timer\.[a-z0-9_]+','active'\) \}\}$/;
 const useBlueprint: Check = (v) =>
-  typeof v === "object" && v !== null && !Array.isArray(v) &&
+  typeof v === "object" &&
+  v !== null &&
+  !Array.isArray(v) &&
   Object.keys(v).every((k) => k === "path" || k === "input") &&
   typeof (v as { path?: unknown }).path === "string" &&
   checkBlueprintInput((v as { path: string }).path, (v as { input?: unknown }).input, entityIdCheck) === null;
 const categoryMap: Check = (v) =>
-  typeof v === "object" && v !== null && !Array.isArray(v) &&
+  typeof v === "object" &&
+  v !== null &&
+  !Array.isArray(v) &&
   Object.entries(v).every(([k, c]) => (CATEGORY_SCOPES as readonly string[]).includes(k) && idOrNull(c));
 
 // The class itself is checked against the entity's domain in validateInput.
@@ -49,7 +74,17 @@ const deviceClassField: Check = (v) => v === null || (typeof v === "string" && /
 // Every field each kind may change, named as Home Assistant names it. Anything
 // else is refused before it is stored, let alone sent.
 export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
-  entity: { new_entity_id: entityIdCheck, name: strOrNull(), icon, area_id: idOrNull, labels: ids, categories: categoryMap, hidden_by: userOrNull, disabled_by: userOrNull, device_class: deviceClassField },
+  entity: {
+    new_entity_id: entityIdCheck,
+    name: strOrNull(),
+    icon,
+    area_id: idOrNull,
+    labels: ids,
+    categories: categoryMap,
+    hidden_by: userOrNull,
+    disabled_by: userOrNull,
+    device_class: deviceClassField,
+  },
   device: { name_by_user: strOrNull(), area_id: idOrNull, labels: ids, disabled_by: userOrNull },
   area: { name: str(), floor_id: idOrNull, icon, labels: ids, temperature_entity_id: entityIdOrNull, humidity_entity_id: entityIdOrNull },
   floor: { name: str(), level, icon },
@@ -66,7 +101,7 @@ export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
     // A timer's duration in seconds: one minute to four hours.
     duration: (v) => Number.isInteger(v) && (v as number) >= 60 && (v as number) <= 14400,
     icon,
-    state_template: (v) => typeof v === "string" && OCCUPIED_TEMPLATE_RE.test(v),
+    state_template: (v) => typeof v === "string" && (OCCUPIED_TEMPLATE_RE.test(v) || v === HOUSE_OCCUPIED_TEMPLATE),
     device_class: oneOf("occupancy"),
     periods: (v) => checkPeriods(v) === null,
   },
@@ -80,7 +115,7 @@ export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
     button_map: validButtonMap,
   },
   script: {
-    script_id: (v) => v === ANNOUNCE_SCRIPT_ID,
+    script_id: (v) => typeof v === "string" && SCRIPT_IDS.includes(v),
     alias: str(),
     use_blueprint: useBlueprint,
   },
@@ -149,15 +184,23 @@ function validateBlueprint(fields: Record<string, unknown>): string | null {
   return null;
 }
 
-// An automation change is one recipe for one area: its id says which, and it
-// can only use that recipe's blueprint.
+// An automation change is one recipe for one area (or, for a house recipe, for the
+// house): its id says which, and it can only use that recipe's blueprint.
 function validateAutomation(fields: Record<string, unknown>): string | null {
-  if ('button_map' in fields) {
-    if(!BUTTON_AUTOMATION_ID.test(String(fields.automation_id)) || typeof fields.alias!=='string' || !validButtonMap(fields.button_map)) return 'A button mapping needs its managed automation id, alias and complete map.';
-    if(Object.keys(fields).some(k=>!['automation_id','alias','button_map'].includes(k))) return 'Button maps cannot also contain recipe or blueprint fields.';
+  if ("button_map" in fields) {
+    if (!BUTTON_AUTOMATION_ID.test(String(fields.automation_id)) || typeof fields.alias !== "string" || !validButtonMap(fields.button_map))
+      return "A button mapping needs its managed automation id, alias and complete map.";
+    if (Object.keys(fields).some((k) => !["automation_id", "alias", "button_map"].includes(k)))
+      return "Button maps cannot also contain recipe or blueprint fields.";
     return null;
   }
-  for (const key of ["automation_id", "recipe", "area_id", "alias", "use_blueprint"]) if (!(key in fields)) return `An automation change needs ${key.replace("_", " ")}.`;
+  // Announce and goodbye are scripts: they have their own kind of change.
+  if (isRecipeKey(fields.recipe) && blueprintForRecipe(fields.recipe).domain !== "automation") return "That recipe is a script, not an automation.";
+  const house = isHouseRecipe(fields.recipe);
+  for (const key of house ? ["automation_id", "recipe", "alias", "use_blueprint"] : ["automation_id", "recipe", "area_id", "alias", "use_blueprint"]) {
+    if (!(key in fields)) return `An automation change needs ${key.replace("_", " ")}.`;
+  }
+  if (house && "area_id" in fields) return "A house recipe belongs to no area.";
   const automationId = String(fields.automation_id);
   const prefix = `taxis_${String(fields.recipe)}_`;
   if (!automationId.startsWith(prefix) || automationId === prefix) return "The automation id has to be taxis_<recipe>_<area code>.";
@@ -169,11 +212,12 @@ function validateAutomation(fields: Record<string, unknown>): string | null {
   return null;
 }
 
-// The announce script: one for the house, from its blueprint, under one id.
+// The scripts Taxis makes (announce, goodbye): one each for the house, from its
+// own blueprint, under its own id.
 function validateScript(fields: Record<string, unknown>): string | null {
   for (const key of ["script_id", "alias", "use_blueprint"]) if (!(key in fields)) return `A script change needs ${key.replace("_", " ")}.`;
   const ub = fields.use_blueprint as { path: string };
-  if (ub.path !== ANNOUNCE_PATH) return "That script uses another blueprint.";
+  if (ub.path !== SCRIPT_BLUEPRINTS[String(fields.script_id)]) return "That script uses another blueprint.";
   return null;
 }
 
@@ -192,13 +236,19 @@ const OWN_FIELDS = {
 function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>): string | null {
   if (op === "update") {
     const only = (key: string) => Object.keys(fields).every((k) => k === key);
-    return only("entities") || only("duration") || only("periods") ? null : "A helper update can only change its members, a timer's duration or a schedule's periods.";
+    return only("entities") || only("duration") || only("periods")
+      ? null
+      : "A helper update can only change its members, a timer's duration or a schedule's periods.";
   }
   if (!("helper" in fields)) return "A new helper needs a kind.";
   if (!("entity_id" in fields)) return "A new helper needs an entity id.";
-  // The house's mode switches belong to no area.
-  const house = fields.helper === "input_boolean" && HOUSE_HELPER_IDS.includes(String(fields.entity_id));
-  if (house && "area_id" in fields) return "The house's mode switches have no area.";
+  // The house's mode switches, its pause switch and its occupied sensors belong to no area.
+  const entity = String(fields.entity_id);
+  const house =
+    (fields.helper === "input_boolean" && HOUSE_HELPER_IDS.includes(entity)) ||
+    (fields.helper === "template" && entity === HOUSE_OCCUPIED_ID) ||
+    (fields.helper === "group" && fields.group_type === "binary_sensor" && entity === HOUSE_AREAS_OCCUPIED_ID);
+  if (house && "area_id" in fields) return "The house's own helpers have no area.";
   // A light group of a floor or of the house gathers other groups and goes in no area.
   const floating = fields.helper === "group" && fields.group_type === "light";
   if (!house && !floating && !("area_id" in fields)) return "A new helper needs an area.";
@@ -211,10 +261,13 @@ function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>):
     if (domain !== wanted) return `A ${kind.replace("_", " ")} helper's entity id has to start with “${wanted}.”.`;
     if (kind === "timer" && !("duration" in fields)) return "A new timer needs a duration.";
     if (kind === "template" && !("state_template" in fields && "device_class" in fields)) return "A new template sensor needs its template and device class.";
+    if (kind === "template" && (entity === HOUSE_OCCUPIED_ID) !== (fields.state_template === HOUSE_OCCUPIED_TEMPLATE))
+      return "The house occupied sensor and its template go together.";
     if (kind === "schedule" && !("periods" in fields)) return "A new schedule needs its periods.";
     return null;
   }
-  if ("duration" in fields || "icon" in fields || "state_template" in fields || "device_class" in fields || "periods" in fields) return "Only a timer, an input boolean, a template sensor or a schedule sets those.";
+  if ("duration" in fields || "icon" in fields || "state_template" in fields || "device_class" in fields || "periods" in fields)
+    return "Only a timer, an input boolean, a template sensor or a schedule sets those.";
   if (!("entities" in fields)) return "A new helper needs members.";
   if (fields.helper === "derivative") {
     if ("group_type" in fields || "set_area_sensor" in fields) return "A derivative sensor has neither a group type nor sets the area's sensor.";
@@ -260,7 +313,16 @@ export function currentValues(h: Hierarchy, kind: ChangeKind, targetId: string, 
     }
     case "area": {
       const a = h.areas[targetId];
-      return a ? { name: a.name, floor_id: a.floorId, icon: a.icon, labels: a.labels, temperature_entity_id: a.temperatureEntityId, humidity_entity_id: a.humidityEntityId } : null;
+      return a
+        ? {
+            name: a.name,
+            floor_id: a.floorId,
+            icon: a.icon,
+            labels: a.labels,
+            temperature_entity_id: a.temperatureEntityId,
+            humidity_entity_id: a.humidityEntityId,
+          }
+        : null;
     }
     case "floor": {
       const f = h.floors.find((x) => x.id === targetId);
@@ -429,7 +491,10 @@ export function planMerge(existing: Change[], input: ChangeInput, h: Hierarchy):
     // nothing once applied.
     const users = existing.filter((c) => !sameTarget.includes(c) && refsOf(c).some((r) => r.kind === kind && r.id === targetId));
     if (users.length) {
-      return { action: "none", reason: `${users.length} change${users.length === 1 ? "" : "s"} in the list use${users.length === 1 ? "s" : ""} this ${kind}. Remove or change ${users.length === 1 ? "it" : "them"} first.` };
+      return {
+        action: "none",
+        reason: `${users.length} change${users.length === 1 ? "" : "s"} in the list use${users.length === 1 ? "s" : ""} this ${kind}. Remove or change ${users.length === 1 ? "it" : "them"} first.`,
+      };
     }
     return { action: "removeThenInsert", ids: sameTarget.map((c) => c.id), change: { kind, op: "delete", targetId, scope, before: current, after: {} } };
   }
@@ -457,7 +522,10 @@ export function planMerge(existing: Change[], input: ChangeInput, h: Hierarchy):
   // Categories: only the scopes that actually change are kept, so Apply never
   // re-sends a scope the user didn't touch.
   if ("categories" in after) {
-    const now = { ...((current.categories ?? {}) as Record<string, string | null>), ...((pending?.before.categories as object) ?? {}) } as Record<string, string | null | undefined>;
+    const now = { ...((current.categories ?? {}) as Record<string, string | null>), ...((pending?.before.categories as object) ?? {}) } as Record<
+      string,
+      string | null | undefined
+    >;
     const merged = { ...((pending?.after.categories as object) ?? {}), ...((fields.categories as object) ?? {}) } as Record<string, string | null>;
     const changed: Record<string, string | null> = {};
     const was: Record<string, string | null> = {};
@@ -514,7 +582,8 @@ function planHelper(existing: Change[], input: ChangeInput, h: Hierarchy): Merge
   const members = (fields.entities ?? []) as string[];
   // A member may be a group the list creates (or a group it renames to that id):
   // a floor's light group is added beside the groups of its areas.
-  const coming = (m: string) => existing.some((c) => (c.kind === "helper" && c.op === "create" && c.after.entity_id === m) || (c.kind === "entity" && c.after.new_entity_id === m));
+  const coming = (m: string) =>
+    existing.some((c) => (c.kind === "helper" && c.op === "create" && c.after.entity_id === m) || (c.kind === "entity" && c.after.new_entity_id === m));
   const absent = members.find((m) => !h.entities[m] && !coming(m));
   if (absent) return none(`“${absent}” isn't in Home Assistant any more.`);
   if (input.op === "update" && "duration" in fields) return planTimerDuration(existing, input, h);
@@ -523,8 +592,10 @@ function planHelper(existing: Change[], input: ChangeInput, h: Hierarchy): Merge
   if (input.op === "create") {
     const entityId = String(fields.entity_id);
     if (h.entities[entityId]) return none(`Home Assistant already has an entity “${entityId}”.`);
-    if (existing.some((c) => c.kind === "helper" && c.op === "create" && c.after.entity_id === entityId)) return none(`The list already creates “${entityId}”.`);
-    if (existing.some((c) => c.kind === "entity" && c.after.new_entity_id === entityId)) return none(`A change in the list already renames an entity to “${entityId}”.`);
+    if (existing.some((c) => c.kind === "helper" && c.op === "create" && c.after.entity_id === entityId))
+      return none(`The list already creates “${entityId}”.`);
+    if (existing.some((c) => c.kind === "entity" && c.after.new_entity_id === entityId))
+      return none(`A change in the list already renames an entity to “${entityId}”.`);
     const bad = checkRefs(existing, h, {}, fields);
     if (bad) return none(bad);
     return { action: "insert", change: { kind: "helper", op: "create", targetId: entityId, scope: null, before: {}, after: { ...fields } } };
@@ -583,7 +654,8 @@ function planRecipePart(existing: Change[], input: ChangeInput, h: Hierarchy): M
   const fields = input.fields ?? {};
   const kind = input.kind as "blueprint" | "automation" | "script";
   const key = String(kind === "blueprint" ? fields.path : kind === "script" ? fields.script_id : fields.automation_id);
-  if (kind === "automation" && !fields.button_map) {
+  // A house recipe belongs to no area.
+  if (kind === "automation" && !fields.button_map && !isHouseRecipe(fields.recipe)) {
     if (!h.areas[String(fields.area_id)]) return none("That area isn't in Home Assistant any more.");
   }
   const same = existing.find((c) => c.kind === kind && c.targetId === key);

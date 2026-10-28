@@ -50,7 +50,10 @@ function house(specs: Spec[]) {
       { area_id: "bedroom", name: "Bedroom", floor_id: "ground" },
       { area_id: "garden", name: "Garden", floor_id: null },
     ],
-    devices: [{ id: "dev", name: "Device", area_id: "living_room" }, { id: "cam", name: "Camera device", area_id: "living_room" }],
+    devices: [
+      { id: "dev", name: "Device", area_id: "living_room" },
+      { id: "cam", name: "Camera device", area_id: "living_room" },
+    ],
     entities: [],
     labels: [],
     states: [],
@@ -60,7 +63,11 @@ function house(specs: Spec[]) {
     if (s.disabled) entity.disabled_by = "user";
     if (s.category) entity.entity_category = s.category;
     reg.entities.push(entity);
-    reg.states.push({ entity_id: s.id, state: s.state ?? "off", attributes: { friendly_name: s.id.split(".")[1].replace(/_/g, " "), device_class: s.dc, entity_id: s.members, ...s.attrs } });
+    reg.states.push({
+      entity_id: s.id,
+      state: s.state ?? "off",
+      attributes: { friendly_name: s.id.split(".")[1].replace(/_/g, " "), device_class: s.dc, entity_id: s.members, ...s.attrs },
+    });
   }
   return buildHierarchy(reg, "now");
 }
@@ -80,7 +87,7 @@ describe("defaultCapability", () => {
     expect(cap("binary_sensor", "garage_door")).toBe("door");
     expect(cap("binary_sensor", "window")).toBe("window");
     expect(cap("binary_sensor", "opening")).toBe("window");
-    expect(cap("binary_sensor", "moisture")).toBeNull();
+    expect(cap("binary_sensor", "moisture")).toBe("leak");
     expect(cap("binary_sensor")).toBeNull();
   });
 
@@ -129,7 +136,10 @@ describe("areaInventory", () => {
   });
 
   it("uses the device's area when the entity has none of its own", () => {
-    const h = house([{ id: "light.lamp", device: "dev" }, { id: "light.bed_lamp", device: "dev", area: "bedroom" }]);
+    const h = house([
+      { id: "light.lamp", device: "dev" },
+      { id: "light.bed_lamp", device: "dev", area: "bedroom" },
+    ]);
     expect(ids(areaInventory(h, EMPTY_INVENTORY, "living_room").lights)).toEqual(["light.lamp"]);
     expect(ids(areaInventory(h, EMPTY_INVENTORY, "bedroom").lights)).toEqual(["light.bed_lamp"]);
   });
@@ -159,14 +169,29 @@ describe("areaInventory", () => {
   });
 
   it("lists entities with members as helpers that don't count", () => {
-    const h = house(inLiving([{ id: "light.lamp_a" }, { id: "light.lamp_b" }, { id: "light.all", platform: "demo", members: ["light.lamp_a", "light.lamp_b"] }]));
+    const h = house(
+      inLiving([{ id: "light.lamp_a" }, { id: "light.lamp_b" }, { id: "light.all", platform: "demo", members: ["light.lamp_a", "light.lamp_b"] }]),
+    );
     const rows = areaInventory(h, EMPTY_INVENTORY, "living_room").lights;
     expect(rows.find((r) => r.entityId === "light.all")).toMatchObject({ counts: false, countsDefault: false, flags: ["helper"] });
     expect(rows.filter((r) => r.counts)).toHaveLength(2);
   });
 
   it("lists helper platforms as helpers that don't count", () => {
-    const platforms = ["template", "group", "min_max", "threshold", "derivative", "statistics", "bayesian", "trend", "filter", "utility_meter", "integration", "history_stats"];
+    const platforms = [
+      "template",
+      "group",
+      "min_max",
+      "threshold",
+      "derivative",
+      "statistics",
+      "bayesian",
+      "trend",
+      "filter",
+      "utility_meter",
+      "integration",
+      "history_stats",
+    ];
     const h = house(inLiving(platforms.map((p) => ({ id: `sensor.${p}_temperature`, dc: "temperature", platform: p }))));
     const rows = areaInventory(h, EMPTY_INVENTORY, "living_room").temperature;
     expect(rows).toHaveLength(platforms.length);
@@ -199,7 +224,13 @@ describe("areaInventory", () => {
   });
 
   it("flags unavailable and unknown entities, which still count", () => {
-    const h = house(inLiving([{ id: "light.a", state: "unavailable" }, { id: "light.b", state: "unknown" }, { id: "light.c", state: "on" }]));
+    const h = house(
+      inLiving([
+        { id: "light.a", state: "unavailable" },
+        { id: "light.b", state: "unknown" },
+        { id: "light.c", state: "on" },
+      ]),
+    );
     const rows = areaInventory(h, EMPTY_INVENTORY, "living_room").lights;
     expect(rows.map((r) => r.flags)).toEqual([["unavailable"], ["unavailable"], []]);
     expect(rows.every((r) => r.counts && !r.overridden)).toBe(true);
@@ -288,7 +319,10 @@ describe("choices", () => {
       { id: "media_player.tv", dc: "tv" },
     ]),
   );
-  const row = (s: InventorySettings, id: string) => Object.values(areaInventory(h, s, "living_room")).flat().find((r) => r.entityId === id)!;
+  const row = (s: InventorySettings, id: string) =>
+    Object.values(areaInventory(h, s, "living_room"))
+      .flat()
+      .find((r) => r.entityId === id)!;
 
   it("stores a counts choice only when it differs from the default, and removes it when it matches", () => {
     const off = setCounts(h, EMPTY_INVENTORY, "light.lamp", false);
@@ -309,7 +343,10 @@ describe("choices", () => {
   it("tells a light group that is unavailable, and so reports no members, by its platform", () => {
     const g = house(inLiving([{ id: "light.lamp" }, { id: "light.balcony_all", platform: "group", state: "unavailable" }]));
     const lights = areaInventory(g, EMPTY_INVENTORY, "living_room").lights;
-    expect(lights.map((r) => [r.entityId, r.counts])).toEqual([["light.balcony_all", false], ["light.lamp", true]]);
+    expect(lights.map((r) => [r.entityId, r.counts])).toEqual([
+      ["light.balcony_all", false],
+      ["light.lamp", true],
+    ]);
     expect(setCounts(g, EMPTY_INVENTORY, "light.balcony_all", true)).toBe(EMPTY_INVENTORY);
   });
 
@@ -543,9 +580,17 @@ describe("fans and appliances", () => {
   it("counts a switch the user says runs a fan, and puts it back with a reset", () => {
     const on = setCounts(h, EMPTY_INVENTORY, "switch.bath_fan_plug", true);
     expect(on.entities["switch.bath_fan_plug"]).toEqual({ counts: true });
-    expect(rows(on).fan.filter((r) => r.counts).map((r) => r.entityId)).toEqual(["fan.bath_extractor", "switch.bath_fan_plug"]);
+    expect(
+      rows(on)
+        .fan.filter((r) => r.counts)
+        .map((r) => r.entityId),
+    ).toEqual(["fan.bath_extractor", "switch.bath_fan_plug"]);
     expect(rows(on).fan.find((r) => r.entityId === "switch.bath_fan_plug")!.overridden).toBe(true);
-    expect(rows(resetEntity(on, "switch.bath_fan_plug")).fan.filter((r) => r.counts).map((r) => r.entityId)).toEqual(["fan.bath_extractor"]);
+    expect(
+      rows(resetEntity(on, "switch.bath_fan_plug"))
+        .fan.filter((r) => r.counts)
+        .map((r) => r.entityId),
+    ).toEqual(["fan.bath_extractor"]);
     // The matrix has a column for fans.
     const row = inventoryMatrix(h, on)[0];
     expect(row.perCapability.fan).toEqual({ counted: 2, total: 3 });

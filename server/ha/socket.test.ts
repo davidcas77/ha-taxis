@@ -40,13 +40,24 @@ function fakeHa(opts: { token?: string; answer?: (msg: { id: number; type: strin
   return { factory, sent, opened: () => opened };
 }
 
-const blueprint = (over: Record<string, unknown> = {}) => ({ domain: "automation", path: "taxis/occupancy.yaml", yaml: "blueprint: {}\n", allow_override: true, ...over });
+const blueprint = (over: Record<string, unknown> = {}) => ({
+  domain: "automation",
+  path: "taxis/occupancy.yaml",
+  yaml: "blueprint: {}\n",
+  allow_override: true,
+  ...over,
+});
 
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-const week = (over: Record<string, unknown> = {}) => ({ ...Object.fromEntries(DAYS.map((d) => [d, []])), monday: [{ from: "06:30:00", to: "08:30:00" }], ...over });
+const week = (over: Record<string, unknown> = {}) => ({
+  ...Object.fromEntries(DAYS.map((d) => [d, []])),
+  monday: [{ from: "06:30:00", to: "08:30:00" }],
+  ...over,
+});
 const schedule = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ name: "Living room climate", ...week(), ...over });
 const scheduleUpdate = (over: Record<string, unknown> = {}): Record<string, unknown> => schedule({ schedule_id: "living_room_climate", ...over });
-const payloadFor = (t: string) => (t === "blueprint/save" ? blueprint() : t === "schedule/create" ? schedule() : t === "schedule/update" ? scheduleUpdate() : {});
+const payloadFor = (t: string) =>
+  t === "blueprint/save" ? blueprint() : t === "schedule/create" ? schedule() : t === "schedule/update" ? scheduleUpdate() : {};
 
 describe("read-only guard", () => {
   it("allows only registry and state reads", () => {
@@ -58,7 +69,14 @@ describe("read-only guard", () => {
 
   it("reads the list of integrations, and no other command for config entries", () => {
     expect(READ_COMMANDS.has("config_entries/get")).toBe(true);
-    for (const t of ["config_entries/delete", "config_entries/disable", "config_entries/update", "config_entries/reload", "config_entries/flow/progress", "config_entries/subentries/list"]) {
+    for (const t of [
+      "config_entries/delete",
+      "config_entries/disable",
+      "config_entries/update",
+      "config_entries/reload",
+      "config_entries/flow/progress",
+      "config_entries/subentries/list",
+    ]) {
       expect(READ_COMMANDS.has(t), t).toBe(false);
       expect(() => assertReadCommand(t), t).toThrow(/isn.t a read/);
       expect(WRITE_COMMANDS.has(t), t).toBe(false);
@@ -87,17 +105,42 @@ describe("read-only guard", () => {
     const registry = [...WRITE_COMMANDS].filter((t) => t.startsWith("config/device_registry/") || t.startsWith("config/entity_registry/"));
     expect(registry.sort()).toEqual(["config/device_registry/update", "config/entity_registry/update"]);
     // The usual names for taking a device or entity out of Home Assistant stay refused.
-    for (const t of ["config/device_registry/remove_config_entry", "config/device_registry/delete", "config/device_registry/remove", "config/entity_registry/remove", "config/entity_registry/delete", "config/entity_registry/remove_orphaned", "config_entries/delete", "call_service"]) {
+    for (const t of [
+      "config/device_registry/remove_config_entry",
+      "config/device_registry/delete",
+      "config/device_registry/remove",
+      "config/entity_registry/remove",
+      "config/entity_registry/delete",
+      "config/entity_registry/remove_orphaned",
+      "config_entries/delete",
+      "call_service",
+    ]) {
       expect(WRITE_COMMANDS.has(t), t).toBe(false);
       expect(() => assertWriteCommand(t), t).toThrow(/doesn't make that change/);
     }
   });
 
   it("allows the recipe writes and the blueprint read, and no other timer, helper or blueprint command", () => {
-    for (const t of ["blueprint/save", "timer/create", "timer/update", "input_boolean/create", "schedule/create", "schedule/update"]) expect(WRITE_COMMANDS.has(t), t).toBe(true);
+    for (const t of ["blueprint/save", "timer/create", "timer/update", "input_boolean/create", "schedule/create", "schedule/update"])
+      expect(WRITE_COMMANDS.has(t), t).toBe(true);
     expect(READ_COMMANDS.has("blueprint/list")).toBe(true);
     // The writes and reads recipes add are exactly these, and nothing next to them.
-    for (const t of ["blueprint/delete", "blueprint/import", "blueprint/substitute", "timer/delete", "timer/start", "timer/list", "input_boolean/delete", "input_boolean/update", "input_number/create", "input_select/create", "input_datetime/create", "schedule/delete", "schedule/list", "counter/create"]) {
+    for (const t of [
+      "blueprint/delete",
+      "blueprint/import",
+      "blueprint/substitute",
+      "timer/delete",
+      "timer/start",
+      "timer/list",
+      "input_boolean/delete",
+      "input_boolean/update",
+      "input_number/create",
+      "input_select/create",
+      "input_datetime/create",
+      "schedule/delete",
+      "schedule/list",
+      "counter/create",
+    ]) {
       expect(WRITE_COMMANDS.has(t), t).toBe(false);
       expect(READ_COMMANDS.has(t), t).toBe(false);
       expect(() => assertWriteCommand(t)).toThrow(/doesn't make that change/);
@@ -108,15 +151,21 @@ describe("read-only guard", () => {
     expect(() => assertWriteCommand("blueprint/save", blueprint())).not.toThrow();
     expect(() => assertWriteCommand("blueprint/save", blueprint({ source_url: "https://example.test/x.yaml", allow_override: false }))).not.toThrow();
     for (const domain of ["template", "Automation", "Script", "scene", "", undefined, null, ["automation"], ["script"]]) {
-      expect(() => assertWriteCommand("blueprint/save", blueprint({ domain })), String(domain)).toThrow(/automation blueprints, and one script blueprint/);
+      expect(() => assertWriteCommand("blueprint/save", blueprint({ domain })), String(domain)).toThrow(
+        /automation blueprints, and the announce and goodbye script blueprints/,
+      );
     }
-    // The one script blueprint, and nowhere else.
+    // The two script blueprints, and nowhere else.
     expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path: "taxis/announce.yaml" }))).not.toThrow();
-    for (const path of ["taxis/occupancy.yaml", "taxis/announce2.yaml", "taxis/other.yaml", "taxis/a.yaml"]) {
-      expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path })), path).toThrow(/the only script blueprint Taxis writes is taxis\/announce\.yaml/);
+    expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path: "taxis/goodbye.yaml" }))).not.toThrow();
+    for (const path of ["taxis/occupancy.yaml", "taxis/announce2.yaml", "taxis/other.yaml", "taxis/a.yaml", "taxis/leak_alert.yaml"]) {
+      expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path })), path).toThrow(
+        /the only script blueprints Taxis writes are taxis\/announce\.yaml and taxis\/goodbye\.yaml/,
+      );
     }
-    // ...and announce is not an automation blueprint.
-    expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "automation", path: "taxis/announce.yaml" }))).toThrow(/the only script blueprint/);
+    // ...and neither is an automation blueprint.
+    expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "automation", path: "taxis/announce.yaml" }))).toThrow(/the only script blueprints/);
+    expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "automation", path: "taxis/goodbye.yaml" }))).toThrow(/the only script blueprints/);
     expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path: "taxis/../announce.yaml" }))).toThrow(/only to taxis/);
     expect(() => assertWriteCommand("blueprint/save", blueprint({ domain: "script", path: "other/announce.yaml" }))).toThrow(/only to taxis/);
     const paths = [
@@ -145,14 +194,16 @@ describe("read-only guard", () => {
     expect(() => assertWriteCommand("blueprint/save", blueprint({ yaml: "x".repeat(64 * 1024 + 1) }))).toThrow(/no text or too much/);
     // Nothing else rides along, and it needs a payload at all.
     expect(() => assertWriteCommand("blueprint/save", blueprint({ extra: 1 }))).toThrow(/isn't something Taxis sends/);
-    expect(() => assertWriteCommand("blueprint/save")).toThrow(/automation blueprints, and one script blueprint/);
+    expect(() => assertWriteCommand("blueprint/save")).toThrow(/automation blueprints, and the announce and goodbye script blueprints/);
   });
 
   it("write() checks a blueprint's payload before anything is sent", async () => {
     const ha = fakeHa();
     const client = new HaSocket("ws://x", "good", ha.factory);
-    await expect(client.write("blueprint/save", blueprint({ domain: "scene" }))).rejects.toThrow(/automation blueprints, and one script blueprint/);
-    await expect(client.write("blueprint/save", blueprint({ domain: "script" }))).rejects.toThrow(/only script blueprint/);
+    await expect(client.write("blueprint/save", blueprint({ domain: "scene" }))).rejects.toThrow(
+      /automation blueprints, and the announce and goodbye script blueprints/,
+    );
+    await expect(client.write("blueprint/save", blueprint({ domain: "script" }))).rejects.toThrow(/only script blueprints/);
     await expect(client.write("blueprint/save", blueprint({ path: "taxis/../../x.yaml" }))).rejects.toThrow(/only to taxis/);
     expect(ha.opened()).toBe(0);
     await client.write("blueprint/save", blueprint());
@@ -164,7 +215,17 @@ describe("read-only guard", () => {
     expect(() => assertWriteCommand("schedule/create", schedule({ icon: "mdi:radiator" }))).not.toThrow();
     expect(() => assertWriteCommand("schedule/update", scheduleUpdate())).not.toThrow();
     // Several periods in a day, touching ones too.
-    expect(() => assertWriteCommand("schedule/create", schedule({ friday: [{ from: "06:30:00", to: "08:30:00" }, { from: "17:00:00", to: "23:59:00" }] }))).not.toThrow();
+    expect(() =>
+      assertWriteCommand(
+        "schedule/create",
+        schedule({
+          friday: [
+            { from: "06:30:00", to: "08:30:00" },
+            { from: "17:00:00", to: "23:59:00" },
+          ],
+        }),
+      ),
+    ).not.toThrow();
 
     // An id belongs to an update, never a creation; an update needs one.
     expect(() => assertWriteCommand("schedule/create", scheduleUpdate())).toThrow(/with an id/);
@@ -173,7 +234,8 @@ describe("read-only guard", () => {
     expect(() => assertWriteCommand("schedule/update", scheduleUpdate({ schedule_id: "../x" }))).toThrow(/without saying which/);
 
     // The name and the icon.
-    for (const name of ["", "  ", undefined, 5, "x".repeat(256)]) expect(() => assertWriteCommand("schedule/create", schedule({ name })), String(name)).toThrow(/no name/);
+    for (const name of ["", "  ", undefined, 5, "x".repeat(256)])
+      expect(() => assertWriteCommand("schedule/create", schedule({ name })), String(name)).toThrow(/no name/);
     for (const icon of ["radiator", "MDI:x", 5, ""]) expect(() => assertWriteCommand("schedule/create", schedule({ icon })), String(icon)).toThrow(/icon/);
 
     // Nothing else rides along: not in the payload, not in a period.
@@ -184,7 +246,9 @@ describe("read-only guard", () => {
     const { sunday: _sunday, ...short } = schedule();
     expect(() => assertWriteCommand("schedule/create", short)).toThrow(/sunday/);
     expect(() => assertWriteCommand("schedule/create", schedule({ sunday: "none" }))).toThrow(/sunday/);
-    expect(() => assertWriteCommand("schedule/create", schedule({ sunday: Array.from({ length: 9 }, () => ({ from: "01:00:00", to: "02:00:00" })) }))).toThrow(/short list/);
+    expect(() => assertWriteCommand("schedule/create", schedule({ sunday: Array.from({ length: 9 }, () => ({ from: "01:00:00", to: "02:00:00" })) }))).toThrow(
+      /short list/,
+    );
     for (const bad of [
       { from: "6:30:00", to: "08:30:00" },
       { from: "06:30", to: "08:30" },
@@ -338,7 +402,16 @@ describe("allowlists for renames", () => {
     expect(() => assertWriteCommand("lovelace/config/save")).not.toThrow();
     const ha = fakeHa();
     const client = new HaSocket("ws://x", "good", ha.factory);
-    for (const t of ["lovelace/config/delete", "lovelace/dashboards/create", "lovelace/dashboards/delete", "lovelace/config", "search/related", "call_service", "config/entity_registry/remove", "config/automation/delete"]) {
+    for (const t of [
+      "lovelace/config/delete",
+      "lovelace/dashboards/create",
+      "lovelace/dashboards/delete",
+      "lovelace/config",
+      "search/related",
+      "call_service",
+      "config/entity_registry/remove",
+      "config/automation/delete",
+    ]) {
       await expect(client.write(t, {})).rejects.toThrow(/doesn't make that change/);
     }
     expect(ha.opened()).toBe(0);
