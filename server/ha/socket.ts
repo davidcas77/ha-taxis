@@ -10,8 +10,9 @@ import { DAY_KEYS, MAX_RANGES_PER_DAY } from "../../shared/periods.ts";
 //
 // What may be sent is enforced here rather than by convention: command() sends
 // only READ_COMMANDS; write() sends only WRITE_COMMANDS, and only the Apply step
-// calls write(). Services are never called and nothing is ever deleted: devices
-// and entities are only updated. Registry edits are most of the writes. Besides
+// calls write(). Services are never called. Taxis never deletes a device or an
+// entity (they are only updated); it deletes floors, areas, labels and categories
+// only when you ask, through the change list. Registry edits are most of the writes. Besides
 // those, Apply edits the contents of dashboards (lovelace/config/save) and, via
 // the REST client in rest.ts (which has its own fixed allowlist), of
 // automations, scripts and scenes, to replace a renamed entity id in them and
@@ -66,8 +67,10 @@ export function assertReadCommand(type: string): void {
   }
 }
 
-// Edits Apply can make: registry edits from the change list (entities and
-// devices are only ever updated, never removed), and dashboard contents.
+// Edits Apply can make: registry edits from the change list, and dashboard
+// contents. Devices and entities are only ever updated, never removed. The
+// deletes below are for floors, areas, labels and categories, and only reach here
+// as a change the user queued and applied.
 export const WRITE_COMMANDS = new Set([
   "config/floor_registry/create",
   "config/floor_registry/update",

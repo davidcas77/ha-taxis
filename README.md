@@ -7,12 +7,18 @@ categorising, and applies your changes to Home Assistant in one go, with a
 backup first.
 
 It runs as a Home Assistant app and opens from the sidebar. It needs no token
-and no account, and it only talks to your own Home Assistant.
+and no account. Out of the box it talks only to your own Home Assistant; the
+optional AI and Jev features contact the services you set up, and only when you
+ask (see [Privacy](#privacy)).
 
-> **Status: early.** Taxis reads and edits the organisation of your home,
-> checks naming and configuration health, and plans native helpers and recipe
-> automations. Every proposed Home Assistant change goes through the change
-> list, with a backup before Apply and verification afterwards.
+> **Status: 0.7.x, still young.** Taxis reads and edits the organisation of your
+> home, checks naming and configuration health, guides setup room by room, plans
+> native helpers and recipe automations, maps remote and wall-button gestures to
+> actions, and offers optional AI advice that cannot change anything. Every
+> proposed Home Assistant change goes through the change list, with a backup
+> before Apply and verification afterwards. Live remote hardware and real AI
+> provider calls are not yet verified end to end, so review each change before you
+> apply it.
 
 ## Install
 
@@ -79,9 +85,12 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   working when Taxis is stopped.
 - **Buttons:** inspect remotes, wall controls and HA button inputs across
   integrations, grouped by button and advertised gesture. See existing automation
-  matches, assign lights/groups On, Off or Toggle, run scripts/scenes/automation
-  actions, or choose another registered service. **By output** lists every mapped
-  button controlling an entity. Taxis queues one native automation per output,
+  matches and assign an action from a fixed, safe list: control lights, switches,
+  fans, covers, media players, climate and similar entities, run scripts, scenes
+  and automations, or send a persistent notification. Anything that reaches Home
+  Assistant itself, the host, shell commands or integration administration, and
+  any reload, restart, stop, remove or delete service, is refused. **By output**
+  lists every mapped button controlling an entity. Taxis queues one native automation per output,
   with separate actions per gesture; edits and disabling reuse that automation.
   Existing handlers and unreadable configs block new mappings by default.
   Explicit coexistence preserves those handlers. Unknown gesture metadata stays
@@ -92,27 +101,41 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   dependencies, and reads Home Assistant back to check each change. Apply history
   and unresolved repairs remain available across reloads and app restarts.
 
-Taxis never removes a device or an entity and does not call device-control
-services itself. It can create its own recipe/button automations and Announce script;
-in other automations, scripts, scenes and dashboards it only replaces renamed
-entity IDs. The native automations run inside Home Assistant and call the
-services they need. The commands Taxis may send are fixed in
-`server/ha/socket.ts` and `server/ha/rest.ts`.
+Taxis never deletes a device or an entity and never calls a service itself. It
+deletes floors, areas, labels and categories only when you ask, through the
+change list. It can create its own recipe and button automations and the Announce
+script; in other automations, scripts, scenes and dashboards it only replaces
+renamed entity IDs. The native automations run inside Home Assistant and call the
+services they need; a button can only be given the actions on a fixed safe list.
+The commands Taxis may send are fixed in `server/ha/socket.ts` and
+`server/ha/rest.ts`.
 
 ## Privacy
 
 - Taxis connects to your Home Assistant through the Supervisor's own
   connection. It needs no long-lived token.
 - It only answers requests that come through Home Assistant (Ingress), so only
-  signed-in Home Assistant users can open it.
+  signed-in Home Assistant users can open it. Nothing else is served, not even
+  from inside the app's own container.
 - It keeps its change list, settings, snapshots, Apply history and repair
-  reminders in `/data/taxis.db` inside the app. Optional AI services are off by
-  default. When enabled, explicit AI requests contact the configured provider.
-  Jev has a separate key and request limit in **Settings > Jev decisions**;
-  **Review notes with Jev** in the Guide sends only typed notes and public test
-  descriptions to TypeSafe. Saved keys stay server-side in app data and are
-  included in app backups. Jev does not tick checklists, save observations or
-  change readiness. AI has no direct Home Assistant write path.
+  reminders in `/data/taxis.db` inside the app. Saved API keys stay server-side
+  in that data and are included in app backups.
+
+Every outside address Taxis can contact, and when:
+
+| Address | Only when | What it receives |
+| --- | --- | --- |
+| Your Home Assistant, through the Supervisor (`ws://supervisor/core/websocket`, `http://supervisor/core/api`) | Always | Reads of the registries, states, services and automation configs; writes only when you Apply |
+| The Supervisor (`http://supervisor`) | Before Apply | A request for a partial backup |
+| Anthropic (`https://api.anthropic.com`) | AI is on, provider Anthropic, and you press Send, Load models, a Test button or the button review | Your API key; the question, reviewed context and up to six earlier messages (Ask Taxis); the reviewed summary (button review); a fixed sentence (Test) |
+| The OpenAI-compatible service you set (its base URL) | AI is on, that provider, and the same actions | The same as above |
+| TypeSafe (`https://api.typesafe.ai/v1/systemone`) | Jev is on with a key, and you press **Review notes with Jev** or Test | Your Jev key and model; the notes you typed (up to 2,000 characters) and the descriptions of the selected checklist items; a fixed sentence (Test) |
+
+AI and Jev receive no Home Assistant token, state values, attributes or
+automation YAML, redirects are not followed, and neither can change Home
+Assistant. There is no analytics, update check or telemetry. Links you click
+open in your browser; Taxis does not fetch them. Details are in
+[the app's documentation](taxis/DOCS.md#data-and-privacy).
 
 For Jev setup, request accounting and data boundaries, see
 [Jev decisions](docs/design/jev-decisions.md).

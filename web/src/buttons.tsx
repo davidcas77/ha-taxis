@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { buttonTargetDomains, defaultButtonService, domainAllowsService, offeredButtonServices } from '../../shared/button-actions.ts';
 import { buttonOutput, validButtonAction, validButtonMap, type ButtonAction, type ButtonControl, type ButtonGesture, type ButtonInventory, type ButtonAiPreview, type ButtonMapping } from '../../shared/buttons.ts';
 import type { Hierarchy } from '../../shared/types.ts';
 import { api } from './api.ts';
@@ -19,9 +20,9 @@ export function ButtonsPage({h,controlId,go}:{h:Hierarchy;controlId:string|null;
   const [editing,setEditing]=useState<{key:string;action:ButtonAction|null;enabled:boolean}|null>(null);
   const [submitting,setSubmitting]=useState(false);
   useEffect(()=>{let stale=false;setLoading(true);void api.buttons(refresh>0).then(r=>{if(stale)return;if(r.ok){setData({inventory:r.inventory,fingerprint:r.fingerprint});setError(null);}else setError(r.error);setLoading(false);});return()=>{stale=true;};},[refresh]);
-  const maps=new Map((data?.inventory.managed??[]).map(m=>[m.id,{map:m.map,queued:false}]));
-  for(const c of changes) if(c.kind==='automation' && validButtonMap(c.after.button_map)) maps.set(c.targetId,{map:c.after.button_map,queued:true});
-  const bindings=[...maps.values()].flatMap(m=>m.map.bindings.map(b=>({...b,queued:m.queued,output:m.map.output})));
+  const maps=new Map((data?.inventory.managed??[]).map(m=>[m.id,{map:m.map,queued:false,blocked:m.blocked}]));
+  for(const c of changes) if(c.kind==='automation' && validButtonMap(c.after.button_map)) maps.set(c.targetId,{map:c.after.button_map,queued:true,blocked:[]});
+  const bindings=[...maps.entries()].flatMap(([automationId,m])=>m.map.bindings.map(b=>({...b,queued:m.queued,output:m.map.output,automationId,blocked:m.blocked.find(x=>x.key===b.key)?.reason??null})));
   const source=data?.inventory.controls.find(c=>c.id===controlId)??null;
   const potentials=(c:ButtonControl)=>c.gestures.length>0 || /button|remote|keypad|keyfob|doorbell/i.test(`${c.name} ${c.model??''}`) || !!c.deviceId && Object.values(h.entities).some(e=>e.domain==='remote' && e.deviceId===c.deviceId);
   const list=(data?.inventory.controls??[]).filter(c=>(all || potentials(c)) && `${c.name} ${c.model} ${c.integrations.join(' ')} ${h.areas[c.areaId??'']?.name??''}`.toLowerCase().includes(query.toLowerCase()));
@@ -39,7 +40,7 @@ export function ButtonsPage({h,controlId,go}:{h:Hierarchy;controlId:string|null;
       </aside>
       <div className="min-h-0 min-w-0 flex-1 overflow-auto p-4 pb-24 md:p-6">
         {data && <details className="mb-4 text-xs text-muted"><summary className="cursor-pointer">Discovery coverage · {data.inventory.coverage.readable} of {data.inventory.coverage.automations} automation configs readable</summary><ul className="mt-2 list-disc pl-4">{data.inventory.notes.map(n=><li key={n}>{n}</li>)}</ul></details>}
-        {mode==='targets'?<><h2 className="text-lg font-semibold">{output?(h.entities[output]?.name??output):'Select an output'}</h2>{output && <div className="mt-3 overflow-auto"><table aria-label="Buttons controlling output" className="w-full text-left text-sm"><thead className="text-muted"><tr>{['Control','Button','Gesture','Action','Status'].map(t=><th key={t} className="p-2">{t}</th>)}</tr></thead><tbody>{bindings.filter(b=>b.output===output).map(b=><tr key={b.key} className="border-t border-line"><td className="p-2"><button type="button" className="text-accent" onClick={()=>{setMode('controls');go({page:'buttons',controlId:b.controlId});}}>{data?.inventory.controls.find(c=>c.id===b.controlId)?.name??b.controlId}</button></td><td className="p-2">{b.button}</td><td className="p-2">{b.gesture}</td><td className="p-2">{b.action.service}</td><td className="p-2">{b.queued?'In changes':b.enabled?'Enabled':'Disabled'}</td></tr>)}</tbody></table></div>}</>:source && data?<>
+        {mode==='targets'?<><h2 className="text-lg font-semibold">{output?(h.entities[output]?.name??output):'Select an output'}</h2>{output && <div className="mt-3 overflow-auto"><table aria-label="Buttons controlling output" className="w-full text-left text-sm"><thead className="text-muted"><tr>{['Control','Button','Gesture','Action','Status'].map(t=><th key={t} className="p-2">{t}</th>)}</tr></thead><tbody>{bindings.filter(b=>b.output===output).map(b=><tr key={b.key} className="border-t border-line"><td className="p-2"><button type="button" className="text-accent" onClick={()=>{setMode('controls');go({page:'buttons',controlId:b.controlId});}}>{data?.inventory.controls.find(c=>c.id===b.controlId)?.name??b.controlId}</button></td><td className="p-2">{b.button}</td><td className="p-2">{b.gesture}</td><td className="p-2">{b.action.service}</td><td className="p-2">{b.blocked?"Blocked by Taxis's safety rules":b.queued?'In changes':b.enabled?'Enabled':'Disabled'}</td></tr>)}</tbody></table></div>}</>:source && data?<>
           <h2 className="text-lg font-semibold">{source.name}</h2><p className="mt-1 text-sm text-muted">{[source.manufacturer,source.model,...source.integrations].filter(Boolean).join(' · ')}</p>
           {source.notes.map(n=><p key={n} className="mt-2 text-xs text-warn">{n}</p>)}
           {!source.gestures.length && <p className="mt-4 text-sm text-muted">HA did not expose button gestures for this device. Its button count and click combinations will not be guessed. Check its integration's event/device-trigger support, then refresh.</p>}
@@ -52,14 +53,38 @@ export function ButtonsPage({h,controlId,go}:{h:Hierarchy;controlId:string|null;
   </main>;
 }
 
-function GestureRow({control,gesture,h,data,bindings,onQueued,editing,busy,onEdit,onClose,onBusy}:{control:ButtonControl;gesture:ButtonGesture;h:Hierarchy;data:{inventory:ButtonInventory;fingerprint:string};bindings:(ButtonMapping & {queued:boolean})[];onQueued:()=>Promise<void>;editing:{key:string;action:ButtonAction|null;enabled:boolean}|null;busy:boolean;onEdit:(action:ButtonAction|null,enabled:boolean)=>void;onClose:()=>void;onBusy:(value:boolean)=>void}) {
+function GestureRow({control,gesture,h,data,bindings,onQueued,editing,busy,onEdit,onClose,onBusy}:{control:ButtonControl;gesture:ButtonGesture;h:Hierarchy;data:{inventory:ButtonInventory;fingerprint:string};bindings:(ButtonMapping & {queued:boolean;automationId:string;blocked:string|null})[];onQueued:()=>Promise<void>;editing:{key:string;action:ButtonAction|null;enabled:boolean}|null;busy:boolean;onEdit:(action:ButtonAction|null,enabled:boolean)=>void;onClose:()=>void;onBusy:(value:boolean)=>void}) {
   const external=(control.existing[gesture.key]??[]).filter(a=>!a.managed);
   return <div role="group" aria-label={`${gesture.gesture} · ${gesture.source}`} className="mt-3 border-t border-line pt-3 text-sm"><div className="flex flex-wrap items-center gap-3"><p className="font-medium">{gesture.gesture}</p><span className="text-xs text-muted">{gesture.source}</span><Button className="ml-auto" disabled={busy} onClick={()=>onEdit(null,true)}>Assign action</Button></div>
-    {bindings.map(b=><div key={buttonOutput(b.action)} className="mt-2 flex flex-wrap items-center gap-2 rounded bg-surface p-2"><code className="break-all text-xs">{b.action.service} → {b.action.entityId??'Service action'}</code><span className="text-xs text-muted">{b.queued?'In changes':b.enabled?'Enabled':'Disabled'}</span><Button disabled={busy} onClick={()=>onEdit(b.action,b.enabled)}>Edit assignment</Button></div>)}
+    {bindings.map(b=><div key={buttonOutput(b.action)} className="mt-2 flex flex-wrap items-center gap-2 rounded bg-surface p-2"><code className="break-all text-xs">{b.action.service} → {b.action.entityId??'Service action'}</code>
+      {b.blocked ? <>
+        <span className="text-xs font-medium text-danger">Blocked by Taxis's safety rules</span>
+        <p className="basis-full text-xs text-muted">{b.blocked} This automation is still active in Home Assistant, and Taxis won't write it again as it is. <a className="text-accent" href={`/config/automation/edit/${encodeURIComponent(b.automationId)}`} target="_blank" rel="noreferrer">Open it in HA</a> to change or remove it, or assign this button a new action here to replace it.</p>
+      </> : <>
+        <span className="text-xs text-muted">{b.queued?'In changes':b.enabled?'Enabled':'Disabled'}</span><Button disabled={busy} onClick={()=>onEdit(b.action,b.enabled)}>Edit assignment</Button>
+      </>}</div>)}
     {external.map(a=><details key={a.id} className="mt-2 rounded border border-line p-2 text-xs"><summary className="cursor-pointer">{a.name} · {a.enabled===true?'On':a.enabled===false?'Off':'State unknown'} · {a.match==='exact'?'Trigger match':'Possible match — inspect logic'}</summary><p className="mt-1">{a.services.join(', ') || 'No service summary'} · {a.targets.join(', ') || 'No explicit target summary'}</p><a className="mt-1 inline-block text-accent" href={`/config/automation/edit/${encodeURIComponent(a.id)}`} target="_blank" rel="noreferrer">Open existing automation in HA</a><p className="mt-1 text-muted">Conditions, choose branches and blueprint inputs can change what this gesture does. This handler is not modified by assigning a new Taxis action.</p></details>)}
     {!bindings.length && !external.length && <p className="mt-2 text-xs text-muted">No readable automation matched this gesture. See discovery coverage for gaps.</p>}
     {editing && <AssignmentEditor key={`${gesture.key}:${JSON.stringify(editing.action)}:${editing.enabled}`} h={h} control={control} gesture={gesture} inventory={data.inventory} fingerprint={data.fingerprint} initial={editing.action} initiallyEnabled={editing.enabled} onBusy={onBusy} onCancel={onClose} onQueued={async()=>{await onQueued();onClose();}}/>}
   </div>;
+}
+
+// What an action is called in the list. Only allowed services reach it.
+function actionLabel(s:string,hasTarget:boolean):string {
+  if(s==='persistent_notification.create') return 'Show a notification in HA';
+  if(!hasTarget && s.startsWith('script.')) return `Run script ${s.slice(7)}`;
+  if(s==='script.turn_on') return 'Run script';
+  if(s==='script.turn_off') return 'Stop script';
+  if(s==='automation.turn_on') return 'Enable automation';
+  if(s==='automation.turn_off') return 'Disable automation';
+  if(s==='automation.toggle') return 'Toggle automation enabled';
+  if(s==='scene.turn_on') return 'Activate scene';
+  if(s.endsWith('.turn_on')) return 'On';
+  if(s.endsWith('.turn_off')) return 'Off';
+  if(s.endsWith('.toggle')) return 'Toggle';
+  if(s.endsWith('.trigger')) return 'Run automation actions';
+  if(s.endsWith('.press')) return 'Press';
+  return s;
 }
 
 function AssignmentEditor({h,control,gesture,inventory,fingerprint,initial,initiallyEnabled,onCancel,onQueued,onBusy}:{h:Hierarchy;control:ButtonControl;gesture:ButtonGesture;inventory:ButtonInventory;fingerprint:string;initial:ButtonAction|null;initiallyEnabled:boolean;onCancel:()=>void;onQueued:()=>Promise<void>;onBusy:(value:boolean)=>void}) {
@@ -75,16 +100,18 @@ function AssignmentEditor({h,control,gesture,inventory,fingerprint,initial,initi
   const [error,setError]=useState<string|null>(null);
   const [dirty,setDirty]=useState(false);
   useDraftGuard(dirty||busy);
-  const domain=entity.split('.')[0];
-  const allowed=entity?inventory.services.filter(s=>s.startsWith(`${domain}.`) && !s.endsWith('.reload') && (['light','switch','input_boolean'].includes(domain)?['turn_on','turn_off','toggle'].includes(s.split('.')[1]):domain==='script'?['script.turn_on','script.turn_off'].includes(s):true)):inventory.services.filter(s=>!inventory.targetServices.includes(s));
+  // Only what Taxis's safety rules allow, by the same check the server makes.
+  const entityIds=new Set(Object.values(h.entities).filter(e=>!e.disabled).map(e=>e.entityId));
+  const allowed=offeredButtonServices(inventory.services,entity||null,entityIds);
+  const targetDomains=new Set(buttonTargetDomains().filter(d=>inventory.services.some(s=>domainAllowsService(d,s))));
   const act=(change:()=>void)=>{change();setDirty(true);};
   return <form aria-label={`Assign ${gesture.gesture}`} className="mt-3 grid gap-3 rounded-lg border border-accent/30 bg-surface p-3 sm:grid-cols-2" onSubmit={async e=>{
     e.preventDefault();let action:ButtonAction;
     try {action={entityId:entity||null,service,data:JSON.parse(json)};if(!validButtonAction(action))throw new Error();}catch{setError('Choose a service and valid JSON data. Entity/device/area targets belong in the target picker; templates are not accepted.');return;}
     setBusy(true);onBusy(true);setError(null);try{const r=await api.assignButton({controlId:control.id,gestureKey:gesture.key,action,enabled,allowExisting:coexist,fingerprint:reviewedFingerprint,changesVersion:reviewedChangesVersion});if(r.ok){setDirty(false);await onQueued();}else setError(r.error);}finally{setBusy(false);onBusy(false);}
   }}>
-    <label>Target<select aria-label="Button action target" disabled={busy||initial!==null} className={`${inputClass} mt-1`} value={entity} onChange={e=>act(()=>{setEntity(e.target.value);const d=e.target.value.split('.')[0];setService(d==='light'||d==='switch'||d==='input_boolean'?`${d}.toggle`:d==='scene'?'scene.turn_on':d==='script'?'script.turn_on':d==='automation'?'automation.trigger':d==='button'||d==='input_button'?`${d}.press`:'');})}><option value="">Service action without an entity target</option>{Object.values(h.entities).filter(e=>!e.disabled && !inventory.managed.some(m=>m.entityId===e.entityId) && inventory.services.some(s=>s.startsWith(`${e.domain}.`)&&!s.endsWith('.reload'))).sort((a,b)=>a.name.localeCompare(b.name)).map(e=><option key={e.entityId} value={e.entityId}>{e.name} · {e.entityId}</option>)}</select></label>
-    <label>Action<select aria-label="Button action service" disabled={busy||initial!==null && initial.entityId===null} className={`${inputClass} mt-1`} value={service} onChange={e=>act(()=>setService(e.target.value))}><option value="">Choose an action</option>{allowed.map(s=><option key={s} value={s}>{s==='script.turn_on'?'Run script':s==='script.turn_off'?'Stop script':s==='automation.turn_on'?'Enable automation':s==='automation.turn_off'?'Disable automation':s==='automation.toggle'?'Toggle automation enabled':s==='scene.turn_on'?'Activate scene':s.endsWith('.turn_on')?'On':s.endsWith('.turn_off')?'Off':s.endsWith('.toggle')?'Toggle':s.endsWith('.trigger')?'Run automation actions':s} · {s}</option>)}</select></label>
+    <label>Target<select aria-label="Button action target" disabled={busy||initial!==null} className={`${inputClass} mt-1`} value={entity} onChange={e=>act(()=>{setEntity(e.target.value);const d=e.target.value.split('.')[0];setService(defaultButtonService(d,inventory.services));})}><option value="">Service action without an entity target</option>{Object.values(h.entities).filter(e=>!e.disabled && !inventory.managed.some(m=>m.entityId===e.entityId) && targetDomains.has(e.domain)).sort((a,b)=>a.name.localeCompare(b.name)).map(e=><option key={e.entityId} value={e.entityId}>{e.name} · {e.entityId}</option>)}</select></label>
+    <label>Action<select aria-label="Button action service" disabled={busy||initial!==null && initial.entityId===null} className={`${inputClass} mt-1`} value={service} onChange={e=>act(()=>setService(e.target.value))}><option value="">Choose an action</option>{allowed.map(s=><option key={s} value={s}>{actionLabel(s,!!entity)} · {s}</option>)}</select></label>
     {initial && <p className="text-xs text-muted sm:col-span-2">This edit keeps the same output. To replace it, disable this assignment and add the new output; review both changes together.</p>}
     <details className="sm:col-span-2"><summary className="cursor-pointer text-xs text-muted">Optional action data (JSON)</summary><textarea aria-label="Button action data" disabled={busy} className={`${inputClass} mt-2 font-mono`} rows={3} value={json} onChange={e=>act(()=>setJson(e.target.value))}/><p className="mt-1 text-xs text-muted">For example brightness_pct or script variables. Service-only actions must not require an entity target. Automation actions respect their conditions by default.</p></details>
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={enabled} disabled={busy} onChange={e=>act(()=>setEnabled(e.target.checked))}/>Enable this assignment after Apply</label>

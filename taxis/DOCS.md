@@ -5,9 +5,10 @@ the areas on each floor, and every device and entity in them, and lets you
 organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
-The pages along the top: **Areas**, **Organize**, **Recipes**, **Parameters**,
-**Health**, **Changes** and **Settings**. Devices and entities are in Organize, and in a tab
-of each area. Old links to the Devices and Entities pages (`#devices`,
+The pages along the top: **Guide**, **Areas**, **Organize**, **Recipes**, **Buttons**,
+**Parameters**, **Health**, **Changes**, **Settings** and **AI**. The sparkle button at the
+bottom right of every page opens [Ask Taxis](#ask-taxis). Devices and entities are in
+Organize, and in a tab of each area. Old links to the Devices and Entities pages (`#devices`,
 `#entities`, `#entities/<id>`) open the same section of Organize.
 
 ## Areas
@@ -344,7 +345,7 @@ the sources (click the number to see them). The status says what Taxis would do:
   gives it the id.
 - **Conflict**: the id is held by something that isn't that helper (a real
   sensor named after the room, a template). Nothing is proposed. Change the name
-  in **Settings → Helper names**. A group written in YAML whose members differ
+  in **Settings → Aggregation markers**. A group written in YAML whose members differ
   is also a conflict: Taxis can't edit it.
 - **In changes**: already in the list of changes.
 
@@ -362,9 +363,9 @@ own. Each area's Capabilities tab ends with its own Helpers table.
 | A floor's lights | `light.<floor code>_all` | the `light.<code>_all` group of every area on the floor that has one |
 | The house's lights | `light.all` | the floors' groups, and the `light.<code>_all` groups of areas on no floor |
 
-The floor code is set in **Settings → Floor codes** (default: the floor's id) and
-the end (`all`) is the Lights helper name, like the areas'. The house group's id
-is also a setting (**Light group of the whole house**). A new group is named
+The floor code is set in **Parameters → Area codes** (default: the floor's id) and
+the end (`all`) is the Lights aggregation marker, like the areas'. The house group's
+id is also a setting (**House light group**, in Settings). A new group is named
 "Ground floor lights" or "All lights". They are ordinary groups, nested in each
 other; Home Assistant handles that. They go in **no area**.
 
@@ -826,6 +827,155 @@ things together however many speakers it has. It is a script blueprint saved at
 script (`config/script/config/taxis_announce`). When a speaker, an area's Occupancy
 or the setting changes, the cell says **Out of date** and what changed.
 
+## House guide
+
+**Guide** is the first page. It helps you build a comfortable house one area at a
+time: you say what each room is for, and Taxis shows what the room has and what is
+still missing. The guide itself changes nothing in Home Assistant. The steps that do
+add proposals to [Changes](#changes-and-apply), for you to review and apply.
+
+The first screen shows:
+
+- four counts: areas with chosen goals, areas ready for a room test, areas tested
+  by you, and areas awaiting review and Apply;
+- **Guest, away and sleep**, the three house modes (below);
+- **Start with one room**, a card for every area with its floor, its room type and
+  goals, and where it stands (for example *Review equipment*, *Prepare helpers*,
+  *Ready for a room test*). Choose a card to open the area. **Guide this area** on
+  an area's page opens the same place;
+- **Ideas from real homes**, automation ideas with a link to the original
+  discussion (a link only: Taxis does not fetch it) and the recipes that implement
+  each one.
+
+Inside an area, work from the top:
+
+1. **Choose this area's purpose.** Pick a **room type** (bedroom, living or dining
+   room and so on). That selects suggested goals, such as comfortable automatic
+   lighting, gentle night lighting, reliable occupancy, room climate, switching
+   media off in empty rooms, humidity-controlled ventilation, outdoor evening
+   lighting, door and window reminders or appliance-finished notifications. Adjust
+   them before you save. The choice stays in Taxis.
+2. **Review equipment and controls.** For each goal, the equipment it needs
+   (*Detected and reporting*, *Review existing entities*, *Needed for this goal* or
+   *Optional improvement*), with the entities found and advice on types and
+   placement. The advice never names brands. A detected entity is not proof of good
+   coverage. **Review this area's capabilities** opens the area's Capabilities tab.
+3. **Prepare helpers.** The canonical helpers the goals need, with their status.
+   Add them to Changes from here.
+4. **Review comfort settings.** The values from [Parameters](#parameters) the
+   generated automations will use for this area, with links to edit them.
+5. **Set up native automations.** The recipes the goals call for, in order
+   (occupancy first). A missing requirement explains the next step. A pending
+   proposal, or an automation Taxis could not read, never counts as installed.
+6. **Test comfort in the room.** After you apply the setup, tick the behaviour you
+   have actually observed, write notes and **Save room test record**. These are
+   your observations, not an automatic check. A change to the room's settings,
+   equipment, helper members or installed recipes means the room needs a retest;
+   routine sensor values do not.
+
+**Guest, away and sleep.** Three manual toggles (`away`, `sleep`, `guest`) that
+the recipes respect. *Away* stops automatic indoor lights from turning on. *Sleep*
+uses night lighting, and a bedroom uses only its Night-role lights. *Guest* keeps
+visitors comfortable when residents leave: it pauses automatic indoor lighting and
+media off by default, while climate keeps its window, season, sleep and night
+rules. **Choose mode switches** opens Parameters → House, where you pick the
+switches and can add them to Changes. Taxis never decides that the house is empty;
+you flip the toggles in Home Assistant.
+
+**Review your notes with Jev.** Under the room test, an optional button sends the
+notes you typed to the [Jev decision service](#jev-decisions). It is manual and
+only suggests.
+
+## Buttons
+
+**Buttons** is for remotes, wall controls and any other button Home Assistant can
+see. Taxis lists them, shows which automations already react to each press, and
+lets you give a press, double press or hold an action. What you get is an ordinary
+Home Assistant automation that keeps working when Taxis is stopped. Nothing
+changes in Home Assistant until you apply the change.
+
+**What it lists.** One control per device (or per entity that has no device). The
+gestures come only from what each integration tells Home Assistant: the device
+triggers it advertises, event entities and their event types, sensors that report
+presses as a value, and button and input button entities. Taxis never guesses a
+button count or a click combination. A control whose integration exposes none says
+so, and you can't assign it until Home Assistant sees its gestures. A sensor that
+reports presses as a value cannot show the same press twice in a row, and the
+control says that too. Use the search box to find a control by name, area or
+integration, **Show devices without button metadata** to include devices that look
+like no button, and **Refresh buttons and automations** to read again.
+
+**Existing automations.** Taxis reads the automations it can read and matches them
+to each gesture. **Trigger match** means the automation's trigger, including the
+event type it filters on, is that gesture. **Possible match — inspect logic** means
+it only mentions the device, listens to every press of an entity, or is a blueprint
+whose inputs name the device. Each match shows whether it is on, the services it
+calls and what it targets, with a link that opens it in Home Assistant. Conditions,
+choose branches and blueprint inputs can change what a handler really does, so read
+it there. Under **Discovery coverage** you see how many automation configurations
+could be read. YAML-only and unavailable ones can't be, so no match is not proof
+that nothing else reacts to a button.
+
+**Assigning an action.** Open a control, choose a gesture and **Assign action**.
+Choose the **Target**, an entity, and the **Action** to run on it, or an action
+that needs no target (below). **Optional action data** takes plain JSON such as
+`brightness_pct` or script variables; templates are refused, and so are entity,
+device and area targets, which belong in the Target field. Tick **Enable this
+assignment after Apply** or leave it off to keep it disabled. If another automation
+may also handle the gesture, or some automations couldn't be read, tick **I
+reviewed existing handlers and any coverage gaps; allow coexistence**: without it
+Taxis refuses to add a second handler. **Add to changes** queues it. Taxis never
+edits the existing handlers.
+
+**One automation per output.** Every button that controls the same output (the
+same light, scene, script and so on) shares one automation named `Taxis buttons ·`
+followed by the output, and each gesture inside it has its own action. Assigning another button
+to that output, editing an assignment or disabling it updates that same
+automation. **By output** lists every button mapped to an output. Apply checks that
+the automation wasn't changed by hand since you reviewed it, saves it, reads it
+back and confirms it is loaded in the state you asked for. A set of assignments
+where a button presses another button that presses the first is refused as a loop.
+
+**What a button may do.** A button's automation runs by itself, so the list of
+actions is fixed by Taxis. The page offers only what is allowed, the server checks
+it again when you add the assignment, and Apply checks it a third time.
+
+- *With an entity target of the same kind:* lights, switches, fans, covers, media
+  players, climate, humidifiers, sirens and valves (any of their services, except
+  those named below); locks (lock and unlock only); scenes (turn on); scripts (turn
+  on, turn off, toggle); input booleans; input buttons and buttons (press);
+  automations (trigger, turn on, turn off, toggle); vacuums (start, pause, return to
+  base, stop); numbers and input numbers (set value); selects and input selects
+  (select option, next, previous); remotes (turn on, turn off, toggle, send
+  command).
+- *Without a target:* calling a script that exists, and
+  `persistent_notification.create`.
+- *Never:* anything in the `homeassistant` domain (so `homeassistant.turn_on` is
+  out too: choose the entity's own service), `hassio`, `shell_command`,
+  `python_script`, `pyscript`, `command_line`, `rest_command`, `recorder`, `logger`,
+  `system_log`, `backup`, `frontend`, `update`, and the administration services of
+  `zha`, `zwave_js`, `mqtt` and `esphome`. Also any service whose name begins
+  `reload`, `remove`, `delete`, `purge` or `install`, or is exactly `restart`,
+  `stop`, `shutdown` or `reboot`. Notify services are out as well, apart from the
+  persistent notification. A cover's *stop cover* is fine; a vacuum's *stop* too.
+
+When Taxis refuses an action it says which rule applies.
+
+A Taxis button automation made before these rules, or edited since, can still hold
+an action the rules now refuse. Taxis still reads it and lists the binding as
+**Blocked by Taxis's safety rules**, with the reason and a link to open it in Home
+Assistant. It stays in Home Assistant, still on, because Taxis never deletes an
+automation. Taxis won't write it again as it is, which also means you can't add or
+change other buttons in that same automation. Change or remove it in Home
+Assistant, or assign that button a new, allowed action to replace it.
+
+**AI review.** Under a control, **AI review of existing button automations** can
+explain the matches in plain language. **Prepare AI preview** shows exactly what
+would be sent: the control, its gestures, coverage notes, and the names, services
+and targets of matching automations, not raw YAML or action data. Only
+**Send this review to Medium AI** sends it. The reply is an explanation: it cannot
+assign an action or apply anything.
+
 ## Why an entity doesn't work
 
 An entity that is disabled, left over, unavailable, unknown or otherwise not what
@@ -996,32 +1146,38 @@ Saving a code changes Taxis's naming rules; it does not itself rename entities
 or write to Home Assistant. Links from an area's Naming tab open this Parameters
 tab. Resetting the other naming settings preserves your area codes.
 
-The other naming controls remain under **Settings → Naming**:
+**Floor codes** are in the same table, on each floor's own row: the word a
+floor's light group starts with, `light.<floor code>_all`. The default is the
+floor's id as a slug, and you can type your own (letters, digits and `_`, up to
+40, like an area code). Two floors can't share a code: the table marks both rows
+and won't save. A floor id that says little (`floor_2`, `level_1`, or a word that
+has nothing to do with the floor's name, such as `floor_2` for the Loft) is
+flagged with the slug of its name as a suggestion and a **Use it** button; a code
+you typed is never flagged. A floor code that is also an area's is warned about,
+since the floor's group would sit on the area's (the Helpers tab shows it as a
+conflict).
 
-- **Floor codes.** The word a floor's light group starts with:
-  `light.<floor code>_all`. The default is the floor's id as a slug, and you can
-  type your own (letters, digits and `_`, up to 40, like an area code). Two
-  floors can't share a code: Settings marks both rows and won't save. A floor id
-  that says little (`floor_2`, `level_1`, or a word that has nothing to do with the
-  floor's name, such as `floor_2` for the Loft) is flagged with the slug of its
-  name as a suggestion and a **Use it** button; a code you typed is never
-  flagged. A floor code that is also an area's is warned about, since the floor's
-  group would sit on the area's (the Helpers tab shows it as a conflict).
-- **Light group of the whole house.** The end of the house group's id,
-  `light.all` by default. Lower-case letters, digits and `_`, up to 30 characters.
+The other naming controls are under **Settings**:
+
 - **Patterns.** For entity ids (default `{area}_{type}_{name}`) and display
   names (default `{Area} {Name}`). The type word goes in only where the domain
   doesn't already say it: `binary_sensor.livingroom_motion_sofa`, but
   `light.livingroom_lamp`.
-- **Type words.** The word for each kind of entity (`motion`, `door`,
-  `temp`…).
-- **Helper names.** The end of each canonical helper's entity id (`all`,
-  `motion_all`, `presences`, `doors`, `windows`, `temperature`, `humidity`,
-  `illuminance`, `media`). Lower-case letters, digits and `_`, up to 30
-  characters, and each used once. Settings shows an example id as you type.
-  The recipes' own helpers end in `hold`, `occupied`, `paused`, `override`, `climate`
-  and `humidity_rate`; these are fixed, and no binary sensor helper may use
-  `occupied` nor a sensor helper `humidity_rate`.
+- **House light group.** The end of the house group's id, `light.all` by
+  default. Lower-case letters, digits and `_`, up to 30 characters.
+- **Type words.** The word for each kind of entity (`motion`, `door`, `temp`…).
+  One set serves entity ids and helper ids; Door and Window have their own.
+- **Aggregation markers.** A helper's id is built as
+  `<domain>.<area code>_<capability word>_<aggregation marker>`: `door` with
+  `all` gives `door_all`, and `temp` with `avg` gives `temp_avg`. An empty part is
+  left out, and each combined name can be used once. The default marker is `all`,
+  and `avg` for temperature, humidity and light level. Settings shows an example
+  id as you type. Helpers that already had complete ids keep them until you save
+  this form once; saving may change the ids Taxis proposes, but Home Assistant
+  changes only after you review and apply them. The recipes' own helpers end in
+  `hold`, `occupied`, `paused`, `override`, `climate` and `humidity_rate`; these
+  are fixed, and no binary sensor helper may use `occupied` nor a sensor helper
+  `humidity_rate`.
 
 Each area's **Naming** tab checks its entities against these: which ids start
 with the area's code, which use an older code, which name another area, and
@@ -1124,10 +1280,23 @@ including helper members and recipe inputs.
 Taxis only edits what Home Assistant's own settings pages edit: names, ids,
 areas, floors, labels, categories, icons, hidden and disabled, an area's
 temperature and humidity sensor, the helpers described above, and the
-blueprints and automations of the recipes, and the one script, Announce. When it renames an entity it replaces
-the old id in automations, scripts, scenes and dashboards, and changes nothing
-else in them. It never removes a device, an entity, a helper, a blueprint or an
-automation, and never calls a service.
+blueprints and automations of the recipes, the automations that carry out your
+[button](#buttons) assignments, and the one script, Announce. When it renames an
+entity it replaces the old id in automations, scripts, scenes and dashboards,
+and changes nothing else in them.
+
+What Taxis never does:
+
+- It never calls a service: it doesn't turn a light on or run a script itself.
+  The automations it writes run inside Home Assistant and call the services they
+  need, and a button can only be given the actions on the fixed list in
+  [Buttons](#buttons).
+- It never deletes a device or an entity, nor a helper, a blueprint or an
+  automation. It deletes floors, areas, labels and categories only when you ask,
+  through the change list.
+- It never sends Home Assistant a command that isn't on a fixed list in the app,
+  which tests keep honest.
+- It never answers a request that doesn't come through Home Assistant's Ingress.
 
 A **helper** is made the way Home Assistant's Helpers page makes it: Taxis
 starts the same setup dialog (a group, or a min/max sensor with the mean), fills
@@ -1164,9 +1333,10 @@ names, not entities, and are not looked for in Home Assistant.
 ## AI (optional)
 
 AI is **off** until you turn it on in **Settings → AI (optional)**. Nothing in
-Taxis needs it. This first step is the groundwork only: the connection, the
-spending limit and a **Test connection** button. Asking Taxis questions comes
-later. The [Health](#health) checks don't use AI.
+Taxis needs it. The [Health](#health) checks, capability counting, helper plans
+and readiness never use it. When it is on, it runs only when you ask: a question in
+[Ask Taxis](#ask-taxis), an explanation of an existing button's automations (see
+[Buttons](#buttons)), or a connection test. Nothing runs in the background.
 
 What it is:
 
@@ -1175,12 +1345,17 @@ What it is:
   shows only that a key is set and its last four characters, with **Replace**
   and **Remove**), and never writes it to the log. Home Assistant backups of the
   app include its data, so they include the key.
-- **AI never writes to Home Assistant.** It has no way to change anything. When
-  later features let it propose a change, the proposal goes into the **change
-  list** like any other edit, for you to review and apply.
+- **A saved key follows its address.** If you change the base URL of an
+  OpenAI-compatible service, Taxis does not carry the saved key over to the new
+  address. Settings asks you to enter the key again (or remove it) before you can
+  save, and the app refuses a save that would keep it. Anthropic has one fixed
+  address, so its key is not affected.
+- **AI never writes to Home Assistant.** It has no tools and no way to change
+  anything or to queue a change. Its replies are advice and explanations; you act
+  on them in the usual pages and the **change list**.
 - **Taxis calls only the service you picked.** Anthropic at
   `api.anthropic.com`, or the base URL you give for an OpenAI-compatible
-  service. Nothing else is contacted, and redirects are not followed.
+  service. Redirects are not followed. See [Data and privacy](#data-and-privacy).
 
 Settings:
 
@@ -1189,11 +1364,17 @@ Settings:
   such as Ollama (`http://<host>:11434/v1`) or LM Studio. The address must be
   `https://`, except `http://` for this machine and private-network addresses.
   For a service that needs no key, leave the key empty.
-- **Load models** asks the service which models it offers (with the saved key,
-  or one you have just typed). Then pick a model for each job: **Quick**, for
-  short answers, and **Ask**, for open questions. For Anthropic they start as
-  `claude-haiku-5-5` and `claude-sonnet-5-5`. For an OpenAI-compatible service
-  Taxis starts from the first two it lists, and you choose.
+- **Models, by tier.** **Load models** asks the service which models it offers
+  (with the saved key, or one you have just typed). Then pick a model for each of
+  three tiers: **Low**, for routine naming and classification; **Medium**, for
+  explanations and analysis; **Strong**, for complex planning and review. A
+  feature asks for a tier, never for a model name. Ask Taxis uses Low for *Naming
+  help*, Medium for *Explain* and Strong for *Suggest next steps*; the button
+  review uses Medium. For Anthropic the tiers start as `claude-haiku-5-5` (Low) and
+  `claude-sonnet-5-5` (Medium), with Strong left empty for you to choose. An
+  OpenAI-compatible service starts empty and you pick from what it lists. A tier
+  with no model can't be used. Settings saved before the tiers existed keep their
+  *Quick* model as Low and their *Ask* model as Medium.
 - **Effort**: *Quick*, *Balanced* (the default) or *Thorough*. For Anthropic
   this is the model's effort setting (low, medium, high); for an
   OpenAI-compatible service it is sent as `reasoning_effort` to models that
@@ -1204,7 +1385,7 @@ Settings:
   you can enter what it costs per million tokens, so its calls count toward the
   cap; enter 0 for a model on your own machine.
 
-**Usage and the cap.** Every call is recorded (when, which job, provider and
+**Usage and the cap.** Every call is recorded (when, which task, provider and
 model, tokens in and out, estimated cost, never the text). Settings shows this
 month's total (calendar month, UTC) against the cap. Before each call Taxis
 checks the total: once it has reached the cap, calls are refused with a clear
@@ -1213,16 +1394,161 @@ known price is counted in tokens but its cost is unknown, so **the cap cannot
 see it**; Settings says when that has happened. The cap is checked before a
 call, so the call that crosses it is the last one.
 
-**Test connection** sends one short, fixed sentence (nothing about your home) to
-the Quick or the Ask model and shows the answer, the tokens used and the
-estimated cost. It is a real call and counts toward the cap.
+**Test connection.** Each tier with a model has its own button (**Test the Low
+model**, and so on). It sends one short, fixed sentence (nothing about your home)
+and shows the answer, the tokens used and the estimated cost. It is a real call
+and counts toward the cap.
+
+## Ask Taxis
+
+The round sparkle button at the bottom right of every page opens **Ask Taxis**, a
+small chat window that floats above the page and leaves the page's layout alone.
+It answers questions about Taxis and your set-up. It gives advice only: it can't
+change Home Assistant, queue a change or Apply, it doesn't run the Health scan and
+it doesn't consult Jev. Opening the window, or looking at its context, never
+contacts an AI service. Only **Send** does. It needs AI turned on in Settings and a
+model for the task's tier; the window says what is missing and links to Settings.
+
+- **Task.** The menu at the top right of the window: **Explain** (Medium),
+  **Suggest next steps** (Strong) or **Naming help** (Low). The buttons on an empty
+  chat fill in a starting question.
+- **Context.** The chip under the title says what Taxis will send besides your
+  question: *Page help only* to begin with, *House counts* or the name of an area.
+  Open it to tick **Include page data** and choose the area the question is about,
+  and to **Review exactly what will be sent**, which shows the exact text and what
+  was left out. Room context has the area's entity names and ids (up to 60), their
+  roles and availability flags, capability counts, helper plans and the guide's
+  equipment assessment. House context is counts only. State values, attributes,
+  automation YAML, credentials and saved room notes are never included. On the
+  Changes page, the queued changes in scope are described by their kind and the
+  few fields that matter, marked as a preview and not live work. If the context
+  changes before you send, you are asked to refresh and review it again.
+- **Sending.** **Send** or Enter sends; Shift+Enter adds a new line. A question is
+  up to 2,000 characters. Follow-ups include up to six earlier messages, each
+  shortened to 2,000 characters. One question runs at a time. A reply cut off by the
+  output limit says so.
+- **The three-dot menu.** **AI administration**, **AI settings**, **Clear chat**,
+  the provider and model in use, and the last reply's model, tokens and estimated
+  cost.
+
+The conversation lives only in the open window. It clears when you close the window,
+change page or context, or reload. Taxis keeps just a line per request: time, task,
+page, context, model and result. Never the question, the reply or the room.
+
+## AI administration
+
+**AI**, the last page in the bar, shows where AI is used and what it costs. It only
+reads: nothing on it runs a model.
+
+- **Generative AI** says whether it is on, the provider, this month's calls and
+  estimated spend against the cap, and how many calls had no known price and so
+  aren't counted toward the cap.
+- **Jev decisions** says whether Jev is off, missing its key or configured, its
+  model and this month's requests against the limit.
+- **Connected functions** lists, for every use of AI: the function, the model or
+  status, what triggers it, what data it sends, and what authority it has. They
+  are the three Ask Taxis tasks, the Jev room-note review, the connection tests
+  and the button mapping review. None has authority beyond text advice or a
+  suggestion.
+- **Access and limitations** says what the AI can and can't see.
+- **Recent assistant requests** are the latest 30 Ask Taxis requests (200 kept)
+  with time, task, page and context, model and result. Questions, replies and room
+  identities are not saved. Button reviews and tests count toward usage but are not
+  listed here.
+
+**Configure models and keys** opens Settings, and **Refresh AI overview** reads
+again.
+
+## Jev decisions
+
+Jev is an optional decision service from TypeSafe, separate from your Low, Medium
+and Strong models. It has one job: in the Guide's room test, **Review notes with
+Jev** reads the notes you typed and says, for each checklist item you selected,
+whether they describe it **working**, **a problem**, or **not established**, with
+the probabilities it gave. It is a suggestion. It never ticks a box, saves an
+observation, changes readiness or touches Home Assistant, and editing the notes
+clears the review shown. Your own observations stay the evidence.
+
+Set it up in **Settings → Jev decisions**:
+
+- **Enable Jev decisions**, and choose the **model** (a pinned version).
+- **Jev API key**, from TypeSafe's console. It is separate from your other AI keys,
+  write-only like them, stored in the app's data (so in backups of the app) and
+  never returned to the browser or written to the log. **Replace Jev key** and
+  **Remove Jev key** change it.
+- **Monthly Jev request limit** (default 100, from 1 to 10,000). Every outgoing
+  attempt counts, including connection tests and failed requests, per calendar
+  month (UTC). It is separate from the AI spending cap.
+- **Test connection** sends one fixed sentence and shows the model, the tokens and
+  the estimated cost.
+
+Requests are made only when you press a button. They are not retried, redirects are
+not followed, and a request that takes longer than 25 seconds is dropped. Usage
+keeps counts and estimated cost, never the notes or the answers. What Jev receives
+is listed in [Data and privacy](#data-and-privacy).
 
 ## Data and privacy
 
-- Taxis talks only to your own Home Assistant, through the Supervisor. It needs
-  no token and no account, and sends nothing to the internet. The one exception
-  is [AI](#ai-optional), which is off until you turn it on: then Taxis talks to
-  the AI service you chose, and to no other address.
-- Only Home Assistant users can open it (through Home Assistant's sidebar).
-- It keeps its change list and snapshots of what it read in `/data/taxis.db`
-  inside the app. Removing the app removes them.
+Out of the box, Taxis talks only to your own Home Assistant. Every other address
+below is contacted only when you have turned that feature on and then done
+something that uses it. Nothing here runs in the background, and there is no
+analytics, update check or telemetry.
+
+Every address Taxis can contact:
+
+- **Your Home Assistant**, always. Inside Home Assistant that is the Supervisor's
+  own connection (`ws://supervisor/core/websocket` and
+  `http://supervisor/core/api`), which needs no token or account of yours. Taxis
+  reads the registries, states, services and the configuration of automations,
+  scripts, scenes and dashboards. It writes only when you apply the change list.
+  Outside Home Assistant (for development) it talks to the `HA_URL` you set.
+- **The Supervisor** (`http://supervisor`, inside Home Assistant only), to ask for
+  a partial backup of Home Assistant before Apply. It is the only thing Taxis asks
+  of the Supervisor.
+- **Anthropic** (`https://api.anthropic.com`), only when AI is on and the provider
+  is Anthropic.
+- **The OpenAI-compatible service you chose** (the base URL you entered: OpenAI,
+  OpenRouter, or a service on your own network), only when AI is on and that is the
+  provider.
+- **TypeSafe** (`https://api.typesafe.ai/v1/systemone`), only when Jev decisions
+  are on and have a key.
+
+What each of the AI and Jev services receives, and when:
+
+- **An AI service** (Anthropic or the one you chose) receives your API key as the
+  login of the request, and:
+  - when you press **Send** in [Ask Taxis](#ask-taxis): your question, the context
+    you could review (page help, or house counts, or one area's names, ids, roles,
+    availability flags, capability counts, helper plans and equipment assessment)
+    and up to six earlier messages;
+  - when you press **Send this review to Medium AI** on Buttons: the summary you
+    could preview, with control and gesture names and the names, services and
+    targets of matching automations;
+  - when you press **Load models**: only the key and the request for the list;
+  - when you press a **Test** button: one fixed sentence.
+  It never receives your Home Assistant token, state values, attributes, the YAML
+  of automations, saved room notes or another service's key. Your Home Assistant
+  token and the saved API keys are also removed from any text before it is sent.
+- **TypeSafe** receives your Jev API key as the login of the request, the Jev model
+  name, and:
+  - when you press **Review notes with Jev** in the Guide: the notes you typed (up
+    to 2,000 characters, with the Home Assistant token and saved keys removed) and the descriptions of the
+    checklist items you selected. Not the area, entities, states or saved test
+    records. Whatever you write in the notes is part of the request;
+  - when you press **Test connection** in Settings: one fixed sentence.
+
+Neither kind of service is called with a tool, and neither can change Home Assistant.
+Redirects are not followed.
+
+Links you click, such as the community discussions in the Guide, TypeSafe's console
+or Home Assistant's own editors, open in your browser. Taxis does not fetch them.
+
+Locally:
+
+- Only Home Assistant users can open Taxis, through Home Assistant's sidebar. It
+  answers requests that arrive through Ingress and refuses everything else,
+  including requests from inside the app's own container.
+- It keeps its change list, settings, snapshots of what it read, Apply history,
+  repair reminders and usage counts in `/data/taxis.db` inside the app. AI and Jev
+  API keys are stored there too, so backups of the app include them. Removing the
+  app removes all of it.
