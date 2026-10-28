@@ -10,14 +10,45 @@ button count or possible clicks from a manufacturer's model name.
 
 - The page reads `device_automation/trigger/list`, entity state metadata and
   registered services. Event entities supply their advertised `event_types`;
-  motion event entities are excluded. Generic events require user inspection.
+  motion event entities are excluded. Generic events (no button device class)
+  require user inspection; the control carries one note for them.
 - Controls without advertised metadata remain accessible through **Show devices
   without button metadata**. Related legacy event/blueprint handlers are shown
   even when gestures are unknown; assigning guessed gestures is not supported.
 - Every loaded automation's editable config is read, including disabled ones.
-  Native trigger matches are distinguished from possible device/entity or
-  blueprint-input references. Service and target summaries do not prove which
-  conditions or choose branch will execute.
+  The matching lives in `shared/button-match.ts` and is per gesture, not per
+  device. **Exact** means the automation runs for that gesture and, as far as
+  its config shows, only for it; **possible** means it may run for it.
+  - Device triggers: exact when `domain`, `device_id`, `type` and `subtype`
+    are equal. `discovery_id`, `metadata` and trigger ids are ignored, so a
+    trigger saved by the UI matches the entry in HA's trigger list. A blueprint
+    that takes the device itself is possible for its device-trigger gestures.
+  - Event entities: a state trigger on the entity, narrowed by a condition on its
+    `event_type` attribute (anywhere in conditions, through and/or, and in
+    choose/if conditions inside actions), by `attribute: event_type, to:` on the
+    trigger, or by a template quoting the type. Exact for the listed types only;
+    a trigger with no filter is possible for every type of that entity. Another
+    entity of the same device never matches. A filter under `not` or an
+    inequality in a template is not read as a selection.
+  - Enum sensors that report presses ("Single press", "Double press"…) are
+    gestures too (source "HA enum sensor", trigger `state` with `to: <option>`).
+    They match the same way, filtering on the sensor's state. Because pressing the
+    same way twice leaves the state unchanged, the control carries a warning, and
+    generated maps use the plain state trigger without the event-entity
+    timestamp condition.
+  - Blueprints: an input holding the entity makes the automation possible for that
+    entity's presses. If the input name carries a button number (`button3_event`)
+    and sibling inputs carry the same number and a press word (`b3_single`,
+    `button_3_double`), the filled ones are exact for that press and the rest
+    do not match.
+  - Legacy `event`-platform handlers (zha_event, xiaomi click…) that name the
+    device, its hardware id or an entity of it cannot be tied to a gesture. They
+    are listed under the control as **Other automations that may use this
+    device**, as are all trigger/blueprint references for a control with no
+    gestures.
+  Service summaries list entity targets and `device:<name>` / `area:<name>` for
+  device and area targets. They do not prove which condition or choose branch
+  will execute.
 - YAML-only/unreadable configs count as gaps, not empty assignments. Arbitrary
   MQTT topics, templates, scripts and external controllers cannot always be
   linked to the physical device. No match is not proof of no existing handler.

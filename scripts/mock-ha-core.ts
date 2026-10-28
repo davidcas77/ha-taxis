@@ -1410,5 +1410,51 @@ export function withButtonDemo(reg:MockHome):MockHome {
   reg.automations[id]={id,alias:'Existing wall button toggle',trigger:[reg.buttonTriggers.demo_wall_buttons[0]],action:[{service:'light.toggle',target:{entity_id:'light.living_lamp'}}]};
   reg.entities.push({entity_id:`automation.${id}`,platform:'automation',unique_id:id});
   reg.states.push({entity_id:`automation.${id}`,state:'on',attributes:{id,friendly_name:'Existing wall button toggle'}});
+  withButtonMatchingDemo(reg);
   return reg;
+}
+
+// The ways real automations refer to buttons, with invented names. Used to try
+// the Buttons page against existing handlers (see shared/button-match.ts).
+function withButtonMatchingDemo(reg:MockHome) {
+  const automation=(id:string,config:Config)=>{
+    reg.automations[id]={id,...config};
+    reg.entities.push({entity_id:`automation.${id}`,platform:'automation',unique_id:id});
+    reg.states.push({entity_id:`automation.${id}`,state:'on',attributes:{id,friendly_name:String(config.alias)}});
+  };
+  const addState=(entity_id:string,state:string,deviceId:string,attributes:Record<string,unknown>)=>{
+    reg.entities.push({entity_id,platform:'matter',device_id:deviceId,unique_id:entity_id});
+    reg.states.push({entity_id,state,attributes} as never);
+  };
+  const presses=['Single press','Double press','Long press'];
+  const stamp=new Date().toISOString();
+
+  // MQTT: the trigger list adds discovery_id and metadata that the UI never saves.
+  const mqtt=reg.buttonTriggers!.demo_six_buttons;
+  reg.buttonTriggers!.demo_six_buttons=mqtt.map(t=>({...t,discovery_id:`0x00158d0001 ${t.subtype}_${t.type}`,metadata:{}}));
+  automation('demo_mqtt_ui',{alias:'Six-button remote 1 short press (saved by the UI)',triggers:[{trigger:'device',domain:'mqtt',device_id:'demo_six_buttons',type:'remote_button_short_press',subtype:'1'}],actions:[{action:'light.toggle',target:{area_id:'living_room'}}]});
+
+  // Event entities without a device class, and automations that filter on event_type.
+  reg.devices.push({id:'demo_desk_remote',name:'Desk remote',manufacturer:'Demo only',model:'Two-button event remote',area_id:'living_room'});
+  for(const n of [1,2]) addState(`event.demo_desk_button_event_${n}`,stamp,'demo_desk_remote',{friendly_name:`Desk remote button ${n}`,event_types:presses});
+  automation('demo_desk_single',{alias:'Desk button 1 single press',
+    triggers:[{trigger:'state',entity_id:'event.demo_desk_button_event_1',not_from:['unavailable','unknown'],id:'a'}],
+    conditions:[{condition:'state',entity_id:'event.demo_desk_button_event_1',attribute:'event_type',state:'Single press'}],
+    actions:[{action:'light.toggle',target:{entity_id:'light.living_lamp'}}]});
+  const doubleOn=(entity:string,id:string)=>({condition:'and',conditions:[{condition:'trigger',id},{condition:'state',entity_id:entity,attribute:'event_type',state:'Double press'}]});
+  automation('demo_desk_double',{alias:'Desk buttons double press',
+    triggers:[{trigger:'state',entity_id:'event.demo_desk_button_event_1',id:'a'},{trigger:'state',entity_id:'event.demo_desk_button_event_2',id:'b'}],
+    conditions:[{condition:'or',conditions:[doubleOn('event.demo_desk_button_event_1','a'),doubleOn('event.demo_desk_button_event_2','b')]}],
+    actions:[{action:'light.turn_off',target:{device_id:'demo_desk_remote'}}]});
+  automation('demo_desk_any',{alias:'Desk button 2 any press',triggers:[{trigger:'state',entity_id:'event.demo_desk_button_event_2'}],actions:[{action:'light.turn_on',target:{entity_id:'light.living_lamp'}}]});
+
+  // A switch with event buttons 3 and 4, handled by a blueprint, and enum-sensor buttons 1 and 2.
+  reg.devices.push({id:'demo_door_switch',name:'Door switch',manufacturer:'Demo only',model:'Four-button switch',area_id:'living_room'});
+  for(const n of [3,4]) addState(`event.demo_door_switch_button_event_${n}`,stamp,'demo_door_switch',{friendly_name:`Door switch button ${n}`,event_types:presses});
+  for(const n of [1,2]) addState(`sensor.demo_door_switch_button_event_${n}`,'Single press','demo_door_switch',{friendly_name:`Door switch button ${n} (sensor)`,device_class:'enum',options:presses});
+  reg.blueprints['demo/switch_buttons.yaml']=['blueprint:','  name: Demo switch buttons','  domain: automation','  input:','    button3_event:','      name: Button 3','    button4_event:','      name: Button 4','    b3_single:','      name: Button 3 single','    b3_double:','      name: Button 3 double','    b4_single:','      name: Button 4 single','triggers: []','actions: []',''].join('\n');
+  automation('demo_door_blueprint',{alias:'Door switch buttons',use_blueprint:{path:'demo/switch_buttons.yaml',input:{
+    button3_event:'event.demo_door_switch_button_event_3',button4_event:'event.demo_door_switch_button_event_4',
+    b3_single:[{action:'light.toggle',target:{entity_id:'light.living_lamp'}}],b3_double:[{action:'light.turn_off',target:{entity_id:'light.living_lamp'}}],b4_single:[{action:'light.turn_on',target:{entity_id:'light.living_lamp'}}]}}});
+  automation('demo_door_sensor_single',{alias:'Door switch sensor 1 single press',triggers:[{trigger:'state',entity_id:'sensor.demo_door_switch_button_event_1',to:'Single press'}],actions:[{action:'light.toggle',target:{entity_id:'light.living_lamp'}}]});
 }

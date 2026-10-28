@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Buttons: existing automations match the right gesture.** Event-entity gestures
+  are now matched by the entity and the `event_type` the automation filters on
+  (conditions, nested and/or, choose/if, trigger-level `to`, templates), device
+  triggers by domain, device, type and subtype only, and blueprints by their
+  per-press inputs. Enum sensors that report presses appear as gestures. Handlers
+  that only reference the device are listed under the control instead of on every
+  gesture, and action summaries name device and area targets.
+
 ## 0.7.3
 
 - **Buttons.** A new input inventory shows advertised gestures across integrations,
