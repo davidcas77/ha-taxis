@@ -1699,7 +1699,7 @@ describe("bathroom fan", () => {
       const pending = [
         change({ kind: "helper", targetId: "sensor.living_humidity_rate", after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" } }),
         change({ kind: "helper", targetId: "input_boolean.living_paused", after: { helper: "input_boolean", entity_id: "input_boolean.living_paused" } }),
-        change({ kind: "blueprint", targetId: "taxis/bathroom_fan.yaml", after: { path: "taxis/bathroom_fan.yaml", version: 1 } }),
+        change({ kind: "blueprint", targetId: "taxis/bathroom_fan.yaml", after: { path: "taxis/bathroom_fan.yaml", version: 2 } }),
       ];
       expect(kindsOf(fan([hygro, humidityMean, extractor], { changes: pending, installed: { blueprints: {} } }))).toEqual(["automation:create:taxis_bathroom_fan_living"]);
       expect(kindsOf(fan([hygro, humidityMean, extractor], { installed: { blueprints: {} } }))[0]).toBe("blueprint:create:taxis/bathroom_fan.yaml");
@@ -1772,7 +1772,7 @@ describe("bathroom fan", () => {
     });
 
     it("is out of date for an older blueprint, a missing pause switch and another name", () => {
-      expect(fan(inPlace, { installed: { ...installedWith(defaults), blueprints: { "taxis/bathroom_fan.yaml": 0 } } }).reasons).toEqual(["The blueprint is version 0, Taxis has 1"]);
+      expect(fan(inPlace, { installed: { ...installedWith(defaults), blueprints: { "taxis/bathroom_fan.yaml": 0 } } }).reasons).toEqual(["The blueprint is version 0, Taxis has 2"]);
       expect(fan(inPlace.filter((e) => e !== toggle), { installed: installedWith(defaults) }).reasons).toEqual(["input_boolean.living_paused is missing"]);
       expect(fan(inPlace, { installed: { automations: { taxis_bathroom_fan_living: { alias: "Lounge – Bathroom fan (Taxis)", path: "taxis/bathroom_fan.yaml", input: defaults } } } }).reasons).toEqual([
         "Name: Lounge – Bathroom fan (Taxis) → Living room – Bathroom fan (Taxis)",
