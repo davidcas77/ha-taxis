@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.2
 
 - **Floating assistant.** Ask Taxis opens in a rounded, compact floating window
   about half the screen height, leaving the page's width unchanged. Chat messages
@@ -8,6 +8,10 @@
   usage and administration move to the three-dot menu. Send or Enter submits
   explicitly, with Shift+Enter for a newline. Page data still starts off and
   opening the window never calls an AI provider.
+- **Validation.** TypeScript, production build, all 1,381 unit/API tests and
+  21 relevant dummy-data browser scenarios passed, including desktop/mobile
+  sizing, fixed composer, long replies, keyboard behavior and existing tables.
+  Existing AI/Jev settings and HA data-access boundaries are preserved.
 
 ## 0.7.1
 
