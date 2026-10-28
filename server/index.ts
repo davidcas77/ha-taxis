@@ -33,6 +33,8 @@ import { readInstalled } from "./changes/recipes.ts";
 import { changeStore } from "./changes/store.ts";
 import { aiLedger } from "./ai/ledger.ts";
 import { aiRoutes } from "./ai/routes.ts";
+import { jevRoutes } from "./jev/routes.ts";
+import { jevLedger } from "./jev/ledger.ts";
 import { healthSnapshot, readBlueprints } from "./health/assemble.ts";
 import { checkAreaCodes, settingsStore, validateGroups, validateInventory, validateNaming, validateNamingIgnores, validateParameters } from "./settings.ts";
 import { dataDir, redact, resolveHaTarget, runMode } from "./config.ts";
@@ -74,6 +76,7 @@ const changes = changeStore(store.db);
 const settings = settingsStore(store.db);
 // The AI keys are secrets too: never written to the log, whatever an error says.
 for (const p of AI_PROVIDERS) addLogSecret(settings.aiKey(p));
+addLogSecret(settings.jevKey());
 
 const n = (v: number) => v.toLocaleString("en-US");
 
@@ -322,6 +325,16 @@ app.route(
   "/api",
   aiRoutes({ settings, ledger: aiLedger(store.db), protect: addLogSecret, redact: (m) => redact(m, token) }),
 );
+
+// Separate decision provider. No hierarchy or HA mutation dependency is passed.
+app.route("/api", jevRoutes({
+  settings, ledger: jevLedger(store.db), protect: addLogSecret,
+  redact: (text) => {
+    let out = redact(text, token);
+    for (const provider of AI_PROVIDERS) out = redact(out, settings.aiKey(provider) ?? undefined);
+    return out.replace(/\bsk-[A-Za-z0-9_*.-]{4,}/g, "[redacted]").replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, "$1 [redacted]");
+  },
+}));
 
 app.post("/api/changes", async (c) => {
   if (applying) return c.json<ChangesResponse>({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);

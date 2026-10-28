@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { EMPTY_GUIDE, validateGuide, type GuideSettings } from "../shared/guide.ts";
+import { DEFAULT_JEV, isJevKey, validateJev, type JevSettings, type JevView } from "../shared/jev.ts";
 
 import {
   AI_EFFORTS,
@@ -137,6 +138,26 @@ export function settingsStore(db: DatabaseSync) {
       } catch { return structuredClone(EMPTY_GUIDE); }
     },
     saveGuide(s: GuideSettings): void { put.run("guide", JSON.stringify(s)); },
+    jev(): JevSettings {
+      const row = get.get("jev") as { value: string } | undefined;
+      try { const checked = row ? validateJev(JSON.parse(row.value)) : null; return checked?.ok ? checked.value : structuredClone(DEFAULT_JEV); }
+      catch { return structuredClone(DEFAULT_JEV); }
+    },
+    jevKey(): string | null {
+      const row = get.get("jev_key") as { value: string } | undefined;
+      try { const value: unknown = row ? JSON.parse(row.value) : null; return isJevKey(value) ? value : null; }
+      catch { return null; }
+    },
+    jevView(): JevView { return { ...this.jev(), keySet: this.jevKey() !== null }; },
+    saveJev(value: JevSettings, key?: string | null): void {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        put.run("jev", JSON.stringify(value));
+        if (key === null) del.run("jev_key");
+        else if (key !== undefined) put.run("jev_key", JSON.stringify(key));
+        db.exec("COMMIT");
+      } catch (e) { db.exec("ROLLBACK"); throw e; }
+    },
     ai(): AiSettings {
       const row = get.get("ai") as { value: string } | undefined;
       if (!row) return structuredClone(DEFAULT_AI);

@@ -21,6 +21,7 @@ import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/
 import { AiSection } from "./ai.tsx";
 import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis, type Route } from "./state.tsx";
+import { JevSection } from "./jev.tsx";
 import { useStoredFlag } from "./storage.ts";
 import { GroupToggle, GroupedRows, SortHeader, useSort } from "./table.tsx";
 import { Button, Field, inputClass } from "./ui.tsx";
@@ -92,8 +93,12 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold">Settings</h1>
           <p className="max-w-[68ch] text-[13px] text-muted">
-            How entities should be named. These settings live in Taxis; they don't change anything in Home Assistant. Each area's Naming tab uses them to measure its entities and suggest names.
+            Naming and optional AI services. These settings live in Taxis; they don't change anything in Home Assistant. Each area's Naming tab uses the naming settings to measure its entities and suggest names.
           </p>
+          <nav aria-label="Settings sections" className="mt-3 flex flex-wrap gap-2">
+            <Button onClick={() => document.getElementById("ai-settings")?.scrollIntoView({ block: "start" })}>AI models</Button>
+            <Button onClick={() => document.getElementById("jev-settings")?.scrollIntoView({ block: "start" })}>Jev decisions</Button>
+          </nav>
         </div>
 
         <section className="flex flex-col gap-3">
@@ -230,6 +235,7 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
         </p>
 
         <AiSection />
+        <JevSection />
       </div>
       </fieldset>
     </main>

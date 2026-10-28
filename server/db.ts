@@ -53,6 +53,12 @@ const MIGRATIONS: string[] = [
      change_id INTEGER, message TEXT NOT NULL, created_at TEXT NOT NULL, acknowledged_at TEXT
    );
    CREATE INDEX IF NOT EXISTS repairs_open ON repairs(acknowledged_at, id);`,
+  // Separate decision-service ledger: counts only, never notes, answers or keys.
+  `CREATE TABLE IF NOT EXISTS jev_usage (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, job TEXT NOT NULL,
+     model TEXT NOT NULL, status TEXT NOT NULL, input_tokens INTEGER,
+     output_tokens INTEGER, estimated_usd REAL
+   ); CREATE INDEX IF NOT EXISTS jev_usage_at ON jev_usage(at);`,
 ];
 
 const KEEP_SNAPSHOTS = 10;

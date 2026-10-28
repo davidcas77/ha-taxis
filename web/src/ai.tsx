@@ -98,7 +98,7 @@ export function AiSection() {
   }, []);
 
   return (
-    <section aria-labelledby="ai-heading" className="flex flex-col gap-3 border-t border-line pt-6">
+    <section id="ai-settings" aria-labelledby="ai-heading" className="flex flex-col gap-3 border-t border-line pt-6">
       <div className="flex flex-col gap-1">
         <h2 id="ai-heading" className="text-sm font-semibold">
           AI (optional)
@@ -363,7 +363,7 @@ function AiForm({ saved, onSaved }: { saved: AiSettingsView; onSaved: (v: AiSett
               ))}
             </datalist>
             <p className="text-xs text-muted">Task routing: Low for naming/classification, Medium for explanations/analysis, Strong for planning/review. You can also enter a model ID directly.</p>
-            <p className="text-xs text-muted">Configure and test each tier here. Task-based AI features are not connected yet.</p>
+            <p className="text-xs text-muted">Configure and test each tier here. Low/Medium/Strong task features are not connected yet. Jev room-note reviews have their own settings below.</p>
             <div className="grid gap-3 lg:grid-cols-3">
               {AI_TIERS.map((job) => (
                 <Field
