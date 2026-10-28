@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1
 
 - **Ask Taxis.** A floating sparkle button opens contextual AI help on every
   page: explanations use Medium, next-step advice Strong, and naming help Low.
@@ -24,6 +24,11 @@
 - **Bounded requests.** Connection tests and failed requests count toward a
   separate monthly limit. Requests do not follow redirects or retry paid POSTs.
   Usage stores counts and estimated costs, not notes, answers or credentials.
+- **Upgrade and validation.** Existing settings, guide records, naming, helpers,
+  blueprints and recipes are preserved. Installing the app does not apply pending
+  proposals or activate automations. TypeScript, production build, 1,381 tests
+  across 58 files and 88 dummy-data browser scenarios passed. Paid-provider
+  authentication and advice quality have not been verified with real keys.
 
 ## 0.7.0
 
