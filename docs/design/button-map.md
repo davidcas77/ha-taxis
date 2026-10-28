@@ -9,7 +9,20 @@ button count or possible clicks from a manufacturer's model name.
 ## Discovery and existing assignments
 
 - The page reads `device_automation/trigger/list`, entity state metadata and
-  registered services. Event entities supply their advertised `event_types`;
+  registered services. It does not ask every device for device triggers: that is
+  one round trip per device, and most devices (lamps, speakers, sensors) have no
+  buttons. A device is asked when it has an event, button, input_button or
+  press-reporting enum-sensor entity, when its integration is one known to expose
+  button device triggers (a short list in `server/buttons/trigger-candidates.ts`:
+  zha, mqtt, deconz, hue, homekit_controller, lutron_caseta, shelly, tasmota,
+  zwave_js, xiaomi_aqara, aqara and a few more), when an automation already
+  mentions the device by id, or when Taxis can't tell what the device is.
+  **Trade-off:** a device from an integration that is not on the list, with no
+  event or button entity and that no automation mentions, shows no native-trigger
+  gestures. It still appears as a control and the automations that handle it are
+  still found. To cover another integration, add its domain to that list.
+  Automation configs are read once and shared with References, Health and
+  Recipes (30 s, dropped by Apply). Event entities supply their advertised `event_types`;
   motion event entities are excluded. Generic events (no button device class)
   require user inspection; the control carries one note for them.
 - Controls without advertised metadata remain accessible through **Show devices
@@ -46,9 +59,9 @@ button count or possible clicks from a manufacturer's model name.
     are listed under the control as **Other automations that may use this
     device**, as are all trigger/blueprint references for a control with no
     gestures.
-  Service summaries list entity targets and `device:<name>` / `area:<name>` for
-  device and area targets. They do not prove which condition or choose branch
-  will execute.
+    Service summaries list entity targets and `device:<name>` / `area:<name>` for
+    device and area targets. They do not prove which condition or choose branch
+    will execute.
 - YAML-only/unreadable configs count as gaps, not empty assignments. Arbitrary
   MQTT topics, templates, scripts and external controllers cannot always be
   linked to the physical device. No match is not proof of no existing handler.
@@ -91,7 +104,8 @@ triggers retain the integration's trigger definition.
 
 Assignment only queues a Change. The input inventory and Changes revisions must
 still match the reviewed form. Apply follows the existing backup/selection flow,
-then rereads device triggers, services, targets and existing automation handlers.
+then rereads device triggers (only for the controls the change uses), services,
+targets and existing automation handlers.
 It refuses missing/disabled targets, changed gestures, unacknowledged conflicts,
 foreign automation IDs and edited stored configs. Only a known matching map may
 be replaced. Writes use the existing automation-config REST endpoint; no device

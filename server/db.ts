@@ -5,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 // Local storage, one SQLite file inside the app's /data volume (./data in
 // development). Phase 1 keeps snapshots of what it read from Home Assistant;
 // later phases compare against the last snapshot to tell which side changed.
+// Nothing reads them yet, so one is saved only on an explicit Refresh of the main
+// page and after a completed Apply (server/ha/reader.ts), not on every read.
 
 const MIGRATIONS: string[] = [
   `CREATE TABLE IF NOT EXISTS snapshots (
@@ -88,12 +90,8 @@ export function openStore(dir: string): Store {
     db.prepare("UPDATE schema_version SET version = ?").run(version);
   }
 
-  const insert = db.prepare(
-    "INSERT INTO snapshots (taken_at, ha_version, counts, raw) VALUES (?, ?, ?, ?)",
-  );
-  const prune = db.prepare(
-    "DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT ?)",
-  );
+  const insert = db.prepare("INSERT INTO snapshots (taken_at, ha_version, counts, raw) VALUES (?, ?, ?, ?)");
+  const prune = db.prepare("DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT ?)");
   const latest = db.prepare("SELECT id, taken_at, raw FROM snapshots ORDER BY id DESC LIMIT 1");
 
   return {

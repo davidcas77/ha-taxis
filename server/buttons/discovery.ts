@@ -1,4 +1,13 @@
-import { buttonRecord, validButtonMap, type ButtonControl, type ButtonExisting, type ButtonGesture, type ButtonInventory, type ButtonManaged, type ButtonMap } from "../../shared/buttons.ts";
+import {
+  buttonRecord,
+  validButtonMap,
+  type ButtonControl,
+  type ButtonExisting,
+  type ButtonGesture,
+  type ButtonInventory,
+  type ButtonManaged,
+  type ButtonMap,
+} from "../../shared/buttons.ts";
 import { blockedBindings } from "../../shared/button-actions.ts";
 import { gestureSource, matchGesture, normalizeTrigger, referencesDevice, summarizeActions, type TargetNames } from "../../shared/button-match.ts";
 import type { Hierarchy } from "../../shared/types.ts";
@@ -7,6 +16,7 @@ import type { RestApi } from "../ha/rest.ts";
 import { mapLimit } from "../references/snapshot.ts";
 import { buttonConfig } from "./mapping.ts";
 import { BUTTON_MARKER, buttonHash, buttonAutomationId } from "./identity.ts";
+import { buttonTriggerFilter, devicesMentionedBy } from "./trigger-candidates.ts";
 export { BUTTON_MARKER, buttonHash, buttonAutomationId } from "./identity.ts";
 
 export type ButtonHa = { command<T>(type: string, payload?: Record<string, unknown>): Promise<T> };
@@ -59,8 +69,16 @@ class Controls {
     for (const d of Object.values(h.devices)) {
       const integrations = new Set(d.entityIds.map((id) => h.entities[id]?.platform).filter((p): p is string => !!p));
       this.all.set(`device:${d.id}`, {
-        id: `device:${d.id}`, deviceId: d.id, name: d.name, areaId: d.areaId, manufacturer: d.manufacturer, model: d.model,
-        integrations: [...integrations], gestures: [], notes: [], existing: {},
+        id: `device:${d.id}`,
+        deviceId: d.id,
+        name: d.name,
+        areaId: d.areaId,
+        manufacturer: d.manufacturer,
+        model: d.model,
+        integrations: [...integrations],
+        gestures: [],
+        notes: [],
+        existing: {},
       });
     }
   }
@@ -72,7 +90,18 @@ class Controls {
     if (ofDevice) return ofDevice;
     const id = `entity:${entityId}`;
     if (!this.all.has(id)) {
-      this.all.set(id, { id, deviceId: null, name: e.name, areaId: e.areaId, manufacturer: null, model: null, integrations: [e.platform], gestures: [], notes: [], existing: {} });
+      this.all.set(id, {
+        id,
+        deviceId: null,
+        name: e.name,
+        areaId: e.areaId,
+        manufacturer: null,
+        model: null,
+        integrations: [e.platform],
+        gestures: [],
+        notes: [],
+        existing: {},
+      });
     }
     return this.all.get(id)!;
   }
@@ -91,7 +120,8 @@ async function addDeviceTriggerGestures(control: ButtonControl, ha: ButtonHa) {
       control.notes.push("Device trigger metadata was not readable.");
       return;
     }
-    if (list.length > MAX_DEVICE_TRIGGERS) control.notes.push(`Only the first ${MAX_DEVICE_TRIGGERS} device triggers are listed. Discovery is incomplete for this control.`);
+    if (list.length > MAX_DEVICE_TRIGGERS)
+      control.notes.push(`Only the first ${MAX_DEVICE_TRIGGERS} device triggers are listed. Discovery is incomplete for this control.`);
     for (const value of list.slice(0, MAX_DEVICE_TRIGGERS)) {
       const trigger = normalizeTrigger(value);
       if (!trigger || trigger.platform !== "device" || trigger.device_id !== control.deviceId) continue;
@@ -134,7 +164,14 @@ function addEntityGestures(raw: RawRegistry, h: Hierarchy, controls: Controls) {
       if (options && control) addEnumGestures(control, e.entityId, e.name, options);
     } else if (e.domain === "button" || e.domain === "input_button") {
       const control = controls.forEntity(e.entityId);
-      if (control) addGesture(control, { button: e.name, gesture: "Press", source: "HA button state", trigger: { platform: "state", entity_id: e.entityId }, eventEntity: e.entityId });
+      if (control)
+        addGesture(control, {
+          button: e.name,
+          gesture: "Press",
+          source: "HA button state",
+          trigger: { platform: "state", entity_id: e.entityId },
+          eventEntity: e.entityId,
+        });
     }
   }
   // One note per control, however many generic events it has.
@@ -144,7 +181,14 @@ function addEntityGestures(raw: RawRegistry, h: Hierarchy, controls: Controls) {
 function addEventGestures(control: ButtonControl, entityId: string, name: string, attrs: Record<string, unknown> | undefined) {
   const types = stringList(attrs?.event_types, 100);
   for (const type of types) {
-    addGesture(control, { button: name, gesture: readable(type), source: "HA event types", trigger: { platform: "state", entity_id: entityId }, eventEntity: entityId, eventType: type });
+    addGesture(control, {
+      button: name,
+      gesture: readable(type),
+      source: "HA event types",
+      trigger: { platform: "state", entity_id: entityId },
+      eventEntity: entityId,
+      eventType: type,
+    });
   }
   if (!types.length) control.notes.push(`${name}: no supported event types were exposed.`);
 }
@@ -156,9 +200,17 @@ function addEventGestures(control: ButtonControl, entityId: string, name: string
 // (unavailable → the last press value) from firing the action.
 function addEnumGestures(control: ButtonControl, entityId: string, name: string, options: string[]) {
   for (const option of options) {
-    addGesture(control, { button: name, gesture: option, source: "HA enum sensor", trigger: { platform: "state", entity_id: entityId, not_from: ["unavailable", "unknown"], to: option }, enumSensor: entityId });
+    addGesture(control, {
+      button: name,
+      gesture: option,
+      source: "HA enum sensor",
+      trigger: { platform: "state", entity_id: entityId, not_from: ["unavailable", "unknown"], to: option },
+      enumSensor: entityId,
+    });
   }
-  control.notes.push(`${name} reports presses as a sensor value: pressing the same way twice in a row doesn't change the value, so the second press is missed. Prefer an event entity if the integration offers one.`);
+  control.notes.push(
+    `${name} reports presses as a sensor value: pressing the same way twice in a row doesn't change the value, so the second press is missed. Prefer an event entity if the integration offers one.`,
+  );
 }
 
 // ---- Automations -----------------------------------------------------------
@@ -194,7 +246,15 @@ function findManaged(evidence: ButtonEvidence[], entityIds: ReadonlySet<string>)
   for (const a of evidence) {
     const map = storedButtonMap(a.config);
     if (map && a.id === buttonAutomationId(map.output) && buttonHash(a.config) === buttonHash(buttonConfig(a.id, a.name, map))) {
-      managed.push({ id: a.id, alias: a.name, entityId: a.entityId, enabled: a.enabled, map, fingerprint: buttonHash(a.config), blocked: blockedBindings(map, entityIds) });
+      managed.push({
+        id: a.id,
+        alias: a.name,
+        entityId: a.entityId,
+        enabled: a.enabled,
+        map,
+        fingerprint: buttonHash(a.config),
+        blocked: blockedBindings(map, entityIds),
+      });
     }
   }
   return managed;
@@ -224,7 +284,14 @@ function typesBySource(control: ButtonControl): Map<string, string[]> {
 
 // What the automation does for this gesture: the Taxis map's own binding when
 // it is one of ours, otherwise a summary of the config.
-function existingEntry(a: ButtonEvidence, ctx: MatchContext, map: ButtonMap | undefined, control: ButtonControl, gesture: ButtonGesture, match: ButtonExisting["match"]): ButtonExisting {
+function existingEntry(
+  a: ButtonEvidence,
+  ctx: MatchContext,
+  map: ButtonMap | undefined,
+  control: ButtonControl,
+  gesture: ButtonGesture,
+  match: ButtonExisting["match"],
+): ButtonExisting {
   const own = map?.bindings.filter((b) => b.controlId === control.id && b.gestureKey === gesture.key) ?? [];
   const summary = map
     ? { services: own.map((b) => b.action.service), targets: own.flatMap((b) => (b.action.entityId ? [b.action.entityId] : [])) }
@@ -243,7 +310,9 @@ function matchGestures(control: ButtonControl, ctx: MatchContext) {
       // A Taxis automation is matched by its own bindings only: its generated
       // triggers also listen to other presses and filter them in conditions.
       const match = map
-        ? map.bindings.some((b) => b.controlId === control.id && b.gestureKey === gesture.key) ? "exact" : null
+        ? map.bindings.some((b) => b.controlId === control.id && b.gestureKey === gesture.key)
+          ? "exact"
+          : null
         : matchGesture(a.config, gesture, siblings);
       if (match) control.existing[gesture.key].push(existingEntry(a, ctx, map, control, gesture, match));
     }
@@ -255,10 +324,22 @@ function findRelated(control: ButtonControl, ctx: MatchContext): ButtonExisting[
   const deviceRefs = new Set([...(control.deviceId ? [control.deviceId] : []), ...hardwareIds(ctx.raw, control.deviceId)]);
   const sourceEntities = control.deviceId ? (ctx.h.devices[control.deviceId]?.entityIds ?? []) : [control.id.replace(/^entity:/, "")];
   const refs = { all: new Set([...deviceRefs, ...sourceEntities]), device: deviceRefs };
-  const shown = new Set(Object.values(control.existing).flat().map((a) => a.id));
+  const shown = new Set(
+    Object.values(control.existing)
+      .flat()
+      .map((a) => a.id),
+  );
   return ctx.evidence
     .filter((a) => a.config && !shown.has(a.id) && !ctx.managed.some((m) => m.id === a.id) && referencesDevice(a.config, refs, control.gestures.length > 0))
-    .map((a) => ({ id: a.id, entityId: a.entityId, name: a.name, enabled: a.enabled, match: "possible" as const, ...summarizeActions(a.config, ctx.names), managed: false }));
+    .map((a) => ({
+      id: a.id,
+      entityId: a.entityId,
+      name: a.name,
+      enabled: a.enabled,
+      match: "possible" as const,
+      ...summarizeActions(a.config, ctx.names),
+      managed: false,
+    }));
 }
 
 // ---- Services --------------------------------------------------------------
@@ -267,10 +348,15 @@ async function readServices(ha: ButtonHa, notes: string[]): Promise<{ services: 
   try {
     const result = await ha.command<unknown>("get_services");
     if (!buttonRecord(result)) return { services: [], targetServices: [] };
-    const entries = Object.entries(result).flatMap(([domain, items]) => (buttonRecord(items) ? Object.entries(items).map(([name, spec]) => ({ id: `${domain}.${name}`, spec })) : []));
+    const entries = Object.entries(result).flatMap(([domain, items]) =>
+      buttonRecord(items) ? Object.entries(items).map(([name, spec]) => ({ id: `${domain}.${name}`, spec })) : [],
+    );
     return {
       services: entries.map((s) => s.id).sort(),
-      targetServices: entries.filter((s) => buttonRecord(s.spec) && "target" in s.spec).map((s) => s.id).sort(),
+      targetServices: entries
+        .filter((s) => buttonRecord(s.spec) && "target" in s.spec)
+        .map((s) => s.id)
+        .sort(),
     };
   } catch {
     notes.push("Action services could not be read; assignments cannot be queued until this read succeeds.");
@@ -278,17 +364,44 @@ async function readServices(ha: ButtonHa, notes: string[]): Promise<{ services: 
   }
 }
 
-export async function discoverButtons(ha: ButtonHa, rest: Pick<RestApi, "get">, raw: RawRegistry, h: Hierarchy): Promise<ButtonRead> {
+export type DiscoverOptions = {
+  // Look only at these controls (by id). Apply passes the controls its changes
+  // use: it needs their triggers, not the whole house's. Their device triggers
+  // are always asked for. Everything else (automations, services, the managed
+  // list, coverage) is still read in full, because the checks need all of it.
+  only?: ReadonlySet<string>;
+};
+
+export async function discoverButtons(
+  ha: ButtonHa,
+  rest: Pick<RestApi, "get">,
+  raw: RawRegistry,
+  h: Hierarchy,
+  options: DiscoverOptions = {},
+): Promise<ButtonRead> {
   const controls = new Controls(h);
-  await mapLimit([...controls.all.values()], 6, (c) => addDeviceTriggerGestures(c, ha));
+  // The automations first: which devices they mention decides which devices are
+  // asked for device triggers (trigger-candidates.ts).
+  const evidence = await readAutomations(raw, rest);
+  const mentioned = devicesMentionedBy(
+    evidence.map((a) => a.config),
+    new Set(Object.keys(h.devices)),
+  );
+  const worthAsking = buttonTriggerFilter(raw, h, mentioned);
+  const asked = [...controls.all.values()].filter((c) => (options.only ? options.only.has(c.id) : worthAsking(c)));
+  await mapLimit(asked, 6, (c) => addDeviceTriggerGestures(c, ha));
   addEntityGestures(raw, h, controls);
 
-  const evidence = await readAutomations(raw, rest);
-  const usable = new Set(Object.values(h.entities).filter((e) => !e.disabled).map((e) => e.entityId));
+  const usable = new Set(
+    Object.values(h.entities)
+      .filter((e) => !e.disabled)
+      .map((e) => e.entityId),
+  );
   const managed = findManaged(evidence, usable);
   const names: TargetNames = { device: (id) => h.devices[id]?.name ?? id, area: (id) => h.areas[id]?.name ?? id };
   const ctx: MatchContext = { evidence, managed, raw, h, names };
   for (const control of controls.all.values()) {
+    if (options.only && !options.only.has(control.id)) continue;
     matchGestures(control, ctx);
     const related = findRelated(control, ctx);
     if (related.length || !control.gestures.length) control.related = related;
@@ -298,13 +411,21 @@ export async function discoverButtons(ha: ButtonHa, rest: Pick<RestApi, "get">, 
   const notes: string[] = [];
   const { services, targetServices } = await readServices(ha, notes);
   const missing = evidence.filter((a) => !a.config).length;
-  if (missing) notes.push(`${missing} automation configs could not be read (including YAML-only or unavailable configurations); mapping coverage is incomplete.`);
-  notes.push("Only gestures exposed by HA integrations are listed. Device triggers can be incomplete until an integration discovers them; unknown gestures are never invented.");
-  notes.push("Possible references are conservative. Arbitrary MQTT topics, templates, scripts and external controllers cannot always be linked to a device; absence of a match is not proof that no other handler exists.");
+  if (missing)
+    notes.push(`${missing} automation configs could not be read (including YAML-only or unavailable configurations); mapping coverage is incomplete.`);
+  notes.push(
+    "Only gestures exposed by HA integrations are listed. Device triggers can be incomplete until an integration discovers them; unknown gestures are never invented.",
+  );
+  notes.push(
+    "Possible references are conservative. Arbitrary MQTT topics, templates, scripts and external controllers cannot always be linked to a device; absence of a match is not proof that no other handler exists.",
+  );
   return {
     inventory: {
-      controls: [...controls.all.values()].sort((a, b) => a.name.localeCompare(b.name)),
-      managed, services, targetServices, notes,
+      controls: [...controls.all.values()].filter((c) => !options.only || options.only.has(c.id)).sort((a, b) => a.name.localeCompare(b.name)),
+      managed,
+      services,
+      targetServices,
+      notes,
       coverage: { automations: evidence.length, readable: evidence.length - missing, unreadable: missing },
       fetchedAt: new Date().toISOString(),
     },

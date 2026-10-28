@@ -1,6 +1,6 @@
 {
   "name": "ha-taxis",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "private": true,
   "description": "Taxis: see and organise your Home Assistant floors, areas, devices and entities as one hierarchy.",
   "license": "MIT",
@@ -17,6 +17,8 @@
     "build:server": "esbuild server/index.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/server.js",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "format": "prettier --write",
+    "format:check": "prettier --check",
     "test": "vitest run",
     "mock-ha": "tsx scripts/mock-ha.ts",
     "dev:mock": "concurrently -n mock,server,web -c yellow,blue,magenta \"npm:mock-ha\" \"tsx watch --env-file=scripts/mock.env server/index.ts\" \"npm:dev:web\""
@@ -35,6 +37,7 @@
     "concurrently": "^10.0.6",
     "esbuild": "^0.28.2",
     "lucide-react": "^1.61.0",
+    "prettier": "3.9.10",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tailwindcss": "^4.3.3",

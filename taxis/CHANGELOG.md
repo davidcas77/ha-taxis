@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.5
+
+- **Faster Apply on big installs.** Apply used to read the whole of Home Assistant
+  (about twelve requests, including every state) after each step and again on
+  each retry, and saved a snapshot of it every time. It now reads only what each
+  check looks at (the registries to check registry edits, the states to see that
+  an automation loaded) and does one full read at the end. Nothing it checks or
+  reports has changed.
+- **Faster Buttons, References and Health.** The three pages used to read every
+  automation separately; they now share one read of them. The Buttons page also
+  asks only the devices that can have button triggers for them (devices with an
+  event or button entity, from integrations such as ZHA, Zigbee2MQTT, deCONZ,
+  Hue or Shelly, or that an automation already uses), not every device in the
+  house. A device from another integration, with no button entity and no
+  automation using it, no longer lists device-trigger gestures; it still appears
+  as a control.
+- Internal: the server is split into an app factory (`server/app.ts`), route
+  groups and a reader that owns the caches, so the Apply route is tested end to
+  end (backup, no backup, version, `only`, concurrent Apply, preflight, Ingress);
+  one redactor and one AI service replace the copies; the Supervisor backup
+  call is tested and no longer repeats the token in an error; Prettier is added
+  (checked in CI on the files a pull request changes); the browser scenarios run
+  nightly in their own workflow.
+
 ## 0.7.4
 
 - **Buttons: existing automations match the right gesture.** Event-entity gestures
@@ -28,7 +52,7 @@
   applies.
 - **Buttons: older automations that hold a refused action.** A Taxis button
   automation that already contains such an action is still read and shown,
-  marked *Blocked by Taxis's safety rules* with the reason and a link to open it
+  marked _Blocked by Taxis's safety rules_ with the reason and a link to open it
   in Home Assistant. It is never dropped silently, and Taxis refuses to write it
   again unchanged. Giving that same button a new, allowed action replaces it.
   Review your button automations after updating: an existing one is not turned off.
@@ -325,9 +349,9 @@
   switch any to another, kept in Taxis like the door/window choice. Area climate
   runs an AC in both seasons, and Heating and Valve in the heating season only; the
   Recipes cell says which it left out.
-- **Cooling temperatures.** New Climate parameters *Cool: comfort / eco / night and
-  sleep / away* (24, 27, 25, 29). In the cooling season the recipe uses them instead
-  of the heating ones, and *Lowest* and *Highest* no longer limit the target (they
+- **Cooling temperatures.** New Climate parameters _Cool: comfort / eco / night and
+  sleep / away_ (24, 27, 25, 29). In the cooling season the recipe uses them instead
+  of the heating ones, and _Lowest_ and _Highest_ no longer limit the target (they
   would cap 27 at 24). The Area climate blueprint is now **version 2**: an installed
   one shows as out of date until it is updated.
 - **Parameters.** Floors have no values: a value comes from the area, interior or
@@ -378,8 +402,8 @@
   two minutes) with the pause switch and `taxis/bathroom_fan.yaml`. The thresholds,
   the reference sensor and the sleep option are on a new **Bathroom fan** tab of
   Parameters.
-- **A shower keeps the bathroom occupied.** A new Occupancy parameter, *Shower
-  holds occupied at* (%/s, 0 is off): when the area's humidity rate sensor exists,
+- **A shower keeps the bathroom occupied.** A new Occupancy parameter, _Shower
+  holds occupied at_ (%/s, 0 is off): when the area's humidity rate sensor exists,
   a rate at or above it keeps the hold timer running (it never starts it). The
   Occupancy blueprint is now **version 4**, so an installed Occupancy shows as out
   of date until it is updated.
@@ -395,7 +419,7 @@
   below 5 W; one automation per area, the message names the machine. New **Safety**
   tab of Parameters for both.
 - **Notify services.** Left open and Appliance done send to the notify services
-  listed in a new House parameter, *Notify services* (like
+  listed in a new House parameter, _Notify services_ (like
   `notify.mobile_app_phone`), and to Home Assistant's own notifications when it is
   empty. Health says once, as info, when a recipe that notifies is installed with no
   service set. Taxis can't tell whether a service exists: that would need a read of
@@ -529,8 +553,8 @@ faces.
   already had, and its count includes them.
 - **Mock demo.** `npm run mock-ha` now has something for every check.
 - **AI (optional): connection, settings and spending cap.** A new **AI (optional)**
-  section in Settings, off by default. Choose *Anthropic (Claude)* or any
-  *OpenAI-compatible* service (OpenAI, OpenRouter, Ollama, LM Studio), enter an
+  section in Settings, off by default. Choose _Anthropic (Claude)_ or any
+  _OpenAI-compatible_ service (OpenAI, OpenRouter, Ollama, LM Studio), enter an
   API key, press **Load models**, and pick a model for the **Quick** and **Ask**
   jobs. The key is kept inside the app: it is never sent back to the browser
   (Settings shows only that it is set and its last four characters), never
@@ -575,9 +599,9 @@ faces.
   Nothing is ever deleted. The occupied sensor isn't counted as one of the
   area's sensors.
 - **Occupancy: extended and sleep.** Once an area has been occupied for the
-  *extended after* time, the hold timer uses the longer *extended hold
-  timeout*. In a bedroom with a bed sensor (marked on the area's Capabilities
-  tab), the timer uses the *sleep hold timeout* while the bed sensor is on and
+  _extended after_ time, the hold timer uses the longer _extended hold
+  timeout_. In a bedroom with a bed sensor (marked on the area's Capabilities
+  tab), the timer uses the _sleep hold timeout_ while the bed sensor is on and
   never runs out. The extended time is read from the occupied sensor's last
   change, so there is nothing more to create; a Home Assistant restart starts
   the count again.
@@ -588,12 +612,12 @@ faces.
   never the main ones. Task lights are not switched on by the recipe, and turning
   off still uses the whole light group. When someone changes the lights by hand
   (the app, a dashboard, a wall switch), the recipe leaves the area alone until it
-  clears, becomes occupied again after being clear, or the *manual override*
+  clears, becomes occupied again after being clear, or the _manual override_
   time is up. The recipe makes a timer for it (`timer.<code>_override`). The
   occupied sensor blinking when the hold timer restarts no longer dims the
   lights: the area counts as clear after two seconds.
-- **Media off.** Turns off the area's speakers after *speakers off when clear
-  for* (15 min) and its TVs after *TVs off when clear for* (30 min). Needs
+- **Media off.** Turns off the area's speakers after _speakers off when clear
+  for_ (15 min) and its TVs after _TVs off when clear for_ (30 min). Needs
   Occupancy and a counted speaker or TV. Uses the area's media group when it has
   one kind of player, the players themselves otherwise.
 - The Occupancy and Motion lights blueprints are now version 3 (Media off

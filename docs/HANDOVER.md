@@ -1,7 +1,7 @@
 # Taxis handover
 
 State at **0.7.3** (tag `v0.7.3`) plus the unreleased 0.7.4 safety-and-honesty
-batch described in `taxis/CHANGELOG.md` under *Unreleased* (button action
+batch described in `taxis/CHANGELOG.md` under _Unreleased_ (button action
 allowlist, AI key and address, Ingress-only, deletion wording, privacy text,
 documentation). Written for whoever continues the work: what Taxis is, how it got
 here, what is in it, how to work on it, and what is left. Details of the
@@ -21,7 +21,7 @@ A Home Assistant app (add-on, Ingress panel) that **organises Home Assistant
 natively**. It reads the registries, shows the home as floors → areas → devices
 → entities, lets the user edit all of it, and applies the edits in one go
 (preview → backup → apply → read back and verify). On top of that it knows what
-each area *has* (capabilities), creates the helpers and automations for it from
+each area _has_ (capabilities), creates the helpers and automations for it from
 **parameters**, guides setup room by room (the House guide), maps remote and wall
 button gestures to actions (Buttons), and checks the install for things that are
 broken (Health). Optional AI (Ask Taxis) and an optional decision service (Jev)
@@ -61,20 +61,20 @@ Hard rules that hold everywhere:
 
 ## 2. History
 
-| Version | What it added |
-| --- | --- |
-| 0.1 | Read HA, show the hierarchy |
-| 0.2 | Edit entities, devices, areas, floors |
-| 0.3 | Labels and categories, bulk edits |
-| 0.4 | Naming scheme and checks, entity-id rename together with the automations, scripts, scenes and dashboards that use the id |
-| 0.5.0 | Smart areas: capabilities, canonical helpers, parameters, recipes, blueprints, climate, Health, optional AI |
-| 0.5.1 | Devices and entities in Organize (table or records), apply one change, impact of an id rename, "why" for failing entities, AC / heating / valve, no floor-level parameters, many UI refinements |
-| 0.6.x | Recipes page, shared Records layouts, Apply recovery and history, installed blueprints browser, Area codes tab with floor codes, three AI tiers (Low / Medium / Strong), shared Type words and Aggregation markers |
-| 0.7.0 | House guide: room type and goals, equipment, helpers, comfort settings, guided automations, room test records, guest / away / sleep modes |
-| 0.7.1 | Ask Taxis, AI administration, Jev decisions (room-note review) |
-| 0.7.2 | Ask Taxis as a compact floating window |
-| 0.7.3 | Buttons: input inventory, grouped output automations, AI review of button automations |
-| Unreleased | Button matching per press; the safety-and-honesty batch (§1) |
+| Version    | What it added                                                                                                                                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.1        | Read HA, show the hierarchy                                                                                                                                                                                        |
+| 0.2        | Edit entities, devices, areas, floors                                                                                                                                                                              |
+| 0.3        | Labels and categories, bulk edits                                                                                                                                                                                  |
+| 0.4        | Naming scheme and checks, entity-id rename together with the automations, scripts, scenes and dashboards that use the id                                                                                           |
+| 0.5.0      | Smart areas: capabilities, canonical helpers, parameters, recipes, blueprints, climate, Health, optional AI                                                                                                        |
+| 0.5.1      | Devices and entities in Organize (table or records), apply one change, impact of an id rename, "why" for failing entities, AC / heating / valve, no floor-level parameters, many UI refinements                    |
+| 0.6.x      | Recipes page, shared Records layouts, Apply recovery and history, installed blueprints browser, Area codes tab with floor codes, three AI tiers (Low / Medium / Strong), shared Type words and Aggregation markers |
+| 0.7.0      | House guide: room type and goals, equipment, helpers, comfort settings, guided automations, room test records, guest / away / sleep modes                                                                          |
+| 0.7.1      | Ask Taxis, AI administration, Jev decisions (room-note review)                                                                                                                                                     |
+| 0.7.2      | Ask Taxis as a compact floating window                                                                                                                                                                             |
+| 0.7.3      | Buttons: input inventory, grouped output automations, AI review of button automations                                                                                                                              |
+| Unreleased | Button matching per press; the safety-and-honesty batch (§1)                                                                                                                                                       |
 
 Full notes per version: `taxis/CHANGELOG.md`.
 
@@ -131,7 +131,7 @@ Apply re-reads, checks the expected fingerprint, writes, reads back and verifies
 the enabled state. Coexistence with existing handlers needs an explicit tick.
 Loops between virtual buttons are refused. An optional AI review (Medium) explains
 the matches from a previewed summary. A stored map holding an action that the
-rules now refuse is read and shown as *Blocked by Taxis's safety rules*
+rules now refuse is read and shown as _Blocked by Taxis's safety rules_
 (`ButtonManaged.blocked`), is never dropped, and is refused on re-save (planner and
 Apply).
 
@@ -272,15 +272,44 @@ only).
 
 ## 6. Code map
 
-| Path | Contents |
-| --- | --- |
-| `shared/` | Pure logic and types, no IO, tested directly (inventory, helpers, parameters, recipes, blueprints, climate, health, naming, roles, device-tree, entity-diagnosis, apply-plan, route-hash, sort, guide and guide-checks, house-modes, area-capabilities, ai and ai-form and ai-url, assistant, jev, **buttons, button-match, button-actions**) |
-| `server/` | Hono server. `ha/` WebSocket + REST clients and the allowlists, Supervisor backup call; `changes/` store and apply pipeline (`apply.ts`, `helpers.ts`, `recipes.ts`, `all.ts`, history); `buttons/` discovery, mapping, routes and Apply for button automations; `references/` finds and rewrites entity ids in configs; `health/assemble.ts`; `ai/` providers, ledger, service, routes, assistant; `jev/` service, ledger, routes; `model/hierarchy.ts`; `settings.ts` (SQLite, one JSON per key); `guard.ts`, `ingress.ts`, `config.ts` |
-| `web/src/` | React 19 + Tailwind SPA. `state.tsx` is the store (and the route type); one file per area of the UI (`spaces`, `organize`, `devices-view`, `capabilities`, `helpers`, `parameters`, `parameter-table`, `area-codes`, `recipes`, `recipe-records`, `health`, `changes`, `naming` (Settings), `labels`, `guide*`, `house-modes`, `buttons`, `assistant`, `ai`, `ai-admin`, `jev*`) |
-| `scripts/mock-ha.ts`, `mock-ha-core.ts` | The fake Home Assistant with an invented house, including broken groups, an orphan, a failed integration, an offline device, a low battery |
-| `scripts/*-browser.py` | Playwright scenarios against the mock (run by hand, not in CI) |
-| `taxis/` | App manifest (`config.yaml`), Dockerfile, `DOCS.md`, `CHANGELOG.md` |
-| `docs/design/` | Designs: smart-areas, house-guide, ask-taxis, jev-decisions, button-map |
+| Path                                    | Contents                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared/`                               | Pure logic and types, no IO, tested directly (inventory, helpers, parameters, recipes, blueprints, climate, health, naming, roles, device-tree, entity-diagnosis, apply-plan, route-hash, sort, guide and guide-checks, house-modes, area-capabilities, ai and ai-form and ai-url, assistant, jev, **buttons, button-match, button-actions**)                                    |
+| `server/`                               | Hono server, split so the HTTP app can be tested without a server, a database file or a Home Assistant (see _Server layout_ below)                                                                                                                                                                                                                                               |
+| `web/src/`                              | React 19 + Tailwind SPA. `state.tsx` is the store (and the route type); one file per area of the UI (`spaces`, `organize`, `devices-view`, `capabilities`, `helpers`, `parameters`, `parameter-table`, `area-codes`, `recipes`, `recipe-records`, `health`, `changes`, `naming` (Settings), `labels`, `guide*`, `house-modes`, `buttons`, `assistant`, `ai`, `ai-admin`, `jev*`) |
+| `scripts/mock-ha.ts`, `mock-ha-core.ts` | The fake Home Assistant with an invented house, including broken groups, an orphan, a failed integration, an offline device, a low battery                                                                                                                                                                                                                                       |
+| `scripts/*-browser.py`                  | Playwright scenarios against the mock (nightly and on demand in `.github/workflows/browser.yml`, not on every pull request)                                                                                                                                                                                                                                                      |
+| `taxis/`                                | App manifest (`config.yaml`), Dockerfile, `DOCS.md`, `CHANGELOG.md`                                                                                                                                                                                                                                                                                                              |
+| `docs/design/`                          | Designs: smart-areas, house-guide, ask-taxis, jev-decisions, button-map                                                                                                                                                                                                                                                                                                          |
+
+### Server layout
+
+| Path             | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`       | The process entry only: reads the environment, builds the real dependencies (database, WebSocket and REST clients, Supervisor backup), calls `createApp()`, listens, handles signals                                                                                                                                                                                                                                                                                                     |
+| `app.ts`         | `createApp(deps)`: builds the Hono app from injected dependencies (`context.ts`: mode, target, HA clients, `backup`, stores, clock, logger). The peer check (Ingress only in app mode), the `x-taxis-request` guard and the settings concurrency middleware are registered here. No `process.env`, no module-level state                                                                                                                                                                 |
+| `context.ts`     | `AppDeps` (what the entry injects) and `AppContext` (what the route groups share: the reader, the redactor, the one AI service)                                                                                                                                                                                                                                                                                                                                                          |
+| `routes/`        | One file per group of routes, each `xRoutes(ctx)` mounted under `/api`: `hierarchy` (hierarchy, blueprints, recipes state), `changes` (the list, history, repairs), `apply` (**the one route that writes**), `settings` (naming, groups, naming ignores, inventory, parameters, guide), `health`, `references`, `ai` (AI settings, Ask Taxis, the button routes), `jev`, `ui` (the built web UI). `buttons/routes.ts`, `ai/routes.ts`, `ai/assistant.ts`, `jev/routes.ts` keep their own |
+| `ha/reader.ts`   | `HaReader`: every cache and its generation counter (the registry read, the button inventory, the references snapshot, the blueprint list), the stored-config cache (`ConfigCache`) shared by References, Health, Buttons and Recipes, and the Apply lock. `invalidate()` is what Apply calls                                                                                                                                                                                             |
+| `ha/registry.ts` | `readRegistry(ha, scope)`: the full read, or only the parts a check needs (`READS.registries`, `READS.states`...). Parts not asked for come back empty, never stale                                                                                                                                                                                                                                                                                                                      |
+| `ha/`            | `socket.ts` and `rest.ts` (clients and the allowlists), `supervisor.ts` (the backup call)                                                                                                                                                                                                                                                                                                                                                                                                |
+| `redact.ts`      | `redactSecrets()` / `secretRedactor()`: the one place secrets are removed from text (HA token, AI and Jev keys, key- and Authorization-shaped text)                                                                                                                                                                                                                                                                                                                                      |
+| `changes/`       | store, preview, history and the apply pipeline (`apply.ts`, `helpers.ts`, `recipes.ts`, `all.ts`, `preflight.ts`)                                                                                                                                                                                                                                                                                                                                                                        |
+| `buttons/`       | discovery, mapping, routes and Apply for button automations; `trigger-candidates.ts` decides which devices are asked for device triggers                                                                                                                                                                                                                                                                                                                                                 |
+| other            | `references/` (finds and rewrites entity ids in configs), `health/assemble.ts`, `ai/`, `jev/`, `model/hierarchy.ts`, `settings.ts` (SQLite, one JSON per key), `guard.ts`, `ingress.ts`, `config.ts`                                                                                                                                                                                                                                                                                     |
+
+`server/app.test.ts` calls the whole app with `app.request()` against the fake
+Home Assistant (`references/fake-ha.ts`) and asserts what was written; use it as
+the model for a new route test.
+
+How much Apply reads of Home Assistant: a full read is about twelve commands
+(and `get_states` can be megabytes). Apply asks `reader.readParts(READS.x)` for
+each check instead, keeps the configs it reads in a cache of its own that forgets
+a config as soon as Apply writes it, and makes **one** full read at the end, which
+fills the cache and keeps a snapshot. Snapshots (the `snapshots` table) are saved
+only by that read and by an explicit Refresh of the main page; nothing reads them
+yet. A new check must name what it needs in `READS`; a check that asks for too
+little sees empty lists and fails in the tests (`fake-ha.ts` blanks the same way).
 
 Order of an apply: registry changes first (with renames, and what uses the old
 ids), then blueprints, helpers, the automations (the recipes' and the button
@@ -294,8 +323,9 @@ Server-only secrets and anything that reads `process.env` stay out of `shared/`.
 npm install
 npm run dev:mock      # fake HA + server + UI at http://localhost:5173
 npm run typecheck
-npm test              # vitest, 1486 tests in 61 files at the 0.7.4 safety batch
+npm test              # vitest; 1486 tests in 61 files at the 0.7.4 safety batch
 npm run build
+npm run format -- path/to/file.ts        # Prettier (pinned); also: format:check
 ```
 
 Notes from the last sessions:
@@ -310,14 +340,19 @@ Notes from the last sessions:
 - Tailwind v4 buttons have no pointer cursor by default; a global rule in
   `web/src/styles.css` restores it.
 - Windows: git warns about LF to CRLF; harmless.
-- The button code (`server/buttons/*`, `web/src/buttons.tsx`, `shared/buttons.ts`)
-  is written in a dense one-line style. New code there should be readable, with
-  small named functions; reformat the old code only in a change of its own.
+- Formatting is Prettier, pinned exactly (`.prettierrc`: width 160, double
+  quotes, semicolons, trailing commas). The repository is **not** formatted as a
+  whole: CI (`ci.yml`) runs `prettier --check` only on the files a pull request
+  changes, so a file gets formatted when somebody touches it. Run
+  `npm run format -- <files>` before pushing. The button code and the biggest
+  web files were formatted in the 0.7.5 server batch; the rest is as it was.
+- The browser scenarios (`scripts/*-browser.py`) run in `.github/workflows/browser.yml`
+  nightly and on demand, not on every pull request.
 
 ### Release
 
 1. Bump `version` in `taxis/config.yaml` and `package.json` (and lock), add a
-   `taxis/CHANGELOG.md` entry (turn *Unreleased* into the version).
+   `taxis/CHANGELOG.md` entry (turn _Unreleased_ into the version).
 2. PR to `main`, CI (`check`, `image`) must pass, merge.
 3. Tag `v<version>` on the merge commit and push the tag.
 4. `release.yml` builds amd64 and aarch64 images to `ghcr.io`; HA then offers the
@@ -358,7 +393,7 @@ Also open:
 - **To watch:** the "stale" rule (24 h) may flag door sensors that rarely report;
   an id rename with a backup has been exercised mostly against the mock.
 - **After updating a real install:** a Taxis button automation made before the
-  safety rules may show *Blocked by Taxis's safety rules*. It stays active in HA;
+  safety rules may show _Blocked by Taxis's safety rules_. It stays active in HA;
   the owner changes or removes it there, or assigns the button a new action.
 - **Upstream:** two button entities of one Aqara device appear as enum sensors,
   not event entities, in the Aqara-LANLink integration; worth an issue there.

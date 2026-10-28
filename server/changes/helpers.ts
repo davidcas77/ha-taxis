@@ -2,6 +2,7 @@ import { isTempId, sameValue } from "../../shared/changes.ts";
 import { parsePeriods, sameSchedule, scheduleDays } from "../../shared/periods.ts";
 import { formatDuration, parseDuration, RATE_WINDOW } from "../../shared/recipes.ts";
 import type { Change } from "../../shared/types.ts";
+import { READS, type FreshRead } from "../ha/registry.ts";
 import type { RawEntity, RawRegistry } from "../model/hierarchy.ts";
 import type { Outcome } from "./apply.ts";
 
@@ -57,7 +58,7 @@ export type HelperWs = {
 export type HelperIO = {
   ha: HelperWs;
   rest: FlowRest;
-  readFresh: () => Promise<RawRegistry>;
+  readFresh: FreshRead;
   // From the registry step of the same Apply: real ids of areas created in the
   // list, and entity ids renamed (old to new), which members and targets may
   // still carry.
@@ -68,8 +69,24 @@ export type HelperIO = {
 };
 
 type Kind = "group" | "min_max" | "timer" | "input_boolean" | "template" | "schedule" | "derivative";
-const PLATFORM: Record<Kind, string> = { group: "group", min_max: "min_max", timer: "timer", input_boolean: "input_boolean", template: "template", schedule: "schedule", derivative: "derivative" };
-const TITLES: Record<Kind, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule", derivative: "derivative sensor" };
+const PLATFORM: Record<Kind, string> = {
+  group: "group",
+  min_max: "min_max",
+  timer: "timer",
+  input_boolean: "input_boolean",
+  template: "template",
+  schedule: "schedule",
+  derivative: "derivative",
+};
+const TITLES: Record<Kind, string> = {
+  group: "group",
+  min_max: "min/max sensor",
+  timer: "timer",
+  input_boolean: "toggle",
+  template: "template sensor",
+  schedule: "schedule",
+  derivative: "derivative sensor",
+};
 // Made by a config flow, so their entity has a config entry. A timer and a
 // toggle are storage helpers: no config entry, found by the id they were given.
 const FLOW_MADE: ReadonlySet<Kind> = new Set<Kind>(["group", "min_max", "template", "derivative"]);
@@ -94,7 +111,10 @@ class Flows {
   private async post(path: string, body: unknown): Promise<Record<string, unknown>> {
     const res = await this.rest.request("POST", path, body);
     if (res.status < 200 || res.status >= 300) {
-      const message = res.body && typeof res.body === "object" && typeof (res.body as { message?: unknown }).message === "string" ? `: ${(res.body as { message: string }).message}` : "";
+      const message =
+        res.body && typeof res.body === "object" && typeof (res.body as { message?: unknown }).message === "string"
+          ? `: ${(res.body as { message: string }).message}`
+          : "";
       throw new Error(`Home Assistant refused it (HTTP ${res.status}${message}).`);
     }
     if (!res.body || typeof res.body !== "object" || Array.isArray(res.body)) throw new Error("Home Assistant answered in a way Taxis couldn't read.");
@@ -134,20 +154,29 @@ class Flows {
   /** Creates a min/max sensor (the mean) and returns its config entry id. */
   async createMinMax(name: string, entities: string[]): Promise<string> {
     const start = await this.step("/config/config_entries/flow", { handler: "min_max" }, "form");
-    return this.entry(await this.step(`/config/config_entries/flow/${this.id(start)}`, { name, entity_ids: entities, type: "mean", round_digits: 1 }, "create_entry"));
+    return this.entry(
+      await this.step(`/config/config_entries/flow/${this.id(start)}`, { name, entity_ids: entities, type: "mean", round_digits: 1 }, "create_entry"),
+    );
   }
 
   /** Creates a derivative sensor (the rate of change of `source` per second) and returns its config entry id. */
   async createDerivative(name: string, source: string): Promise<string> {
     const start = await this.step("/config/config_entries/flow", { handler: "derivative" }, "form");
-    return this.entry(await this.step(`/config/config_entries/flow/${this.id(start)}`, { name, source, round: 3, unit_time: "s", time_window: { ...RATE_WINDOW } }, "create_entry"));
+    return this.entry(
+      await this.step(
+        `/config/config_entries/flow/${this.id(start)}`,
+        { name, source, round: 3, unit_time: "s", time_window: { ...RATE_WINDOW } },
+        "create_entry",
+      ),
+    );
   }
 
   /** Creates the template binary sensor of a recipe and returns its config entry id. */
   async createTemplateSensor(name: string, state: string, deviceClass: string): Promise<string> {
     const menu = await this.step("/config/config_entries/flow", { handler: "template", show_advanced_options: false }, "menu");
     const flowId = this.id(menu);
-    if (Array.isArray(menu.menu_options) && !menu.menu_options.includes("binary_sensor")) throw new Error("Home Assistant doesn't offer a template binary sensor.");
+    if (Array.isArray(menu.menu_options) && !menu.menu_options.includes("binary_sensor"))
+      throw new Error("Home Assistant doesn't offer a template binary sensor.");
     await this.step(`/config/config_entries/flow/${flowId}`, { next_step_id: "binary_sensor" }, "form");
     return this.entry(await this.step(`/config/config_entries/flow/${flowId}`, { name, state, device_class: deviceClass }, "create_entry"));
   }
@@ -155,7 +184,9 @@ class Flows {
   /** Sets a group's members, keeping its other options as they are. */
   async setMembers(entryId: string, entities: string[]): Promise<void> {
     const start = await this.step("/config/config_entries/options/flow", { handler: entryId }, "form");
-    const schema = Array.isArray(start.data_schema) ? (start.data_schema as { name?: unknown; default?: unknown; description?: { suggested_value?: unknown } }[]) : [];
+    const schema = Array.isArray(start.data_schema)
+      ? (start.data_schema as { name?: unknown; default?: unknown; description?: { suggested_value?: unknown } }[])
+      : [];
     const body: Record<string, unknown> = { entities };
     // The form asks for the other values again; send what it shows now.
     for (const name of ["hide_members", "all"]) {
@@ -177,9 +208,13 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
 
   let before: RawRegistry;
   try {
-    before = await io.readFresh();
+    before = await io.readFresh(READS.entitiesAndStates);
   } catch (e) {
-    return changes.map((c) => ({ changeId: c.id, ok: false, message: `Taxis couldn't read Home Assistant first (${(e as Error).message}), so nothing was sent.` }));
+    return changes.map((c) => ({
+      changeId: c.id,
+      ok: false,
+      message: `Taxis couldn't read Home Assistant first (${(e as Error).message}), so nothing was sent.`,
+    }));
   }
 
   // An id may have been renamed by the registry step of this same Apply.
@@ -240,14 +275,19 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
       // Already there as the helper it should be: an earlier Apply made it and
       // stopped before placing it. Don't make another.
       if (held.platform !== PLATFORM[a.helper] || (FLOW_MADE.has(a.helper) && held.config_entry_id == null)) {
-        return { ok: false, message: `${canonical} is already taken by something else (${held.platform || "no integration"}). Change the helper name in Settings, remove this change and plan again.` };
+        return {
+          ok: false,
+          message: `${canonical} is already taken by something else (${held.platform || "no integration"}). Change the helper name in Settings, remove this change and plan again.`,
+        };
       }
       details.push("It was already in Home Assistant; Taxis only checked where it is.");
       uniqueId = held.unique_id ?? null;
     } else {
       // The same helper under another id: made by an earlier Apply that stopped
       // before renaming it, or by hand. A second one would be a duplicate.
-      const twin = before.entities.find((e) => e.platform === PLATFORM[a.helper] && e.entity_id.startsWith(`${domain}.`) && (e.name ?? e.original_name) === a.name);
+      const twin = before.entities.find(
+        (e) => e.platform === PLATFORM[a.helper] && e.entity_id.startsWith(`${domain}.`) && (e.name ?? e.original_name) === a.name,
+      );
       if (twin) {
         return {
           ok: false,
@@ -270,7 +310,8 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
           const item = await io.ha.write<Record<string, unknown>>("schedule/create", { name: a.name, ...scheduleDays(parsed.days) });
           if (typeof item?.id !== "string") throw new Error("Home Assistant didn't say which schedule it made.");
           uniqueId = item.id;
-          if (!sameSchedule(item, parsed.days)) throw new Error(`Home Assistant made the schedule, but stored other periods than Taxis sent. Check ${canonical} in Home Assistant.`);
+          if (!sameSchedule(item, parsed.days))
+            throw new Error(`Home Assistant made the schedule, but stored other periods than Taxis sent. Check ${canonical} in Home Assistant.`);
           made = await entityOfStorage("schedule", item.id).catch(() => null);
         } else if (a.helper === "input_boolean") {
           // No initial state: a new toggle is off, so the area's recipes run until it is turned on.
@@ -292,7 +333,11 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
       } catch (e) {
         return { ok: false, message: (e as Error).message };
       }
-      if (!made) return { ok: false, message: `Home Assistant made the ${kind}, but Taxis couldn't find its entity to rename it. Check the Helpers page in Home Assistant, then plan again.` };
+      if (!made)
+        return {
+          ok: false,
+          message: `Home Assistant made the ${kind}, but Taxis couldn't find its entity to rename it. Check the Helpers page in Home Assistant, then plan again.`,
+        };
       entityId = made.entity_id;
       details.push(`Created ${entityId}.`);
     }
@@ -305,7 +350,10 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
       try {
         await io.ha.write("config/entity_registry/update", placing);
       } catch (e) {
-        return { ok: false, message: `The ${kind} was created as ${entityId}, but Home Assistant refused to ${placing.new_entity_id ? "rename it and " : ""}put it in its area (${(e as Error).message}). Apply again to finish.` };
+        return {
+          ok: false,
+          message: `The ${kind} was created as ${entityId}, but Home Assistant refused to ${placing.new_entity_id ? "rename it and " : ""}put it in its area (${(e as Error).message}). Apply again to finish.`,
+        };
       }
       if (placing.new_entity_id) details.push(`Renamed to ${canonical}.`);
       if (placing.area_id) details.push(`Put in ${before.areas.find((x) => x.area_id === areaId)?.name ?? areaId}.`);
@@ -317,7 +365,10 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
         await io.ha.write("timer/update", { timer_id: uniqueId, duration: formatDuration(a.duration!) });
         details.push(`Duration set to ${a.duration! / 60} min.`);
       } catch (e) {
-        return { ok: false, message: `The timer is ready as ${canonical}, but Home Assistant refused to set its duration (${(e as Error).message}). Apply again to finish.` };
+        return {
+          ok: false,
+          message: `The timer is ready as ${canonical}, but Home Assistant refused to set its duration (${(e as Error).message}). Apply again to finish.`,
+        };
       }
     }
 
@@ -329,7 +380,10 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
           await io.ha.write("config/area_registry/update", { area_id: areaId, [field]: canonical });
           details.push(`Set as the area's ${a.set_area_sensor} sensor.`);
         } catch (e) {
-          return { ok: false, message: `The ${kind} is ready as ${canonical}, but Home Assistant refused to make it the area's ${a.set_area_sensor} sensor (${(e as Error).message}). Apply again to finish.` };
+          return {
+            ok: false,
+            message: `The ${kind} is ready as ${canonical}, but Home Assistant refused to make it the area's ${a.set_area_sensor} sensor (${(e as Error).message}). Apply again to finish.`,
+          };
         }
       }
     }
@@ -342,7 +396,8 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
     const target = current(c.targetId);
     const item = entryOf(target);
     if (!item) return { ok: false, message: "It's no longer in Home Assistant." };
-    if (item.platform !== "timer" || !item.unique_id) return { ok: false, message: "It isn't a timer set up in the Home Assistant UI, so its duration can't be changed here." };
+    if (item.platform !== "timer" || !item.unique_id)
+      return { ok: false, message: "It isn't a timer set up in the Home Assistant UI, so its duration can't be changed here." };
     if (durationOf(before, target) === seconds) return { ok: true, message: "Applied (the duration was already this)." };
     try {
       await io.ha.write("timer/update", { timer_id: item.unique_id, duration: formatDuration(seconds) });
@@ -360,12 +415,14 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
     const target = current(c.targetId);
     const item = entryOf(target);
     if (!item) return { ok: false, message: "It's no longer in Home Assistant." };
-    if (item.platform !== "schedule" || !item.unique_id) return { ok: false, message: "It isn't a schedule set up in the Home Assistant UI, so its periods can't be changed here." };
+    if (item.platform !== "schedule" || !item.unique_id)
+      return { ok: false, message: "It isn't a schedule set up in the Home Assistant UI, so its periods can't be changed here." };
     const name = item.name ?? item.original_name ?? String(before.states.find((s) => s.entity_id === target)?.attributes?.friendly_name ?? "");
     if (!name) return { ok: false, message: "Taxis couldn't read the schedule's name, which Home Assistant needs to change it." };
     try {
       const answer = await io.ha.write<Record<string, unknown>>("schedule/update", { schedule_id: item.unique_id, name, ...scheduleDays(parsed.days) });
-      if (!sameSchedule(answer, parsed.days)) return { ok: false, message: "Home Assistant answered with other periods than Taxis sent. Check the schedule in Home Assistant." };
+      if (!sameSchedule(answer, parsed.days))
+        return { ok: false, message: "Home Assistant answered with other periods than Taxis sent. Check the schedule in Home Assistant." };
     } catch (e) {
       return { ok: false, message: (e as Error).message };
     }
@@ -377,14 +434,16 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
     const target = current(c.targetId);
     const item = entryOf(target);
     if (!item) return { ok: false, message: "It's no longer in Home Assistant." };
-    if (item.platform !== "group" || !item.config_entry_id) return { ok: false, message: "It isn't a group set up in the Home Assistant UI, so its members can't be changed here." };
+    if (item.platform !== "group" || !item.config_entry_id)
+      return { ok: false, message: "It isn't a group set up in the Home Assistant UI, so its members can't be changed here." };
     const missing = wanted.find((m) => !known.has(m));
     if (missing) return { ok: false, message: `“${missing}” is no longer in Home Assistant.` };
     const now = membersOf(before, target);
     if (now && sameSet(now, wanted)) return { ok: true, message: "Applied (the members were already these)." };
     // Changed in Home Assistant since the edit was made: reported, not overwritten.
     const was = (c.before.entities as string[] | undefined) ?? [];
-    if (now && !sameSet(now, was.map(current))) return { ok: false, message: "Its members were changed in Home Assistant after you made this edit. Remove this change and plan again." };
+    if (now && !sameSet(now, was.map(current)))
+      return { ok: false, message: "Its members were changed in Home Assistant after you made this edit. Remove this change and plan again." };
     try {
       await flows.setMembers(item.config_entry_id, wanted);
     } catch (e) {
@@ -397,7 +456,13 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
   // beside, and a group before the group that gathers it (a floor's light group
   // after the groups of its areas); each one on its own, because the next needs
   // the registry as it is.
-  for (const c of [...inOrder(changes.filter((x) => x.op === "create"), current), ...changes.filter((x) => x.op === "update")]) {
+  for (const c of [
+    ...inOrder(
+      changes.filter((x) => x.op === "create"),
+      current,
+    ),
+    ...changes.filter((x) => x.op === "update"),
+  ]) {
     const done = await (c.op === "create" ? createOne(c) : "duration" in c.after ? updateTimer(c) : "periods" in c.after ? updateSchedule(c) : updateOne(c));
     // What was just made can be a member of the next group.
     if (done.ok && c.op === "create") known.add(String(c.after.entity_id));
@@ -410,9 +475,10 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
   for (let attempt = 0; attempt < 4 && toCheck.length > 0; attempt++) {
     let after: RawRegistry;
     try {
-      after = await io.readFresh();
+      after = await io.readFresh(READS.entitiesAndStates);
     } catch (e) {
-      for (const c of toCheck) outcome.set(c.id, { changeId: c.id, ok: false, message: `Sent, but Taxis couldn't read Home Assistant back to check it (${(e as Error).message}).` });
+      for (const c of toCheck)
+        outcome.set(c.id, { changeId: c.id, ok: false, message: `Sent, but Taxis couldn't read Home Assistant back to check it (${(e as Error).message}).` });
       break;
     }
     const problems = new Map<number, string>();
@@ -460,7 +526,9 @@ export function verify(c: Change, fresh: RawRegistry, current: (id: string) => s
   if (c.op === "update" && "periods" in c.after) return null;
   if (c.op === "update" && "duration" in c.after) {
     const seconds = durationOf(fresh, current(c.targetId));
-    return seconds === c.after.duration ? null : `Its duration reads ${seconds === null ? "nothing" : `${seconds / 60} min`} in Home Assistant, not ${(c.after.duration as number) / 60} min.`;
+    return seconds === c.after.duration
+      ? null
+      : `Its duration reads ${seconds === null ? "nothing" : `${seconds / 60} min`} in Home Assistant, not ${(c.after.duration as number) / 60} min.`;
   }
   if (c.op === "update") {
     const target = current(c.targetId);
@@ -469,7 +537,14 @@ export function verify(c: Change, fresh: RawRegistry, current: (id: string) => s
     if (!members) return "Home Assistant doesn't show its members.";
     return sameSet(members, wanted) ? null : `Its members read ${JSON.stringify(members)} in Home Assistant, not ${JSON.stringify(wanted)}.`;
   }
-  const a = c.after as { helper: Kind; entity_id: string; entities?: string[]; area_id?: string | null; set_area_sensor?: "temperature" | "humidity"; duration?: number };
+  const a = c.after as {
+    helper: Kind;
+    entity_id: string;
+    entities?: string[];
+    area_id?: string | null;
+    set_area_sensor?: "temperature" | "humidity";
+    duration?: number;
+  };
   const item = fresh.entities.find((e) => e.entity_id === a.entity_id);
   if (!item) return `Home Assistant doesn't show ${a.entity_id} after creating it.`;
   if (item.platform !== PLATFORM[a.helper]) return `${a.entity_id} reads as ${item.platform || "no integration"} in Home Assistant, not a ${TITLES[a.helper]}.`;
@@ -489,7 +564,8 @@ export function verify(c: Change, fresh: RawRegistry, current: (id: string) => s
     if (a.set_area_sensor) {
       const field = a.set_area_sensor === "temperature" ? "temperature_entity_id" : "humidity_entity_id";
       const read = fresh.areas.find((x) => x.area_id === areaId)?.[field] ?? null;
-      if (!sameValue(read, a.entity_id)) return `The area's ${a.set_area_sensor} sensor reads ${JSON.stringify(read)} in Home Assistant, not ${JSON.stringify(a.entity_id)}.`;
+      if (!sameValue(read, a.entity_id))
+        return `The area's ${a.set_area_sensor} sensor reads ${JSON.stringify(read)} in Home Assistant, not ${JSON.stringify(a.entity_id)}.`;
     }
   }
   return null;

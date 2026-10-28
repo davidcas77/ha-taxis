@@ -1,0 +1,5 @@
+# Not source, or generated.
+node_modules
+dist
+data
+package-lock.json
