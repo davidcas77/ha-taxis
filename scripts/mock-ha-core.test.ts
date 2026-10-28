@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { buildMockRegistry, containsEntityId, handleMock, handleMockRest, withSmartDemo } from "./mock-ha-core.ts";
+import { buildMockRegistry, containsEntityId, handleMock, handleMockRest, withButtonDemo, withSmartDemo } from "./mock-ha-core.ts";
+import { discoverButtons } from "../server/buttons/discovery.ts";
 import { buildHierarchy, type RawConfigEntry } from "../server/model/hierarchy.ts";
 import { diagnose } from "../shared/entity-diagnosis.ts";
 import { planHelpers } from "../shared/helpers.ts";
@@ -491,5 +492,32 @@ describe("the demo house explains what does not work", () => {
   it("proposes the Loft's own group the lights the area counts, taking out the one that is gone", () => {
     const row = planHelpers(h, EMPTY_INVENTORY, { ...DEFAULT_NAMING }).find((r) => r.canonicalId === "light.loft_all");
     expect(row).toMatchObject({ status: "update-members", added: [], removed: ["light.loft_old_lamp"], missing: ["light.loft_old_lamp"] });
+  });
+});
+
+describe("button demo", () => {
+  const home = withButtonDemo(buildMockRegistry());
+  const ha = { command: async <T>(type: string, p?: Record<string, unknown>) => ok<T>(home, type, p ?? {}) };
+  const rest = { get: async (kind: string, id: string) => handleMockRest(home, "GET", `/api/config/${kind}/config/${id}`, undefined).body as Record<string, unknown> };
+  const read = () => discoverButtons(ha, rest as never, home, buildHierarchy(home, "now"));
+  const matchesOf = (control: { gestures: { key: string; gesture: string; eventType?: string; eventEntity?: string; enumSensor?: string }[]; existing: Record<string, { id: string; match: string }[]> }, entity: string, id: string) =>
+    Object.fromEntries(control.gestures.filter((g) => (g.eventEntity ?? g.enumSensor) === entity).map((g) => [g.eventType ?? g.gesture, control.existing[g.key].find((a) => a.id === id)?.match ?? null]));
+
+  it("matches event_type, blueprint, MQTT and enum-sensor handlers to the press they handle", async () => {
+    const { inventory } = await read();
+    const control = (id: string) => inventory.controls.find((c) => c.id === `device:${id}`)!;
+    const desk = control("demo_desk_remote");
+    expect(matchesOf(desk, "event.demo_desk_button_event_1", "demo_desk_single")).toEqual({ "Single press": "exact", "Double press": null, "Long press": null });
+    expect(matchesOf(desk, "event.demo_desk_button_event_2", "demo_desk_double")["Double press"]).toBe("exact");
+    expect(matchesOf(desk, "event.demo_desk_button_event_2", "demo_desk_any")["Long press"]).toBe("possible");
+    const door = control("demo_door_switch");
+    expect(matchesOf(door, "event.demo_door_switch_button_event_3", "demo_door_blueprint")).toEqual({ "Single press": "exact", "Double press": "exact", "Long press": null });
+    expect(matchesOf(door, "event.demo_door_switch_button_event_4", "demo_door_blueprint")).toEqual({ "Single press": "exact", "Double press": null, "Long press": null });
+    expect(matchesOf(door, "sensor.demo_door_switch_button_event_1", "demo_door_sensor_single")).toEqual({ "Single press": "exact", "Double press": null, "Long press": null });
+    expect(door.notes.some((n) => n.includes("reports presses as a sensor value"))).toBe(true);
+    const mqtt = control("demo_six_buttons");
+    const hit = mqtt.gestures.filter((g) => mqtt.existing[g.key].some((a) => a.id === "demo_mqtt_ui"));
+    expect(hit.map((g) => g.trigger.subtype)).toEqual(["1"]);
+    expect(hit[0].trigger.type).toBe("remote_button_short_press");
   });
 });

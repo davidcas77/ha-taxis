@@ -1,7 +1,10 @@
 // Button inputs are supplied by HA integrations, never inferred from a brand's
 // advertised button count. One managed automation groups mappings by output.
 export type ButtonAction = { service: string; entityId: string | null; data: Record<string, unknown> };
-export type ButtonGesture = { key: string; button: string; gesture: string; source: string; trigger: Record<string, unknown>; eventEntity?: string; eventType?: string };
+// An enum sensor that reports presses (`enumSensor`) is matched like an event
+// entity but is not one: its generated trigger is a plain `to:` state trigger
+// with none of the event-entity timestamp conditions, so eventEntity stays unset.
+export type ButtonGesture = { key: string; button: string; gesture: string; source: string; trigger: Record<string, unknown>; eventEntity?: string; eventType?: string; enumSensor?: string };
 export type ButtonMapping = { key: string; controlId: string; gestureKey: string; button: string; gesture: string; trigger: Record<string, unknown>; eventEntity?: string; eventType?: string; action: ButtonAction; enabled: boolean };
 export type ButtonMap = { version: 1; output: string; bindings: ButtonMapping[]; expected: string | null; allowExisting: boolean };
 export type ButtonExisting = { id: string; entityId: string | null; name: string; enabled: boolean | null; match: "exact" | "possible"; services: string[]; targets: string[]; managed: boolean };

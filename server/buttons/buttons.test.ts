@@ -70,6 +70,120 @@ describe('button discovery across integrations',()=>{
   });
 });
 
+type Fixture=ReturnType<typeof buttonFixture>;
+function addEvent(f:Fixture,entityId:string,deviceId:string,name:string,attributes:Record<string,unknown>={}) {
+  f.raw.entities.push({entity_id:entityId,platform:'matter',device_id:deviceId,unique_id:entityId});
+  f.raw.states.push({entity_id:entityId,state:'2026-10-28T00:00:00Z',attributes:{friendly_name:name,event_types:['Single press','Double press','Long press'],...attributes} as never});
+}
+function addEnumSensor(f:Fixture,entityId:string,deviceId:string,name:string) {
+  f.raw.entities.push({entity_id:entityId,platform:'matter',device_id:deviceId,unique_id:entityId});
+  f.raw.states.push({entity_id:entityId,state:'Single press',attributes:{friendly_name:name,device_class:'enum',options:['Single press','Double press','Long press']} as never});
+}
+const matches=(c:{gestures:{key:string;eventEntity?:string;enumSensor?:string;eventType?:string;gesture:string}[];existing:Record<string,{id:string;match:string}[]>},source:string,id:string)=>
+  Object.fromEntries(c.gestures.filter(g=>(g.eventEntity??g.enumSensor)===source).map(g=>[g.eventType??g.gesture,c.existing[g.key].find(a=>a.id===id)?.match??null]));
+
+describe('matching existing automations to the gesture they handle',()=>{
+  const DESK1='event.desk_remote_button_event_1',DESK2='event.desk_remote_button_event_2';
+  const deskRemote=(f:Fixture)=>{addEvent(f,DESK1,'remote3','Desk remote button 1');addEvent(f,DESK2,'remote3','Desk remote button 2');};
+
+  it('matches an event entity trigger plus event_type condition to that press only',async()=>{
+    const f=buttonFixture();deskRemote(f);
+    f.addAutomation('desk_single',{alias:'Desk single',triggers:[{trigger:'state',entity_id:DESK1,not_from:['unavailable','unknown'],id:'a'}],
+      conditions:[{condition:'state',entity_id:DESK1,attribute:'event_type',state:'Single press'}],actions:[{action:'light.toggle',target:{entity_id:'light.bedroom_main'}}]});
+    const c=(await f.read()).inventory.controls.find(c=>c.id==='device:remote3')!;
+    expect(matches(c,DESK1,'desk_single')).toEqual({'Single press':'exact','Double press':null,'Long press':null});
+    expect(matches(c,DESK2,'desk_single')).toEqual({'Single press':null,'Double press':null,'Long press':null});
+    expect(c.related ?? []).toHaveLength(0);
+  });
+  it('matches nested or/and conditions across two event entities',async()=>{
+    const f=buttonFixture();deskRemote(f);
+    const press=(entity:string,id:string)=>({condition:'and',conditions:[{condition:'trigger',id},{condition:'state',entity_id:entity,attribute:'event_type',state:'Double press'}]});
+    f.addAutomation('desk_double',{alias:'Desk double',triggers:[{trigger:'state',entity_id:DESK1,id:'a'},{trigger:'state',entity_id:DESK2,id:'b'}],
+      conditions:[{condition:'or',conditions:[press(DESK1,'a'),press(DESK2,'b')]}],actions:[]});
+    const c=(await f.read()).inventory.controls.find(c=>c.id==='device:remote3')!;
+    for(const e of [DESK1,DESK2]) expect(matches(c,e,'desk_double')).toEqual({'Single press':null,'Double press':'exact','Long press':null});
+  });
+  it('lists an unfiltered event trigger as possible for its own entity only',async()=>{
+    const f=buttonFixture();deskRemote(f);
+    f.addAutomation('any_press',{alias:'Any press',triggers:[{trigger:'state',entity_id:DESK1}],actions:[]});
+    const c=(await f.read()).inventory.controls.find(c=>c.id==='device:remote3')!;
+    expect(matches(c,DESK1,'any_press')).toEqual({'Single press':'possible','Double press':'possible','Long press':'possible'});
+    expect(Object.values(matches(c,DESK2,'any_press')).every(m=>m===null)).toBe(true);
+    expect(c.gestures.filter(g=>!g.eventEntity).every(g=>!c.existing[g.key].length)).toBe(true);
+  });
+  it('reads a template on event_type as an exact filter',async()=>{
+    const f=buttonFixture();deskRemote(f);
+    f.addAutomation('tpl',{alias:'Template',triggers:[{trigger:'state',entity_id:DESK1}],conditions:[{condition:'template',value_template:"{{ trigger.to_state.attributes.event_type == 'Double press' }}"}],actions:[]});
+    const c=(await f.read()).inventory.controls.find(c=>c.id==='device:remote3')!;
+    expect(matches(c,DESK1,'tpl')).toEqual({'Single press':null,'Double press':'exact','Long press':null});
+  });
+  it('matches a UI-saved MQTT device trigger against the list entry with discovery_id and metadata',async()=>{
+    const f=buttonFixture(),listed=f.triggers.remote2[0];
+    f.triggers.remote2=f.triggers.remote2.map(t=>({...t,discovery_id:`0xabc ${t.type}_${t.subtype}`}));
+    const {platform:_p,metadata:_m,...fields}=listed;
+    f.addAutomation('mqtt_ui',{alias:'Saved by the UI',triggers:[{trigger:'device',...fields}],actions:[]});
+    const c=(await f.read()).inventory.controls.find(c=>c.id==='device:remote2')!;
+    const hits=c.gestures.filter(g=>c.existing[g.key].some(a=>a.id==='mqtt_ui'));
+    expect(hits).toHaveLength(1);
+    expect(hits[0].trigger).toMatchObject({type:listed.type,subtype:listed.subtype});
+    expect(c.existing[hits[0].key][0].match).toBe('exact');
+  });
+  it('matches a blueprint per button through its per-press inputs',async()=>{
+    const f=buttonFixture();
+    const door=(n:number)=>`event.door_switch_button_event_${n}`;
+    for(const n of [1,2,3,4]) addEvent(f,door(n),'remote3',`Door switch ${n}`);
+    f.addAutomation('door_bp',{alias:'Door switch',use_blueprint:{path:'user/switch_buttons.yaml',input:{button3_event:door(3),button4_event:door(4),
+      b3_single:[{action:'light.toggle'}],b3_double:[{action:'light.turn_on'}],b4_single:[{action:'light.turn_off'}]}}});
+    const c=(await f.read()).inventory.controls.find(c=>c.id==='device:remote3')!;
+    expect(matches(c,door(3),'door_bp')).toEqual({'Single press':'exact','Double press':'exact','Long press':null});
+    expect(matches(c,door(4),'door_bp')).toEqual({'Single press':'exact','Double press':null,'Long press':null});
+    for(const n of [1,2]) expect(Object.values(matches(c,door(n),'door_bp')).every(m=>m===null)).toBe(true);
+  });
+  it('treats enum sensors that report presses as gestures with a warning, and matches a `to` trigger',async()=>{
+    const f=buttonFixture(),sensor='sensor.door_switch_button_event_1';
+    addEnumSensor(f,sensor,'remote3','Door switch button 1');
+    f.raw.entities.push({entity_id:'sensor.remote_battery',platform:'matter',device_id:'remote3',unique_id:'bat'});
+    f.raw.states.push({entity_id:'sensor.remote_battery',state:'90',attributes:{friendly_name:'Battery',device_class:'enum',options:['Low','Normal']} as never});
+    f.addAutomation('enum_single',{alias:'Enum single',triggers:[{trigger:'state',entity_id:sensor,to:'Single press'}],actions:[{action:'light.toggle',target:{entity_id:'light.bedroom_main'}}]});
+    const r=await f.read(),c=r.inventory.controls.find(c=>c.id==='device:remote3')!;
+    const gestures=c.gestures.filter(g=>g.enumSensor===sensor);
+    expect(gestures.map(g=>g.gesture).sort()).toEqual(['Double press','Long press','Single press']);
+    expect(gestures.every(g=>g.source==='HA enum sensor' && !g.eventEntity && g.trigger.entity_id===sensor && typeof g.trigger.to==='string')).toBe(true);
+    expect(c.notes.filter(n=>n.includes("doesn't change the value"))).toHaveLength(1);
+    expect(c.gestures.some(g=>g.enumSensor==='sensor.remote_battery')).toBe(false);
+    expect(matches(c,sensor,'enum_single')).toEqual({'Single press':'exact','Double press':null,'Long press':null});
+    // The generated automation uses the plain state trigger and none of the event-entity timestamp logic.
+    const a={...assignment(r,'remote3'),gestureKey:gestures.find(g=>g.gesture==='Double press')!.key};
+    const change=asChange(planButtonAssignment(r.inventory,{...a,allowExisting:true},[]));
+    const map=change.after.button_map as ButtonMap;
+    expect(map.bindings[0].eventEntity).toBeUndefined();expect(validButtonMap(map)).toBe(true);
+    const config=buttonConfig(change.targetId,'Enum',map);
+    expect((config.trigger as Record<string,unknown>[])[0]).toMatchObject({platform:'state',entity_id:sensor,to:'Double press'});
+    expect(JSON.stringify(config.condition)).toContain('trigger.id not in []');
+  });
+  it('shows one generic-event note per control',async()=>{
+    const f=buttonFixture();deskRemote(f);
+    const c=(await f.read()).inventory.controls.find(c=>c.id==='device:remote3')!;
+    expect(c.notes.filter(n=>n.includes('no button device class'))).toHaveLength(1);
+  });
+  it('names device and area targets in the action summary',async()=>{
+    const f=buttonFixture(),trigger=f.triggers.remote1[0];
+    f.addAutomation('to_device',{alias:'Device action',triggers:[trigger],actions:[{action:'homeassistant.turn_on',target:{device_id:'remote2',area_id:'bedroom'}}]});
+    const c=(await f.read()).inventory.controls.find(c=>c.id==='device:remote1')!;
+    const hit=Object.values(c.existing).flat().find(a=>a.id==='to_device')!;
+    expect(hit.targets).toEqual(['device:Remote 2','area:Bedroom']);
+  });
+  it('keeps legacy event handlers under the control, not on every gesture',async()=>{
+    const f=buttonFixture();
+    f.raw.entities.push({entity_id:'binary_sensor.legacy_wall_switch',platform:'xiaomi_aqara',device_id:'remote1',unique_id:'legacy'});
+    f.addAutomation('legacy',{trigger:[{platform:'event',event_type:'xiaomi_aqara.click',event_data:{entity_id:'binary_sensor.legacy_wall_switch'}}],action:[{service:'light.toggle',target:{entity_id:'light.bedroom_main'}}]});
+    const c=(await f.read()).inventory.controls.find(v=>v.id==='device:remote1')!;
+    expect(c.gestures.length).toBeGreaterThan(0);
+    expect(Object.values(c.existing).flat()).toHaveLength(0);
+    expect(c.related).toMatchObject([{id:'legacy',match:'possible'}]);
+  });
+});
+
 describe('one automation per output',()=>{
   it('combines four remotes into one light automation with independent actions',async()=>{
     const f=buttonFixture(),r=await f.read();let c:Change|null=null;
