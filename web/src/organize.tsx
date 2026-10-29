@@ -402,7 +402,10 @@ function ItemsPane({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-2 border-b border-line p-2.5">
-        <PageHeader title={<span className="truncate">{TYPE_NAME[type]}</span>} actions={headerActions} />
+        <PageHeader
+          title={<span className="truncate">{TYPE_NAME[type]}</span>}
+          actions={headerActions ? <div className="flex min-h-7 items-center">{headerActions}</div> : undefined}
+        />
         {type !== "spaces" && (
           <Toolbar label="Find and filter">
             {listKeyFor(type) && <SearchField value={query} onChange={setQuery} placeholder={`Find in ${TYPE_NAME[type].toLowerCase()}`} />}
