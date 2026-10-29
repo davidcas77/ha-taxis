@@ -1,12 +1,12 @@
-import { ColumnHeader } from "./table.tsx";
 import { useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { organizeEntityType } from "../../shared/organize.ts";
 import { CATEGORY_SCOPES, type AreaNode, type ChangeInput, type DeviceItem, type EntityItem, type FloorNode, type Hierarchy } from "../../shared/types.ts";
+import { DataTable, type Column } from "./data-table.tsx";
 import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis } from "./state.tsx";
-import { Actions, AreaSelect, Button, ConfirmAction, Field, inputClass, LabelPicker, Panel } from "./ui.tsx";
+import { Actions, AreaSelect, Button, ConfirmAction, EmptyState, Field, inputClass, LabelPicker, Panel, Section } from "./ui.tsx";
 
 // Editors. Each one shows the values as they'll be (pending changes included),
 // and "Add to changes" appears once a field differs and proposes only those. Nothing reaches
@@ -29,7 +29,10 @@ function useSubmit(onDone: () => void, onSaved?: () => void) {
     setSaving(true);
     const ok = await propose(input);
     setSaving(false);
-    if (ok) { onSaved?.(); onDone(); }
+    if (ok) {
+      onSaved?.();
+      onDone();
+    }
   };
   return { saving, error, setError, submit };
 }
@@ -43,7 +46,7 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
   const [area, setArea] = useState<string | null>(entity.ownAreaId);
   const [labels, setLabels] = useState(entity.labels);
   const scope = entity.categoryScope;
-  const [category, setCategory] = useState<string>(scope ? entity.categories[scope] ?? "" : "");
+  const [category, setCategory] = useState<string>(scope ? (entity.categories[scope] ?? "") : "");
   const [hidden, setHidden] = useState(entity.hidden);
   const [disabled, setDisabled] = useState(entity.disabled);
   const [icon, setIcon] = useState(entity.icon ?? "");
@@ -68,7 +71,8 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
     return (
       <Panel title={entity.name} onClose={() => guard.close(onClose)}>
         <p className="text-[13px] text-muted">
-          This entity has no unique id (usually YAML without <code className="font-mono">unique_id</code>), so Home Assistant doesn't let it be renamed, moved or labelled.
+          This entity has no unique id (usually YAML without <code className="font-mono">unique_id</code>), so Home Assistant doesn't let it be renamed, moved
+          or labelled.
         </p>
       </Panel>
     );
@@ -156,7 +160,9 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
         {entity.hiddenBy && entity.hiddenBy !== "user" && !hidden && (
           <p className="text-xs text-warn">Its integration hid it ({entity.hiddenBy}). Showing it overrides that choice.</p>
         )}
-        {entity.disabledBy === "integration" && !disabled && <p className="text-xs text-warn">Its integration disabled it. Enabling it overrides that choice.</p>}
+        {entity.disabledBy === "integration" && !disabled && (
+          <p className="text-xs text-warn">Its integration disabled it. Enabling it overrides that choice.</p>
+        )}
         {(entity.disabledBy === "device" || entity.disabledBy === "config_entry") && (
           <p className="text-xs text-muted">
             It's disabled because its {entity.disabledBy === "device" ? "device is" : "integration entry is"} disabled. Enable the{" "}
@@ -165,7 +171,9 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
         )}
         {disabled !== entity.disabled && (
           <p className="text-xs text-warn">
-            {disabled ? "Home Assistant stops this entity: it stops updating and automations can't use it." : "Home Assistant starts this entity again; its integration may reload."}
+            {disabled
+              ? "Home Assistant stops this entity: it stops updating and automations can't use it."
+              : "Home Assistant starts this entity again; its integration may reload."}
           </p>
         )}
       </div>
@@ -192,45 +200,103 @@ export function DeviceEditor({ h, device, onClose }: { h: Hierarchy; device: Dev
 
   return (
     <div className="flex flex-col gap-4">
-    <Panel title={device.name} onClose={() => guard.close(onClose)} actions={<Actions dirty={dirty} onSave={save} onCancel={() => guard.close(onClose)} saving={saving} error={error} />}>
-      <p className="text-xs text-muted">{[device.manufacturer, device.model].filter(Boolean).join(" · ") || "Unknown model"}</p>
-      <Field label="Name" htmlFor="dev-name" hint="Leave empty to use the name its integration gives it.">
-        <input id="dev-name" className={inputClass} value={name} placeholder={device.name} onChange={(e) => setName(e.target.value)} />
-      </Field>
-      <Field label="Area" htmlFor="dev-area" hint={`${followers} of its ${device.entityIds.length} entities follow the device's area.`}>
-        <AreaSelect h={h} id="dev-area" value={area} onChange={setArea} noneLabel="No area" />
-      </Field>
-      <Field label="Labels" htmlFor="dev-labels">
-        <LabelPicker h={h} id="dev-labels" value={labels} onChange={setLabels} />
-      </Field>
-      <label className="flex items-center gap-2 text-[13px]">
-        <input type="checkbox" checked={disabled} onChange={(e) => setDisabled(e.target.checked)} /> Disabled (all its entities stop)
-      </label>
-    </Panel>
-    <DeviceEntities h={h} device={device} />
+      <Panel
+        title={device.name}
+        onClose={() => guard.close(onClose)}
+        actions={<Actions dirty={dirty} onSave={save} onCancel={() => guard.close(onClose)} saving={saving} error={error} />}
+      >
+        <p className="text-xs text-muted">{[device.manufacturer, device.model].filter(Boolean).join(" · ") || "Unknown model"}</p>
+        <Field label="Name" htmlFor="dev-name" hint="Leave empty to use the name its integration gives it.">
+          <input id="dev-name" className={inputClass} value={name} placeholder={device.name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Area" htmlFor="dev-area" hint={`${followers} of its ${device.entityIds.length} entities follow the device's area.`}>
+          <AreaSelect h={h} id="dev-area" value={area} onChange={setArea} noneLabel="No area" />
+        </Field>
+        <Field label="Labels" htmlFor="dev-labels">
+          <LabelPicker h={h} id="dev-labels" value={labels} onChange={setLabels} />
+        </Field>
+        <label className="flex items-center gap-2 text-[13px]">
+          <input type="checkbox" checked={disabled} onChange={(e) => setDisabled(e.target.checked)} /> Disabled (all its entities stop)
+        </label>
+      </Panel>
+      <DeviceEntities h={h} device={device} />
     </div>
   );
 }
 
 // Every entity is shown here, including diagnostics and disabled entities, so a
 // device's detail never looks empty merely because a list filter hid its children.
-export function DeviceEntities({ h, device }: { h: Hierarchy; device: DeviceItem }) {
-  const entities = device.entityIds.map(id => h.entities[id]).filter((entity): entity is EntityItem => Boolean(entity)).sort((a, b) => a.name.localeCompare(b.name));
-  return <section aria-labelledby={`device-entities-${device.id}`} className="rounded-lg border border-line bg-surface">
-    <h2 id={`device-entities-${device.id}`} className="border-b border-line px-3.5 py-3 text-sm font-semibold">Entities ({entities.length})</h2>
-    {entities.length === 0 ? <p className="p-3.5 text-[13px] text-muted">This device has no entities.</p> : <div className="overflow-x-auto">
-      <table className="w-full text-left text-[13px]">
-        <thead className="bg-sunken text-xs text-muted"><tr><ColumnHeader>Name / entity id</ColumnHeader><ColumnHeader>State</ColumnHeader><ColumnHeader>Area</ColumnHeader></tr></thead>
-        <tbody>{entities.map(entity => <tr key={entity.entityId} className="border-t border-line align-top">
-          <td className="px-3 py-2"><a className="text-accent hover:underline" href={`#organize/${organizeEntityType(entity)}/${encodeURIComponent(entity.entityId)}`}>{entity.name}</a><code className="block break-all font-mono text-[11px] text-muted">{entity.entityId}</code>
-            <div className="flex flex-wrap gap-1 text-[11px] text-muted">{entity.disabled && <span>Disabled</span>}{entity.hidden && <span>Hidden</span>}{entity.maintenance && <span>Diagnostic / configuration</span>}</div>
-          </td>
-          <td className="px-3 py-2">{entity.state ?? "No state"}{entity.unit && <span> {entity.unit}</span>}</td>
-          <td className="px-3 py-2">{entity.areaId ? h.areas[entity.areaId]?.name ?? entity.areaId : "No area"}{entity.ownAreaId === null && <span className="block text-[11px] text-muted">Follows device</span>}</td>
-        </tr>)}</tbody>
-      </table>
-    </div>}
-  </section>;
+function DeviceEntities({ h, device }: { h: Hierarchy; device: DeviceItem }) {
+  const entities = device.entityIds
+    .map((id) => h.entities[id])
+    .filter((entity): entity is EntityItem => Boolean(entity))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const areaName = (entity: EntityItem) => (entity.areaId ? (h.areas[entity.areaId]?.name ?? entity.areaId) : "No area");
+  const columns: Column<EntityItem>[] = [
+    {
+      id: "name",
+      header: "Name / entity id",
+      priority: 1,
+      sticky: true,
+      minWidth: 200,
+      maxWidth: 360,
+      sort: (entity) => entity.name,
+      cell: (entity) => (
+        <>
+          <a className="text-accent hover:underline" href={`#organize/${organizeEntityType(entity)}/${encodeURIComponent(entity.entityId)}`}>
+            {entity.name}
+          </a>
+          <code className="block truncate font-mono text-[11px] text-muted" title={entity.entityId}>
+            {entity.entityId}
+          </code>
+          <div className="flex flex-wrap gap-1 text-[11px] text-muted">
+            {entity.disabled && <span>Disabled</span>}
+            {entity.hidden && <span>Hidden</span>}
+            {entity.maintenance && <span>Diagnostic / configuration</span>}
+          </div>
+        </>
+      ),
+    },
+    {
+      id: "state",
+      header: "State",
+      priority: 2,
+      minWidth: 100,
+      sort: (entity) => entity.state,
+      cell: (entity) => (
+        <>
+          {entity.state ?? "No state"}
+          {entity.unit && <span> {entity.unit}</span>}
+        </>
+      ),
+    },
+    {
+      id: "area",
+      header: "Area",
+      priority: 2,
+      minWidth: 120,
+      sort: areaName,
+      cell: (entity) => (
+        <>
+          {areaName(entity)}
+          {entity.ownAreaId === null && <span className="block text-[11px] text-muted">Follows device</span>}
+        </>
+      ),
+    },
+  ];
+  return (
+    <Section id={`device-entities-${device.id}`} title={`Entities (${entities.length})`}>
+      <DataTable
+        id="device-entities"
+        label={`Entities of ${device.name}`}
+        rows={entities}
+        rowKey={(entity) => entity.entityId}
+        columns={columns}
+        defaultSort={{ key: "name", dir: "asc" }}
+        empty={<EmptyState>This device has no entities.</EmptyState>}
+      />
+    </Section>
+  );
 }
 
 export function AreaEditor({ h, area, onClose, onDeleted }: { h: Hierarchy; area: AreaNode; onClose: () => void; onDeleted: () => void }) {
@@ -365,11 +431,14 @@ export function NewItemForm({ kind, floorId, onDone }: { kind: "area" | "floor";
   const [name, setName] = useState("");
   const [level, setLevel] = useState("");
   const guard = useDraftGuard(name.trim() !== "" || level.trim() !== "");
-  const { saving, error, setError, submit } = useSubmit(() => {
-    setName("");
-    setLevel("");
-    onDone();
-  }, () => guard.release());
+  const { saving, error, setError, submit } = useSubmit(
+    () => {
+      setName("");
+      setLevel("");
+      onDone();
+    },
+    () => guard.release(),
+  );
   const create = () => {
     if (!name.trim()) return setError(`Give the new ${kind} a name.`);
     const fields: Record<string, unknown> = { name: name.trim() };
@@ -389,11 +458,24 @@ export function NewItemForm({ kind, floorId, onDone }: { kind: "area" | "floor";
       }}
     >
       <Field label={kind === "area" ? "New area" : "New floor"} htmlFor={`new-${kind}`}>
-        <input id={`new-${kind}`} className={inputClass} value={name} placeholder={kind === "area" ? "Laundry room" : "Basement"} onChange={(e) => setName(e.target.value)} />
+        <input
+          id={`new-${kind}`}
+          className={inputClass}
+          value={name}
+          placeholder={kind === "area" ? "Laundry room" : "Basement"}
+          onChange={(e) => setName(e.target.value)}
+        />
       </Field>
       {kind === "floor" && (
         <Field label="Level" htmlFor="new-floor-level">
-          <input id="new-floor-level" className={`${inputClass} w-20!`} inputMode="numeric" value={level} placeholder="-1" onChange={(e) => setLevel(e.target.value)} />
+          <input
+            id="new-floor-level"
+            className={`${inputClass} w-20!`}
+            inputMode="numeric"
+            value={level}
+            placeholder="-1"
+            onChange={(e) => setLevel(e.target.value)}
+          />
         </Field>
       )}
       <Button type="submit" disabled={saving}>

@@ -5,7 +5,7 @@ import { SCOPE_NAMES } from "./editors.tsx";
 import { AssignTool } from "./assign.tsx";
 import { EntityLabels } from "./entity-labels.tsx";
 import { useTaxis } from "./state.tsx";
-import { Actions, ConfirmAction, Field, HeaderBar, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
+import { Actions, ConfirmAction, Field, HeaderBar, PageHeader, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
 
 // Label and category details, shown in the Organize page's right pane. Labels
 // go on areas, devices and entities; categories file automations, scripts,
@@ -45,20 +45,11 @@ export function categoryUsage(h: Hierarchy): Map<string, EntityItem[]> {
 }
 
 // Title on the left, the same actions as every editor on the right.
-function DetailHeader({
-  title,
-  children,
-  actions,
-}: {
-  title: ReactNode;
-  children?: ReactNode;
-  actions: ReactNode;
-}) {
+function DetailHeader({ title, description, actions }: { title: ReactNode; description?: ReactNode; actions: ReactNode }) {
   return (
     <HeaderBar>
-      <div className="flex min-w-[8rem] flex-1 flex-col gap-1">
-        <h1 className="flex items-center gap-2 text-xl font-semibold">{title}</h1>
-        {children}
+      <div className="min-w-[8rem] flex-1">
+        <PageHeader title={title} description={description} />
       </div>
       {actions}
     </HeaderBar>
@@ -129,11 +120,8 @@ export function LabelDetail({ h, label, usage, onDeleted }: { h: Hierarchy; labe
             {label.name}
           </>
         }
-      >
-        <p className="text-[13px] text-muted">
-          On {count(usage?.areas.length ?? 0, "area")}, {count(usage?.devices.length ?? 0, "device")} and {count(usage?.entities.length ?? 0, "entity", "entities")}.
-        </p>
-      </DetailHeader>
+        description={`On ${count(usage?.areas.length ?? 0, "area")}, ${count(usage?.devices.length ?? 0, "device")} and ${count(usage?.entities.length ?? 0, "entity", "entities")}.`}
+      />
 
       <section className="grid max-w-2xl gap-3 sm:grid-cols-2">
         <Field label="Name" htmlFor="label-name">
@@ -221,11 +209,8 @@ export function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarc
           />
         }
         title={category.name}
-      >
-        <p className="text-[13px] text-muted">
-          {SCOPE_NAMES[scope]} category · {members.length} in it
-        </p>
-      </DetailHeader>
+        description={`${SCOPE_NAMES[scope]} category · ${members.length} in it`}
+      />
       <section className="grid max-w-2xl gap-3 sm:grid-cols-2">
         <Field label="Name" htmlFor="cat-name">
           <input id="cat-name" className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
@@ -246,7 +231,19 @@ export function CategoryDetail({ h, category, members, onDeleted }: { h: Hierarc
   );
 }
 
-function Members({ title, what, from, items, onRemove }: { title: string; what: string; from: string; items: { id: string; name: string; sub?: string }[]; onRemove: (id: string) => void }) {
+function Members({
+  title,
+  what,
+  from,
+  items,
+  onRemove,
+}: {
+  title: string;
+  what: string;
+  from: string;
+  items: { id: string; name: string; sub?: string }[];
+  onRemove: (id: string) => void;
+}) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-sm font-semibold">
@@ -272,4 +269,3 @@ function Members({ title, what, from, items, onRemove }: { title: string; what: 
     </section>
   );
 }
-

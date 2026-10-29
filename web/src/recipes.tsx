@@ -1,14 +1,16 @@
-import { RecipeRecords } from "./recipe-records.tsx";
-import { useStoredChoice } from "./storage.ts";
-import { HelpDisclosure, HelpTopic } from "./help.tsx";
+import { DoorOpen, Fan, Lightbulb, Megaphone, Sunset, Thermometer, Tv, Users, WashingMachine, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { splitByFit } from "../../shared/recipe-fit.ts";
 import { RECIPES, planAnnounce, planRecipes, recipeChangeInputs, type RecipeCell, type RecipeInstalled, type RecipeStatus } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
-import { useTaxis } from "./state.tsx";
-import { ColumnHeader, SortHeader, useSort } from "./table.tsx";
-import { Button } from "./ui.tsx";
+import { DataTable, type Column } from "./data-table.tsx";
+import { HelpDisclosure, HelpTopic } from "./help.tsx";
+import { RecipeRecords } from "./recipe-records.tsx";
+import { useTaxis, type Route } from "./state.tsx";
+import { useStoredChoice, useStoredFlag } from "./storage.ts";
+import { Button, Chip, EmptyState, TONE_TEXT, Toolbar, type Tone } from "./ui.tsx";
 
 // Recipes: an automation Taxis makes for an area from a blueprint of its own,
 // with the helpers it needs and the parameters of the area. One table, areas by
@@ -16,6 +18,9 @@ import { Button } from "./ui.tsx";
 // it can't, and whether an installed one still matches. Adding cells puts
 // changes in the list; nothing reaches Home Assistant until the list is applied.
 // Announce is the exception: one script for the whole house, in a row of its own.
+//
+// Only the recipes that fit an area are listed for it (shared/recipe-fit.ts), so
+// "Missing requirements" always means something; "Show all recipes" lists the rest.
 
 const NOTE = "Choose recipes for each room. Review and apply installations in Changes.";
 
@@ -28,6 +33,32 @@ const RECIPE_HELP: Record<string, string> = {
   exterior_lights: "Controls outdoor lights using sunset and activity.",
   left_open: "Notifies when a door or window stays open too long.",
   appliance_done: "Notifies when an appliance's power use indicates it has finished.",
+};
+
+const RECIPE_ICON: Record<string, LucideIcon> = {
+  occupancy: Users,
+  motion_lights: Lightbulb,
+  media_off: Tv,
+  area_climate: Thermometer,
+  bathroom_fan: Fan,
+  exterior_lights: Sunset,
+  left_open: DoorOpen,
+  appliance_done: WashingMachine,
+  announce: Megaphone,
+};
+
+// The recipes the table shows beside the area; the rest wait behind their
+// arrow when the table is narrow (the least used go first).
+const RECIPE_PRIORITY: Record<string, 2 | 3> = {
+  occupancy: 2,
+  motion_lights: 2,
+  media_off: 2,
+  area_climate: 2,
+  bathroom_fan: 3,
+  exterior_lights: 3,
+  left_open: 3,
+  appliance_done: 3,
+  announce: 2,
 };
 
 // Most useful first.
@@ -43,7 +74,7 @@ const FILTERS: { key: RecipeStatus | "all" | "todo"; label: string }[] = [
   { key: "in-changes", label: "In changes" },
 ];
 
-type Line = { areaId: string; areaName: string; floorName: string; cells: Record<string, RecipeCell> };
+type Line = { key: string; areaId: string; areaName: string; floorName: string; house: boolean; cells: Record<string, RecipeCell> };
 
 const keyOf = (c: RecipeCell) => `${c.areaId}|${c.recipe}`;
 
@@ -53,25 +84,22 @@ function matches(c: RecipeCell, f: (typeof FILTERS)[number]["key"]): boolean {
   return c.status === f;
 }
 
+const STATUS_TONE: Record<RecipeStatus, Tone> = { ready: "warn", installed: "ok", "out-of-date": "warn", "in-changes": "info", missing: "muted" };
+
 function StatusCell({ cell }: { cell: RecipeCell }) {
   let main: ReactNode;
-  let tone = "text-muted";
   switch (cell.status) {
     case "ready":
       main = "Ready";
-      tone = "text-warn";
       break;
     case "installed":
       main = "Installed";
-      tone = "text-on";
       break;
     case "out-of-date":
       main = "Out of date";
-      tone = "text-warn";
       break;
     case "in-changes":
       main = "In changes";
-      tone = "text-accent";
       break;
     case "missing":
       main = `Missing: ${cell.missing.join("; ")}`;
@@ -79,7 +107,7 @@ function StatusCell({ cell }: { cell: RecipeCell }) {
   }
   return (
     <div className="flex flex-col gap-0.5">
-      <span className={tone}>{main}</span>
+      <span className={TONE_TEXT[STATUS_TONE[cell.status]]}>{main}</span>
       {cell.reasons.length > 0 && (
         <ul className="text-[11px] text-muted">
           {cell.reasons.map((r) => (
@@ -97,7 +125,9 @@ function StatusCell({ cell }: { cell: RecipeCell }) {
           <summary className="cursor-pointer">
             Already controlled by {cell.controlledBy.length} other automation{cell.controlledBy.length === 1 ? "" : "s"}
           </summary>
-          <p className="mt-0.5 text-muted">Installing this would make two automations control the same {cell.controls === "lights" ? "lights" : "thermostats"}.</p>
+          <p className="mt-0.5 text-muted">
+            Installing this would make two automations control the same {cell.controls === "lights" ? "lights" : "thermostats"}.
+          </p>
           <ul className="mt-0.5 flex flex-col gap-0.5">
             {cell.controlledBy.map((a) => (
               <li key={a.entityId}>
@@ -112,7 +142,19 @@ function StatusCell({ cell }: { cell: RecipeCell }) {
 }
 
 // A cell: its checkbox (when it can be added) and what it says.
-function CellBox({ c, label, areaName, picked, setPicked }: { c: RecipeCell; label: string; areaName: string; picked: Set<string>; setPicked: (f: (p: Set<string>) => Set<string>) => void }) {
+function CellBox({
+  c,
+  label,
+  areaName,
+  picked,
+  setPicked,
+}: {
+  c: RecipeCell;
+  label: string;
+  areaName: string;
+  picked: Set<string>;
+  setPicked: (f: (p: Set<string>) => Set<string>) => void;
+}) {
   return (
     <div className="flex items-start gap-2">
       {c.actionable ? (
@@ -137,44 +179,46 @@ function CellBox({ c, label, areaName, picked, setPicked }: { c: RecipeCell; lab
   );
 }
 
-// The table, once what Home Assistant holds is known.
-export function RecipesTable({ h, installed }: { h: Hierarchy; installed: RecipeInstalled }) {
-  const { inventory, naming, parameters, changes, propose, busy } = useTaxis();
+// The table, once what Home Assistant holds is known. `cells` is every cell of
+// the plan; `shown` the keys of the ones that fit their area (or all of them).
+export function RecipesTable({ h, cells, shown }: { h: Hierarchy; cells: readonly RecipeCell[]; shown: ReadonlySet<string> }) {
+  const { propose, busy } = useTaxis();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
-  const areaCells = useMemo(() => planRecipes(h, inventory, naming, parameters, installed, changes), [h, inventory, naming, parameters, installed, changes]);
-  const announce = useMemo(() => planAnnounce(h, inventory, naming, parameters, installed, changes), [h, inventory, naming, parameters, installed, changes]);
-  const cells = useMemo(() => [...areaCells, announce], [areaCells, announce]);
-  const lines = useMemo(() => {
+  const { lines, announce } = useMemo(() => {
     const byArea = new Map<string, Line>();
-    for (const c of areaCells) {
+    let house: RecipeCell | null = null;
+    for (const c of cells) {
+      if (c.recipe === "announce") {
+        house = c;
+        continue;
+      }
       let line = byArea.get(c.areaId);
       if (!line) {
         const floor = h.floors.find((f) => f.id === h.areas[c.areaId]?.floorId);
-        line = { areaId: c.areaId, areaName: c.areaName, floorName: floor?.name ?? "", cells: {} };
+        line = { key: c.areaId, areaId: c.areaId, areaName: c.areaName, floorName: floor?.name ?? "", house: false, cells: {} };
         byArea.set(c.areaId, line);
       }
       line.cells[c.recipe] = c;
     }
-    return [...byArea.values()];
-  }, [areaCells, h]);
+    return { lines: [...byArea.values()], announce: house };
+  }, [cells, h]);
 
-  const shown = useMemo(() => lines.filter((l) => Object.values(l.cells).some((c) => matches(c, filter))), [lines, filter]);
-  const columns = useMemo(
-    () => ({
-      area: (l: Line) => l.areaName,
-      floor: (l: Line) => l.floorName,
-      ...Object.fromEntries(RECIPES.map((r) => [r.key, (l: Line) => ORDER.indexOf(l.cells[r.key].status)])),
-    }),
-    [],
+  const visible = (c: RecipeCell) => shown.has(keyOf(c));
+  const rows = useMemo(() => lines.filter((l) => Object.values(l.cells).some((c) => visible(c) && matches(c, filter))), [lines, filter, shown]);
+  const houseLine = useMemo<Line | null>(
+    () =>
+      announce && matches(announce, filter)
+        ? { key: "house", areaId: "house", areaName: "House", floorName: "one script", house: true, cells: { announce } }
+        : null,
+    [announce, filter],
   );
-  const { rows, sort, toggle } = useSort(shown, columns, { key: "area", dir: "asc" });
 
-  const count = (f: (typeof FILTERS)[number]["key"]) => cells.filter((c) => matches(c, f)).length;
+  const shownCells = useMemo(() => cells.filter(visible), [cells, shown]);
+  const count = (f: (typeof FILTERS)[number]["key"]) => shownCells.filter((c) => matches(c, f)).length;
   // Only cells that are on screen and can still be added count as picked.
-  const showHouse = matches(announce, filter);
-  const selectable = [...rows.flatMap((l) => Object.values(l.cells)), ...(showHouse ? [announce] : [])].filter((c) => c.actionable);
+  const selectable = [...rows.flatMap((l) => Object.values(l.cells).filter(visible)), ...(houseLine && announce ? [announce] : [])].filter((c) => c.actionable);
   const chosen = selectable.filter((c) => picked.has(keyOf(c)));
   const allChosen = selectable.length > 0 && chosen.length === selectable.length;
 
@@ -184,20 +228,71 @@ export function RecipesTable({ h, installed }: { h: Hierarchy; installed: Recipe
     if (await propose(inputs)) setPicked(new Set());
   };
 
+  const dash = (title: string) => (
+    <span className="text-muted/60" title={title}>
+      –
+    </span>
+  );
+  const columns: Column<Line>[] = [
+    {
+      id: "area",
+      header: "Area",
+      help: "The room this recipe will automate.",
+      priority: 1,
+      sticky: true,
+      minWidth: 140,
+      sort: (l) => l.areaName,
+      text: (l) => l.areaName,
+      cell: (l) => (
+        <>
+          {l.areaName}
+          {l.floorName && <div className="text-[11px] text-muted">{l.floorName}</div>}
+        </>
+      ),
+    },
+    ...RECIPES.map<Column<Line>>((r) => {
+      const Icon = RECIPE_ICON[r.key];
+      return {
+        id: r.key,
+        header: r.label,
+        icon: <Icon className="size-3.5 shrink-0" aria-hidden />,
+        help: RECIPE_HELP[r.key],
+        priority: RECIPE_PRIORITY[r.key],
+        minWidth: 140,
+        sort: (l) => (l.cells[r.key] && visible(l.cells[r.key]) ? ORDER.indexOf(l.cells[r.key].status) : null),
+        cell: (l) => {
+          const c = l.cells[r.key];
+          if (!c) return dash("Nothing for the house here");
+          if (!visible(c)) return dash(`${r.label} doesn't fit this area. Choose Show all recipes to see it.`);
+          return <CellBox c={c} label={r.label} areaName={l.areaName} picked={picked} setPicked={setPicked} />;
+        },
+      };
+    }),
+    {
+      id: "announce",
+      header: "Announce",
+      label: "Announce",
+      icon: <Megaphone className="size-3.5 shrink-0" aria-hidden />,
+      help: "Speaks a message in occupied rooms using text-to-speech.",
+      priority: RECIPE_PRIORITY.announce,
+      minWidth: 140,
+      cell: (l) =>
+        l.cells.announce ? (
+          <CellBox c={l.cells.announce} label="Announce" areaName="the house" picked={picked} setPicked={setPicked} />
+        ) : (
+          dash("Announce is one script for the whole house")
+        ),
+    },
+  ];
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex min-h-[2rem] flex-wrap items-center gap-3">
-        <div role="group" aria-label="Show" className="flex flex-1 flex-wrap gap-1 text-xs">
+    <div className="flex min-w-0 flex-col gap-3">
+      <Toolbar label="Recipe filters">
+        <div role="group" aria-label="Show" className="flex flex-1 flex-wrap gap-1">
           {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              aria-pressed={filter === f.key}
-              onClick={() => setFilter(f.key)}
-              className={`rounded-md border px-2 py-1 ${filter === f.key ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}
-            >
+            <Chip key={f.key} pressed={filter === f.key} onClick={() => setFilter(f.key)}>
               {f.label} {count(f.key)}
-            </button>
+            </Chip>
           ))}
         </div>
         <label className="flex items-center gap-2 text-xs text-muted">
@@ -216,58 +311,56 @@ export function RecipesTable({ h, installed }: { h: Hierarchy; installed: Recipe
             Add {chosen.length} to changes
           </Button>
         )}
-      </div>
+      </Toolbar>
 
-      {rows.length === 0 && !showHouse ? (
-        <p className="text-[13px] text-muted">Nothing here.</p>
+      <DataTable
+        id="recipes"
+        label="Recipes by area"
+        rows={rows}
+        pinned={houseLine ? [houseLine] : undefined}
+        rowKey={(l) => l.key}
+        columns={columns}
+        defaultSort={{ key: "area", dir: "asc" }}
+        empty={<EmptyState>Nothing here.</EmptyState>}
+        maxHeight="none"
+      />
+    </div>
+  );
+}
+
+// The toolbar above both views: how many recipes were left out, and the way to see them.
+function FitNote({ hidden, showAll, setShowAll }: { hidden: number; showAll: boolean; setShowAll: (on: boolean) => void }) {
+  if (hidden === 0 && !showAll) return null;
+  return (
+    <Toolbar label="Recipes that fit">
+      <p className="flex-1 text-xs text-muted">
+        {showAll
+          ? "Showing every recipe for every area, including the ones that don't fit."
+          : `${hidden} recipe${hidden === 1 ? "" : "s"} ${hidden === 1 ? "doesn't" : "don't"} fit these areas (an exterior light in a bathroom, a bathroom fan in a hall) and ${hidden === 1 ? "is" : "are"} left out.`}
+      </p>
+      <Chip pressed={showAll} onClick={() => setShowAll(!showAll)} title="List recipes for areas they don't fit too">
+        Show all recipes
+      </Chip>
+    </Toolbar>
+  );
+}
+
+function RecipesBody({ h, installed, view }: { h: Hierarchy; installed: RecipeInstalled; view: "table" | "records" }) {
+  const { inventory, naming, parameters, changes } = useTaxis();
+  const [showAll, setShowAll] = useStoredFlag("taxis:recipes:show-all", false);
+  const all = useMemo(
+    () => [...planRecipes(h, inventory, naming, parameters, installed, changes), planAnnounce(h, inventory, naming, parameters, installed, changes)],
+    [h, inventory, naming, parameters, installed, changes],
+  );
+  const split = useMemo(() => splitByFit(h, inventory, naming, all), [h, inventory, naming, all]);
+  const shown = useMemo(() => new Set((showAll ? all : split.fits).map(keyOf)), [showAll, all, split]);
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <FitNote hidden={split.hidden.length} showAll={showAll} setShowAll={setShowAll} />
+      {view === "records" ? (
+        <RecipeRecords h={h} installed={installed} descriptions={RECIPE_HELP} cells={all.filter((c) => shown.has(keyOf(c)))} />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-          <table className="w-full text-[13px]">
-            <thead className="bg-sunken text-left text-xs text-muted">
-              <tr>
-                <SortHeader label="Area" help="The room this recipe will automate." k="area" sort={sort} onToggle={toggle} />
-                {RECIPES.map((r) => (
-                  <SortHeader key={r.key} label={r.label} help={RECIPE_HELP[r.key]} k={r.key} sort={sort} onToggle={toggle} />
-                ))}
-                <ColumnHeader aria-label="Announce" help="Speaks a message in occupied rooms using text-to-speech." className="px-3 py-2 font-medium">
-                  Announce
-                </ColumnHeader>
-              </tr>
-            </thead>
-            <tbody>
-              {showHouse && (
-                <tr className="border-t border-line align-top">
-                  <th scope="row" className="px-3 py-1.5 text-left font-normal">
-                    House
-                    <div className="text-[11px] text-muted">one script</div>
-                  </th>
-                  {RECIPES.map((r) => (
-                    <td key={r.key} className="px-3 py-1.5 text-muted">
-                      –
-                    </td>
-                  ))}
-                  <td className="px-3 py-1.5">
-                    <CellBox c={announce} label="Announce" areaName="the house" picked={picked} setPicked={setPicked} />
-                  </td>
-                </tr>
-              )}
-              {rows.map((l) => (
-                <tr key={l.areaId} className="border-t border-line align-top">
-                  <th scope="row" className="px-3 py-1.5 text-left font-normal">
-                    {l.areaName}
-                    {l.floorName && <div className="text-[11px] text-muted">{l.floorName}</div>}
-                  </th>
-                  {RECIPES.map((r) => (
-                    <td key={r.key} className="px-3 py-1.5">
-                      <CellBox c={l.cells[r.key]} label={r.label} areaName={l.areaName} picked={picked} setPicked={setPicked} />
-                    </td>
-                  ))}
-                  <td className="px-3 py-1.5 text-muted">–</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <RecipesTable h={h} cells={all} shown={shown} />
       )}
     </div>
   );
@@ -293,8 +386,18 @@ export function RecipesTab({ h, view = "table" }: { h: Hierarchy; view?: "table"
   }, [h.fetchedAt]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <HelpDisclosure summary={NOTE}><HelpTopic title="Requirements">Recipes use the entities counted in Capabilities and your parameter values.</HelpTopic><HelpTopic title="Installation">Creates a reusable blueprint, required helpers and one automation per room. Announce creates one house-wide script.</HelpTopic><HelpTopic title="Review first">Nothing changes in Home Assistant until you apply the queued installation.</HelpTopic></HelpDisclosure>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <HelpDisclosure summary={NOTE}>
+        <HelpTopic title="Requirements">Recipes use the entities counted in Capabilities and your parameter values.</HelpTopic>
+        <HelpTopic title="Installation">
+          Creates a reusable blueprint, required helpers and one automation per room. Announce creates one house-wide script.
+        </HelpTopic>
+        <HelpTopic title="Review first">Nothing changes in Home Assistant until you apply the installation in Changes.</HelpTopic>
+        <HelpTopic title="Which recipes are listed">
+          Only the recipes that fit a room: Exterior lights for an exterior area, Bathroom fan for a fan or a bathroom, Media off for a speaker or a TV, and so
+          on. Show all recipes lists the rest.
+        </HelpTopic>
+      </HelpDisclosure>
       {!ready ? (
         <p className="text-[13px] text-muted">Loading the settings…</p>
       ) : error ? (
@@ -304,19 +407,25 @@ export function RecipesTab({ h, view = "table" }: { h: Hierarchy; view?: "table"
       ) : !installed ? (
         <p className="text-[13px] text-muted">Checking what is installed in Home Assistant…</p>
       ) : (
-        view === "records" ? <RecipeRecords h={h} installed={installed} descriptions={RECIPE_HELP} /> : <div className="min-h-0 overflow-auto"><RecipesTable h={h} installed={installed} /></div>
+        <RecipesBody h={h} installed={installed} view={view} />
       )}
     </div>
   );
 }
 
-
-export function RecipesPage({ h }: { h: Hierarchy }) {
+// The Recipes tab of the Automations page: content only, the page supplies the header.
+export function RecipesPanel({ h }: { h: Hierarchy; go?: (r: Route) => void }) {
   const [view, setView] = useStoredChoice("taxis:recipes:view", ["table", "records"] as const, "records");
-  return <main className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4 md:p-6">
-    <header className="flex shrink-0 flex-wrap items-center gap-3"><h1 className="flex-1 text-xl font-semibold">Recipes</h1>
-      <div role="group" aria-label="Recipe view" className="flex gap-1">{(["table", "records"] as const).map(mode => <Button key={mode} aria-pressed={view === mode} onClick={() => setView(mode)}>{mode === "table" ? "Table" : "Records"}</Button>)}</div>
-    </header>
-    <RecipesTab h={h} view={view} />
-  </main>;
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <Toolbar label="Recipe view" className="w-fit gap-x-1">
+        {(["table", "records"] as const).map((mode) => (
+          <Chip key={mode} pressed={view === mode} onClick={() => setView(mode)}>
+            {mode === "table" ? "Table" : "Records"}
+          </Chip>
+        ))}
+      </Toolbar>
+      <RecipesTab h={h} view={view} />
+    </div>
+  );
 }

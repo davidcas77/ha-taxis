@@ -406,6 +406,81 @@ describe("one Apply at a time", () => {
   });
 });
 
+describe("adding several changes at once", () => {
+  const MISSING: ChangeInput = { kind: "area", op: "update", targetId: "no_such_area", fields: { name: "Nowhere" } };
+  const batch = (t: ReturnType<typeof setup>, changes: unknown) => t.post("/api/changes/batch", { changes });
+
+  it("stores them all, folded like one-by-one edits", async () => {
+    const t = setup();
+    const res = await batch(t, [AREA_RENAME, OTHER_RENAME, { kind: "area", op: "update", targetId: "kitchen", fields: { name: "Cooking 2" } }]);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ChangesResponse & { ok: true };
+    // The third edit folds into the first, as if added separately.
+    expect(body.changes.map((c) => [c.targetId, c.after])).toEqual([
+      ["kitchen", { name: "Cooking 2" }],
+      ["study", { name: "Office" }],
+    ]);
+    expect(t.changes.list()).toHaveLength(2);
+    nothingWritten(t);
+  });
+
+  it("keeps nothing when one is invalid", async () => {
+    const t = setup();
+    const res = await batch(t, [AREA_RENAME, { kind: "bogus", op: "update", targetId: "x", fields: {} }]);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/Change 2 of 2: Unknown kind.*Nothing was added/);
+    expect(t.changes.list()).toEqual([]);
+  });
+
+  it("keeps nothing when one is refused, even after earlier ones were stored", async () => {
+    const t = setup();
+    await t.queue(OTHER_RENAME);
+    const before = t.version();
+    const res = await batch(t, [AREA_RENAME, MISSING]);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/Change 2 of 2: .*Nothing was added/);
+    expect(t.version()).toBe(before);
+    expect(t.changes.list()).toHaveLength(1);
+  });
+
+  it("refuses an empty, oversized or malformed batch", async () => {
+    const t = setup();
+    expect((await batch(t, [])).status).toBe(400);
+    expect((await batch(t, "nope")).status).toBe(400);
+    expect((await batch(t, [null])).status).toBe(400);
+    expect((await t.post("/api/changes/batch", [AREA_RENAME])).status).toBe(400);
+    expect(
+      (
+        await batch(
+          t,
+          Array.from({ length: 501 }, () => AREA_RENAME),
+        )
+      ).status,
+    ).toBe(400);
+    expect(t.changes.list()).toEqual([]);
+  });
+
+  it("refuses while an Apply is running", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const t = setup({
+      mode: "app",
+      backup: async (name) => {
+        await held;
+        return { ok: true, name, slug: "late" };
+      },
+    });
+    await t.queue(AREA_RENAME);
+    const first = t.post("/api/apply", { version: t.version() });
+    await vi.waitFor(() => expect(t.backupNames).toHaveLength(1));
+    const res = await batch(t, [OTHER_RENAME]);
+    expect(res.status).toBe(409);
+    expect(t.changes.list()).toHaveLength(1);
+    release();
+    await first;
+  });
+});
+
 describe("who may talk to the app", () => {
   it("refuses a peer other than Ingress in app mode, before anything else", async () => {
     const t = setup({ mode: "app" });

@@ -10,8 +10,8 @@ from pathlib import Path
 import unittest
 import urllib.request
 from playwright.sync_api import sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:8099")
 TIERS = ["Low", "Medium", "Strong"]
 
 
@@ -23,7 +23,7 @@ class AiModelsRegression(unittest.TestCase):
         if body["hierarchy"]["home"]["name"] != "Demo House":
             raise RuntimeError("Use the local mock house")
         cls.playwright = sync_playwright().start()
-        cls.browser = cls.playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), headless=True)
+        cls.browser = launch(cls.playwright)
 
     @classmethod
     def tearDownClass(cls):
@@ -91,7 +91,7 @@ class AiModelsRegression(unittest.TestCase):
         self.assertEqual(self.errors, [])
 
     def open(self):
-        self.page.goto(BASE + "/#settings", wait_until="networkidle")
+        self.page.goto(BASE + "/#settings/ai", wait_until="networkidle")
         self.page.get_by_label("Strong model", exact=True).wait_for()
 
     def load(self):
@@ -118,7 +118,7 @@ class AiModelsRegression(unittest.TestCase):
         self.assertEqual(self.puts, [])
         self.assertEqual(self.tests, [])
         self.assertEqual(self.current, self.fixture)
-        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output = screenshot_dir()
         output.mkdir(parents=True, exist_ok=True)
         self.page.get_by_role("region", name="Available models (92)", exact=True).scroll_into_view_if_needed()
         self.page.screenshot(path=str(output / "ai-three-tiers-and-model-list.png"))
@@ -155,7 +155,7 @@ class AiModelsRegression(unittest.TestCase):
         self.page.once("dialog", dismiss)
         self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Areas", exact=True).click()
         self.assertEqual(len(dialogs), 1)
-        self.assertTrue(self.page.url.endswith("#settings"))
+        self.assertTrue(self.page.url.endswith("#settings/ai"))
         self.assertEqual(self.page.get_by_label("Strong model", exact=True).input_value(), "custom/model-not-listed")
         ai = self.page.locator("section[aria-labelledby='ai-heading']")
         ai.get_by_role("button", name="Undo changes", exact=True).click()

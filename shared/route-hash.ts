@@ -8,13 +8,23 @@
 //   #entities, #entities/<id>    #organize/entities, #organize/entities/<id>
 //   #area/<id>/devices           #area/<id>/devices-entities
 //   #area/<id>/entities          #area/<id>/devices-entities
+//
+// Recipes and Buttons are the two tabs of one Automations page, and the AI
+// administration is a tab of Settings:
+//
+//   #recipes, #parameters/recipes   #automations/recipes
+//   #buttons, #buttons/<control>    #automations/buttons, #automations/buttons/<control>
+//   #ai-admin, #ai                  #settings/ai
 
 export const DEVICES_ENTITIES = "devices-entities";
 
 export function normalizeLegacyHash(hash: string): string {
   const parts = hash.replace(/^#/, "").split("/");
   const [head, a, b] = parts;
-  if (head === "parameters" && a === "recipes") return "#recipes";
+  if (head === "parameters" && a === "recipes") return "#automations/recipes";
+  if (head === "recipes" && parts.length === 1) return "#automations/recipes";
+  if (head === "buttons" && parts.length <= 2) return a ? `#automations/buttons/${a}` : "#automations/buttons";
+  if ((head === "ai-admin" || head === "ai") && parts.length === 1) return "#settings/ai";
   if ((head === "devices" || head === "entities" || head === DEVICES_ENTITIES) && parts.length <= 2) {
     const section = head === "entities" ? "entities" : "devices";
     return a ? `#organize/${section}/${a}` : `#organize/${section}`;

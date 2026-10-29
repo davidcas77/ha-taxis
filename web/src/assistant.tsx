@@ -12,10 +12,18 @@ import type { AiSettingsView } from "../../shared/ai.ts";
 import { TIER_LABEL } from "../../shared/ai.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
-import type { Route } from "./state.tsx";
+import { AI_SETTINGS, type Route } from "./state.tsx";
 import { Button, inputClass } from "./ui.tsx";
 
-export function routeScope(route: Route, h: Hierarchy | null): AssistantScope {
+// The assistant has its own names for the pages (shared/assistant.ts): Recipes
+// and Buttons are two of them, and the AI administration is one too.
+function assistantPage(route: Route): AssistantScope["page"] {
+  if (route.page === "automations") return route.tab;
+  if (route.page === "settings" && route.tab === "ai") return "ai-admin";
+  return route.page;
+}
+
+function routeScope(route: Route, h: Hierarchy | null): AssistantScope {
   let areaId: string | null = null;
   if (route.page === "areas" && route.sel.kind === "area") areaId = route.sel.id;
   if (route.page === "guide") areaId = route.areaId;
@@ -24,7 +32,8 @@ export function routeScope(route: Route, h: Hierarchy | null): AssistantScope {
     if (route.type === "devices") areaId = h?.devices[route.id]?.areaId ?? null;
     if (route.type === "spaces" && route.id.startsWith("area:")) areaId = route.id.slice(5);
   }
-  return { page: route.page, section: "tab" in route ? route.tab : route.page === "organize" ? route.type : "", areaId, includeData: false };
+  const section = route.page === "areas" || route.page === "parameters" ? route.tab : route.page === "organize" ? route.type : "";
+  return { page: assistantPage(route), section, areaId, includeData: false };
 }
 
 export function AskTaxis({
@@ -192,19 +201,10 @@ function AssistantSession({
             tone="ghost"
             onClick={() => {
               setOptionsOpen(false);
-              go({ page: "ai-admin" });
+              go(AI_SETTINGS);
             }}
           >
             AI administration
-          </Button>
-          <Button
-            tone="ghost"
-            onClick={() => {
-              setOptionsOpen(false);
-              go({ page: "settings" });
-            }}
-          >
-            AI settings
           </Button>
           <Button
             tone="ghost"
@@ -392,7 +392,7 @@ function AssistantSession({
         {ai && !ai.enabled && (
           <p className="mb-2 text-xs text-warn">
             AI is off.{" "}
-            <button type="button" className="underline" onClick={() => go({ page: "settings" })}>
+            <button type="button" className="underline" onClick={() => go(AI_SETTINGS)}>
               Set up AI
             </button>
           </p>
@@ -400,7 +400,7 @@ function AssistantSession({
         {ai?.enabled && !ai.models[ASSISTANT_ACTIONS[action].tier] && (
           <p className="mb-2 text-xs text-warn">
             Choose a {TIER_LABEL[ASSISTANT_ACTIONS[action].tier]} model in{" "}
-            <button type="button" className="underline" onClick={() => go({ page: "settings" })}>
+            <button type="button" className="underline" onClick={() => go(AI_SETTINGS)}>
               AI settings
             </button>
             .

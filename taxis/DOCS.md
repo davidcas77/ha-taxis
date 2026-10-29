@@ -5,11 +5,24 @@ the areas on each floor, and every device and entity in them, and lets you
 organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
-The pages along the top: **Guide**, **Areas**, **Organize**, **Recipes**, **Buttons**,
-**Parameters**, **Health**, **Changes**, **Settings** and **AI**. The sparkle button at the
-bottom right of every page opens [Ask Taxis](#ask-taxis). Devices and entities are in
-Organize, and in a tab of each area. Old links to the Devices and Entities pages (`#devices`,
-`#entities`, `#entities/<id>`) open the same section of Organize.
+The pages along the top, in the order Taxis takes you through a house: **Guide**
+(the home page), **Areas**, **Organize**, **Automations** (the tabs **Recipes** and
+**Buttons**), **Parameters**, **Health** and **Changes**, with **Settings** (the tabs
+**General** and **AI**) at the right. The sparkle button at the bottom right of every
+page opens [Ask Taxis](#ask-taxis). Devices and entities are in Organize, and in a tab
+of each area. Old links keep working: `#devices`, `#entities` and `#entities/<id>` open
+the same section of Organize, `#recipes` and `#buttons` open the tabs of Automations,
+`#ai-admin` and `#ai` open Settings → AI, and an empty or unknown link opens the Guide.
+
+**Tables.** Every table works the same way. It scrolls inside its own card, never
+the page, and its header stays in view. When the columns don't fit, the least
+important ones hide and a small arrow at the start of each row opens the hidden
+values under it. **Columns** (top right of the table) shows or hides any column and
+remembers the choice for that table in this browser; **Reset columns** puts them back.
+Long entity ids end in an ellipsis with the whole id in a tooltip, never broken in
+the middle. The first column stays in view while a wide table scrolls sideways. The
+matrices under Parameters (Capabilities and Helpers) use short headers with an icon
+and the full name in the tooltip.
 
 ## Areas
 
@@ -51,12 +64,12 @@ Organize, and in a tab of each area. Old links to the Devices and Entities pages
 Choose **Not in any area** in the Areas tree to find entities whose own area and
 device's area are both unset. Switch between **Cards** and **Table**; the choice
 is remembered in this browser. Cards keeps the lists grouped by what entities do.
-Table adds search by name, entity ID or device, paged results and resizable
-columns shared with the app's other tables.
+Table adds search by name, entity ID or device, paged results and the column
+controls shared with the app's other tables.
 
 Tick several entities, or use **Select all shown** for the current page, then
-choose an area in the bulk action bar. This queues each eligible entity's area
-change in **Changes**; Home Assistant is updated only after Apply. Entities that
+choose an area in the bulk action bar. This adds each eligible entity's area
+change to **Changes**; Home Assistant is updated only after Apply. Entities that
 Home Assistant cannot edit are not selectable, and the bulk action explains any
 selected entity it must skip. The existing filters for disabled, hidden,
 configuration and diagnostic entities still apply.
@@ -155,7 +168,7 @@ view of Devices and of Entities (the whole home). Choose one of three buttons,
   available when nothing matches, so you can change or reset them.
 - **Shared controls.** Search, kind chips, area and other available filters,
   selection and page controls use the same behavior across views; the table views
-  also share column resizing. Select all shown acts on the current page's
+  also share the Columns menu. Select all shown acts on the current page's
   editable entities.
 - **Why.** An entity that is disabled, left over, unavailable or unknown, a group
   with members that are gone, or a device that is offline says why; see
@@ -192,15 +205,13 @@ listed twice. Links to an entity open its matching section in Records; existing
 entity links continue to work.
 
 On desktop, drag the vertical divider between the records list and the selected
-item's properties to give either side more room. Drag a list column's right edge
-to change its width. The divider and column widths are remembered in this browser;
-they do not change Home Assistant or the pending change list. Data columns across
-the app, including Parameters, Health and the device's entity list, use the same
-resize control. Their widths are remembered per view. **Reset layout**
-restores the default split and column widths. Resize handles also accept the left
-and right arrow keys when focused.
-Long names, entity ids and paths wrap inside their columns, including label and
-category assignment tables. Editing controls stay within narrowed columns.
+item's properties to give either side more room. The divider position and each
+table's column choices are remembered in this browser; they do not change Home
+Assistant or the pending change list. **Reset layout** restores the default split
+and every table's default columns. The divider also accepts the left and right
+arrow keys when focused. In a narrow list, columns that don't fit hide (open a
+row's arrow to see them). Long entity ids and paths end in an ellipsis with the
+whole value in a tooltip.
 
 Automations, Devices, Entities and Helpers have an area filter beside search.
 Choose several areas to show their records together, select **No area** for unassigned records, or choose
@@ -215,14 +226,14 @@ count. Pagination makes every matching record reachable; use search and filters
 to narrow the results without losing the controls.
 
 Organize's **Helpers** list inspects helpers that already exist, with search,
-area filtering, resizable columns and the ordinary entity editor where Home
+area filtering, the Columns menu and the ordinary entity editor where Home
 Assistant permits editing. Use **Parameters → Helpers** to plan canonical helpers.
 
 **Blueprints** follows Automations, before Devices, Entities and Helpers. It reads
 all installed automation and script blueprints, including providers other than
 Taxis. Search by name, description, author or path, filter by type, and select a
 record to inspect its description, inputs, defaults and available source link.
-The list and details use the resizable Records layout. Blueprint errors remain
+The list and details use the Records layout with its draggable divider. Blueprint errors remain
 visible as entries, and an incomplete read shows a warning rather than presenting
 a partial list as complete. This page is read-only: inspecting a blueprint does
 not import, edit or delete it, or create an automation or script.
@@ -305,17 +316,17 @@ The helpers Taxis proposes per area, from the capabilities. Each area gets one
 automation can point at it and adding or replacing a sensor changes one group,
 not the automation. Nothing is written until you apply the list of changes.
 
-| Helper | Entity id | Made of | Wanted when |
-|---|---|---|---|
-| Lights | `light.<code>_all` | group of the counted lights | 1 or more |
-| Motion | `binary_sensor.<code>_motion_all` | group (any on) of the counted motion sensors | 1 or more |
-| Presence | `binary_sensor.<code>_presences` | group of the counted presence sensors | 1 or more |
-| Doors | `binary_sensor.<code>_doors` | group of the counted door sensors | 1 or more |
-| Windows | `binary_sensor.<code>_windows` | group of the counted window sensors | 1 or more |
-| Temperature | `sensor.<code>_temperature` | min/max (mean) | 1 or more |
-| Humidity | `sensor.<code>_humidity` | min/max (mean) | 1 or more |
-| Light level | `sensor.<code>_illuminance` | min/max (mean) | 1 or more |
-| Media | `media_player.<code>_media` | group of the counted speakers and TVs | 2 or more |
+| Helper      | Entity id                         | Made of                                      | Wanted when |
+| ----------- | --------------------------------- | -------------------------------------------- | ----------- |
+| Lights      | `light.<code>_all`                | group of the counted lights                  | 1 or more   |
+| Motion      | `binary_sensor.<code>_motion_all` | group (any on) of the counted motion sensors | 1 or more   |
+| Presence    | `binary_sensor.<code>_presences`  | group of the counted presence sensors        | 1 or more   |
+| Doors       | `binary_sensor.<code>_doors`      | group of the counted door sensors            | 1 or more   |
+| Windows     | `binary_sensor.<code>_windows`    | group of the counted window sensors          | 1 or more   |
+| Temperature | `sensor.<code>_temperature`       | min/max (mean)                               | 1 or more   |
+| Humidity    | `sensor.<code>_humidity`          | min/max (mean)                               | 1 or more   |
+| Light level | `sensor.<code>_illuminance`       | min/max (mean)                               | 1 or more   |
+| Media       | `media_player.<code>_media`       | group of the counted speakers and TVs        | 2 or more   |
 
 `<code>` is the area's entity id code from **Parameters → Area codes**. The name
 of a new helper is the area's name and a word: "Kitchen motions". The humidity rate sensor of
@@ -358,10 +369,10 @@ own. Each area's Capabilities tab ends with its own Helpers table.
 **Floors and house.** A second table below, with the same statuses and the same
 **Add to changes**, for two more light groups:
 
-| Group | Entity id | Made of |
-|---|---|---|
-| A floor's lights | `light.<floor code>_all` | the `light.<code>_all` group of every area on the floor that has one |
-| The house's lights | `light.all` | the floors' groups, and the `light.<code>_all` groups of areas on no floor |
+| Group              | Entity id                | Made of                                                                    |
+| ------------------ | ------------------------ | -------------------------------------------------------------------------- |
+| A floor's lights   | `light.<floor code>_all` | the `light.<code>_all` group of every area on the floor that has one       |
+| The house's lights | `light.all`              | the floors' groups, and the `light.<code>_all` groups of areas on no floor |
 
 The floor code is set in **Parameters → Area codes** (default: the floor's id) and
 the end (`all`) is the Lights aggregation marker, like the areas'. The house group's
@@ -418,56 +429,56 @@ header to sort the areas by it (the floor headings are shown in the default
 order). Values saved for a floor by an older version are ignored, and gone with
 the next change you make.
 
-| Tab | Parameter | Built-in default | Allowed |
-|---|---|---|---|
-| House | Night starts, Night ends | 23:00, 07:00 | a time |
-| House | Away mode switch, Sleep mode switch | empty: Taxis makes `input_boolean.taxis_away` and `taxis_sleep` when it installs Area climate | an `input_boolean` you already have (the box suggests them) |
-| House | Notify services | empty: messages appear in Home Assistant's notifications | notify services like `notify.mobile_app_phone`, separated by commas, up to 20; **house only** |
-| House | Text-to-speech | empty | a `tts` entity (the box suggests them); **house only** |
-| Occupancy | Hold timeout | 5 min | 1 to 240 |
-| Occupancy | Extended after | 30 min | 1 to 720 |
-| Occupancy | Extended hold timeout | 15 min | 1 to 240 |
-| Occupancy | Sleep hold timeout | 60 min | 1 to 480 |
-| Occupancy | Shower holds occupied at | 0 %/s (off) | 0 to 1, in steps of 0.001 |
-| Lighting | Dark below | 50 lx | 0 to 5000 |
-| Lighting | Day brightness, Night brightness | 100 %, 10 % | 1 to 100 |
-| Lighting | Day colour, Night colour | 3000 K, 2200 K | 1500 to 6500, in steps of 50 |
-| Lighting | Transition | 1 s | 0 to 60 |
-| Lighting | Dim before off | 15 s | 0 to 300 (0: no dimming, the lights go off at once) |
-| Lighting | Dim level | 30 % | 1 to 100 |
-| Lighting | Manual override lasts | 0 min | 0 to 240 (0: until the area next clears) |
-| Lighting | Entry lights | empty: the area's only light, else its main lights | up to 20 lights of the area; **area level only** |
-| Media | Speakers off when clear for | 15 min | 1 to 720 |
-| Media | TVs off when clear for | 30 min | 1 to 720 |
-| Media | Announcement volume | 40 % | 0 to 100 (0: leave the volume as it is); **house only** |
-| Climate | Comfort, Eco, Night, Sleep, Away | 21, 19, 18, 17.5, 16 | 5 to 35, in steps of 0.5 |
-| Climate | Cool: comfort, Cool: eco, Cool: night and sleep, Cool: away | 24, 27, 25, 29 | 5 to 35, in steps of 0.5; used in the cooling season instead of the five above (the night one also for sleep) |
-| Climate | Frost protection | 7 | 0 to 15, in steps of 0.5 |
-| Climate | Lowest, Highest | 16, 24 | 5 to 35, in steps of 0.5; the heating target never leaves them (the cooling temperatures are not limited by them) |
-| Climate | Window open for | 2 min | 0 to 60 |
-| Climate | Restore after close | 1 min | 0 to 60 |
-| Climate | Eco when clear for | 30 min | 1 to 720 |
-| Climate | Comfort needs occupancy | yes (a bedroom with no choice of its own: no) | yes or no |
-| Climate | Season | heating | heating, cooling or off |
-| Climate | Switch on and off itself | no | yes or no |
-| Climate | Open doors count | no | yes or no |
-| Climate | Comfort periods | `Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00` | days, then times (below) |
-| Climate | Preset: comfort, eco, away, sleep and night | empty | a preset name the thermostat offers (the box suggests them) |
-| Bathroom fan | On: rise rate | 0.03 %/s | 0.001 to 1, in steps of 0.001 |
-| Bathroom fan | On: above the reference | 10 % | 1 to 50 |
-| Bathroom fan | On: humidity | 80 % | 30 to 100 |
-| Bathroom fan | Off: within the reference | 3 % | 0 to 30 |
-| Bathroom fan | Off: flat for | 20 min | 1 to 240 |
-| Bathroom fan | Off: after at most | 60 min | 1 to 480 |
-| Bathroom fan | Reference humidity sensor | empty: none | a humidity `sensor` of another area, or a house average (the box suggests them) |
-| Bathroom fan | Not while the house sleeps | no | yes or no |
-| Exterior | Lights on from sunset | 0 min | -120 to 120, in steps of 5 (negative: before sunset) |
-| Exterior | Stay on for | 120 min | 1 to 720 |
-| Safety | Door open for | 10 min | 1 to 1440 |
-| Safety | Window open for | 30 min | 1 to 1440 |
-| Safety | Repeat every | 0 min (once) | 0 to 1440 |
-| Safety | Running above, Running for | 10 W, 2 min | 1 to 10000, 1 to 120 |
-| Safety | Done below, Done for | 5 W, 3 min | 0 to 10000, 1 to 120 |
+| Tab          | Parameter                                                   | Built-in default                                                                              | Allowed                                                                                                           |
+| ------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| House        | Night starts, Night ends                                    | 23:00, 07:00                                                                                  | a time                                                                                                            |
+| House        | Away mode switch, Sleep mode switch                         | empty: Taxis makes `input_boolean.taxis_away` and `taxis_sleep` when it installs Area climate | an `input_boolean` you already have (the box suggests them)                                                       |
+| House        | Notify services                                             | empty: messages appear in Home Assistant's notifications                                      | notify services like `notify.mobile_app_phone`, separated by commas, up to 20; **house only**                     |
+| House        | Text-to-speech                                              | empty                                                                                         | a `tts` entity (the box suggests them); **house only**                                                            |
+| Occupancy    | Hold timeout                                                | 5 min                                                                                         | 1 to 240                                                                                                          |
+| Occupancy    | Extended after                                              | 30 min                                                                                        | 1 to 720                                                                                                          |
+| Occupancy    | Extended hold timeout                                       | 15 min                                                                                        | 1 to 240                                                                                                          |
+| Occupancy    | Sleep hold timeout                                          | 60 min                                                                                        | 1 to 480                                                                                                          |
+| Occupancy    | Shower holds occupied at                                    | 0 %/s (off)                                                                                   | 0 to 1, in steps of 0.001                                                                                         |
+| Lighting     | Dark below                                                  | 50 lx                                                                                         | 0 to 5000                                                                                                         |
+| Lighting     | Day brightness, Night brightness                            | 100 %, 10 %                                                                                   | 1 to 100                                                                                                          |
+| Lighting     | Day colour, Night colour                                    | 3000 K, 2200 K                                                                                | 1500 to 6500, in steps of 50                                                                                      |
+| Lighting     | Transition                                                  | 1 s                                                                                           | 0 to 60                                                                                                           |
+| Lighting     | Dim before off                                              | 15 s                                                                                          | 0 to 300 (0: no dimming, the lights go off at once)                                                               |
+| Lighting     | Dim level                                                   | 30 %                                                                                          | 1 to 100                                                                                                          |
+| Lighting     | Manual override lasts                                       | 0 min                                                                                         | 0 to 240 (0: until the area next clears)                                                                          |
+| Lighting     | Entry lights                                                | empty: the area's only light, else its main lights                                            | up to 20 lights of the area; **area level only**                                                                  |
+| Media        | Speakers off when clear for                                 | 15 min                                                                                        | 1 to 720                                                                                                          |
+| Media        | TVs off when clear for                                      | 30 min                                                                                        | 1 to 720                                                                                                          |
+| Media        | Announcement volume                                         | 40 %                                                                                          | 0 to 100 (0: leave the volume as it is); **house only**                                                           |
+| Climate      | Comfort, Eco, Night, Sleep, Away                            | 21, 19, 18, 17.5, 16                                                                          | 5 to 35, in steps of 0.5                                                                                          |
+| Climate      | Cool: comfort, Cool: eco, Cool: night and sleep, Cool: away | 24, 27, 25, 29                                                                                | 5 to 35, in steps of 0.5; used in the cooling season instead of the five above (the night one also for sleep)     |
+| Climate      | Frost protection                                            | 7                                                                                             | 0 to 15, in steps of 0.5                                                                                          |
+| Climate      | Lowest, Highest                                             | 16, 24                                                                                        | 5 to 35, in steps of 0.5; the heating target never leaves them (the cooling temperatures are not limited by them) |
+| Climate      | Window open for                                             | 2 min                                                                                         | 0 to 60                                                                                                           |
+| Climate      | Restore after close                                         | 1 min                                                                                         | 0 to 60                                                                                                           |
+| Climate      | Eco when clear for                                          | 30 min                                                                                        | 1 to 720                                                                                                          |
+| Climate      | Comfort needs occupancy                                     | yes (a bedroom with no choice of its own: no)                                                 | yes or no                                                                                                         |
+| Climate      | Season                                                      | heating                                                                                       | heating, cooling or off                                                                                           |
+| Climate      | Switch on and off itself                                    | no                                                                                            | yes or no                                                                                                         |
+| Climate      | Open doors count                                            | no                                                                                            | yes or no                                                                                                         |
+| Climate      | Comfort periods                                             | `Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00`                                        | days, then times (below)                                                                                          |
+| Climate      | Preset: comfort, eco, away, sleep and night                 | empty                                                                                         | a preset name the thermostat offers (the box suggests them)                                                       |
+| Bathroom fan | On: rise rate                                               | 0.03 %/s                                                                                      | 0.001 to 1, in steps of 0.001                                                                                     |
+| Bathroom fan | On: above the reference                                     | 10 %                                                                                          | 1 to 50                                                                                                           |
+| Bathroom fan | On: humidity                                                | 80 %                                                                                          | 30 to 100                                                                                                         |
+| Bathroom fan | Off: within the reference                                   | 3 %                                                                                           | 0 to 30                                                                                                           |
+| Bathroom fan | Off: flat for                                               | 20 min                                                                                        | 1 to 240                                                                                                          |
+| Bathroom fan | Off: after at most                                          | 60 min                                                                                        | 1 to 480                                                                                                          |
+| Bathroom fan | Reference humidity sensor                                   | empty: none                                                                                   | a humidity `sensor` of another area, or a house average (the box suggests them)                                   |
+| Bathroom fan | Not while the house sleeps                                  | no                                                                                            | yes or no                                                                                                         |
+| Exterior     | Lights on from sunset                                       | 0 min                                                                                         | -120 to 120, in steps of 5 (negative: before sunset)                                                              |
+| Exterior     | Stay on for                                                 | 120 min                                                                                       | 1 to 720                                                                                                          |
+| Safety       | Door open for                                               | 10 min                                                                                        | 1 to 1440                                                                                                         |
+| Safety       | Window open for                                             | 30 min                                                                                        | 1 to 1440                                                                                                         |
+| Safety       | Repeat every                                                | 0 min (once)                                                                                  | 0 to 1440                                                                                                         |
+| Safety       | Running above, Running for                                  | 10 W, 2 min                                                                                   | 1 to 10000, 1 to 120                                                                                              |
+| Safety       | Done below, Done for                                        | 5 W, 3 min                                                                                    | 0 to 10000, 1 to 120                                                                                              |
 
 **House only.** The notify services, the text-to-speech entity and the
 announcement volume have one value for the whole house: only the House default row
@@ -491,6 +502,17 @@ writes the line in one spelling, and hovering over it spells it out.
 
 ## Recipes
 
+**Automations → Recipes.** By default the list shows only the recipes that fit
+each area, so a row that says _Missing requirements_ means something is really
+missing: Occupancy needs a motion or presence sensor (or a bedroom); Motion lights
+an interior area with lights and a sensor; Media off a speaker or a TV; Area climate
+an interior area with a thermostat; Bathroom fan an interior area with a fan, or a
+humidity sensor in a bathroom-like area (bath, toilet, WC, shower, washroom,
+ensuite); Exterior lights only areas marked Exterior; Left open a door or window
+sensor; Appliance done a power sensor. An installed or out-of-date recipe, or one
+already in Changes, always shows. A line above the table says how many recipes
+don't fit; **Show all recipes** lists them anyway (remembered in this browser).
+
 A recipe is an automation Taxis makes for an area from a blueprint of its own,
 filled in with the area's sensors, lights and parameters. There are eight, and
 one script for the whole house (Announce):
@@ -505,24 +527,24 @@ one script for the whole house (Announce):
   hold on the area's Capabilities tab. How long the timer runs depends on the
   state of the area:
   - **Sleep**: in an area marked as a bedroom, while a presence sensor marked as
-    a bed sensor is on, the timer is as long as *Sleep hold timeout*, and it
+    a bed sensor is on, the timer is as long as _Sleep hold timeout_, and it
     never runs out while the bed sensor is on.
-  - **Extended**: once the area has been occupied without a break for *Extended
-    after*, the timer is as long as *Extended hold timeout*. Taxis reads how long
+  - **Extended**: once the area has been occupied without a break for _Extended
+    after_, the timer is as long as _Extended hold timeout_. Taxis reads how long
     the area has been occupied from when its occupied sensor last changed, so
     there is nothing more to create. After a Home Assistant restart the count
     starts again.
-  - Otherwise it is *Hold timeout*.
+  - Otherwise it is _Hold timeout_.
 - **Motion lights** turns the area's lights on when it becomes occupied and off
   when it clears. The lights go on only when they are off and, if the area has a
-  light level helper, only when it reads below *Dark below* (read while the
+  light level helper, only when it reads below _Dark below_ (read while the
   lights are off, so the lights don't feed back). Which lights go on depends on
   their role (set on the area's Capabilities tab: main, accent, task or night)
   and on the time:
   - **By day**: the entry lights (the area's only light, else its main lights,
     unless you chose others; the blueprint falls back to the main lights if it
     is given none), and the accent lights once the area has been occupied for
-    *Extended after*. Main lights that are not entry lights stay as they are.
+    _Extended after_. Main lights that are not entry lights stay as they are.
   - **Inside the night window**: the night lights, or, when the area has none,
     the main lights at the night brightness and colour.
   - **While someone is in bed** (bedroom with a bed sensor on): only the night
@@ -530,9 +552,9 @@ one script for the whole house (Announce):
   - Task lights are never switched on by the recipe. Turning off uses the
     area's whole light group, so every light goes off, whatever its role.
 
-  When the area clears the lights that are on dim to *Dim level*, wait *Dim
-  before off* seconds for the area to be occupied again, and go off; with *Dim
-  before off* at 0 they go off at once. The area counts as clear after two
+  When the area clears the lights that are on dim to _Dim level_, wait _Dim
+  before off_ seconds for the area to be occupied again, and go off; with _Dim
+  before off_ at 0 they go off at once. The area counts as clear after two
   seconds, so the occupied sensor blinking when the hold timer restarts doesn't
   dim the lights. When the area is occupied again, lights left at or below the
   dim level come back to the profile.
@@ -542,14 +564,15 @@ one script for the whole house (Announce):
   group on or off), the automation leaves the area alone: it doesn't turn the
   lights back on after you turned them off, or off after you turned them on. The
   override ends when the area clears, when it becomes occupied again after being
-  clear, or after *Manual override lasts* minutes, whichever comes first (0: no
+  clear, or after _Manual override lasts_ minutes, whichever comes first (0: no
   time limit, which in practice is a day). A change that a Home Assistant
   automation made, this one included, is not manual. When the time runs out and
   the area is clear, the lights go off. Taxis makes a timer for it,
   `timer.<code>_override`.
-- **Media off** turns off the area's speakers when it has been clear for *Speakers
-  off when clear for*, and its TVs when it has been clear for *TVs off when clear
-  for*. Only players that are on are sent the command, and one that refuses it
+
+- **Media off** turns off the area's speakers when it has been clear for _Speakers
+  off when clear for_, and its TVs when it has been clear for _TVs off when clear
+  for_. Only players that are on are sent the command, and one that refuses it
   does not stop the others. An area with one kind of player and the media group
   (`media_player.<code>_media`) uses the group; with both kinds it uses the
   players, since each kind has its own time.
@@ -590,7 +613,7 @@ automations control the same lights. It is a warning, not a stop. A note says
 when the area has no entry or main lights (nothing goes on by day) or no night
 lights (nothing goes on while someone is in bed). The Motion lights blueprint is
 now version 4: an installed automation shows as out of date until it is updated
-(blueprint version, and *Entry lights: none → …*).
+(blueprint version, and _Entry lights: none → …_).
 
 Installing a recipe adds these changes (the Changes page shows each):
 
@@ -604,7 +627,7 @@ Installing a recipe adds these changes (the Changes page shows each):
   paused"; off to begin with, so the recipes run: turn it on to pause the area's
   recipes, and it keeps its state through a restart);
 - for Motion lights, the override timer `timer.<code>_override` ("Kitchen
-  override", as long as *Manual override lasts*, or an hour when that is 0: the
+  override", as long as _Manual override lasts_, or an hour when that is 0: the
   automation sets the real length itself);
 - the automation `taxis_<recipe>_<code>`, named "Kitchen – Occupancy (Taxis)",
   that uses the blueprint with its inputs.
@@ -614,8 +637,8 @@ Taxis is stopped or uninstalled. Not in this version: boost, covers by the sun
 (it needs to know which way each window faces) and the other recipes of the design.
 
 The Occupancy blueprint is now version 4: an installed Occupancy automation shows
-as out of date until it is updated (blueprint version, and *Shower holds occupied
-at: none → 0*).
+as out of date until it is updated (blueprint version, and _Shower holds occupied
+at: none → 0_).
 
 #### Area climate
 
@@ -623,27 +646,27 @@ at: none → 0*).
 area's Capabilities) by fixed rules. It works the target out again whenever an
 input changes, and the first rule that fits wins:
 
-1. **Window.** A window (or, with *Open doors count*, a door) of the area has been
-   open for *Window open for*: the heating goes down to *Frost protection*, or,
-   if *Switch on and off itself* is on and the thermostat can be switched off,
-   off. For *Restore after close* after the last one closes nothing is changed;
+1. **Window.** A window (or, with _Open doors count_, a door) of the area has been
+   open for _Window open for_: the heating goes down to _Frost protection_, or,
+   if _Switch on and off itself_ is on and the thermostat can be switched off,
+   off. For _Restore after close_ after the last one closes nothing is changed;
    then the target is worked out again. While a window has been open for less
    than the delay, nothing is changed either.
-2. **Away.** The house away switch is on: the *Away* temperature.
+2. **Away.** The house away switch is on: the _Away_ temperature.
 3. **Sleep.** In a bedroom, a bed sensor is on or the house sleep switch is on:
-   the *Sleep* temperature.
-4. **Night.** Inside the night window (House tab): the *Night* temperature.
+   the _Sleep_ temperature.
+4. **Night.** Inside the night window (House tab): the _Night_ temperature.
 5. **Comfort.** The area's schedule is on and the area is occupied, or was
-   clear for less than *Eco when clear for*, or *Comfort needs occupancy* is no:
-   the *Comfort* temperature.
-6. **Eco.** Anything else: the *Eco* temperature.
+   clear for less than _Eco when clear for_, or _Comfort needs occupancy_ is no:
+   the _Comfort_ temperature.
+6. **Eco.** Anything else: the _Eco_ temperature.
 
-In the heating season the target stays between *Lowest* and *Highest*. Frost
-protection is the one value that doesn't. The *Season* is heating, cooling or off
+In the heating season the target stays between _Lowest_ and _Highest_. Frost
+protection is the one value that doesn't. The _Season_ is heating, cooling or off
 (the recipe does nothing). In the **cooling** season the thermostat is put in cool
-instead of heat and the target comes from the four *Cool* temperatures instead
-(*Cool: eco*, *Cool: away*, *Cool: comfort*, and *Cool: night and sleep*, which sleep
-shares); *Lowest* and *Highest* don't limit them, since cooling temperatures lie
+instead of heat and the target comes from the four _Cool_ temperatures instead
+(_Cool: eco_, _Cool: away_, _Cool: comfort_, and _Cool: night and sleep_, which sleep
+shares); _Lowest_ and _Highest_ don't limit them, since cooling temperatures lie
 above the heating ones. The device's own limits and step still apply.
 
 **Which climate entities run.** An **AC** runs in both seasons. **Heating** and
@@ -667,7 +690,7 @@ Only what differs from what the thermostat shows is sent, so nothing is sent whe
 it is already right. A thermostat that is unavailable is left alone.
 
 **Switching on and off.** Taxis does not change a thermostat's mode unless you say
-so with *Switch on and off itself*. When it is off, a thermostat that is off is
+so with _Switch on and off itself_. When it is off, a thermostat that is off is
 left alone, and a window lowers the setpoint to frost protection. When it is on,
 a thermostat that is off is switched on again (heat, or cool when cooling; and, if
 the area has a temperature helper, only when the room is colder than the target,
@@ -684,7 +707,7 @@ turn them on yourself or from your own automations (Taxis does not decide when y
 are away). The sleep switch puts only bedrooms to sleep.
 
 **The schedule.** Each area gets `schedule.<code>_climate` ("Kitchen climate"), a
-Home Assistant schedule helper made from the *Comfort periods*. When you change
+Home Assistant schedule helper made from the _Comfort periods_. When you change
 the periods, the cell says **Out of date** and installing updates the schedule.
 Taxis keeps the periods it wrote in the automation, because it can't read a
 schedule back; a schedule you already have at that id is used as it is and never
@@ -722,21 +745,21 @@ Helpers page does (the `derivative` setup dialog, with the unit of time a second
 three decimals), gives it the id and puts it in the area. If it is removed, the
 Recipes cell says it is missing and the fix makes it again.
 
-*The fan goes on* when the humidity rises at least *On: rise rate* (0.03 %/s, 1.8 %
-a minute), or is at least *On: above the reference* (10 %) above the reference
-sensor, or is at least *On: humidity* (80 %). The reference is the humidity sensor
+_The fan goes on_ when the humidity rises at least _On: rise rate_ (0.03 %/s, 1.8 %
+a minute), or is at least _On: above the reference_ (10 %) above the reference
+sensor, or is at least _On: humidity_ (80 %). The reference is the humidity sensor
 you choose on the Bathroom fan tab: another area's, or an average of the house you
 made yourself. Without one, only the rise rate and the humidity level start the
 fan.
 
-*The fan goes off* at the first of: the humidity is back within *Off: within the
-reference* (3 %) of the reference and no longer rising fast; the rate has been flat
-(within 0.001 %/s of zero) for *Off: flat for* (20 min); or the fan has run for
-*Off: after at most* (60 min). Without a reference sensor "the reference" is the
+_The fan goes off_ at the first of: the humidity is back within _Off: within the
+reference_ (3 %) of the reference and no longer rising fast; the rate has been flat
+(within 0.001 %/s of zero) for _Off: flat for_ (20 min); or the fan has run for
+_Off: after at most_ (60 min). Without a reference sensor "the reference" is the
 humidity at the moment the fan started: Home Assistant keeps it for as long as the
 fan runs, so no helper is needed for it. A fan that is already on is left alone, so
-a fan you switched on by hand is not switched off by Taxis. With *Not while the
-house sleeps* on, the fan does not start while the house sleep switch is on (the
+a fan you switched on by hand is not switched off by Taxis. With _Not while the
+house sleeps_ on, the fan does not start while the house sleep switch is on (the
 House tab's, or `input_boolean.taxis_sleep`, which Taxis makes if you have none).
 The cell says: with no reference, and when a shower does not hold the area occupied.
 
@@ -744,7 +767,7 @@ Limits: if Home Assistant restarts while the fan runs, the cycle is lost and the
 stays on until you switch it off. A cycle that starts with the humidity already
 low and flat, or already near the reference, ends by the time limit.
 
-**A shower keeps the bathroom occupied.** Set *Shower holds occupied at* on the
+**A shower keeps the bathroom occupied.** Set _Shower holds occupied at_ on the
 Occupancy tab (for the bathroom, or any level; 0 is off). The Occupancy automation
 is then given the area's humidity rate sensor, when it exists (or is in the list of
 changes): while the hold timer runs, a rate at or above that keeps it running. It
@@ -760,15 +783,15 @@ that count (a camera's motion sensor included, if you let it count) and every
 person. Installing adds the blueprint `taxis/exterior_lights.yaml`, the area's pause
 switch and override timer if there are none, and `taxis_exterior_lights_<code>`.
 
-- At **sunset** (moved by *Lights on from sunset*, in minutes), the lights go on and
-  a clock of *Stay on for* starts (120 min).
+- At **sunset** (moved by _Lights on from sunset_, in minutes), the lights go on and
+  a clock of _Stay on for_ starts (120 min).
 - **Motion** (or a counted camera or presence sensor turning on) and **a person
   arriving home**, during the night, turn the lights on if they are off and start
   the clock again. When the clock runs out the lights go off.
 - At **sunrise** the lights go off and any manual override ends. In **daytime**
   nothing starts.
 - **Manual override**, as in Motion lights: a light changed by hand (app, dashboard,
-  wall switch) keeps the automation out of the area for *Manual override lasts*
+  wall switch) keeps the automation out of the area for _Manual override lasts_
   (Lighting tab; 0 is until sunrise). The override timer is `timer.<code>_override`,
   the same one Motion lights uses; the cell warns when Motion lights is installed
   for the area too.
@@ -781,10 +804,10 @@ starts.
 Reports a door or window that stays open. **Needs** a door or window sensor that
 counts. Taxis watches each sensor itself (not the area's door and window groups),
 so the message says which one and a second door opening later is not hidden by the
-first: a door open for *Door open for* (10 min) and a window for *Window open for*
-(30 min). With *Repeat every* above 0 the message is sent again at that interval
-until it closes (0: once). The message goes to every notify service in *Notify
-services* on the House tab; with none set, it appears in Home Assistant's
+first: a door open for _Door open for_ (10 min) and a window for _Window open for_
+(30 min). With _Repeat every_ above 0 the message is sent again at that interval
+until it closes (0: once). The message goes to every notify service in _Notify
+services_ on the House tab; with none set, it appears in Home Assistant's
 notifications. Taxis does not check that a service you type exists: it cannot read
 the list of services without a read it does not make. Installing adds the blueprint
 `taxis/left_open.yaml`, the area's pause switch and `taxis_left_open_<code>`.
@@ -794,9 +817,9 @@ the list of services without a read it does not make. Installing adds the bluepr
 Tells you when a machine has finished. **Needs** a power sensor that counts and that
 you ticked as an **Appliance** on the area's Capabilities tab; one automation per
 area covers all its appliances, and the message names the one that finished (the
-sensor's name without a trailing "power"). A machine is *running* when its power has
-stayed above *Running above* (10 W) for *Running for* (2 min) and *done* when it has
-stayed below *Done below* (5 W) for *Done for* (3 min). Running above has to be
+sensor's name without a trailing "power"). A machine is _running_ when its power has
+stayed above _Running above_ (10 W) for _Running for_ (2 min) and _done_ when it has
+stayed below _Done below_ (5 W) for _Done for_ (3 min). Running above has to be
 higher than Done below. The levels are in watts: a sensor in kW is flagged in the
 cell. The message goes to the notify services, as for Left open. Two cycles that
 overlap on the same machine, or a pause that dips below the running level and back,
@@ -815,7 +838,7 @@ Areas with speakers but no Occupancy are left out, and the cell says which. Noth
 is said when no area qualifies.
 
 **Needs** a text-to-speech entity (House tab) and at least one such area. The
-script sets the volume on those speakers first (*Announcement volume*, 40 %, or the
+script sets the volume on those speakers first (_Announcement volume_, 40 %, or the
 volume you pass; 0 leaves it) and does not put it back, then calls the
 `tts.speak` service on the text-to-speech entity. Call it from your own automations
 or scripts: `script.taxis_announce` with `message: "Dinner is ready"`.
@@ -827,21 +850,39 @@ things together however many speakers it has. It is a script blueprint saved at
 script (`config/script/config/taxis_announce`). When a speaker, an area's Occupancy
 or the setting changes, the cell says **Out of date** and what changed.
 
-## House guide
+## Guide
 
-**Guide** is the first page. It helps you build a comfortable house one area at a
-time: you say what each room is for, and Taxis shows what the room has and what is
-still missing. The guide itself changes nothing in Home Assistant. The steps that do
-add proposals to [Changes](#changes-and-apply), for you to review and apply.
+**Guide** is the home page, and the path Taxis takes you along to a complete,
+well-organised Home Assistant. It changes nothing in Home Assistant itself; the
+steps it sends you to add proposals to [Changes](#changes-and-apply), for you to
+review and apply.
 
-The first screen shows:
+**Your path** is a checklist of nine steps, each checked against what Taxis has read,
+with a short summary, a status (_Done_, _Needs attention_, _Not started_, or _Reading_
+or _Couldn't read_ while the data loads or fails; a step that couldn't be read is
+never counted as done) and a button that opens the exact place. A progress bar and a
+**Next step** card point at the first step that isn't done.
+
+1. **Floors and areas**: areas without a floor (opens them in Organize).
+2. **Every entity in an area**: entities in no area (opens _Not in any area_).
+3. **Naming**: entity ids that match their area's code, for example 38 of 46 (opens
+   the area with the most to fix, on its Naming tab).
+4. **Capabilities**: areas that have equipment but nothing counted (Parameters → Capabilities).
+5. **Helpers**: helpers to create or update, conflicts, and those in place (Parameters → Helpers).
+6. **Parameters**: whether any house, floor or room setting has been chosen yet.
+7. **Recipes**: rooms ready, installed, and changes waiting (Automations → Recipes).
+8. **Buttons**: controls found and press types still without an action (Automations → Buttons).
+9. **Health**: errors and warnings of the last check (Health).
+
+Below the path, **Room by room** is the guide for each area: you say what a room is
+for, and Taxis shows what the room has and what is still missing. It shows:
 
 - four counts: areas with chosen goals, areas ready for a room test, areas tested
   by you, and areas awaiting review and Apply;
 - **Guest, away and sleep**, the three house modes (below);
 - **Start with one room**, a card for every area with its floor, its room type and
-  goals, and where it stands (for example *Review equipment*, *Prepare helpers*,
-  *Ready for a room test*). Choose a card to open the area. **Guide this area** on
+  goals, and where it stands (for example _Review equipment_, _Prepare helpers_,
+  _Ready for a room test_). Choose a card to open the area. **Guide this area** on
   an area's page opens the same place;
 - **Ideas from real homes**, automation ideas with a link to the original
   discussion (a link only: Taxis does not fetch it) and the recipes that implement
@@ -856,8 +897,8 @@ Inside an area, work from the top:
    lighting, door and window reminders or appliance-finished notifications. Adjust
    them before you save. The choice stays in Taxis.
 2. **Review equipment and controls.** For each goal, the equipment it needs
-   (*Detected and reporting*, *Review existing entities*, *Needed for this goal* or
-   *Optional improvement*), with the entities found and advice on types and
+   (_Detected and reporting_, _Review existing entities_, _Needed for this goal_ or
+   _Optional improvement_), with the entities found and advice on types and
    placement. The advice never names brands. A detected entity is not proof of good
    coverage. **Review this area's capabilities** opens the area's Capabilities tab.
 3. **Prepare helpers.** The canonical helpers the goals need, with their status.
@@ -874,8 +915,8 @@ Inside an area, work from the top:
    routine sensor values do not.
 
 **Guest, away and sleep.** Three manual toggles (`away`, `sleep`, `guest`) that
-the recipes respect. *Away* stops automatic indoor lights from turning on. *Sleep*
-uses night lighting, and a bedroom uses only its Night-role lights. *Guest* keeps
+the recipes respect. _Away_ stops automatic indoor lights from turning on. _Sleep_
+uses night lighting, and a bedroom uses only its Night-role lights. _Guest_ keeps
 visitors comfortable when residents leave: it pauses automatic indoor lighting and
 media off by default, while climate keeps its window, season, sleep and night
 rules. **Choose mode switches** opens Parameters → House, where you pick the
@@ -888,7 +929,7 @@ only suggests.
 
 ## Buttons
 
-**Buttons** is for remotes, wall controls and any other button Home Assistant can
+**Automations → Buttons** is for remotes, wall controls and any other button Home Assistant can
 see. Taxis lists them, shows which automations already react to each press, and
 lets you give a press, double press or hold an action. What you get is an ordinary
 Home Assistant automation that keeps working when Taxis is stopped. Nothing
@@ -916,6 +957,13 @@ it there. Under **Discovery coverage** you see how many automation configuration
 could be read. YAML-only and unavailable ones can't be, so no match is not proof
 that nothing else reacts to a button.
 
+**One table per control.** Opening a control shows a table: a row per button and a
+column per press type that the control offers (Single press, Double press, Long press,
+and so on, spelled as the integration spells them). Each cell shows the automations
+that already handle that press (Taxis's own, and existing ones as links to Home
+Assistant) or a faint **+** where nothing was found. Click a cell, or the **+**, to
+assign. The discovery coverage is one collapsible line above the table.
+
 **Assigning an action.** Open a control, choose a gesture and **Assign action**.
 Choose the **Target**, an entity, and the **Action** to run on it, or an action
 that needs no target (below). **Optional action data** takes plain JSON such as
@@ -924,7 +972,7 @@ device and area targets, which belong in the Target field. Tick **Enable this
 assignment after Apply** or leave it off to keep it disabled. If another automation
 may also handle the gesture, or some automations couldn't be read, tick **I
 reviewed existing handlers and any coverage gaps; allow coexistence**: without it
-Taxis refuses to add a second handler. **Add to changes** queues it. Taxis never
+Taxis refuses to add a second handler. **Add to changes** puts it in the list. Taxis never
 edits the existing handlers.
 
 **One automation per output.** Every button that controls the same output (the
@@ -940,7 +988,7 @@ where a button presses another button that presses the first is refused as a loo
 actions is fixed by Taxis. The page offers only what is allowed, the server checks
 it again when you add the assignment, and Apply checks it a third time.
 
-- *With an entity target of the same kind:* lights, switches, fans, covers, media
+- _With an entity target of the same kind:_ lights, switches, fans, covers, media
   players, climate, humidifiers, sirens and valves (any of their services, except
   those named below); locks (lock and unlock only); scenes (turn on); scripts (turn
   on, turn off, toggle); input booleans; input buttons and buttons (press);
@@ -948,16 +996,16 @@ it again when you add the assignment, and Apply checks it a third time.
   base, stop); numbers and input numbers (set value); selects and input selects
   (select option, next, previous); remotes (turn on, turn off, toggle, send
   command).
-- *Without a target:* calling a script that exists, and
+- _Without a target:_ calling a script that exists, and
   `persistent_notification.create`.
-- *Never:* anything in the `homeassistant` domain (so `homeassistant.turn_on` is
+- _Never:_ anything in the `homeassistant` domain (so `homeassistant.turn_on` is
   out too: choose the entity's own service), `hassio`, `shell_command`,
   `python_script`, `pyscript`, `command_line`, `rest_command`, `recorder`, `logger`,
   `system_log`, `backup`, `frontend`, `update`, and the administration services of
   `zha`, `zwave_js`, `mqtt` and `esphome`. Also any service whose name begins
   `reload`, `remove`, `delete`, `purge` or `install`, or is exactly `restart`,
   `stop`, `shutdown` or `reboot`. Notify services are out as well, apart from the
-  persistent notification. A cover's *stop cover* is fine; a vacuum's *stop* too.
+  persistent notification. A cover's _stop cover_ is fine; a vacuum's _stop_ too.
 
 When Taxis refuses an action it says which rule applies.
 
@@ -1040,8 +1088,8 @@ The checks, and the exact rules:
   whole value (`light.a`, or a comma-separated list), a key in a scene, or in a
   template (`states('sensor.a')`, `states.sensor.a.state`). The names of
   services (`light.turn_on`), aliases and descriptions are not read. An id built
-  by a template is not seen. The recipes' own automations are left to *Taxis
-  setup*.
+  by a template is not seen. The recipes' own automations are left to _Taxis
+  setup_.
 - **Broken groups.** A group whose members include entities Home Assistant
   doesn't have (renamed or removed), or a group helper that is unavailable and so
   reports no members. Warning. The detail names the missing ids. An area's own
@@ -1063,7 +1111,7 @@ The checks, and the exact rules:
   numeric condition has no number that passes (`above` at or over `below`).
   Conditions inside `or`, `not` and branches are not judged this way, because
   there a false condition only picks another branch; their missing ids appear
-  under *Missing references*. Info when a state condition tests an input boolean
+  under _Missing references_. Info when a state condition tests an input boolean
   that no automation, script or scene turns on or off: it can only be changed by
   hand.
 - **One-way switches.** An input boolean that something turns on and nothing
@@ -1088,15 +1136,15 @@ The checks, and the exact rules:
   helper, so a thermostat that is off is switched on without looking at the room.
 - **Taxis setup.** Warning: a recipe whose installed automation no longer matches
   (the fix is the recipe's update); a canonical helper id that something else
-  holds (the Helpers tab's *conflict*; the link goes to Settings); a sensor or
+  holds (the Helpers tab's _conflict_; the link goes to Settings); a sensor or
   light an area counts that has been unavailable more than 1 hour but less than
-  the *not reporting* limit; an area's temperature or humidity setting that names
+  the _not reporting_ limit; an area's temperature or humidity setting that names
   an entity that doesn't exist (the fix points it at the area's own helper when
   there is one, and clears it otherwise). Info: an area with lights that count
   and no Occupancy installed (the fix adds it when it is ready; otherwise the
   link goes to the area's Capabilities).
   Also a warning: the light group of a floor or of the house that lacks the light
-  group of one of its areas or floors (the Helpers tab's *Update members*; the fix
+  group of one of its areas or floors (the Helpers tab's _Update members_; the fix
   adds the change), and a floor or house group id something else holds. A bathroom
   fan whose humidity rate sensor is gone is a recipe out of date (the fix makes the
   sensor again). Announce is checked the same way: out of date (the fix updates the
@@ -1225,7 +1273,7 @@ them on the **Changes** page.
 
 Taxis-only settings, including capability choices, parameters, naming rules and
 label/category groups, are separate from that list. **Saved in Taxis** means the
-app has stored a setting; **Queued for HA** means a proposed Home Assistant edit
+app has stored a setting; **In changes** means a proposed Home Assistant edit
 is waiting for Apply; **Applied to HA** means Apply has completed its checks.
 A form's unsaved draft has reached none of those stages.
 
@@ -1359,7 +1407,7 @@ What it is:
 
 Settings:
 
-- **Provider.** *Anthropic (Claude)*, or *OpenAI-compatible*: OpenAI itself
+- **Provider.** _Anthropic (Claude)_, or _OpenAI-compatible_: OpenAI itself
   (`https://api.openai.com/v1`), OpenRouter, or a service on your own network,
   such as Ollama (`http://<host>:11434/v1`) or LM Studio. The address must be
   `https://`, except `http://` for this machine and private-network addresses.
@@ -1368,14 +1416,14 @@ Settings:
   (with the saved key, or one you have just typed). Then pick a model for each of
   three tiers: **Low**, for routine naming and classification; **Medium**, for
   explanations and analysis; **Strong**, for complex planning and review. A
-  feature asks for a tier, never for a model name. Ask Taxis uses Low for *Naming
-  help*, Medium for *Explain* and Strong for *Suggest next steps*; the button
+  feature asks for a tier, never for a model name. Ask Taxis uses Low for _Naming
+  help_, Medium for _Explain_ and Strong for _Suggest next steps_; the button
   review uses Medium. For Anthropic the tiers start as `claude-haiku-5-5` (Low) and
   `claude-sonnet-5-5` (Medium), with Strong left empty for you to choose. An
   OpenAI-compatible service starts empty and you pick from what it lists. A tier
   with no model can't be used. Settings saved before the tiers existed keep their
-  *Quick* model as Low and their *Ask* model as Medium.
-- **Effort**: *Quick*, *Balanced* (the default) or *Thorough*. For Anthropic
+  _Quick_ model as Low and their _Ask_ model as Medium.
+- **Effort**: _Quick_, _Balanced_ (the default) or _Thorough_. For Anthropic
   this is the model's effort setting (low, medium, high); for an
   OpenAI-compatible service it is sent as `reasoning_effort` to models that
   accept it, and left out for those that don't.
@@ -1413,7 +1461,7 @@ model for the task's tier; the window says what is missing and links to Settings
   **Suggest next steps** (Strong) or **Naming help** (Low). The buttons on an empty
   chat fill in a starting question.
 - **Context.** The chip under the title says what Taxis will send besides your
-  question: *Page help only* to begin with, *House counts* or the name of an area.
+  question: _Page help only_ to begin with, _House counts_ or the name of an area.
   Open it to tick **Include page data** and choose the area the question is about,
   and to **Review exactly what will be sent**, which shows the exact text and what
   was left out. Room context has the area's entity names and ids (up to 60), their
@@ -1427,7 +1475,7 @@ model for the task's tier; the window says what is missing and links to Settings
   up to 2,000 characters. Follow-ups include up to six earlier messages, each
   shortened to 2,000 characters. One question runs at a time. A reply cut off by the
   output limit says so.
-- **The three-dot menu.** **AI administration**, **AI settings**, **Clear chat**,
+- **The three-dot menu.** **AI administration** (Settings → AI), **Clear chat**,
   the provider and model in use, and the last reply's model, tokens and estimated
   cost.
 
@@ -1437,8 +1485,8 @@ page, context, model and result. Never the question, the reply or the room.
 
 ## AI administration
 
-**AI**, the last page in the bar, shows where AI is used and what it costs. It only
-reads: nothing on it runs a model.
+**Settings → AI** shows where AI is used and what it costs, then the model and key
+settings and Jev. The overview only reads: nothing on it runs a model.
 
 - **Generative AI** says whether it is on, the provider, this month's calls and
   estimated spend against the cap, and how many calls had no known price and so
@@ -1526,9 +1574,9 @@ What each of the AI and Jev services receives, and when:
     targets of matching automations;
   - when you press **Load models**: only the key and the request for the list;
   - when you press a **Test** button: one fixed sentence.
-  It never receives your Home Assistant token, state values, attributes, the YAML
-  of automations, saved room notes or another service's key. Your Home Assistant
-  token and the saved API keys are also removed from any text before it is sent.
+    It never receives your Home Assistant token, state values, attributes, the YAML
+    of automations, saved room notes or another service's key. Your Home Assistant
+    token and the saved API keys are also removed from any text before it is sent.
 - **TypeSafe** receives your Jev API key as the login of the request, the Jev model
   name, and:
   - when you press **Review notes with Jev** in the Guide: the notes you typed (up

@@ -5,8 +5,8 @@ import os
 import unittest
 import urllib.request
 from playwright.sync_api import sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:8099")
 
 
 class EntityLabelsRegression(unittest.TestCase):
@@ -15,7 +15,7 @@ class EntityLabelsRegression(unittest.TestCase):
         with urllib.request.urlopen(BASE + "/api/hierarchy", timeout=30) as response:
             cls.fixture = json.load(response)
         cls.pw = sync_playwright().start()
-        cls.browser = cls.pw.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), args=["--no-sandbox"])
+        cls.browser = launch(cls.pw)
 
     @classmethod
     def tearDownClass(cls):
@@ -43,17 +43,20 @@ class EntityLabelsRegression(unittest.TestCase):
         self.page.route("**/api/hierarchy*", lambda route: route.fulfill(json=self.body))
         def changes(route):
             if route.request.method == "POST":
-                item = route.request.post_data_json
-                self.posts.append(item)
-                change_id = len(self.queue) + 1
-                target = item.get("targetId") or f"new:{item['kind']}:{change_id}"
-                self.queue.append({"id": change_id, "kind": item["kind"], "op": item["op"], "targetId": target, "scope": None, "before": {}, "after": item["fields"], "createdAt": "2026-10-27T00:00:00Z"})
-                if item["kind"] == "label":
-                    h["labels"][target] = {"id": target, "name": item["fields"]["name"], "color": item["fields"].get("color"), "icon": None, "description": None}
-                elif item["kind"] == "entity":
-                    h["entities"][target]["labels"] = item["fields"]["labels"]
+                body = route.request.post_data_json
+                # One edit goes to /api/changes; several (a bulk edit) go in one request to /api/changes/batch.
+                for item in body["changes"] if "changes" in body else [body]:
+                    self.posts.append(item)
+                    change_id = len(self.queue) + 1
+                    target = item.get("targetId") or f"new:{item['kind']}:{change_id}"
+                    self.queue.append({"id": change_id, "kind": item["kind"], "op": item["op"], "targetId": target, "scope": None, "before": {}, "after": item["fields"], "createdAt": "2026-10-27T00:00:00Z"})
+                    if item["kind"] == "label":
+                        h["labels"][target] = {"id": target, "name": item["fields"]["name"], "color": item["fields"].get("color"), "icon": None, "description": None}
+                    elif item["kind"] == "entity":
+                        h["entities"][target]["labels"] = item["fields"]["labels"]
             route.fulfill(json={"ok": True, "changes": self.queue, "version": str(len(self.queue))})
         self.page.route("**/api/changes", changes)
+        self.page.route("**/api/changes/batch", changes)
 
     def tearDown(self):
         self.context.close()

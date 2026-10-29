@@ -87,30 +87,41 @@ export function changeStore(db: DatabaseSync) {
       db.exec("BEGIN IMMEDIATE");
       try {
         for (const result of outcome.results) if (result.ok) remove.run(result.changeId);
-        for (const r of outcome.retargets) { setTarget.run(r.targetId, r.changeId); replace.run(JSON.stringify(r.before), JSON.stringify(r.after), r.changeId); }
+        for (const r of outcome.retargets) {
+          setTarget.run(r.targetId, r.changeId);
+          replace.run(JSON.stringify(r.before), JSON.stringify(r.after), r.changeId);
+        }
         for (const c of list()) {
           let target = c.targetId;
           let after = c.after;
           let before = c.before;
-          for (const [temp, real] of outcome.realIds) { if (target === temp) target = real; after = swapRef(after, temp, real); }
+          for (const [temp, real] of outcome.realIds) {
+            if (target === temp) target = real;
+            after = swapRef(after, temp, real);
+          }
           const current = (id: string) => outcome.renamed.get(id) ?? id;
           if (c.kind === "entity" || (c.kind === "helper" && c.op === "update")) target = current(target);
           const remap = (fields: Record<string, unknown>) => {
             const next = { ...fields };
             for (const key of ["temperature_entity_id", "humidity_entity_id"]) if (typeof next[key] === "string") next[key] = current(next[key]);
-            if (c.kind === "helper" && Array.isArray(next.entities)) next.entities = next.entities.map(e => typeof e === "string" ? current(e) : e);
+            if (c.kind === "helper" && Array.isArray(next.entities)) next.entities = next.entities.map((e) => (typeof e === "string" ? current(e) : e));
             if ((c.kind === "automation" || c.kind === "script") && next.use_blueprint && typeof next.use_blueprint === "object") {
               const use = next.use_blueprint as { path: string; input: Record<string, unknown> };
               next.use_blueprint = { ...use, input: mapInputEntities(use.path, use.input, current) };
             }
             return next;
           };
-          after = remap(after); before = remap(before);
-          setTarget.run(target, c.id); replace.run(JSON.stringify(before), JSON.stringify(after), c.id);
+          after = remap(after);
+          before = remap(before);
+          setTarget.run(target, c.id);
+          replace.run(JSON.stringify(before), JSON.stringify(after), c.id);
         }
         record?.();
         db.exec("COMMIT");
-      } catch (error) { db.exec("ROLLBACK"); throw error; }
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     },
 
     /** Folds an edit into the list. Returns an error message, or null when stored. */
@@ -141,6 +152,30 @@ export function changeStore(db: DatabaseSync) {
           removeWithDependents(plan.ids);
           insertChange(plan.change);
           return null;
+      }
+    },
+
+    /**
+     * Folds several edits in, all or nothing: if any one is refused, none of them
+     * is kept. Each is folded into the list the ones before it made, exactly as
+     * if they had been added one by one. Returns null when all are stored, or
+     * the position (0-based) and message of the one that was refused.
+     */
+    addMany(inputs: ChangeInput[], h: Hierarchy): { index: number; error: string } | null {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const [index, input] of inputs.entries()) {
+          const refused = this.add(input, h);
+          if (refused !== null) {
+            db.exec("ROLLBACK");
+            return { index, error: refused };
+          }
+        }
+        db.exec("COMMIT");
+        return null;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
       }
     },
 

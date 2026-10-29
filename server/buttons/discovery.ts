@@ -43,7 +43,12 @@ export function storedButtonMap(config: unknown): ButtonMap | null {
   }
 }
 
-const readable = (s: string) => s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+// Underscores to spaces and a capital first letter; the rest keeps the
+// integration's own spelling ("Double press", not "Double Press").
+const readable = (s: string) => {
+  const spaced = s.replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+};
 
 // Button and gesture names for a device trigger, from its type and subtype:
 // subtype "1_single" is button "1", gesture "Single".
@@ -359,7 +364,7 @@ async function readServices(ha: ButtonHa, notes: string[]): Promise<{ services: 
         .sort(),
     };
   } catch {
-    notes.push("Action services could not be read; assignments cannot be queued until this read succeeds.");
+    notes.push("Action services could not be read; assignments cannot be added to changes until this read succeeds.");
     return { services: [], targetServices: [] };
   }
 }

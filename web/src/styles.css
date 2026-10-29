@@ -100,34 +100,27 @@ button:not(:disabled),
   outline-offset: 2px;
 }
 
-.records-divider, .column-divider {
+.records-divider {
   cursor: col-resize;
   touch-action: none;
   user-select: none;
-}
-.records-divider {
   width: 7px;
   background: var(--line);
 }
-.records-divider:hover, .records-divider:focus-visible, .column-divider:hover, .column-divider:focus-visible {
+.records-divider:hover,
+.records-divider:focus-visible {
   background: var(--accent);
 }
-.column-divider {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 7px;
-}
 @media (min-width: 768px) {
-  .records-pane { width: clamp(240px, var(--records-width), calc(100% - 327px)); }
+  .records-pane {
+    width: clamp(240px, var(--records-width), calc(100% - 327px));
+  }
 }
-/* Every table shares the resize engine, including assignment and settings
-   tables. Long ids/paths must wrap inside resized cells, not paint over the
-   next column. Numeric/action cells can still opt into nowrap or truncation. */
-table :is(th, td) { overflow-wrap: anywhere; }
-table :is(th, td) code { white-space: normal; overflow-wrap: anywhere; }
 
-/* Keep the surrounding border close to content-sized tables as well. Wide
-   tables still scroll within the available pane or mobile viewport. */
-.border:has(> table[data-content-sized="true"]) { width: fit-content; max-width: 100%; }
+/* Tables are DataTable (web/src/data-table.tsx): each scrolls inside its own
+   card, hides the columns that do not fit, and truncates ids with an ellipsis.
+   Text breaks at word boundaries, never in the middle of a token. A table
+   header's focus ring sits inside the cell so the scroll area never clips it. */
+th :is(button, [role="button"]):focus-visible {
+  outline-offset: 0;
+}

@@ -18,9 +18,10 @@ import {
 import type { Hierarchy } from "../../shared/types.ts";
 import { organizeEntityType } from "../../shared/organize.ts";
 import { api } from "./api.ts";
-import { useTaxis, type Route } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
-import { Button, inputClass } from "./ui.tsx";
+import { RECIPES, SETTINGS, useTaxis, type Route } from "./state.tsx";
+import { DataTable, type Column } from "./data-table.tsx";
+import { timeAgo } from "./time.ts";
+import { Badge, Button, EmptyState, Page, PageHeader, TONE_TEXT, Toolbar, inputClass, toneOfSeverity } from "./ui.tsx";
 
 // Health: the rule-based checks (shared/health.ts) over the home. One report,
 // kept by the provider and shared by the Health page and the Health tab of each
@@ -99,11 +100,11 @@ export function targetRoute(t: HealthTarget): Route {
     case "area":
       return { page: "areas", sel: { kind: "area", id: t.areaId }, tab: t.tab };
     case "parameters":
-      return t.tab === "recipes" ? { page: "recipes" } : { page: "parameters", tab: t.tab };
+      return t.tab === "recipes" ? RECIPES : { page: "parameters", tab: t.tab };
     case "recipes":
-      return { page: "recipes" };
+      return RECIPES;
     case "settings":
-      return { page: "settings" };
+      return SETTINGS;
   }
 }
 
@@ -115,17 +116,15 @@ function entityRoute(h: Hierarchy, id: string): Route | null {
   return e.areaId ? { page: "areas", sel: { kind: "area", id: e.areaId }, tab: "devices-entities" } : { page: "organize", type: organizeEntityType(e), id };
 }
 
-const TONE: Record<Severity, string> = { error: "text-danger", warning: "text-warn", info: "text-muted" };
 const RANK: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
 const ICON = { error: OctagonAlert, warning: AlertTriangle, info: Info } as const;
 
 export function SeverityBadge({ severity }: { severity: Severity }) {
   const Icon = ICON[severity];
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium ${TONE[severity]}`}>
-      <Icon className="size-3.5" aria-hidden />
+    <Badge tone={toneOfSeverity(severity)} icon={<Icon className="size-3" aria-hidden />}>
       {SEVERITY_LABEL[severity]}
-    </span>
+    </Badge>
   );
 }
 
@@ -139,90 +138,106 @@ function subjectOf(f: HealthFinding): string {
 }
 
 export function FindingsTable({ h, findings, go, showArea = true }: { h: Hierarchy; findings: HealthFinding[]; go: (r: Route) => void; showArea?: boolean }) {
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  const columns = useMemo(
-    () => ({
-      severity: (f: HealthFinding) => RANK[f.severity],
-      check: (f: HealthFinding) => HEALTH_CHECK_LABEL[f.check],
-      area: (f: HealthFinding) => (f.area ? h.areas[f.area]?.name ?? f.area : null),
-      title: (f: HealthFinding) => f.title,
-      subject: (f: HealthFinding) => subjectOf(f),
-    }),
-    [h],
-  );
-  const { rows, sort, toggle } = useSort(findings, columns, { key: "severity", dir: "asc" });
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const flip = (id: string) =>
     setOpen((o) => {
       const n = new Set(o);
       if (!n.delete(id)) n.add(id);
       return n;
     });
-
-  if (rows.length === 0) return <p className="text-[13px] text-muted">Nothing here.</p>;
-  return (
-    <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-      <table className="w-full text-[13px]">
-        <thead className="bg-sunken text-left text-xs text-muted">
-          <tr>
-            <SortHeader label="Severity" k="severity" sort={sort} onToggle={toggle} />
-            <SortHeader label="Check" k="check" sort={sort} onToggle={toggle} />
-            {showArea && <SortHeader label="Area" k="area" sort={sort} onToggle={toggle} />}
-            <SortHeader label="What" k="title" sort={sort} onToggle={toggle} />
-            <SortHeader label="Subject" k="subject" sort={sort} onToggle={toggle} />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((f) => {
-            const expanded = open.has(f.id);
-            return (
-              <FindingRows key={f.id} h={h} f={f} expanded={expanded} onToggle={() => flip(f.id)} go={go} showArea={showArea} />
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function FindingRows({ h, f, expanded, onToggle, go, showArea }: { h: Hierarchy; f: HealthFinding; expanded: boolean; onToggle: () => void; go: (r: Route) => void; showArea: boolean }) {
-  const Chevron = expanded ? ChevronDown : ChevronRight;
-  const area = f.area ? h.areas[f.area] : undefined;
-  const columns = showArea ? 5 : 4;
-  return (
-    <>
-      <tr className="border-t border-line align-top">
-        <td className="whitespace-nowrap px-3 py-1.5">
-          <SeverityBadge severity={f.severity} />
-        </td>
-        <td className="px-3 py-1.5 text-muted">{HEALTH_CHECK_LABEL[f.check]}</td>
-        {showArea && (
-          <td className="px-3 py-1.5">
-            {area ? (
-              <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "areas", sel: { kind: "area", id: area.id }, tab: "overview" })}>
-                {area.name}
-              </button>
-            ) : (
-              <span className="text-muted">–</span>
-            )}
-          </td>
-        )}
-        <td className="px-3 py-1.5">
-          <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex items-start gap-1 text-left hover:text-accent">
+  const columns: Column<HealthFinding>[] = [
+    {
+      id: "severity",
+      header: "Severity",
+      priority: 1,
+      nowrap: true,
+      minWidth: 96,
+      sort: (f) => RANK[f.severity],
+      cell: (f) => <SeverityBadge severity={f.severity} />,
+    },
+    {
+      id: "check",
+      header: "Check",
+      priority: 3,
+      nowrap: true,
+      minWidth: 110,
+      sort: (f) => HEALTH_CHECK_LABEL[f.check],
+      cell: (f) => <span className="text-muted">{HEALTH_CHECK_LABEL[f.check]}</span>,
+      text: (f) => HEALTH_CHECK_LABEL[f.check],
+    },
+    ...(showArea
+      ? [
+          {
+            id: "area",
+            header: "Area",
+            priority: 2,
+            minWidth: 110,
+            sort: (f: HealthFinding) => (f.area ? (h.areas[f.area]?.name ?? f.area) : null),
+            text: (f: HealthFinding) => (f.area ? (h.areas[f.area]?.name ?? f.area) : ""),
+            cell: (f: HealthFinding) => {
+              const area = f.area ? h.areas[f.area] : undefined;
+              return area ? (
+                <button
+                  type="button"
+                  className="text-left text-accent hover:underline"
+                  onClick={() => go({ page: "areas", sel: { kind: "area", id: area.id }, tab: "overview" })}
+                >
+                  {area.name}
+                </button>
+              ) : (
+                <span className="text-muted">–</span>
+              );
+            },
+          } satisfies Column<HealthFinding>,
+        ]
+      : []),
+    {
+      id: "title",
+      header: "What",
+      priority: 1,
+      minWidth: 220,
+      sticky: false,
+      sort: (f) => f.title,
+      cell: (f) => {
+        const expanded = open.has(f.id);
+        const Chevron = expanded ? ChevronDown : ChevronRight;
+        return (
+          <button type="button" aria-expanded={expanded} onClick={() => flip(f.id)} className="flex items-start gap-1 text-left hover:text-accent">
             <Chevron className="mt-0.5 size-3.5 shrink-0" aria-hidden />
             <span>{f.title}</span>
           </button>
-        </td>
-        <td className="px-3 py-1.5 text-xs text-muted">{f.item ? f.item.name : f.entity ? <code className="font-mono">{f.entity}</code> : null}</td>
-      </tr>
-      {expanded && (
-        <tr className="bg-sunken/50">
-          <td />
-          <td colSpan={columns - 1} className="px-3 pb-3 pt-1">
+        );
+      },
+    },
+    {
+      id: "subject",
+      header: "Subject",
+      priority: 2,
+      minWidth: 160,
+      maxWidth: 300,
+      truncate: true,
+      sort: (f) => subjectOf(f),
+      text: (f) => subjectOf(f),
+      cell: (f) => <span className="text-xs text-muted">{f.item ? f.item.name : f.entity ? <code className="font-mono">{f.entity}</code> : null}</span>,
+    },
+  ];
+  return (
+    <DataTable
+      id={showArea ? "health-findings" : "health-findings-area"}
+      label="Findings"
+      rows={findings}
+      rowKey={(f) => f.id}
+      columns={columns}
+      defaultSort={{ key: "severity", dir: "asc" }}
+      empty={<EmptyState>Nothing here.</EmptyState>}
+      rowDetail={(f) =>
+        open.has(f.id) ? (
+          <div className="bg-sunken/50 px-3 pb-3 pt-1">
             <FindingDetail h={h} f={f} go={go} />
-          </td>
-        </tr>
-      )}
-    </>
+          </div>
+        ) : null
+      }
+    />
   );
 }
 
@@ -235,7 +250,8 @@ function FindingDetail({ h, f, go }: { h: Hierarchy; f: HealthFinding; go: (r: R
       <p>{f.detail}</p>
       {f.item && (
         <p className="text-xs text-muted">
-          {f.item.kind[0].toUpperCase() + f.item.kind.slice(1)} “{f.item.name}”{f.item.entityId && <code className="ml-1 font-mono">{f.item.entityId}</code>}. Edit it in Home Assistant.
+          {f.item.kind[0].toUpperCase() + f.item.kind.slice(1)} “{f.item.name}”{f.item.entityId && <code className="ml-1 font-mono">{f.item.entityId}</code>}.
+          Edit it in Home Assistant.
         </p>
       )}
       {entities.length > 0 && (
@@ -279,13 +295,6 @@ function FindingDetail({ h, f, go }: { h: Hierarchy; f: HealthFinding; go: (r: R
 // The page.
 // ---------------------------------------------------------------------------
 
-function timeAgo(iso: string): string {
-  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 45) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  return `${Math.round(s / 3600)} h ago`;
-}
-
 const NOTE =
   "Rule-based checks over what Taxis reads from Home Assistant: no AI, and nothing here changes anything. Some findings offer a fix, which only adds changes to the list for you to review and apply.";
 
@@ -297,7 +306,13 @@ export function HealthPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
   const [query, setQuery] = useState("");
 
   const findings = report?.findings ?? [];
-  const areaIds = useMemo(() => [...new Set(findings.map((f) => f.area).filter((a): a is string => Boolean(a)))].sort((a, b) => (h.areas[a]?.name ?? a).localeCompare(h.areas[b]?.name ?? b)), [findings, h]);
+  const areaIds = useMemo(
+    () =>
+      [...new Set(findings.map((f) => f.area).filter((a): a is string => Boolean(a)))].sort((a, b) =>
+        (h.areas[a]?.name ?? a).localeCompare(h.areas[b]?.name ?? b),
+      ),
+    [findings, h],
+  );
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return findings.filter(
@@ -310,101 +325,110 @@ export function HealthPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
   }, [findings, severity, check, area, query]);
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="mx-auto flex max-w-6xl flex-col gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-            <HeartPulse className="size-5 text-accent" aria-hidden /> Health
-          </h1>
-          <div className="ml-auto flex items-center gap-3 text-xs text-muted">
-            {report && <span>Checked {timeAgo(report.generatedAt)}</span>}
+    <Page>
+      <PageHeader
+        title="Health"
+        icon={<HeartPulse className="size-5 text-accent" aria-hidden />}
+        description={NOTE}
+        actions={
+          <>
+            {report && <span className="text-xs text-muted">Checked {timeAgo(report.generatedAt)}</span>}
             <Button onClick={() => void refresh()} disabled={loading}>
               {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
               Check again
             </Button>
-          </div>
-        </div>
-        <p className="max-w-[72ch] text-[13px] text-muted">{NOTE}</p>
-
-        {error && (
-          <p role="alert" className="text-[13px] text-danger">
-            Taxis couldn't run the checks. {error}
-          </p>
-        )}
-
-        {!report ? (
-          !error && <p className="text-[13px] text-muted">Running the checks…</p>
-        ) : (
-          <>
-            <div className="grid grid-cols-3 gap-2.5">
-              {SEVERITIES.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  aria-pressed={severity === s}
-                  onClick={() => setSeverity(severity === s ? "all" : s)}
-                  className={`flex flex-col items-start gap-0.5 rounded-lg border bg-surface px-3 py-2 text-left ${severity === s ? "border-accent" : "border-line hover:border-accent/50"}`}
-                >
-                  <span className={`text-2xl font-semibold tabular-nums ${report.counts[s] > 0 ? TONE[s] : "text-muted"}`}>{report.counts[s]}</span>
-                  <SeverityBadge severity={s} />
-                </button>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="flex flex-col gap-1">
-                <label htmlFor="health-check" className="text-xs font-medium text-muted">
-                  Check
-                </label>
-                <select id="health-check" className={`${inputClass} w-56!`} value={check} onChange={(e) => setCheck(e.target.value as HealthCheck | "all")}>
-                  <option value="all">All checks · {report.findings.length}</option>
-                  {HEALTH_CHECKS.map((c) => (
-                    <option key={c.key} value={c.key}>
-                      {c.label} · {report.byCheck[c.key]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label htmlFor="health-area" className="text-xs font-medium text-muted">
-                  Area
-                </label>
-                <select id="health-area" className={`${inputClass} w-48!`} value={area} onChange={(e) => setArea(e.target.value)}>
-                  <option value="all">All areas</option>
-                  <option value="none">Not in an area</option>
-                  {areaIds.map((id) => (
-                    <option key={id} value={id}>
-                      {h.areas[id]?.name ?? id}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label htmlFor="health-search" className="text-xs font-medium text-muted">
-                  Search
-                </label>
-                <input id="health-search" className={`${inputClass} w-48!`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or entity id" />
-              </div>
-              <Thresholds options={options} onChange={setOptions} />
-            </div>
-
-            <p className="text-xs text-muted">
-              {shown.length} of {findings.length} finding{findings.length === 1 ? "" : "s"}. Looked at {report.checked.entities.toLocaleString()} entities, {report.checked.automations} automations, {report.checked.scripts} scripts, {report.checked.scenes} scenes and {report.checked.dashboards} dashboards.
-            </p>
-
-            {findings.length === 0 ? <p className="text-[13px] text-muted">Nothing to look at: no check found anything.</p> : <FindingsTable h={h} findings={shown} go={go} />}
-
-            {report.notes.length > 0 && (
-              <ul className="flex flex-col gap-1 text-xs text-muted">
-                {report.notes.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-              </ul>
-            )}
           </>
-        )}
-      </div>
-    </main>
+        }
+      />
+
+      {error && (
+        <p role="alert" className="text-[13px] text-danger">
+          Taxis couldn't run the checks. {error}
+        </p>
+      )}
+
+      {!report ? (
+        !error && <p className="text-[13px] text-muted">Running the checks…</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-2.5">
+            {SEVERITIES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={severity === s}
+                onClick={() => setSeverity(severity === s ? "all" : s)}
+                className={`flex flex-col items-start gap-0.5 rounded-lg border bg-surface px-3 py-2 text-left ${severity === s ? "border-accent" : "border-line hover:border-accent/50"}`}
+              >
+                <span className={`text-2xl font-semibold tabular-nums ${report.counts[s] > 0 ? TONE_TEXT[toneOfSeverity(s)] : "text-muted"}`}>
+                  {report.counts[s]}
+                </span>
+                <SeverityBadge severity={s} />
+              </button>
+            ))}
+          </div>
+
+          <Toolbar label="Health filters" className="items-end">
+            <div className="flex flex-col gap-1">
+              <label htmlFor="health-check" className="text-xs font-medium text-muted">
+                Check
+              </label>
+              <select id="health-check" className={`${inputClass} w-56!`} value={check} onChange={(e) => setCheck(e.target.value as HealthCheck | "all")}>
+                <option value="all">All checks · {report.findings.length}</option>
+                {HEALTH_CHECKS.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label} · {report.byCheck[c.key]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="health-area" className="text-xs font-medium text-muted">
+                Area
+              </label>
+              <select id="health-area" className={`${inputClass} w-48!`} value={area} onChange={(e) => setArea(e.target.value)}>
+                <option value="all">All areas</option>
+                <option value="none">Not in an area</option>
+                {areaIds.map((id) => (
+                  <option key={id} value={id}>
+                    {h.areas[id]?.name ?? id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="health-search" className="text-xs font-medium text-muted">
+                Search
+              </label>
+              <input
+                id="health-search"
+                className={`${inputClass} w-48!`}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Name or entity id"
+              />
+            </div>
+            <Thresholds options={options} onChange={setOptions} />
+          </Toolbar>
+
+          <p className="text-xs text-muted">
+            {shown.length} of {findings.length} finding{findings.length === 1 ? "" : "s"}. Looked at {report.checked.entities.toLocaleString()} entities,{" "}
+            {report.checked.automations} automations, {report.checked.scripts} scripts, {report.checked.scenes} scenes and {report.checked.dashboards}{" "}
+            dashboards.
+          </p>
+
+          {findings.length === 0 ? <EmptyState>Nothing to look at: no check found anything.</EmptyState> : <FindingsTable h={h} findings={shown} go={go} />}
+
+          {report.notes.length > 0 && (
+            <ul className="flex flex-col gap-1 text-xs text-muted">
+              {report.notes.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </Page>
   );
 }
 
@@ -418,7 +442,19 @@ function Thresholds({ options, onChange }: { options: HealthOptions; onChange: (
   );
 }
 
-function Threshold({ id, label, k, options, onChange }: { id: string; label: string; k: keyof HealthOptions; options: HealthOptions; onChange: (o: HealthOptions) => void }) {
+function Threshold({
+  id,
+  label,
+  k,
+  options,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  k: keyof HealthOptions;
+  options: HealthOptions;
+  onChange: (o: HealthOptions) => void;
+}) {
   const [draft, setDraft] = useState(String(options[k]));
   useEffect(() => setDraft(String(options[k])), [options, k]);
   const { min, max } = HEALTH_LIMITS[k];
@@ -465,9 +501,7 @@ export function AreaFindings({ h, areaId, go }: { h: Hierarchy; areaId: string; 
   const { findings, ready, error } = useAreaFindings(areaId);
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="text-sm font-semibold">
-        Checks{ready ? ` · ${findings.length}` : ""}
-      </h2>
+      <h2 className="text-sm font-semibold">Checks{ready ? ` · ${findings.length}` : ""}</h2>
       {error && !ready ? (
         <p role="alert" className="text-[13px] text-danger">
           Taxis couldn't run the checks. {error}

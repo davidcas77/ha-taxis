@@ -71,7 +71,8 @@ export function planButtonAssignment(
   pending: readonly { kind: string; targetId: string; after: Record<string, unknown> }[],
   entityIds: ReadonlySet<string> = new Set(),
 ): ChangeInput {
-  if (assignment.fingerprint !== buttonInventoryFingerprint(inventory)) throw new Error("The button inventory changed. Refresh and review it before queuing.");
+  if (assignment.fingerprint !== buttonInventoryFingerprint(inventory))
+    throw new Error("The button inventory changed. Refresh and review it before adding it to changes.");
   const control = inventory.controls.find((c) => c.id === assignment.controlId);
   const gesture = control?.gestures.find((g) => g.key === assignment.gestureKey);
   if (!control || !gesture) throw new Error("This gesture is no longer exposed by Home Assistant.");
@@ -121,7 +122,8 @@ export function planButtonAssignment(
   const all = new Map(inventory.managed.map((m) => [m.id, m.map]));
   for (const c of pending) if (c.kind === "automation" && validButtonMap(c.after.button_map)) all.set(c.targetId, c.after.button_map);
   all.set(id, map);
-  if (buttonInputLoop([...all.values()])) throw new Error("These button assignments would repeatedly press their own inputs. Remove the cycle before queuing.");
+  if (buttonInputLoop([...all.values()]))
+    throw new Error("These button assignments would repeatedly press their own inputs. Remove the cycle before adding it to changes.");
   return {
     kind: "automation",
     op: installed ? "update" : "create",

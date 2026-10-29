@@ -8,8 +8,8 @@ import os
 import unittest
 import urllib.request
 from playwright.sync_api import sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:5173")
 
 
 class UnassignedRegression(unittest.TestCase):
@@ -18,7 +18,7 @@ class UnassignedRegression(unittest.TestCase):
         with urllib.request.urlopen(BASE + "/api/hierarchy", timeout=30) as response:
             cls.base = json.load(response)
         cls.pw = sync_playwright().start()
-        cls.browser = cls.pw.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), args=["--no-sandbox"])
+        cls.browser = launch(cls.pw)
 
     @classmethod
     def tearDownClass(cls):
@@ -46,11 +46,14 @@ class UnassignedRegression(unittest.TestCase):
         self.page.route("**/api/hierarchy*", lambda route: route.fulfill(json=self.body))
         def changes(route):
             if route.request.method == "POST":
-                value = route.request.post_data_json
-                self.posted.append(value)
-                self.queue.append({"id": len(self.queue) + 1, "kind": value["kind"], "op": value["op"], "targetId": value["targetId"], "scope": None, "before": {}, "after": value["fields"], "createdAt": "2026-10-27T00:00:00Z"})
+                body = route.request.post_data_json
+                # One edit goes to /api/changes; several (a bulk move) go in one request to /api/changes/batch.
+                for value in body["changes"] if "changes" in body else [body]:
+                    self.posted.append(value)
+                    self.queue.append({"id": len(self.queue) + 1, "kind": value["kind"], "op": value["op"], "targetId": value["targetId"], "scope": None, "before": {}, "after": value["fields"], "createdAt": "2026-10-27T00:00:00Z"})
             route.fulfill(json={"ok": True, "changes": self.queue, "version": str(len(self.queue))})
         self.page.route("**/api/changes", changes)
+        self.page.route("**/api/changes/batch", changes)
         self.page.goto(BASE + "/#unassigned", wait_until="domcontentloaded")
         self.section = self.page.get_by_role("region", name="Unassigned entities", exact=True)
         self.section.get_by_role("textbox", name="Find unassigned entities").wait_for()
@@ -62,7 +65,7 @@ class UnassignedRegression(unittest.TestCase):
         self.section.get_by_role("button", name="Table", exact=True).click()
         return self.section.get_by_role("table", name="Unassigned entities table")
 
-    def test_cards_and_table_preference_and_resize_persist(self):
+    def test_cards_and_table_preference_and_columns_persist(self):
         self.assertEqual(self.section.get_by_role("button", name="Cards", exact=True).get_attribute("aria-pressed"), "true")
         h = self.body["hierarchy"]
         floor = next(floor for floor in h["floors"] if floor["areaIds"])
@@ -73,16 +76,24 @@ class UnassignedRegression(unittest.TestCase):
         self.assertAlmostEqual(area_label.bounding_box()["x"] - floor_label.bounding_box()["x"], 12, delta=1)
         self.assertAlmostEqual(area_label.locator("..").bounding_box()["width"], floor_label.locator("..").bounding_box()["width"], delta=1)
         table = self.table()
-        handle = self.section.get_by_role("separator", name="Resize unassigned Name column", exact=True)
-        before = table.locator("col").nth(1).evaluate("element => element.getBoundingClientRect().width")
-        handle.focus()
-        self.page.keyboard.press("ArrowRight")
-        after = table.locator("col").nth(1).evaluate("element => element.getBoundingClientRect().width")
-        self.assertGreater(after, before)
+        self.assertEqual(table.locator("tbody tr").count(), 100)
+        # In a narrow window the least important columns give way; the Columns menu brings one back.
+        self.page.set_viewport_size({"width": 480, "height": 1100})
+        menu = self.section.get_by_role("button", name="Columns of Unassigned entities table", exact=True)
+        menu.wait_for()
+        menu.click()
+        columns = self.page.get_by_role("group", name="Columns")
+        crowded_out = columns.locator("label").filter(has_text="no room").first
+        name = crowded_out.locator("span").first.inner_text().strip()
+        crowded_out.locator("input").check()
+        header = table.get_by_role("columnheader", name=name, exact=True)
+        header.wait_for()
+        self.page.keyboard.press("Escape")
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
         self.page.reload(wait_until="domcontentloaded")
         table.wait_for()
         self.assertEqual(self.section.get_by_role("button", name="Table", exact=True).get_attribute("aria-pressed"), "true")
-        self.assertAlmostEqual(table.locator("col").nth(1).evaluate("element => element.getBoundingClientRect().width"), after, delta=1)
+        header.wait_for()
         screenshot = os.environ.get("TAXIS_UNASSIGNED_SCREENSHOT")
         if screenshot:
             os.makedirs(os.path.dirname(os.path.abspath(screenshot)), exist_ok=True)
