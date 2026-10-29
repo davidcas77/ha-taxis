@@ -339,13 +339,16 @@ export function DevicesEntities({
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <Toolbar label="Find and filter">
-        <SearchField value={query} onChange={setQuery} placeholder="Find a device or an entity" />
-        {toolbar}
-        <Button tone="ghost" onClick={resetFilters}>
-          Reset filters
-        </Button>
-      </Toolbar>
+      {cards && groups && (
+        <Toolbar label="Find and filter">
+          <SearchField value={query} onChange={setQuery} placeholder="Find a device or an entity" />
+          {toolbar}
+          <Button tone="ghost" onClick={resetFilters}>
+            Reset filters
+          </Button>
+        </Toolbar>
+      )}
+      {!cards && toolbar && <Toolbar label="Device and entity filters">{toolbar}</Toolbar>}
       {activeFilters}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -368,7 +371,7 @@ export function DevicesEntities({
         </Toolbar>
       </div>
 
-      {filtered.length === 0 ? (
+      {filtered.length === 0 && cards && groups ? (
         <ListEmpty reset={resetFilters} />
       ) : cards && groups ? (
         <>
@@ -378,7 +381,6 @@ export function DevicesEntities({
         </>
       ) : (
         <>
-          {bulk?.(shownIds)}
           <p className="text-xs text-muted">
             {flat
               ? null
@@ -399,7 +401,18 @@ export function DevicesEntities({
           </p>
           <DataTable
             id={`devices-entities-${place}`}
+            search={{ value: query, onChange: setQuery, placeholder: "Find a device or an entity", label: "Find a device or an entity" }}
+            actions={bulk?.(shownIds)}
+            filters={
+              <>
+                <Button tone="ghost" onClick={resetFilters}>
+                  Reset filters
+                </Button>
+              </>
+            }
+
             label="Devices and entities"
+            empty={<ListEmpty reset={resetFilters} />}
             rows={tableRows}
             rowKey={(r) => r.key}
             columns={columns}

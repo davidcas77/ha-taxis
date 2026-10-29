@@ -94,6 +94,41 @@ class UnassignedRegression(unittest.TestCase):
         self.section.get_by_role("button", name="Table", exact=True).click()
         return self.section.get_by_role("table", name="Unassigned entities table")
 
+    def assert_compact_table_toolbar(self, region, table_label, search_label, bulk_label, action_label):
+        table = region.get_by_role("table", name=table_label, exact=True)
+        wrapper = table.locator("xpath=ancestor::*[@data-table-id][1]")
+        toolbar = wrapper.get_by_role("toolbar", name="Table controls for " + table_label, exact=True)
+        search = toolbar.get_by_role("textbox", name=search_label, exact=True)
+        bulk = toolbar.get_by_role("region", name=bulk_label, exact=True)
+        action = bulk.get_by_role("button", name=action_label, exact=True)
+        chooser = toolbar.get_by_role("button", name="Columns of " + table_label, exact=True)
+        centers = [locator.bounding_box()["y"] + locator.bounding_box()["height"] / 2 for locator in [search, action, chooser]]
+        self.assertLessEqual(max(centers) - min(centers), 2)
+        self.assertGreater(action.bounding_box()["x"], search.bounding_box()["x"] + search.bounding_box()["width"])
+        self.assertGreater(chooser.bounding_box()["x"], action.bounding_box()["x"] + action.bounding_box()["width"])
+        self.assertEqual(region.get_by_role("textbox", name=search_label, exact=True).count(), 1)
+        self.assertTrue(table.evaluate("table => {const frame=table.parentElement.parentElement; return !frame.contains(table.closest('[data-table-id]').querySelector('[role=toolbar]'));}"))
+        self.assertGreater(table.locator("tr").first.locator("th").count(), 0)
+        self.assertEqual(table.locator("tr").first.locator("td").count(), 0)
+        self.assertLessEqual(toolbar.bounding_box()["y"] + toolbar.bounding_box()["height"], table.bounding_box()["y"] + 1)
+        return toolbar
+
+    def test_search_batch_actions_and_columns_share_one_external_table_toolbar(self):
+        self.page.reload(wait_until="domcontentloaded")
+        devices = self.page.get_by_role("region", name="Unassigned devices", exact=True)
+        devices.get_by_role("table", name="Unassigned devices table", exact=True).wait_for()
+        self.assert_compact_table_toolbar(devices, "Unassigned devices table", "Find unassigned devices", "Assign selected devices", "Move devices")
+        self.table()
+        self.assert_compact_table_toolbar(self.section, "Unassigned entities table", "Find unassigned entities", "Change the selected entities", "Move")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        chooser = self.section.get_by_role("button", name="Columns of Unassigned entities table", exact=True)
+        chooser.click()
+        columns = self.page.get_by_role("group", name="Columns", exact=True)
+        self.assertTrue(columns.evaluate("e => {const r=e.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth;}"))
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+        self.page.keyboard.press("Escape")
+        self.assertEqual(self.posted, [])
+
     def test_cards_and_table_preference_and_columns_persist(self):
         self.assertEqual(self.section.get_by_role("button", name="Cards", exact=True).get_attribute("aria-pressed"), "true")
         h = self.body["hierarchy"]

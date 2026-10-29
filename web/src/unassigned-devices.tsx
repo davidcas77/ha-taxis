@@ -7,7 +7,7 @@ import type { DeviceItem, Hierarchy } from "../../shared/types.ts";
 import { DataTable, useSortState, type Column } from "./data-table.tsx";
 import { Pagination, usePagination } from "./records.tsx";
 import { useTaxisData } from "./state.tsx";
-import { AreaSelect, Button, SearchField, Toolbar } from "./ui.tsx";
+import { AreaSelect, Button } from "./ui.tsx";
 
 export function UnassignedDevices({ h, showDisabled }: { h: Hierarchy; showDisabled: boolean }) {
   const { propose, busy } = useTaxisData();
@@ -173,45 +173,41 @@ export function UnassignedDevices({ h, showDisabled }: { h: Hierarchy; showDisab
   ];
   return (
     <section aria-label="Unassigned devices" className="flex min-w-0 flex-col gap-3">
-      <Toolbar label="Unassigned devices toolbar">
-        <SearchField
-          label="Find unassigned devices"
-          placeholder="Find device, manufacturer or model"
-          value={query}
-          onChange={(value) => {
-            setQuery(value);
-            setPicked(new Set());
-          }}
-        />
-        <span className="text-xs text-muted">{matches.length} matching devices</span>
-      </Toolbar>
-      <div
-        role="region"
-        aria-label="Assign selected devices"
-        className="flex min-w-0 max-w-full flex-nowrap items-center gap-3 overflow-x-auto rounded-lg border border-accent/40 bg-surface p-2"
-      >
-        <span className="shrink-0 whitespace-nowrap text-[13px] font-medium">{selected.length} devices selected</span>
-        <label
-          className="shrink-0 whitespace-nowrap text-xs text-muted"
-          htmlFor="bulk-device-area"
-          title="Only selected devices on this page are assigned. Entities with their own area keep it; other entities inherit the device area."
-        >
-          Assign area
-        </label>
-        <div className="w-48 shrink-0">
-          <AreaSelect h={h} id="bulk-device-area" value={area} onChange={setArea} disabled={locked || !selected.length} noneLabel="Choose an area…" />
-        </div>
-        <Button disabled={locked || !selected.length || !area} onClick={() => void assign(selected, area)}>
-          Move devices
-        </Button>
-        {!!selected.length && (
-          <Button className="shrink-0 whitespace-nowrap" disabled={locked} tone="ghost" onClick={() => setPicked(new Set())}>
-            Clear selection
-          </Button>
-        )}
-      </div>
       <DataTable
         id="unassigned-devices"
+        search={{
+          label: "Find unassigned devices",
+          placeholder: "Find device, manufacturer or model",
+          value: query,
+          onChange: (value) => {
+            setQuery(value);
+            setPicked(new Set());
+          },
+        }}
+        summary={<span>{matches.length} matching devices</span>}
+        actions={
+          <div role="region" aria-label="Assign selected devices" className="flex shrink-0 flex-nowrap items-center gap-3">
+            <span className="shrink-0 whitespace-nowrap text-[13px] font-medium">{selected.length} devices selected</span>
+            <label
+              className="shrink-0 whitespace-nowrap text-xs text-muted"
+              htmlFor="bulk-device-area"
+              title="Only selected devices on this page are assigned. Entities with their own area keep it; other entities inherit the device area."
+            >
+              Assign area
+            </label>
+            <div className="w-48 shrink-0">
+              <AreaSelect h={h} id="bulk-device-area" value={area} onChange={setArea} disabled={locked || !selected.length} noneLabel="Choose an area…" />
+            </div>
+            <Button disabled={locked || !selected.length || !area} onClick={() => void assign(selected, area)}>
+              Move devices
+            </Button>
+            {!!selected.length && (
+              <Button className="shrink-0 whitespace-nowrap" disabled={locked} tone="ghost" onClick={() => setPicked(new Set())}>
+                Clear selection
+              </Button>
+            )}
+          </div>
+        }
         label="Unassigned devices table"
         rows={shown}
         rowKey={(device) => device.id}

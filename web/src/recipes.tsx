@@ -226,6 +226,8 @@ function CellBox({
 export function RecipesTable({ h, cells, shown }: { h: Hierarchy; cells: readonly RecipeCell[]; shown: ReadonlySet<string> }) {
   const { propose, busy } = useTaxis();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
+  const [query, setQuery] = useState("");
+  const [houseQuery, setHouseQuery] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const { lines, houseCells } = useMemo(() => {
@@ -248,8 +250,25 @@ export function RecipesTable({ h, cells, shown }: { h: Hierarchy; cells: readonl
   }, [cells, h]);
 
   const visible = (c: RecipeCell) => shown.has(keyOf(c));
-  const rows = useMemo(() => lines.filter((l) => Object.values(l.cells).some((c) => visible(c) && matches(c, filter))), [lines, filter, shown]);
-  const houseRows = useMemo(() => houseCells.filter((c) => visible(c) && matches(c, filter)), [houseCells, filter, shown]);
+  const rows = useMemo(
+    () =>
+      lines.filter(
+        (l) =>
+          `${l.areaName} ${l.floorName}`.toLowerCase().includes(query.trim().toLowerCase()) &&
+          Object.values(l.cells).some((c) => visible(c) && matches(c, filter)),
+      ),
+    [lines, filter, shown, query],
+  );
+  const houseRows = useMemo(
+    () =>
+      houseCells.filter(
+        (c) =>
+          visible(c) &&
+          matches(c, filter) &&
+          `${c.recipe} ${HOUSE_RECIPE_LABEL[c.recipe as HouseRecipeKey]} ${c.status}`.toLowerCase().includes(houseQuery.trim().toLowerCase()),
+      ),
+    [houseCells, filter, shown, houseQuery],
+  );
 
   const shownCells = useMemo(() => cells.filter(visible), [cells, shown]);
   const count = (f: (typeof FILTERS)[number]["key"]) => shownCells.filter((c) => matches(c, f)).length;
@@ -351,26 +370,31 @@ export function RecipesTable({ h, cells, shown }: { h: Hierarchy; cells: readonl
             </Chip>
           ))}
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted">
-          <input
-            type="checkbox"
-            aria-label="Select all that can be added"
-            disabled={selectable.length === 0}
-            checked={allChosen}
-            onChange={() => setPicked(allChosen ? new Set() : new Set(selectable.map(keyOf)))}
-            className="accent-[var(--accent)]"
-          />
-          Select all that can be added
-        </label>
-        {chosen.length > 0 && (
-          <Button tone="primary" disabled={busy} onClick={() => void add()}>
-            Add {chosen.length} to changes
-          </Button>
-        )}
       </Toolbar>
 
       <DataTable
         id="recipes"
+        search={{ value: query, onChange: setQuery, placeholder: "Find a room or floor", label: "Find area recipes" }}
+        actions={
+          <>
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <input
+                type="checkbox"
+                aria-label="Select all that can be added"
+                disabled={selectable.length === 0}
+                checked={allChosen}
+                onChange={() => setPicked(allChosen ? new Set() : new Set(selectable.map(keyOf)))}
+                className="accent-[var(--accent)]"
+              />
+              Select all that can be added
+            </label>
+            {chosen.length > 0 && (
+              <Button tone="primary" disabled={busy} onClick={() => void add()}>
+                Add {chosen.length} to changes
+              </Button>
+            )}
+          </>
+        }
         label="Recipes by area"
         rows={rows}
         rowKey={(l) => l.key}
@@ -379,9 +403,10 @@ export function RecipesTable({ h, cells, shown }: { h: Hierarchy; cells: readonl
         empty={<EmptyState>{houseRows.length > 0 ? "No area has a recipe to show here." : "Nothing here."}</EmptyState>}
         maxHeight="none"
       />
-      {houseRows.length > 0 && (
+      {(houseCells.some(visible) || houseQuery.length > 0) && (
         <DataTable
           id="recipes-house"
+          search={{ value: houseQuery, onChange: setHouseQuery, placeholder: "Find a house recipe", label: "Find house recipes" }}
           label="House recipes"
           rows={houseRows}
           rowKey={keyOf}

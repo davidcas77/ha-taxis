@@ -115,7 +115,7 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
           // Only what the table shows is acted on.
           bulk={(shown) => {
             const ids = [...picked].filter((id) => shown.has(id));
-            return ids.length > 0 && <BulkBar h={h} ids={ids} onDone={() => setPicked(new Set())} />;
+            return ids.length > 0 && <BulkBar h={h} ids={ids} onDone={() => setPicked(new Set())} inline />;
           }}
           toolbar={
             <>

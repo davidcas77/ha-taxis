@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Table toolbars.** Search, batch actions and Columns share a compact row
+  immediately above each table. Existing page filters and selection scope are
+  preserved; table headers are the first row inside the border.
+
 - **Page layout.** Shared top spacing brings page titles level with the sidebar
   search field while preserving the side and bottom spacing.
 

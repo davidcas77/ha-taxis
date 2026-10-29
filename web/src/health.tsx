@@ -137,7 +137,19 @@ function subjectOf(f: HealthFinding): string {
   return f.entity ?? "";
 }
 
-export function FindingsTable({ h, findings, go, showArea = true }: { h: Hierarchy; findings: HealthFinding[]; go: (r: Route) => void; showArea?: boolean }) {
+export function FindingsTable({
+  h,
+  findings,
+  go,
+  showArea = true,
+  search,
+}: {
+  h: Hierarchy;
+  findings: HealthFinding[];
+  go: (r: Route) => void;
+  showArea?: boolean;
+  search?: { value: string; onChange: (value: string) => void; placeholder?: string; label?: string };
+}) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const flip = (id: string) =>
     setOpen((o) => {
@@ -225,6 +237,7 @@ export function FindingsTable({ h, findings, go, showArea = true }: { h: Hierarc
     <DataTable
       id={showArea ? "health-findings" : "health-findings-area"}
       label="Findings"
+      search={search}
       rows={findings}
       rowKey={(f) => f.id}
       columns={columns}
@@ -396,18 +409,6 @@ export function HealthPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
                 ))}
               </select>
             </div>
-            <div className="flex flex-col gap-1">
-              <label htmlFor="health-search" className="text-xs font-medium text-muted">
-                Search
-              </label>
-              <input
-                id="health-search"
-                className={`${inputClass} w-48!`}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Name or entity id"
-              />
-            </div>
             <Thresholds options={options} onChange={setOptions} />
           </Toolbar>
 
@@ -417,7 +418,16 @@ export function HealthPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) 
             dashboards.
           </p>
 
-          {findings.length === 0 ? <EmptyState>Nothing to look at: no check found anything.</EmptyState> : <FindingsTable h={h} findings={shown} go={go} />}
+          {findings.length === 0 ? (
+            <EmptyState>Nothing to look at: no check found anything.</EmptyState>
+          ) : (
+            <FindingsTable
+              h={h}
+              findings={shown}
+              go={go}
+              search={{ value: query, onChange: setQuery, label: "Search health findings", placeholder: "Name or entity id" }}
+            />
+          )}
 
           {report.notes.length > 0 && (
             <ul className="flex flex-col gap-1 text-xs text-muted">

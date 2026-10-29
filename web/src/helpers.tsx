@@ -217,10 +217,17 @@ const levelText = (row: HelperRow) => (row.level === "house" ? "House" : `Floor 
 function HelperTable({ h, lines, showArea, go, tableId }: { h: Hierarchy; lines: Line[]; showArea: boolean; go: (r: Route) => void; tableId: string }) {
   const { propose, busy } = useTaxis();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
+  const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const count = (k: (typeof FILTERS)[number]["key"]) => lines.filter((l) => matches(l, k)).length;
-  const shown = useMemo(() => lines.filter((l) => matches(l, filter)), [lines, filter]);
+  const shown = useMemo(
+    () =>
+      lines.filter(
+        (l) => matches(l, filter) && `${l.row.areaName} ${l.row.canonicalId} ${l.row.key} ${l.shown}`.toLowerCase().includes(query.trim().toLowerCase()),
+      ),
+    [lines, filter, query],
+  );
 
   // Only rows that are still on screen and still waiting count as picked.
   const selectable = shown.filter((l) => l.selectable);
@@ -331,14 +338,17 @@ function HelperTable({ h, lines, showArea, go, tableId }: { h: Hierarchy; lines:
             </Chip>
           ))}
         </div>
-        {chosen.length > 0 && (
-          <Button tone="primary" disabled={busy} onClick={() => void add()}>
-            Add {chosen.length} to changes
-          </Button>
-        )}
       </Toolbar>
       <DataTable
         id={`helpers-${tableId}`}
+        search={{ value: query, onChange: setQuery, placeholder: "Find an area or helper", label: `Find ${tableId} helpers` }}
+        actions={
+          chosen.length > 0 && (
+            <Button tone="primary" disabled={busy} onClick={() => void add()}>
+              Add {chosen.length} to changes
+            </Button>
+          )
+        }
         label={showArea && lines.some((l) => l.row.level !== "area") ? "Floor and house helpers" : "Area helpers"}
         rows={shown}
         rowKey={(l) => keyOf(l.row)}

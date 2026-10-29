@@ -5,7 +5,7 @@ import { NewForm } from "./new-form.tsx";
 import { AreaMultiSelect, Pagination, usePagination } from "./records.tsx";
 import { useTaxis } from "./state.tsx";
 import { DataTable, useSortState, type Column } from "./data-table.tsx";
-import { Button, ConfirmAction, EmptyState, LabelChip, SearchField, Toolbar, inputClass } from "./ui.tsx";
+import { Button, ConfirmAction, EmptyState, LabelChip, Toolbar, inputClass } from "./ui.tsx";
 
 // A single table for area and global label assignment. Labels always shows the
 // entity's complete label list; choosing an action never changes the inventory.
@@ -178,15 +178,6 @@ export function EntityLabels({
     <section aria-label="Entity label assignment" className="flex min-w-0 flex-col gap-3">
       <h2 className="text-sm font-semibold">{title}</h2>
       <Toolbar label="Find and filter" className="gap-2">
-        <SearchField
-          label="Search label entities"
-          placeholder="Search name, entity ID, device or label"
-          value={query}
-          onChange={(value) => {
-            setQuery(value);
-            setPicked(new Set());
-          }}
-        />
         {!fixedArea && (
           <AreaMultiSelect
             areas={Object.values(h.areas)}
@@ -213,52 +204,6 @@ export function EntityLabels({
           {rows.length} matching entities · {selected.length} selected on this page
         </span>
       </Toolbar>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            aria-label="Select all shown label entities"
-            checked={all}
-            disabled={!eligible.length || busy}
-            onChange={() => setPicked(all ? new Set() : new Set(eligible.map((e) => e.entityId)))}
-          />
-          Select all shown ({eligible.length})
-        </label>
-        <select
-          aria-label="Label to add"
-          className={`${inputClass} w-48!`}
-          value={h.labels[labelId] ? labelId : ""}
-          onChange={(event) => setLabelId(event.target.value)}
-        >
-          <option value="">Choose a label…</option>
-          {labels.map((label) => (
-            <option key={label.id} value={label.id}>
-              {label.name}
-            </option>
-          ))}
-        </select>
-        <Button disabled={busy || !h.labels[labelId] || !adding.length} onClick={() => void assign()}>
-          Add label
-        </Button>
-        {h.labels[labelId] && removing.length > 0 && (
-          <ConfirmAction
-            tone="plain"
-            disabled={busy}
-            question={`Remove “${h.labels[labelId].name}” from ${removing.length} selected entities?`}
-            onConfirm={() => void assign(true)}
-          >
-            Remove label
-          </ConfirmAction>
-        )}
-        <Button tone="ghost" disabled={busy} onClick={() => setCreating((value) => !value)} aria-expanded={creating}>
-          + Add new label
-        </Button>
-        {selected.length > 0 && (
-          <Button tone="ghost" onClick={() => setPicked(new Set())}>
-            Clear selection
-          </Button>
-        )}
-      </div>
       {creating && (
         <div className="rounded border border-line p-3">
           <NewForm
@@ -277,6 +222,63 @@ export function EntityLabels({
       </p>
       <DataTable
         id="entity-labels"
+        search={{
+          label: "Search label entities",
+          placeholder: "Search name, entity ID, device or label",
+          value: query,
+          onChange: (value) => {
+            setQuery(value);
+            setPicked(new Set());
+          },
+        }}
+        actions={
+          <div className="flex shrink-0 flex-nowrap items-center gap-2">
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                aria-label="Select all shown label entities"
+                checked={all}
+                disabled={!eligible.length || busy}
+                onChange={() => setPicked(all ? new Set() : new Set(eligible.map((e) => e.entityId)))}
+              />
+              Select all shown ({eligible.length})
+            </label>
+            <select
+              aria-label="Label to add"
+              className={`${inputClass} w-48!`}
+              value={h.labels[labelId] ? labelId : ""}
+              onChange={(event) => setLabelId(event.target.value)}
+            >
+              <option value="">Choose a label…</option>
+              {labels.map((label) => (
+                <option key={label.id} value={label.id}>
+                  {label.name}
+                </option>
+              ))}
+            </select>
+            <Button disabled={busy || !h.labels[labelId] || !adding.length} onClick={() => void assign()}>
+              Add label
+            </Button>
+            {h.labels[labelId] && removing.length > 0 && (
+              <ConfirmAction
+                tone="plain"
+                disabled={busy}
+                question={`Remove “${h.labels[labelId].name}” from ${removing.length} selected entities?`}
+                onConfirm={() => void assign(true)}
+              >
+                Remove label
+              </ConfirmAction>
+            )}
+            <Button tone="ghost" disabled={busy} onClick={() => setCreating((value) => !value)} aria-expanded={creating}>
+              + Add new label
+            </Button>
+            {selected.length > 0 && (
+              <Button tone="ghost" onClick={() => setPicked(new Set())}>
+                Clear selection
+              </Button>
+            )}
+          </div>
+        }
         label="Entities and labels"
         rows={shown}
         rowKey={(e) => e.entityId}

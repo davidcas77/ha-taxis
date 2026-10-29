@@ -256,7 +256,7 @@ export function usePagination(total: number, resetKey: string, size = 100) {
 export function Pagination({ page, pages, start, end, total, setPage }: ReturnType<typeof usePagination>) {
   if (pages <= 1) return null;
   return (
-    <nav aria-label="Results pages" className="flex flex-wrap items-center justify-between gap-2 border-t border-line p-2 text-xs text-muted">
+    <nav aria-label="Results pages" className="flex flex-wrap items-center justify-between gap-2 border-t border-line py-2 pl-2 pr-20 text-xs text-muted">
       <span>
         {start + 1}–{end} of {total.toLocaleString()}
       </span>

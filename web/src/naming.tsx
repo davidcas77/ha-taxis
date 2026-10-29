@@ -372,6 +372,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
   // to the changes.
   const [accepted, setAccepted] = useState<Record<string, { name?: boolean; id?: boolean }>>({});
   const [grouped, setGrouped] = useStoredFlag("taxis:group-by-type:naming");
+  const [query, setQuery] = useState("");
   const total = analysis.rows.length;
   // A row whose every suggestion is ignored has nothing for Taxis to suggest: it
   // is left out of the "with a suggestion" count and shown under Ignored, as is a
@@ -381,16 +382,18 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
   const fit = namingFit(analysis, namingIgnores);
   const filtered = useMemo(
     () =>
-      analysis.rows.filter((r) =>
-        filter === "all"
-          ? true
-          : filter === "suggested"
-            ? hasSuggestion(r) && !allIgnored(r, namingIgnores)
-            : filter === "ignored"
-              ? anyIgnored(r, namingIgnores)
-              : r.status === filter,
-      ),
-    [analysis, filter, namingIgnores],
+      analysis.rows
+        .filter((r) => `${r.name} ${r.entityId} ${r.suggestedName ?? ""} ${r.suggestedId ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()))
+        .filter((r) =>
+          filter === "all"
+            ? true
+            : filter === "suggested"
+              ? hasSuggestion(r) && !allIgnored(r, namingIgnores)
+              : filter === "ignored"
+                ? anyIgnored(r, namingIgnores)
+                : r.status === filter,
+        ),
+    [analysis, filter, namingIgnores, query],
   );
   const { sort, toggle: toggleSort } = useSortState({ key: "name", dir: "asc" });
   const roleOf = (r: NamingRow): EntityRole => h.entities[r.entityId]?.role ?? "other";
@@ -654,6 +657,22 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
 
       <DataTable
         id="area-naming"
+        search={{ value: query, onChange: setQuery, placeholder: "Find an entity or suggestion", label: "Find naming suggestions" }}
+        actions={
+          <>
+            <Button disabled={nameCount === 0} onClick={() => acceptAll("name")}>
+              Accept every name suggestion
+            </Button>
+            <Button disabled={idCount === 0} onClick={() => acceptAll("id")}>
+              Accept every id suggestion
+            </Button>
+            {pendingCount > 0 && (
+              <Button tone="primary" disabled={busy} onClick={() => void add()}>
+                Add {pendingCount} to changes
+              </Button>
+            )}
+          </>
+        }
         label="Entity naming"
         rows={rows}
         rowKey={(r) => r.entityId}
@@ -665,17 +684,6 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
       />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={nameCount === 0} onClick={() => acceptAll("name")}>
-          Accept every name suggestion
-        </Button>
-        <Button disabled={idCount === 0} onClick={() => acceptAll("id")}>
-          Accept every id suggestion
-        </Button>
-        {pendingCount > 0 && (
-          <Button tone="primary" disabled={busy} onClick={() => void add()}>
-            Add {pendingCount} to changes
-          </Button>
-        )}
         <span className="text-xs text-muted">
           Tick a suggestion to accept it, cross it to ignore it. For an entity of a device, Home Assistant may still put the device's name in front of the name
           you set. The preview shows what you set; after Apply, Taxis shows what Home Assistant settles on.

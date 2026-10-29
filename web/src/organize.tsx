@@ -392,7 +392,9 @@ function ItemsPane({ h, type, id, select }: { h: Hierarchy; type: OrganizeType; 
       <div className="flex flex-col gap-2 border-b border-line p-2.5">
         <PageHeader title={TYPE_NAME[type]} />
         <Toolbar label="Find and filter">
-          <SearchField value={query} onChange={setQuery} placeholder={`Find in ${TYPE_NAME[type].toLowerCase()}`} />
+          {(type === "spaces" || listKeyFor(type)) && (
+            <SearchField value={query} onChange={setQuery} placeholder={`Find in ${TYPE_NAME[type].toLowerCase()}`} />
+          )}
           {(type === "devices" || isOrganizeEntityType(type)) && <AreaMultiSelect areas={Object.values(h.areas)} selected={areas} onChange={setAreas} />}
         </Toolbar>
         {type === "devices" && (
@@ -421,7 +423,7 @@ function ItemsPane({ h, type, id, select }: { h: Hierarchy; type: OrganizeType; 
       ) : listKeyFor(type) ? (
         <GroupedItems h={h} type={type} id={id} select={select} query={query} />
       ) : (
-        <ItemsTable h={h} type={type} id={id} select={select} query={query} areas={areas} showDisabled={showDisabled} />
+        <ItemsTable h={h} type={type} id={id} select={select} query={query} setQuery={setQuery} areas={areas} showDisabled={showDisabled} />
       )}
       <NewFooter type={type} />
     </div>
@@ -489,6 +491,7 @@ function ItemsTable({
   id,
   select,
   query,
+  setQuery,
   areas,
   showDisabled,
 }: {
@@ -497,6 +500,7 @@ function ItemsTable({
   id: string | null;
   select: (id: string | null) => void;
   query: string;
+  setQuery: (value: string) => void;
   areas: ReadonlySet<string>;
   showDisabled: boolean;
 }) {
@@ -546,6 +550,12 @@ function ItemsTable({
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-2.5">
       <DataTable
         id={`organize-${type}`}
+        search={{
+          value: query,
+          onChange: setQuery,
+          placeholder: `Find in ${TYPE_NAME[type].toLowerCase()}`,
+          label: `Find in ${TYPE_NAME[type].toLowerCase()}`,
+        }}
         label={`${TYPE_NAME[type]} list`}
         rows={shown}
         rowKey={(r) => r.id}
