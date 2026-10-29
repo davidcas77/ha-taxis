@@ -235,7 +235,7 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
         <RecordsSplit
           listVisible={step === "items"}
           detailsVisible={step === "props"}
-          list={
+          list={(resetControl) => (
             <>
               <BackBar label="Types" onBack={() => setStep("types")} />
               {tabular && (
@@ -243,9 +243,9 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
                   <ViewSwitch view={view} onChange={choose} />
                 </div>
               )}
-              <ItemsPane key={type} h={h} type={type} id={id} select={select} />
+              <ItemsPane key={type} h={h} type={type} id={id} select={select} headerActions={resetControl} />
             </>
-          }
+          )}
           details={
             <>
               <BackBar label={TYPE_NAME[type]} onBack={() => select(null)} />
@@ -383,20 +383,32 @@ function rowsFor(h: Hierarchy, type: OrganizeType): { cols: Col[]; rows: Row[] }
   }
 }
 
-function ItemsPane({ h, type, id, select }: { h: Hierarchy; type: OrganizeType; id: string | null; select: (id: string | null) => void }) {
+function ItemsPane({
+  h,
+  type,
+  id,
+  select,
+  headerActions,
+}: {
+  h: Hierarchy;
+  type: OrganizeType;
+  id: string | null;
+  select: (id: string | null) => void;
+  headerActions?: ReactNode;
+}) {
   const [query, setQuery] = useStoredValue(`taxis:records:search:${type}`, "", (v): v is string => typeof v === "string");
   const [areas, setAreas] = useAreaFilter();
   const [showDisabled, setShowDisabled] = useStoredValue("taxis:filters:disabled-devices", false, (v): v is boolean => typeof v === "boolean");
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-2 border-b border-line p-2.5">
-        <PageHeader title={TYPE_NAME[type]} />
-        <Toolbar label="Find and filter">
-          {(type === "spaces" || listKeyFor(type)) && (
-            <SearchField value={query} onChange={setQuery} placeholder={`Find in ${TYPE_NAME[type].toLowerCase()}`} />
-          )}
-          {(type === "devices" || isOrganizeEntityType(type)) && <AreaMultiSelect areas={Object.values(h.areas)} selected={areas} onChange={setAreas} />}
-        </Toolbar>
+        <PageHeader title={<span className="truncate">{TYPE_NAME[type]}</span>} actions={headerActions} />
+        {type !== "spaces" && (
+          <Toolbar label="Find and filter">
+            {listKeyFor(type) && <SearchField value={query} onChange={setQuery} placeholder={`Find in ${TYPE_NAME[type].toLowerCase()}`} />}
+            {(type === "devices" || isOrganizeEntityType(type)) && <AreaMultiSelect areas={Object.values(h.areas)} selected={areas} onChange={setAreas} />}
+          </Toolbar>
+        )}
         {type === "devices" && (
           <label className="flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
@@ -419,7 +431,7 @@ function ItemsPane({ h, type, id, select }: { h: Hierarchy; type: OrganizeType; 
         </div>
       )}
       {type === "spaces" ? (
-        <SpacesTree h={h} id={id} select={select} query={query} />
+        <SpacesTree h={h} id={id} select={select} query={query} onQuery={setQuery} />
       ) : listKeyFor(type) ? (
         <GroupedItems h={h} type={type} id={id} select={select} query={query} />
       ) : (
@@ -578,7 +590,19 @@ function ItemsTable({
 // Not a slug Home Assistant can produce, so a floor called "None" stays a floor.
 const NO_FLOOR = "(no floor)";
 
-function SpacesTree({ h, id, select, query }: { h: Hierarchy; id: string | null; select: (id: string | null) => void; query: string }) {
+function SpacesTree({
+  h,
+  id,
+  select,
+  query,
+  onQuery,
+}: {
+  h: Hierarchy;
+  id: string | null;
+  select: (id: string | null) => void;
+  query: string;
+  onQuery: (value: string) => void;
+}) {
   const { edited, propose, busy } = useTaxis();
   const [adding, setAdding] = useState<{ kind: "area" | "floor"; floorId: string | null } | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -627,9 +651,16 @@ function SpacesTree({ h, id, select, query }: { h: Hierarchy; id: string | null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-line p-2.5">
-        <Button onClick={() => setAdding({ kind: "floor", floorId: null })}>New floor</Button>
-        <Button onClick={() => setAdding({ kind: "area", floorId: null })}>New area</Button>
+      <div className="flex min-w-0 flex-nowrap items-center gap-1.5 border-b border-line p-2.5">
+        <div className="min-w-0 flex-1 [&>label]:min-w-0">
+          <SearchField value={query} onChange={onQuery} placeholder="Find in floors and areas" />
+        </div>
+        <Button className="shrink-0 whitespace-nowrap" onClick={() => setAdding({ kind: "floor", floorId: null })}>
+          New floor
+        </Button>
+        <Button className="shrink-0 whitespace-nowrap" onClick={() => setAdding({ kind: "area", floorId: null })}>
+          New area
+        </Button>
       </div>
       {adding && (
         <div className="flex items-end gap-2 border-b border-line bg-sunken p-2.5">

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Organize layout.** Reset layout shares the list title row; the floors and
+  areas search shares one row with New floor and New area.
+
 - **Navigation.** Home counts and read time sit after Changes in the main bar,
   with the full summary available on hover, removing the extra header row.
 

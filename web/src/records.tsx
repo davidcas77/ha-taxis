@@ -86,13 +86,31 @@ export function RecordsSplit({
   listVisible = true,
   detailsVisible = true,
 }: {
-  list: ReactNode;
+  list: ReactNode | ((resetControl: ReactNode) => ReactNode);
   details: ReactNode;
   listVisible?: boolean;
   detailsVisible?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const pane = usePaneWidth();
+  const resetControl = (
+    <button
+      type="button"
+      className="text-xs text-accent"
+      onClick={() => {
+        pane.reset();
+        try {
+          for (const key of Object.keys(window.localStorage)) if (key.startsWith("taxis:table:v3:")) window.localStorage.removeItem(key);
+        } catch {
+          // Not remembered; the page still works.
+        }
+        window.dispatchEvent(new Event("taxis:reset-layout"));
+      }}
+    >
+      Reset layout
+    </button>
+  );
+
   return (
     <div ref={container} className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
       <section
@@ -100,24 +118,14 @@ export function RecordsSplit({
         style={{ "--records-width": `${pane.width}px` } as CSSProperties}
         className={`${listVisible ? "flex" : "hidden"} records-pane min-h-0 min-w-0 flex-1 flex-col border-b border-line md:flex md:flex-none md:border-b-0`}
       >
-        <div className="flex justify-end border-b border-line px-2 py-1">
-          <button
-            type="button"
-            className="text-xs text-accent"
-            onClick={() => {
-              pane.reset();
-              try {
-                for (const key of Object.keys(window.localStorage)) if (key.startsWith("taxis:table:v3:")) window.localStorage.removeItem(key);
-              } catch {
-                // Not remembered; the page still works.
-              }
-              window.dispatchEvent(new Event("taxis:reset-layout"));
-            }}
-          >
-            Reset layout
-          </button>
-        </div>
-        {list}
+        {typeof list === "function" ? (
+          list(resetControl)
+        ) : (
+          <>
+            <div className="flex justify-end border-b border-line px-2 py-1">{resetControl}</div>
+            {list}
+          </>
+        )}
       </section>
       <PaneDivider
         label="Resize records and properties"
