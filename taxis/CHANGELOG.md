@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.7
 
 - **New recipes.** **Leak alert** (per area: a moisture sensor going wet sends a
   message and a Home Assistant notification, repeating until it is dry, and closes
