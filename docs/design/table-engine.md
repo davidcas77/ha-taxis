@@ -13,6 +13,17 @@ saved by table ID in `localStorage` under `taxis:table:v3:<id>`. **Reset columns
 restores that table's defaults; the global layout reset clears all table choices.
 This changes browser presentation only and never queues or applies HA edits.
 
+Columns resize by default in every table. Drag a header's separator, or focus it
+and use Left/Right (10 pixels), Shift+Left/Right (50 pixels), Home (32 pixels) or
+End (2000 pixels). The first resize captures the displayed widths so adjacent
+columns and sticky offsets remain stable. Widths persist with visibility in the
+same table preference record; **Reset columns** and the global layout reset clear
+both. Explicit widths stay visible and scroll inside the table instead of being
+discarded by responsive fitting. Old visibility-only preferences still work.
+
+The API permits `resizable={false}` on a table, or `resizable: false` on a column,
+only for an explicitly requested exception. No app table opts out by default.
+
 The engine retains the existing sorting, sticky headers/columns, grouping,
 footers, row details and row selection controls supplied by pages. The pure
 fitting rules in `shared/table-fit.ts` decide which optional columns fit the

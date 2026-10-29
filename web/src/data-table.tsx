@@ -50,6 +50,8 @@ export type Column<T> = {
   maxWidth?: number;
   // A fixed width (a checkbox, an open button); implies sticky offsets are exact.
   width?: number;
+  // Override the table's default resizing for this column only.
+  resizable?: boolean;
   // One line with an ellipsis, the whole text in a tooltip. For ids and long names.
   truncate?: boolean;
   align?: "left" | "center" | "right";
@@ -101,6 +103,8 @@ export type DataTableProps<T> = {
   maxHeight?: string;
   // Left of the Columns menu, above the table: a count, a note.
   summary?: ReactNode;
+  // All tables resize by default. Set false only for an explicit exception.
+  resizable?: boolean;
   // Shown instead of the table when there are no rows.
   empty?: ReactNode;
   className?: string;
@@ -121,7 +125,7 @@ function useColumnPrefs(id: string): [ColumnPrefs, (next: ColumnPrefs) => void] 
     (next: ColumnPrefs) => {
       setPrefs(next);
       try {
-        if (next.show.length === 0 && next.hide.length === 0) window.localStorage.removeItem(key);
+        if (next.show.length === 0 && next.hide.length === 0 && !Object.keys(next.widths ?? {}).length) window.localStorage.removeItem(key);
         else window.localStorage.setItem(key, JSON.stringify(next));
       } catch {
         // Not remembered; the table still works.
@@ -130,10 +134,17 @@ function useColumnPrefs(id: string): [ColumnPrefs, (next: ColumnPrefs) => void] 
     [key],
   );
   useEffect(() => {
-    const reset = () => setPrefs(NO_PREFS);
+    try {
+      setPrefs(parseColumnPrefs(JSON.parse(window.localStorage.getItem(key) ?? "null")));
+    } catch {
+      setPrefs(NO_PREFS);
+    }
+  }, [key]);
+  useEffect(() => {
+    const reset = () => set(NO_PREFS);
     window.addEventListener("taxis:reset-layout", reset);
     return () => window.removeEventListener("taxis:reset-layout", reset);
-  }, []);
+  }, [set]);
   return [prefs, set];
 }
 
@@ -185,12 +196,25 @@ export function DataTable<T>({
   density = "normal",
   maxHeight = "70vh",
   summary,
+  resizable = true,
   empty,
   className = "",
 }: DataTableProps<T>) {
   const [prefs, setPrefs] = useColumnPrefs(id);
   const scroller = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState(Number.POSITIVE_INFINITY);
+  const drag = useRef<{ id: string; pointer: number; x: number; width: number; sizes: Record<string, number> } | null>(null);
+  const widths = resizable ? (prefs.widths ?? {}) : {};
+  const widthOf = (c: Column<T>) => widths[c.id] ?? c.width ?? c.minWidth ?? 96;
+  const snapshotWidths = () =>
+    Object.fromEntries(
+      [...(scroller.current?.querySelectorAll<HTMLTableCellElement>("th[data-column-id]") ?? [])].map((th) => [
+        th.dataset.columnId!,
+        Math.min(2000, Math.max(32, Math.round(th.getBoundingClientRect().width))),
+      ]),
+    );
+  const resize = (id: string, width: number, sizes: Record<string, number>) =>
+    setPrefs({ ...prefs, widths: { ...widths, ...sizes, [id]: Math.min(2000, Math.max(32, Math.round(width))) } });
   const [ownSort, setOwnSort] = useState<Sort>(defaultSort ?? { key: "", dir: "asc" });
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
@@ -224,14 +248,14 @@ export function DataTable<T>({
   const fitInput = columns.map((c) => ({
     id: c.id,
     priority: c.priority ?? 2,
-    minWidth: c.width ?? c.minWidth ?? 96,
+    minWidth: widthOf(c),
     locked: c.locked,
     defaultHidden: c.defaultHidden,
   }));
-  const fitKey = `${available}|${fitInput.map((c) => c.id).join()}|${prefs.show.join()}|${prefs.hide.join()}`;
+  const fitKey = `${available}|${fitInput.map((c) => c.id).join()}|${prefs.show.join()}|${prefs.hide.join()}|${JSON.stringify(widths)}`;
   const [drops, setDrops] = useState({ key: "", n: 0 });
   const extraDrops = drops.key === fitKey ? drops.n : 0;
-  const fit = fitColumns(fitInput, prefs, available, 0, extraDrops);
+  const fit = fitColumns(fitInput, { ...prefs, show: [...new Set([...prefs.show, ...Object.keys(widths)])] }, available, 0, extraDrops);
   const visibleKey = fit.visible.join();
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -243,7 +267,7 @@ export function DataTable<T>({
   const withDetails = hidden.length > 0;
   const offsets = stickyOffsets([
     ...(withDetails && hasSticky ? [{ id: "\u0000details", sticky: true, width: DETAILS_WIDTH }] : []),
-    ...visible.map((c) => ({ id: c.id, sticky: c.sticky, width: c.width ?? c.minWidth ?? 96 })),
+    ...visible.map((c) => ({ id: c.id, sticky: c.sticky, width: widthOf(c) })),
   ]);
   const span = visible.length + (withDetails ? 1 : 0);
   const grouped = headerRuns(visible).some((r) => r.group !== null);
@@ -252,10 +276,12 @@ export function DataTable<T>({
 
   const cellStyle = (c: Column<T>, header = false): CSSProperties => {
     const style: CSSProperties = {};
-    if (c.width !== undefined) {
-      style.width = c.width;
-      style.minWidth = c.width;
-      style.maxWidth = c.width;
+    const explicitWidth = widths[c.id] ?? c.width;
+    if (explicitWidth !== undefined) {
+      style.width = explicitWidth;
+      style.minWidth = explicitWidth;
+      style.maxWidth = explicitWidth;
+      style.overflowWrap = "anywhere";
     } else {
       if (c.minWidth !== undefined) style.minWidth = c.minWidth;
       if (c.maxWidth !== undefined && !(c.truncate && !header)) style.maxWidth = c.maxWidth;
@@ -315,6 +341,58 @@ export function DataTable<T>({
   const ariaSort = (c: Column<T>) =>
     c.sort ? (sort.key === c.id ? (sort.dir === "asc" ? ("ascending" as const) : ("descending" as const)) : ("none" as const)) : undefined;
 
+  const resizeHandle = (c: Column<T>) =>
+    !resizable || c.resizable === false ? null : (
+      <span
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`Resize ${textOf(c as Column<never>)} column`}
+        tabIndex={0}
+        aria-valuemin={32}
+        aria-valuemax={2000}
+        aria-valuenow={Math.round(widthOf(c))}
+        title="Drag to resize; arrow keys adjust width; Home/End set minimum/maximum"
+        className="absolute inset-y-0 right-0 z-30 w-2 touch-none cursor-col-resize select-none border-r-2 border-transparent hover:border-accent focus:border-accent focus:outline-none"
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const sizes = snapshotWidths();
+          drag.current = { id: c.id, pointer: e.pointerId, x: e.clientX, width: sizes[c.id] ?? widthOf(c), sizes };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          const d = drag.current;
+          if (d?.pointer === e.pointerId && d.id === c.id) {
+            e.preventDefault();
+            resize(c.id, d.width + e.clientX - d.x, d.sizes);
+          }
+        }}
+        onPointerUp={(e) => {
+          if (drag.current?.pointer === e.pointerId) {
+            drag.current = null;
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        }}
+        onPointerCancel={() => {
+          drag.current = null;
+        }}
+        onLostPointerCapture={() => {
+          drag.current = null;
+        }}
+        onKeyDown={(e) => {
+          const delta = e.shiftKey ? 50 : 10;
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const sizes = snapshotWidths(),
+            current = sizes[c.id] ?? widthOf(c);
+          resize(c.id, e.key === "Home" ? 32 : e.key === "End" ? 2000 : current + (e.key === "ArrowLeft" ? -delta : delta), sizes);
+        }}
+      />
+    );
+
   const head = (
     <thead>
       {grouped && (
@@ -334,12 +412,15 @@ export function DataTable<T>({
                 <th
                   key={first.id}
                   scope="col"
+                  data-column-id={first.id}
+                  aria-label={textOf(first as Column<never>)}
                   rowSpan={2}
                   aria-sort={ariaSort(first)}
                   style={{ ...cellStyle(first, true), top: 0 }}
                   className={`sticky ${thClass(first)}`}
                 >
                   <span className={`flex ${justify(first)}`}>{headerContent(first)}</span>
+                  {resizeHandle(first)}
                 </th>
               );
             }
@@ -373,11 +454,14 @@ export function DataTable<T>({
             <th
               key={c.id}
               scope="col"
+              data-column-id={c.id}
+              aria-label={textOf(c as Column<never>)}
               aria-sort={ariaSort(c)}
               style={{ ...cellStyle(c, true), top: grouped ? GROUP_ROW_HEIGHT : 0 }}
               className={`sticky ${thClass(c, grouped ? "border-l" : "")}`}
             >
               <span className={`flex ${justify(c)}`}>{headerContent(c)}</span>
+              {resizeHandle(c)}
             </th>
           ))}
       </tr>
@@ -401,7 +485,7 @@ export function DataTable<T>({
     if (!c.truncate) return content;
     const text = c.text?.(row) ?? (typeof content === "string" ? content : undefined);
     return (
-      <div className="truncate" style={{ maxWidth: c.maxWidth ?? 280 }} title={text}>
+      <div className="truncate" style={{ maxWidth: widths[c.id] !== undefined ? "100%" : (c.maxWidth ?? 280) }} title={text}>
         {content}
       </div>
     );
@@ -555,7 +639,23 @@ export function DataTable<T>({
           className="max-w-full overflow-auto rounded-b-lg"
           style={{ maxHeight: maxHeight === "none" ? undefined : maxHeight }}
         >
-          <table aria-label={label} className="w-full border-separate border-spacing-0 text-[13px]">
+          <table
+            aria-label={label}
+            className="border-separate border-spacing-0 text-[13px]"
+            style={
+              Object.keys(widths).length
+                ? { tableLayout: "fixed", width: visible.reduce((sum, c) => sum + widthOf(c), withDetails ? DETAILS_WIDTH : 0) }
+                : { width: "100%" }
+            }
+          >
+            {Object.keys(widths).length > 0 && (
+              <colgroup>
+                {withDetails && <col style={{ width: DETAILS_WIDTH }} />}
+                {visible.map((c) => (
+                  <col key={c.id} style={{ width: widthOf(c) }} />
+                ))}
+              </colgroup>
+            )}
             {head}
             <tbody>{body}</tbody>
             {footers && (
@@ -606,7 +706,7 @@ function ColumnsMenu<T>({
       document.removeEventListener("focusin", dismiss);
     };
   }, [open]);
-  const changed = prefs.show.length > 0 || prefs.hide.length > 0;
+  const changed = prefs.show.length > 0 || prefs.hide.length > 0 || Object.keys(prefs.widths ?? {}).length > 0;
   return (
     <div
       ref={root}

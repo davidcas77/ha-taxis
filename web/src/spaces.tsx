@@ -12,6 +12,7 @@ import {
   Droplets,
   Gauge,
   Home,
+  Info,
   Layers,
   Lightbulb,
   Lock,
@@ -69,6 +70,7 @@ import {
   type TabItem,
 } from "./ui.tsx";
 import { WhyIcon, useWhy } from "./why.tsx";
+import { TooltipButton } from "./tooltip.tsx";
 
 const ROLE_ICONS: Record<EntityRole, LucideIcon> = {
   light: Lightbulb,
@@ -520,30 +522,39 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
             <label className="sr-only" htmlFor={`unassigned-area-${e.entityId}`}>
               Area for {e.name}
             </label>
-            <AreaSelect
-              h={h}
-              id={`unassigned-area-${e.entityId}`}
-              value={e.ownAreaId}
-              noneLabel="Choose an area…"
-              disabled={!!reason || applying || assigning}
-              onChange={(area) => void assignArea(e, area)}
-            />
-            {suggestion && (
-              <div className="mt-1 flex items-center gap-1 text-xs">
-                <span className="min-w-0 break-words text-muted">Suggested: {h.areas[suggestion.areaId].name}</span>
-                <Button
+            <div className="flex min-w-0 items-center gap-1.5">
+              <div className="w-28 min-w-0 max-w-[50%] shrink-0">
+                <AreaSelect
+                  h={h}
+                  id={`unassigned-area-${e.entityId}`}
+                  value={e.ownAreaId}
+                  noneLabel="Choose an area…"
                   disabled={!!reason || applying || assigning}
-                  aria-label={`Use suggested area ${h.areas[suggestion.areaId].name} for ${e.name}`}
-                  title="Add this area assignment to Changes"
-                  onClick={() => void assignArea(e, suggestion.areaId)}
-                >
-                  <Check className="size-3" aria-hidden />
-                </Button>
+                  onChange={(area) => void assignArea(e, area)}
+                />
               </div>
-            )}
-            <p className="mt-1 break-words text-xs text-muted">
-              {device ? `Device: ${device.name} · ${deviceArea ? `Area: ${deviceArea}` : "Device has no area"}` : "No device"}
-            </p>
+              {suggestion && (
+                <div className="flex min-w-0 flex-1 items-center gap-1 text-xs">
+                  <span className="min-w-0 truncate text-muted" title={`Suggested: ${h.areas[suggestion.areaId].name}`}>
+                    Suggested: {h.areas[suggestion.areaId].name}
+                  </span>
+                  <Button
+                    className="shrink-0"
+                    disabled={!!reason || applying || assigning}
+                    aria-label={`Use suggested area ${h.areas[suggestion.areaId].name} for ${e.name}`}
+                    title="Add this area assignment to Changes"
+                    onClick={() => void assignArea(e, suggestion.areaId)}
+                  >
+                    <Check className="size-3" aria-hidden />
+                  </Button>
+                </div>
+              )}
+              {deviceArea && (
+                <span className="min-w-0 flex-1 truncate text-xs text-muted" title={`Device area: ${deviceArea}`}>
+                  Device area: {deviceArea}
+                </span>
+              )}
+            </div>
             {reason && <p className="mt-1 text-xs text-muted">{reason}</p>}
           </div>
         );
@@ -606,16 +617,7 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
           </Button>
         )}
       </Toolbar>
-      {view === "cards" && (
-        <label className="flex items-center gap-2 text-sm">
-          {selectionCheckbox}Select all shown ({eligible.length})
-        </label>
-      )}
       <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea />
-      <p className="text-xs text-muted">
-        Only selected entities on this page are changed. Entities outside the registry cannot be selected. A device’s main entity needs its own name to take an
-        area; otherwise move its device in Organize.
-      </p>
       {!shown.length ? (
         <EmptyState>{query ? "No unassigned entities match your search." : "No entities without an area match the current visibility filters."}</EmptyState>
       ) : view === "cards" ? (
@@ -1230,14 +1232,24 @@ export function BulkBar({ h, ids, onDone, requireArea = false }: { h: Hierarchy;
     <div
       role="region"
       aria-label="Change the selected entities"
-      className="sticky top-0 z-10 mb-5 flex flex-wrap items-end gap-3 rounded-lg border border-accent/40 bg-surface p-3 shadow-sm"
+      className="sticky top-0 z-10 flex min-w-0 max-w-full flex-nowrap items-center gap-3 overflow-x-auto rounded-lg border border-accent/40 bg-surface p-2 shadow-sm"
     >
-      <span className="self-center text-[13px] font-medium">{ids.length} selected</span>
-      <div className="flex items-end gap-1.5">
-        <div className="w-48">
-          <label htmlFor="bulk-area" className="mb-1 block text-xs text-muted">
-            Assign area to selected entities
-          </label>
+      <span className="shrink-0 whitespace-nowrap text-[13px] font-medium">{ids.length} selected</span>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <label htmlFor="bulk-area" className="shrink-0 whitespace-nowrap text-xs text-muted">
+          Assign area to selected entities
+        </label>
+        {requireArea && (
+          <TooltipButton
+            label="Area assignment help"
+            compact
+            className="shrink-0 text-muted"
+            content="Only selected entities on this page are changed. Entities outside the registry cannot be selected. A device's main entity needs its own name to take an area; otherwise move its device in Organize."
+          >
+            <Info className="size-3.5" aria-hidden />
+          </TooltipButton>
+        )}
+        <div className="w-48 shrink-0">
           <AreaSelect
             h={h}
             id="bulk-area"
@@ -1263,7 +1275,7 @@ export function BulkBar({ h, ids, onDone, requireArea = false }: { h: Hierarchy;
       </div>
       {ids.length > 0 && (
         <>
-          <div className="flex items-end gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             <select aria-label="Label" className={`${inputClass} w-40!`} value={label} onChange={(ev) => setLabel(ev.target.value)}>
               <option value="">Choose a label…</option>
               {labels.map((l) => (
@@ -1299,11 +1311,12 @@ export function BulkBar({ h, ids, onDone, requireArea = false }: { h: Hierarchy;
           </div>
           <Button
             disabled={busy}
+            className="shrink-0 whitespace-nowrap"
             onClick={() => void run((e) => (e.hidden ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { hidden_by: "user" } }))}
           >
             Hide
           </Button>
-          <Button tone="ghost" className="ml-auto" onClick={onDone}>
+          <Button tone="ghost" className="ml-auto shrink-0 whitespace-nowrap" onClick={onDone}>
             Clear selection
           </Button>
         </>

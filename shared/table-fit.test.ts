@@ -82,6 +82,22 @@ describe("column preferences", () => {
     expect(togglePref(hidden, "id", false)).toEqual({ show: ["id"], hide: [] });
     expect(togglePref(togglePref(hidden, "id", true), "id", true)).toEqual({ show: [], hide: ["id"] });
   });
+  it("keeps valid saved widths while rejecting corrupt or unsafe values", () => {
+    expect(parseColumnPrefs({ show: [], hide: [], widths: { name: 320, state: 32, huge: 2001, negative: -2, text: "80", nan: NaN } })).toEqual({
+      show: [],
+      hide: [],
+      widths: { name: 320, state: 32 },
+    });
+    expect(parseColumnPrefs(JSON.parse('{"show":[],"hide":[],"widths":{"__proto__":100,"constructor":100,"name":240}}'))).toEqual({
+      show: [],
+      hide: [],
+      widths: { name: 240 },
+    });
+    expect(parseColumnPrefs({ show: [], hide: [], widths: [] })).toEqual(NO_PREFS);
+  });
+  it("preserves manual widths when visibility changes", () => {
+    expect(togglePref({ show: [], hide: [], widths: { name: 250 } }, "state", true)).toEqual({ show: [], hide: ["state"], widths: { name: 250 } });
+  });
 });
 
 describe("stickyOffsets", () => {

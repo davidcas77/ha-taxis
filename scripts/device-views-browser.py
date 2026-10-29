@@ -74,8 +74,10 @@ class DeviceViews(unittest.TestCase):
         entity = self.page.locator('tr[data-entity-id="' + entity_id + '"]')
         expect(entity.get_by_role("checkbox")).to_be_checked()
         expect(entity.get_by_role("button", name=re.compile("^Open "))).to_be_visible()
-        # Column widths are no longer dragged; the table's Columns menu shows and hides columns.
-        self.assertEqual(self.page.get_by_role("separator", name=re.compile(r"^Resize .* column")).count(), 0)
+        # Every visible column resizes; the chooser also keeps visibility choices.
+        visible_headers = self.page.locator("table th[data-column-id]").count()
+        self.assertGreater(visible_headers, 0)
+        self.assertEqual(self.page.get_by_role("separator", name=re.compile(r"^Resize .* column")).count(), visible_headers)
         expect(self.page.get_by_role("button", name=re.compile(r"^Columns of "))).to_have_count(1)
         self.mode("Devices")
         expect(self.page.locator('tr[data-device-child="true"]').first).to_be_visible()

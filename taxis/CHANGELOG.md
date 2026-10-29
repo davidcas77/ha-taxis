@@ -11,6 +11,10 @@
   small tables, button matrices and Records lists. Required controls stay visible;
   optional choices persist per table and can be reset. The existing shared engine
   retains responsive fitting, row details, sorting and scrolling inside the table.
+- **Resizable columns.** Every table supports dragging column edges and keyboard
+  resizing by default. Widths persist with column choices and reset together;
+  an explicit `resizable={false}` opts a table out. Page subtitles stay on one
+  line, and bulk area controls use a compact horizontal toolbar.
 
 ## 0.7.8
 
