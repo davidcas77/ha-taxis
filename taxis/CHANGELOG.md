@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Guide path.** The next step is marked inside its checklist row, with a
+  primary action button, instead of appearing again in a separate card.
+
 ## 0.7.9
 
 - **Device-first area assignment.** Not in any area opens separate Devices and
