@@ -535,8 +535,8 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
               </div>
               {suggestion && (
                 <div className="flex min-w-0 flex-1 items-center gap-1 text-xs">
-                  <span className="min-w-0 truncate text-muted" title={`Suggested: ${h.areas[suggestion.areaId].name}`}>
-                    Suggested: {h.areas[suggestion.areaId].name}
+                  <span className="min-w-0 truncate text-muted" title={h.areas[suggestion.areaId].name}>
+                    {h.areas[suggestion.areaId].name}
                   </span>
                   <Button
                     className="shrink-0"
