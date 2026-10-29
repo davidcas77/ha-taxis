@@ -636,7 +636,7 @@ export function DataTable<T>({
           role="region"
           aria-label={label}
           tabIndex={0}
-          className="max-w-full overflow-auto rounded-b-lg"
+          className="relative max-w-full overflow-auto rounded-b-lg"
           style={{ maxHeight: maxHeight === "none" ? undefined : maxHeight }}
         >
           <table

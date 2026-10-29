@@ -35,6 +35,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 
 import { ROLE_ORDER, displayRole } from "../../shared/roles.ts";
 import { suggestEntityArea } from "../../shared/area-suggestion.ts";
+import { unassignedDevices } from "../../shared/unassigned-devices.ts";
 import { sortRows } from "../../shared/sort.ts";
 import { arrangeGroups, membershipIndex, summarizeRoom, type BinarySummary, type NumericSummary } from "../../shared/rooms.ts";
 import type { AreaNode, ChangeInput, EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
@@ -71,6 +72,7 @@ import {
 } from "./ui.tsx";
 import { WhyIcon, useWhy } from "./why.tsx";
 import { TooltipButton } from "./tooltip.tsx";
+import { UnassignedDevices } from "./unassigned-devices.tsx";
 
 const ROLE_ICONS: Record<EntityRole, LucideIcon> = {
   light: Lightbulb,
@@ -151,7 +153,7 @@ function TreeRow({
   depth: number;
   icon: LucideIcon;
   label: string;
-  count?: number;
+  count?: ReactNode;
   // What needs a look in an area (its Health tab): a small dot, red for an error.
   health?: HealthBadge;
   active: boolean;
@@ -296,7 +298,7 @@ export function SpaceTree({
         icon={AlertTriangle}
         label="Not in any area"
         muted
-        count={countVisible(h.unassignedEntityIds, h, filters)}
+        count={<span title="Entities without an effective area">{countVisible(h.unassignedEntityIds, h, filters)} entities</span>}
         active={sel.kind === "unassigned"}
         onClick={() => select({ kind: "unassigned" })}
       />
@@ -412,6 +414,38 @@ export function SpaceView({
 }
 
 function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; edit: (id: string) => void }) {
+  const [tab, setTab] = useState<"devices" | "entities">("devices");
+  return (
+    <section aria-label="Unassigned items" className="flex min-w-0 flex-col gap-3">
+      <Heading
+        title="Not in any area"
+        subtitle={
+          tab === "devices"
+            ? "Assign devices first; entities inherit their device's area unless they have their own. Assignments wait in Changes."
+            : "Neither the entity nor its device has an area. Assign an entity separately, or place its device first."
+        }
+      />
+      <Tabs
+        label="Unassigned items"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: "devices", label: `Devices (${unassignedDevices(h, filters.disabled).length})` },
+          { key: "entities", label: `Entities (${countVisible(h.unassignedEntityIds, h, filters)})` },
+        ]}
+      />
+      <div id={tabPanelId("Unassigned items")} role="tabpanel">
+        {tab === "devices" ? (
+          <UnassignedDevices h={h} showDisabled={filters.disabled} />
+        ) : (
+          <UnassignedEntities h={h} filters={filters} edit={edit} onDevices={() => setTab("devices")} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; filters: Filters; edit: (id: string) => void; onDevices: () => void }) {
   const { propose, busy: applying } = useTaxis();
   const [assigning, setAssigning] = useState(false);
   const assignArea = async (entity: EntityItem, area: string | null) => {
@@ -512,11 +546,7 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
         const suggestion = suggestEntityArea(e.name, e.entityId, Object.values(h.areas));
         const device = e.deviceId ? h.devices[e.deviceId] : undefined;
         const deviceArea = device?.areaId ? h.areas[device.areaId]?.name : null;
-        const reason = !e.inRegistry
-          ? "Not in the entity registry"
-          : e.needsOwnName && !e.customName
-            ? "Uses its device name. Give this entity its own display name to assign a separate area, or move the device in Organize."
-            : null;
+        const reason = !e.inRegistry ? "Not in the entity registry" : e.needsOwnName && !e.customName ? "Assign its device in Devices first." : null;
         return (
           <div className="min-w-0">
             <label className="sr-only" htmlFor={`unassigned-area-${e.entityId}`}>
@@ -555,7 +585,14 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
                 </span>
               )}
             </div>
-            {reason && <p className="mt-1 text-xs text-muted">{reason}</p>}
+            {reason &&
+              (e.inRegistry ? (
+                <button type="button" className="mt-1 text-left text-xs text-accent hover:underline" onClick={onDevices}>
+                  {reason}
+                </button>
+              ) : (
+                <p className="mt-1 text-xs text-muted">{reason}</p>
+              ))}
           </div>
         );
       },
@@ -586,7 +623,6 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
   ];
   return (
     <section aria-label="Unassigned entities" className="flex min-w-0 flex-col gap-4">
-      <Heading title="Not in any area" subtitle="Neither the entity nor its device has an area. Select entities and add an area assignment to Changes." />
       <Toolbar label="Unassigned entities toolbar" className="gap-3">
         <Toolbar label="Unassigned view" className="gap-x-1">
           {(["cards", "table"] as const).map((value) => (
@@ -717,7 +753,7 @@ function HomeView({ h, filters, select }: { h: Hierarchy; filters: Filters; sele
           value={h.counts.entities}
           note={h.counts.disabledEntities > 0 ? `${h.counts.disabledEntities.toLocaleString()} more are disabled` : undefined}
         />
-        <Stat label="Not in any area" value={countVisible(h.unassignedEntityIds, h, filters)} onClick={() => select({ kind: "unassigned" })} />
+        <Stat label="Not in any area" value={countVisible(h.unassignedEntityIds, h, filters)} note="entities" onClick={() => select({ kind: "unassigned" })} />
       </div>
       <Section title="Floors">
         {/* The floors in the order Home Assistant gives them (the areas on no floor last) until a column is clicked. */}

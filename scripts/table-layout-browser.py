@@ -49,9 +49,10 @@ class TableLayoutRegression(unittest.TestCase):
         self.context.close()
         self.assertEqual(self.writes, [])
 
-    def open(self, route):
+    def open(self, route, entities=False):
         self.page.goto(BASE + "/" + route, wait_until="domcontentloaded")
-        if route == "#unassigned":
+        if route == "#unassigned" and entities:
+            self.page.get_by_role("tab", name=re.compile(r"^Entities \(")).click()
             self.page.get_by_role("group", name="Unassigned view", exact=True).get_by_role("button", name="Table", exact=True).click()
         self.page.locator("table").first.wait_for()
 
@@ -93,7 +94,7 @@ class TableLayoutRegression(unittest.TestCase):
         columns.get_by_role("button", name="Reset columns", exact=True).click()
         self.assertEqual(table.get_by_role("columnheader").count(), 4)
         self.page.keyboard.press("Escape")
-        self.open("#unassigned")
+        self.open("#unassigned", entities=True)
         self.section = self.page.get_by_role("region", name="Unassigned entities", exact=True)
         self.section.get_by_role("button", name="Columns of Unassigned entities table", exact=True).click()
         columns = self.section.get_by_role("group", name="Columns", exact=True)
@@ -242,14 +243,17 @@ class TableLayoutRegression(unittest.TestCase):
         device = next(iter(h["devices"]))
         category = h["categories"]["automation"][0]["id"]
         label = next(iter(h["labels"]))
-        routes = ["#health", "#unassigned", "#organize/entities", "#organize/devices/" + device,
+        routes = ["#health", "#unassigned", "#unassigned", "#organize/entities", "#organize/devices/" + device,
                   "#organize/category-automation/" + category, "#organize/labels/" + label,
                   "#organize/blueprints", "#automations/recipes", "#automations/buttons/device%3Ademo_wall_buttons",
                   "#parameters/capabilities", "#parameters/helpers", "#parameters/area-codes", "#settings/ai",
                   "#area/" + area, "#area/" + area + "/capabilities", "#area/" + area + "/naming", "#parameters/house"]
         tested_tables = 0
+        unassigned_seen = False
         for route in routes:
-            self.open(route)
+            self.open(route, entities=route == "#unassigned" and unassigned_seen)
+            if route == "#unassigned":
+                unassigned_seen = True
             self.assert_every_table_has_a_chooser_above_it(route)
             if route == "#automations/recipes":
                 self.page.get_by_role("button", name="Table", exact=True).click()

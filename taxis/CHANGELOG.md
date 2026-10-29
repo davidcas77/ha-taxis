@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Device-first area assignment.** Not in any area opens separate Devices and
+  Entities tabs with independent counts. Device rows and page-scoped bulk moves
+  assign the device area through Changes, letting its entities inherit normally
+  while keeping explicit entity-area overrides. Empty and service devices remain
+  listed, with the existing disabled-device visibility filter.
 - **Unassigned entities.** An Area dropdown on each row, header select-all with
   partial-selection state and an always-visible bulk area assignment make it
   easier to place entities through Changes. Exact name matches suggest an area
