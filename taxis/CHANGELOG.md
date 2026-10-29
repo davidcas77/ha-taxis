@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.9
 
 - **Device-first area assignment.** Not in any area opens separate Devices and
   Entities tabs with independent counts. Device rows and page-scoped bulk moves

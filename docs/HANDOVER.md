@@ -1,6 +1,6 @@
 # Taxis handover
 
-State at **0.7.8** (tag `v0.7.8`, 2026-10-29). `main` is clean and every branch
+State at **0.7.9** (tag `v0.7.9`, 2026-10-29). `main` is clean and every branch
 of this work is merged; nothing is unreleased. Written for whoever continues the
 work (a person, Claude or another assistant): what Taxis is, how it got here, what
 is in it, how to work on it, and what is left (§9). Details of the
