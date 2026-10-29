@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Navigation.** Home counts and read time sit after Changes in the main bar,
+  with the full summary available on hover, removing the extra header row.
+
 - **Table toolbars.** Search, batch actions and Columns share a compact row
   immediately above each table. Existing page filters and selection scope are
   preserved; table headers are the first row inside the border.
