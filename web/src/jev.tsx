@@ -25,10 +25,10 @@ export function JevSection() {
   return (
     <section id="jev-settings" aria-label="Jev decisions" className="flex flex-col gap-4 border-t border-line pt-6">
       <div>
-        <h2 className="text-base font-semibold">Jev decisions</h2>
-        <p className="mt-2 max-w-[85ch] text-[13px] text-muted">
-          An optional TypeSafe decision service, separate from your Low, Medium and Strong models. It can review
-          room-test notes in the Guide. Suggestions do not change checkmarks, readiness, helpers or devices.
+        <h2 className="text-sm font-semibold">Jev decisions</h2>
+        <p className="mt-1 max-w-[72ch] text-[13px] text-muted">
+          An optional TypeSafe decision service, separate from your Low, Medium and Strong models. It can review room-test notes in the Guide. Suggestions do
+          not change checkmarks, readiness, helpers or devices.
         </p>
       </div>
       {error && (
@@ -65,11 +65,7 @@ function JevForm({ saved, onSaved, reload }: { saved: JevView; onSaved: (v: JevV
   const [usage, setUsage] = useState<JevUsage | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [usageVersion, setUsageVersion] = useState(0);
-  const dirty =
-    enabled !== saved.enabled ||
-    model !== saved.model ||
-    Number(limit) !== saved.monthlyRequestLimit ||
-    keyMode !== "keep";
+  const dirty = enabled !== saved.enabled || model !== saved.model || Number(limit) !== saved.monthlyRequestLimit || keyMode !== "keep";
   const guard = useDraftGuard(dirty);
   useEffect(() => {
     let stale = false;
@@ -90,23 +86,13 @@ function JevForm({ saved, onSaved, reload }: { saved: JevView; onSaved: (v: JevV
   return (
     <fieldset disabled={busy} className="flex min-w-0 flex-col gap-4">
       <label className="flex items-center gap-2 text-[13px]">
-        <input
-          type="checkbox"
-          className="accent-[var(--accent)]"
-          checked={enabled}
-          onChange={(e) => setEnabled(e.target.checked)}
-        />
+        <input type="checkbox" className="accent-[var(--accent)]" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         Enable Jev decisions
       </label>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-[13px]">
           Jev model
-          <select
-            aria-label="Jev model"
-            className={inputClass}
-            value={model}
-            onChange={(e) => setModel(e.target.value as JevModel)}
-          >
+          <select aria-label="Jev model" className={inputClass} value={model} onChange={(e) => setModel(e.target.value as JevModel)}>
             {JEV_MODELS.map((id) => (
               <option key={id}>{id}</option>
             ))}
@@ -175,15 +161,13 @@ function JevForm({ saved, onSaved, reload }: { saved: JevView; onSaved: (v: JevV
           </div>
         )}
         <p className="max-w-[85ch] text-xs text-muted">
-          The key is stored in Taxis's app data and included in Home Assistant app backups. Saved keys are never
-          returned to the browser or written to logs. Jev receives room notes and checklist descriptions only when you
-          click Review notes with Jev.
+          The key is stored in Taxis's app data and included in Home Assistant app backups. Saved keys are never returned to the browser or written to logs. Jev
+          receives room notes and checklist descriptions only when you click Review notes with Jev.
         </p>
       </div>
       <p className="text-xs text-muted">
-        The limit counts every outgoing attempt, including connection tests and failed requests, per calendar month
-        (UTC). It is separate from the other AI service's spending cap. Requests are manual; no background analysis
-        runs.
+        The limit counts every outgoing attempt, including connection tests and failed requests, per calendar month (UTC). It is separate from the other AI
+        service's spending cap. Requests are manual; no background analysis runs.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button
@@ -251,10 +235,7 @@ function JevForm({ saved, onSaved, reload }: { saved: JevView; onSaved: (v: JevV
             setTest(null);
             try {
               const r = await api.jevTest();
-              if (r.ok)
-                setTest(
-                  `Connected · ${r.model} · ${r.inputTokens} input tokens · estimated $${r.estimatedUsd.toFixed(6)}`,
-                );
+              if (r.ok) setTest(`Connected · ${r.model} · ${r.inputTokens} input tokens · estimated $${r.estimatedUsd.toFixed(6)}`);
               else setError(r.error);
               setUsageVersion((v) => v + 1);
             } finally {
@@ -282,10 +263,10 @@ function JevForm({ saved, onSaved, reload }: { saved: JevView; onSaved: (v: JevV
       <div className="text-xs text-muted" aria-label="Jev usage">
         {usage ? (
           <p>
-            {usage.month}: {usage.attempts} of {usage.limit} requests · {usage.completed} completed ·{" "}
-            {usage.inputTokens} input tokens · estimated ${usage.estimatedUsd.toFixed(6)}
-            {usage.unknownUsage ? ` · provider usage unavailable for ${usage.unknownUsage} attempts` : ""}. Estimates
-            use TypeSafe's published input price for these pinned models; they are not an invoice.
+            {usage.month}: {usage.attempts} of {usage.limit} requests · {usage.completed} completed · {usage.inputTokens} input tokens · estimated $
+            {usage.estimatedUsd.toFixed(6)}
+            {usage.unknownUsage ? ` · provider usage unavailable for ${usage.unknownUsage} attempts` : ""}. Estimates use TypeSafe's published input price for
+            these pinned models; they are not an invoice.
           </p>
         ) : (
           <p>{usageError ?? "Reading Jev usage…"}</p>

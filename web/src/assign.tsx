@@ -1,11 +1,11 @@
-import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { ROLE_ORDER } from "../../shared/roles.ts";
+import { sortRows } from "../../shared/sort.ts";
 import type { EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
-import { Button, ConfirmAction, inputClass } from "./ui.tsx";
+import { DataTable, useSortState, type Column } from "./data-table.tsx";
+import { Button, Chip, ConfirmAction, EmptyState, SearchField, Toolbar, inputClass } from "./ui.tsx";
 
 // Pick entities with filters, then add them to something (a label, a
 // category) or take them out. Used by the Labels and Categories pages and an
@@ -13,30 +13,7 @@ import { Button, ConfirmAction, inputClass } from "./ui.tsx";
 
 type Show = "not" | "in" | "all";
 
-// Roles a label's name suggests: "Night lights" -> lights, "Battery check" ->
-// batteries. Only ever offered as a filter, never applied on its own.
 const ROLE_LABEL = Object.fromEntries(ROLE_ORDER.map((r) => [r.role, r.label])) as Record<EntityRole, string>;
-
-const ROLE_WORDS: [RegExp, EntityRole][] = [
-  [/light|lamp|spot/i, "light"],
-  [/motion|pir/i, "motion"],
-  [/presence|occupan/i, "presence"],
-  [/batter/i, "battery"],
-  [/door|window|opening|contact/i, "opening"],
-  [/temp/i, "temperature"],
-  [/humid/i, "humidity"],
-  [/media|tv|speaker|music|audio/i, "media"],
-  [/camera|cam\b|cctv/i, "camera"],
-  [/lock/i, "lock"],
-  [/blind|shade|curtain|cover|shutter/i, "cover"],
-  [/switch|plug|socket|outlet/i, "switch"],
-  [/power|energy/i, "power"],
-  [/climate|heat|cool|\bac\b|thermostat/i, "climate"],
-];
-
-export function rolesSuggestedBy(name: string): EntityRole[] {
-  return [...new Set(ROLE_WORDS.filter(([re]) => re.test(name)).map(([, role]) => role))];
-}
 
 export function AssignTool({
   h,
@@ -45,7 +22,6 @@ export function AssignTool({
   candidate = (e) => e.inRegistry,
   onAdd,
   onRemove,
-  suggestedRoles = [],
   fixedArea,
 }: {
   h: Hierarchy;
@@ -54,14 +30,13 @@ export function AssignTool({
   candidate?: (e: EntityItem) => boolean;
   onAdd: (ids: string[]) => void;
   onRemove?: (ids: string[]) => void;
-  suggestedRoles?: EntityRole[];
   // Limit the tool to one area (an area's Labels tab).
   fixedArea?: string;
 }) {
   const [query, setQuery] = useState("");
   const [area, setArea] = useState<string | null>(fixedArea ?? null);
   const [anyArea, setAnyArea] = useState(!fixedArea);
-  const [role, setRole] = useState<string>(suggestedRoles.length === 1 ? suggestedRoles[0] : "");
+  const [role, setRole] = useState<string>("");
   const [domain, setDomain] = useState("");
   const [show, setShow] = useState<Show>("not");
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -78,21 +53,17 @@ export function AssignTool({
       .filter((e) => (show === "all" ? true : show === "in" ? isMember(e) : !isMember(e)))
       .filter((e) => !q || e.name.toLowerCase().includes(q) || e.entityId.includes(q));
   }, [h, candidate, fixedArea, anyArea, area, role, domain, show, isMember, q]);
-  const {
-    rows: sorted,
-    sort,
-    toggle: toggleSort,
-  } = useSort(
-    rows,
-    {
-      name: (e) => e.name,
-      entityId: (e) => e.entityId,
-      area: (e) => (e.areaId ? h.areas[e.areaId]?.name : null),
-      kind: (e) => ROLE_LABEL[e.role],
-      has: (e) => (isMember(e) ? "a" : "b"),
-    },
-    { key: "name", dir: "asc" },
-  );
+  const { sort, toggle: toggleSort } = useSortState({ key: "name", dir: "asc" });
+  const sorted = useMemo(() => {
+    const get = {
+      name: (e: EntityItem) => e.name,
+      entityId: (e: EntityItem) => e.entityId,
+      area: (e: EntityItem) => (e.areaId ? h.areas[e.areaId]?.name : null),
+      kind: (e: EntityItem) => ROLE_LABEL[e.role],
+      has: (e: EntityItem) => (isMember(e) ? "a" : "b"),
+    }[sort.key as "name" | "entityId" | "area" | "kind" | "has"];
+    return sortRows(rows, get, sort.dir);
+  }, [rows, sort, h, isMember]);
   const shown = sorted.slice(0, 300);
   // Members only get a checkbox in "Already added": there it is how Remove is reached.
   const selectable = (e: EntityItem) => show === "in" || !isMember(e);
@@ -110,24 +81,82 @@ export function AssignTool({
   const toAdd = pickedList.filter((id) => !isMember(h.entities[id]));
   const toRemove = pickedList.filter((id) => isMember(h.entities[id]));
 
+  // A row already in the thing is dimmed.
+  const dim = (e: EntityItem, node: ReactNode) => (isMember(e) ? <span className="opacity-60">{node}</span> : node);
+  const columns: Column<EntityItem>[] = [
+    {
+      id: "pick",
+      header: "Select",
+      srOnlyHeader: true,
+      locked: true,
+      sticky: true,
+      width: 32,
+      priority: 1,
+      cell: (e) =>
+        selectable(e) && <input type="checkbox" aria-label={`Select ${e.name}`} checked={picked.has(e.entityId)} onChange={() => toggle(e.entityId)} />,
+    },
+    { id: "name", header: "Name", priority: 1, sticky: true, minWidth: 180, maxWidth: 320, sort: (e) => e.name, cell: (e) => dim(e, e.name) },
+    {
+      id: "entityId",
+      header: "Entity id",
+      priority: 2,
+      minWidth: 160,
+      maxWidth: 280,
+      truncate: true,
+      sort: (e) => e.entityId,
+      text: (e) => e.entityId,
+      cell: (e) => dim(e, <code className="font-mono text-xs text-muted">{e.entityId}</code>),
+    },
+    {
+      id: "area",
+      header: "Area",
+      priority: 2,
+      minWidth: 110,
+      sort: (e) => (e.areaId ? h.areas[e.areaId]?.name : null),
+      cell: (e) => dim(e, <span className="text-muted">{e.areaId ? h.areas[e.areaId]?.name : "No area"}</span>),
+    },
+    {
+      id: "kind",
+      header: "Kind",
+      priority: 3,
+      minWidth: 90,
+      sort: (e) => ROLE_LABEL[e.role],
+      cell: (e) => dim(e, <span className="text-muted">{ROLE_LABEL[e.role]}</span>),
+    },
+    {
+      id: "has",
+      header: "Has it",
+      priority: 2,
+      minWidth: 70,
+      nowrap: true,
+      sort: (e) => (isMember(e) ? "a" : "b"),
+      cell: (e) => isMember(e) && <span className="rounded bg-accent-soft px-1.5 text-[11px] text-accent">has it</span>,
+    },
+  ];
+
   return (
     <section className="flex flex-col gap-3" aria-label={title}>
       <h2 className="text-sm font-semibold">{title}</h2>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-md border border-line bg-bg px-2 py-1.5">
-          <Search className="size-4 text-muted" aria-hidden />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or entity id" aria-label="Search entities" className="w-full bg-transparent text-[13px] outline-none" />
-        </label>
+      <Toolbar label="Find and filter" className="gap-2">
+        <SearchField value={query} onChange={setQuery} placeholder="Name or entity id" label="Search entities" />
         {!fixedArea && (
           <div className="w-48">
-            <select aria-label="Area" className={inputClass} value={anyArea ? "*" : area ?? ""} onChange={(e) => (e.target.value === "*" ? setAnyArea(true) : (setAnyArea(false), setArea(e.target.value || null)))}>
+            <select
+              aria-label="Area"
+              className={inputClass}
+              value={anyArea ? "*" : (area ?? "")}
+              onChange={(e) => (e.target.value === "*" ? setAnyArea(true) : (setAnyArea(false), setArea(e.target.value || null)))}
+            >
               <option value="*">Any area</option>
               <option value="">No area</option>
-              {h.floors.flatMap((f) => f.areaIds).concat(h.looseAreaIds).map((id) => (
-                <option key={id} value={id}>
-                  {h.areas[id].name}
-                </option>
-              ))}
+              {h.floors
+                .flatMap((f) => f.areaIds)
+                .concat(h.looseAreaIds)
+                .map((id) => (
+                  <option key={id} value={id}>
+                    {h.areas[id].name}
+                  </option>
+                ))}
             </select>
           </div>
         )}
@@ -136,7 +165,6 @@ export function AssignTool({
           {ROLE_ORDER.map((r) => (
             <option key={r.role} value={r.role}>
               {r.label}
-              {suggestedRoles.includes(r.role) ? " (suggested)" : ""}
             </option>
           ))}
         </select>
@@ -148,7 +176,7 @@ export function AssignTool({
             </option>
           ))}
         </select>
-        <div role="group" aria-label="Show" className="flex shrink-0 rounded-md border border-line p-0.5 text-xs">
+        <Toolbar label="Show" className="gap-x-1">
           {(
             [
               ["not", "Not added yet"],
@@ -156,26 +184,12 @@ export function AssignTool({
               ["all", "Show all"],
             ] as [Show, string][]
           ).map(([v, l]) => (
-            <button key={v} type="button" aria-pressed={show === v} onClick={() => setShow(v)} className={`rounded px-2 py-1 ${show === v ? "bg-sunken font-medium" : "text-muted"}`}>
+            <Chip key={v} pressed={show === v} onClick={() => setShow(v)}>
               {l}
-            </button>
+            </Chip>
           ))}
-        </div>
-      </div>
-      {suggestedRoles.length > 0 && (
-        <p className="text-xs text-muted">
-          The name suggests{" "}
-          {suggestedRoles.map((r, i) => (
-            <span key={r}>
-              {i > 0 && ", "}
-              <button type="button" className="text-accent hover:underline" onClick={() => setRole(r)}>
-                {ROLE_ORDER.find((x) => x.role === r)?.label.toLowerCase()}
-              </button>
-            </span>
-          ))}
-          . Pick what fits; nothing is added on its own.
-        </p>
-      )}
+        </Toolbar>
+      </Toolbar>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-muted">
           {rows.length.toLocaleString()} match{rows.length === 1 ? "" : "es"}
@@ -215,47 +229,17 @@ export function AssignTool({
           )}
         </span>
       </div>
-      <div className="max-h-[28rem] overflow-auto rounded-lg border border-line bg-surface">
-        <table className="w-full text-[13px]">
-          <thead className="sticky top-0 z-10 bg-sunken text-left text-xs text-muted">
-            <tr>
-              <th className="w-8 px-3 py-2">
-                <span className="sr-only">Select</span>
-              </th>
-              <SortHeader label="Name" k="name" sort={sort} onToggle={toggleSort} />
-              <SortHeader label="Entity id" k="entityId" sort={sort} onToggle={toggleSort} />
-              <SortHeader label="Area" k="area" sort={sort} onToggle={toggleSort} />
-              <SortHeader label="Kind" k="kind" sort={sort} onToggle={toggleSort} />
-              <SortHeader label="Has it" k="has" sort={sort} onToggle={toggleSort} />
-            </tr>
-          </thead>
-          <tbody>
-            {shown.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-3 py-4 text-center text-muted">
-                  Nothing matches these filters.
-                </td>
-              </tr>
-            )}
-            {shown.map((e) => {
-              const has = isMember(e);
-              return (
-                <tr key={e.entityId} className={`border-t border-line hover:bg-sunken ${has ? "text-muted opacity-60" : ""}`}>
-                  <td className="px-3 py-1.5">{selectable(e) && <input type="checkbox" aria-label={`Select ${e.name}`} checked={picked.has(e.entityId)} onChange={() => toggle(e.entityId)} />}</td>
-                  <td className="px-3 py-1.5">{e.name}</td>
-                  <td className="px-3 py-1.5">
-                    <code className="font-mono text-xs text-muted">{e.entityId}</code>
-                  </td>
-                  <td className="px-3 py-1.5 text-muted">{e.areaId ? h.areas[e.areaId]?.name : "No area"}</td>
-                  <td className="px-3 py-1.5 text-muted">{ROLE_LABEL[e.role]}</td>
-                  <td className="px-3 py-1.5">{has && <span className="rounded bg-accent-soft px-1.5 text-[11px] text-accent">has it</span>}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        id="assign"
+        label={title}
+        rows={shown}
+        rowKey={(e) => e.entityId}
+        columns={columns}
+        sort={sort}
+        onSort={toggleSort}
+        maxHeight="28rem"
+        empty={<EmptyState>Nothing matches these filters.</EmptyState>}
+      />
     </section>
   );
 }
-

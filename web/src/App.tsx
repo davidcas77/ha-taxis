@@ -1,19 +1,34 @@
-import { RecipesPage } from "./recipes.tsx";
-import { ButtonsPage } from './buttons.tsx';
-import { AskTaxis } from "./assistant.tsx";
-import { AiAdminPage } from "./ai-admin.tsx";
-import { GuidePage } from "./guide.tsx";
-import { Workflow, AlertTriangle, CheckCircle2, FolderTree, HeartPulse, Layers, ListChecks, Loader2, MapPin, RefreshCw, Search, Settings, SlidersHorizontal } from "lucide-react";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Compass,
+  FolderTree,
+  GitPullRequestArrow,
+  HeartPulse,
+  Layers,
+  Loader2,
+  MapPin,
+  RefreshCw,
+  Search,
+  Settings,
+  SlidersHorizontal,
+  Workflow,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { AskTaxis } from "./assistant.tsx";
+import { AutomationsPage } from "./automations.tsx";
 import { ChangesPage } from "./changes.tsx";
+import { GuidePage } from "./guide.tsx";
 import { HealthPage, HealthProvider, useHealthCounts } from "./health.tsx";
-import { SettingsPage } from "./naming.tsx";
 import { OrganizePage } from "./organize.tsx";
 import { ParametersPage } from "./parameters.tsx";
+import { AREAS_HOME, GUIDE, RECIPES, SETTINGS } from "./route.ts";
+import { SettingsPage } from "./settings-page.tsx";
 import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx";
 import { useStoredFlag } from "./storage.ts";
-import { TaxisProvider, useRoute, useTaxis, type Selection } from "./state.tsx";
+import { TaxisProvider, useNotices, useRoute, useTaxis, type Route, type Selection } from "./state.tsx";
+import { timeAgo } from "./time.ts";
 
 export function App() {
   return (
@@ -25,15 +40,13 @@ export function App() {
   );
 }
 
-function timeAgo(iso: string): string {
-  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 45) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  return `${Math.round(s / 3600)} h ago`;
-}
+// The page bar follows the guided path: Guide, then where the house is built
+// (Areas, Organize, Automations, Parameters), then what watches it (Health,
+// Changes); Settings sits at the right.
+const iconClass = "size-4 shrink-0";
 
 function Shell() {
-  const { hierarchy, changes, loading, error, notice, reload } = useTaxis();
+  const { hierarchy, changes, loading, error, reload } = useTaxis();
   const health = useHealthCounts();
   const [route, go] = useRoute();
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -53,61 +66,82 @@ function Shell() {
     [go],
   );
 
+  const page: Route["page"] = route.page;
+  const open = (r: Route) => () => go(r);
+
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line bg-surface px-4 py-2">
-        <div className="flex items-center gap-2">
-          <Layers className="size-5 text-accent" aria-hidden />
-          <span className="text-base font-semibold tracking-tight">Taxis</span>
-        </div>
-        <nav aria-label="Pages" className="flex flex-wrap gap-1">
-          <Tab active={route.page === "guide"} onClick={() => go({ page: "guide", areaId: null })} icon={<ListChecks className="size-4" aria-hidden />}>Guide</Tab>
-          <Tab active={route.page === "areas"} onClick={() => go(route.page === "areas" ? route : { page: "areas", sel: { kind: "home" }, tab: "overview" })} icon={<MapPin className="size-4" aria-hidden />}>
-            Areas
-          </Tab>
-          <Tab active={route.page === "organize"} onClick={() => go(route.page === "organize" ? route : { page: "organize", type: "labels", id: null })} icon={<FolderTree className="size-4" aria-hidden />}>
-            Organize
-          </Tab>
-          <Tab active={route.page === "recipes"} onClick={() => go({ page: "recipes" })} icon={<Workflow className="size-4" aria-hidden />}>Recipes</Tab>
-          <Tab active={route.page === 'buttons'} onClick={() => go({page:'buttons',controlId:null})} icon={<SlidersHorizontal className="size-4" aria-hidden />}>Buttons</Tab>
-          <Tab active={route.page === "parameters"} onClick={() => go(route.page === "parameters" ? route : { page: "parameters", tab: "capabilities" })} icon={<SlidersHorizontal className="size-4" aria-hidden />}>
-            Parameters
-          </Tab>
-          <Tab active={route.page === "health"} onClick={() => go({ page: "health" })} icon={<HeartPulse className="size-4" aria-hidden />}>
-            Health
-            {health && health.error > 0 && <span className="rounded-full bg-danger px-1.5 text-[11px] font-semibold text-[var(--bg)] tabular-nums">{health.error}</span>}
-            {health && health.error === 0 && health.warning > 0 && <span className="rounded-full bg-warn px-1.5 text-[11px] font-semibold text-[var(--bg)] tabular-nums">{health.warning}</span>}
-          </Tab>
-          <Tab active={route.page === "changes"} onClick={() => go({ page: "changes" })} icon={<ListChecks className="size-4" aria-hidden />}>
-            Changes
-            {changes.length > 0 && <span className="rounded-full bg-warn px-1.5 text-[11px] font-semibold text-[var(--bg)] tabular-nums">{changes.length}</span>}
-          </Tab>
-          <Tab active={route.page === "settings"} onClick={() => go({ page: "settings" })} icon={<Settings className="size-4" aria-hidden />}>
-            Settings
-          </Tab>
-          <Tab active={route.page === "ai-admin"} onClick={() => go({ page: "ai-admin" })} icon={<Settings className="size-4" aria-hidden />}>AI</Tab>
-        </nav>
-        {hierarchy && (
-          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-muted">
-            <span>{hierarchy.home.name}</span>
-            <span className="tabular-nums">
-              {hierarchy.counts.floors} floors · {hierarchy.counts.areas} areas · {hierarchy.counts.devices} devices · {hierarchy.counts.entities.toLocaleString()} entities
-              {hierarchy.counts.disabledEntities > 0 && ` (${hierarchy.counts.disabledEntities.toLocaleString()} disabled)`}
-            </span>
-            <span>Read {timeAgo(hierarchy.fetchedAt)}</span>
+    <div className="flex h-full min-w-0 flex-col">
+      <header className="shrink-0 border-b border-line bg-surface">
+        <div className="flex min-w-0 items-center gap-3 px-3 py-1.5 md:px-4">
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Layers className="size-5 text-accent" aria-hidden />
+            <span className="text-base font-semibold tracking-tight">Taxis</span>
           </div>
-        )}
-        <div className="ml-auto flex items-center gap-2">
+          <nav aria-label="Pages" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+            <Tab active={page === "guide"} onClick={open(GUIDE)} icon={<Compass className={iconClass} aria-hidden />}>
+              Guide
+            </Tab>
+            <Tab active={page === "areas"} onClick={open(route.page === "areas" ? route : AREAS_HOME)} icon={<MapPin className={iconClass} aria-hidden />}>
+              Areas
+            </Tab>
+            <Tab
+              active={page === "organize"}
+              onClick={open(route.page === "organize" ? route : { page: "organize", type: "labels", id: null })}
+              icon={<FolderTree className={iconClass} aria-hidden />}
+            >
+              Organize
+            </Tab>
+            <Tab
+              active={page === "automations"}
+              onClick={open(route.page === "automations" ? route : RECIPES)}
+              icon={<Workflow className={iconClass} aria-hidden />}
+            >
+              Automations
+            </Tab>
+            <Tab
+              active={page === "parameters"}
+              onClick={open(route.page === "parameters" ? route : { page: "parameters", tab: "capabilities" })}
+              icon={<SlidersHorizontal className={iconClass} aria-hidden />}
+            >
+              Parameters
+            </Tab>
+            <Tab active={page === "health"} onClick={open({ page: "health" })} icon={<HeartPulse className={iconClass} aria-hidden />}>
+              Health
+              {health && health.error > 0 && <Count tone="danger">{health.error}</Count>}
+              {health && health.error === 0 && health.warning > 0 && <Count tone="warn">{health.warning}</Count>}
+            </Tab>
+            <Tab active={page === "changes"} onClick={open({ page: "changes" })} icon={<GitPullRequestArrow className={iconClass} aria-hidden />}>
+              Changes
+              {changes.length > 0 && <Count tone="warn">{changes.length}</Count>}
+            </Tab>
+            <span className="ml-auto" aria-hidden />
+            <Tab
+              active={page === "settings"}
+              onClick={open(route.page === "settings" ? route : SETTINGS)}
+              icon={<Settings className={iconClass} aria-hidden />}
+            >
+              Settings
+            </Tab>
+          </nav>
           <button
             type="button"
             onClick={() => void reload(true)}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-[13px] hover:bg-sunken disabled:opacity-60"
+            aria-label="Refresh"
+            title="Read Home Assistant again"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[13px] hover:bg-sunken disabled:opacity-60"
           >
             {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
-            Refresh
+            <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
+        {hierarchy && (
+          <p className="truncate px-3 pb-1.5 text-[12px] tabular-nums text-muted md:px-4">
+            <span className="font-medium text-fg">{hierarchy.home.name}</span> · {hierarchy.counts.floors} floors · {hierarchy.counts.areas} areas ·{" "}
+            {hierarchy.counts.devices} devices · {hierarchy.counts.entities.toLocaleString()} entities
+            {hierarchy.counts.disabledEntities > 0 && ` (${hierarchy.counts.disabledEntities.toLocaleString()} disabled)`} · Read {timeAgo(hierarchy.fetchedAt)}
+          </p>
+        )}
       </header>
 
       {changes.length > 0 && route.page !== "changes" && (
@@ -129,15 +163,12 @@ function Shell() {
         </div>
       )}
 
-      {notice && (
-        <div role="status" className={`flex items-center gap-2 border-b border-line px-4 py-1.5 text-[13px] ${notice.tone === "error" ? "bg-danger-soft text-danger" : "bg-accent-soft text-accent"}`}>
-          {notice.tone === "ok" ? <CheckCircle2 className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}
-          {notice.text}
-        </div>
-      )}
+      <NoticeBanner />
 
-      {route.page === "ai-admin" ? <AiAdminPage go={go} /> : !hierarchy ? (
-        <div className="flex flex-1 items-center justify-center gap-2 text-muted">
+      {route.page === "settings" ? (
+        <SettingsPage h={hierarchy} tab={route.tab} go={go} />
+      ) : !hierarchy ? (
+        <div className="flex flex-1 items-center justify-center gap-2 px-4 text-center text-muted">
           {loading ? (
             <>
               <Loader2 className="size-4 animate-spin" aria-hidden /> Reading your floors, areas, devices and entities…
@@ -150,20 +181,16 @@ function Shell() {
         <GuidePage h={hierarchy} areaId={route.areaId} go={go} />
       ) : route.page === "organize" ? (
         <OrganizePage h={hierarchy} type={route.type} id={route.id} go={go} />
-      ) : route.page === "recipes" ? (
-        <RecipesPage h={hierarchy} />
-      ) : route.page === 'buttons' ? (
-        <ButtonsPage h={hierarchy} controlId={route.controlId} go={go} />
+      ) : route.page === "automations" ? (
+        <AutomationsPage h={hierarchy} tab={route.tab} controlId={route.controlId} go={go} />
       ) : route.page === "parameters" ? (
         <ParametersPage h={hierarchy} tab={route.tab} go={go} />
       ) : route.page === "health" ? (
         <HealthPage h={hierarchy} go={go} />
-      ) : route.page === "settings" ? (
-        <SettingsPage h={hierarchy} go={go} />
       ) : route.page === "changes" ? (
         <ChangesPage h={hierarchy} />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
           <aside className="flex max-h-[45vh] shrink-0 flex-col border-b border-line bg-surface md:max-h-none md:w-72 md:border-r md:border-b-0">
             <div className="border-b border-line p-2.5">
               <label className="flex items-center gap-2 rounded-md border border-line bg-bg px-2 py-1.5">
@@ -205,13 +232,43 @@ function Shell() {
   );
 }
 
+// A short-lived message under the header. It reads the notice by itself, so a
+// toast does not make the rest of the shell draw again.
+function NoticeBanner() {
+  const { notice } = useNotices();
+  if (!notice) return null;
+  return (
+    <div
+      role="status"
+      className={`flex items-center gap-2 border-b border-line px-4 py-1.5 text-[13px] ${notice.tone === "error" ? "bg-danger-soft text-danger" : "bg-accent-soft text-accent"}`}
+    >
+      {notice.tone === "ok" ? <CheckCircle2 className="size-4" aria-hidden /> : <AlertTriangle className="size-4" aria-hidden />}
+      {notice.text}
+    </div>
+  );
+}
+
+function Count({ tone, children }: { tone: "warn" | "danger"; children: ReactNode }) {
+  return (
+    <span className={`rounded-full px-1.5 text-[11px] font-semibold text-[var(--bg)] tabular-nums ${tone === "danger" ? "bg-danger" : "bg-warn"}`}>
+      {children}
+    </span>
+  );
+}
+
 function Tab({ active, onClick, icon, children }: { active: boolean; onClick: () => void; icon: ReactNode; children: ReactNode }) {
+  // On a narrow screen the bar scrolls; keep the current page in view.
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
+  }, [active]);
   return (
     <button
+      ref={ref}
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] ${active ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-sunken hover:text-fg"}`}
+      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-[13px] ${active ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-sunken hover:text-fg"}`}
     >
       {icon}
       {children}

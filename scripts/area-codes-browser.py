@@ -7,13 +7,14 @@ All writes are intercepted in Chromium. This never saves to HA or the mock DB.
 import copy
 import json
 import os
+import re
 from pathlib import Path
 import unittest
 import urllib.request
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:8099")
 
 
 class AreaCodesRegression(unittest.TestCase):
@@ -26,7 +27,7 @@ class AreaCodesRegression(unittest.TestCase):
         if not cls.hierarchy.get("ok") or "kitchen" not in cls.hierarchy["hierarchy"]["areas"]:
             raise RuntimeError("Run against the documented mock house, not a live HA instance")
         cls.playwright = sync_playwright().start()
-        cls.browser = cls.playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), headless=True, args=["--no-sandbox"])
+        cls.browser = launch(cls.playwright)
 
     @classmethod
     def tearDownClass(cls):
@@ -77,6 +78,26 @@ class AreaCodesRegression(unittest.TestCase):
         heading = "Area codes" if fragment == "#parameters/area-codes" else "Parameters" if fragment == "#parameters/helpers" else "Settings"
         self.page.get_by_role("heading", name=heading, exact=True).wait_for()
 
+    def column_index(self, table, header):
+        """The position of a column among the table's cells, by its header text."""
+        return table.locator("thead th").evaluate_all("(cells, name) => cells.findIndex(c => c.innerText.trim() === name)", header)
+
+    def code_groups(self, table):
+        """Floors and the areas under each, in the order the table lists them.
+
+        A floor (or "No floor") is a row of its own with no button; an area is a row whose
+        first column is a button that opens the area."""
+        return table.evaluate(r"""(table, index) => {
+            const groups = [];
+            for (const row of table.tBodies[0].rows) {
+                const cell = row.cells[index];
+                const text = cell.innerText.split("\n")[0].trim();
+                if (cell.querySelector("button")) groups[groups.length - 1][1].push(text);
+                else groups.push([text, []]);
+            }
+            return groups;
+        }""", self.column_index(table, "Area / floor"))
+
     def kitchen_code(self):
         return self.page.get_by_role("textbox", name="Code for Kitchen", exact=True)
 
@@ -86,8 +107,10 @@ class AreaCodesRegression(unittest.TestCase):
         self.assertEqual(self.kitchen_code().get_attribute("placeholder"), "kitchen")
         self.assertEqual(self.page.get_by_role("textbox", name="Code for Living room", exact=True).input_value(), "")
         self.assertEqual(self.page.get_by_role("textbox", name="Code for Living room", exact=True).get_attribute("placeholder"), "living")
-        self.assertEqual(self.page.locator("th[data-column-key='fit:Fit']").evaluate("e => getComputedStyle(e).textAlign"), "center")
-        self.assertEqual(self.kitchen_code().locator("xpath=ancestor::tr").locator("td").nth(4).evaluate("e => getComputedStyle(e).textAlign"), "center")
+        table = self.page.get_by_role("table", name="Area and floor codes", exact=True)
+        fit = self.column_index(table, "Fit")
+        self.assertEqual(table.locator("thead th").nth(fit).evaluate("e => getComputedStyle(e).textAlign"), "center")
+        self.assertEqual(self.kitchen_code().locator("xpath=ancestor::tr").locator("td").nth(fit).evaluate("e => getComputedStyle(e).textAlign"), "center")
         self.assertEqual(self.puts, [])
         self.assertEqual(self.current, self.fixture)
         self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Settings", exact=True).click()
@@ -209,7 +232,7 @@ class AreaCodesRegression(unittest.TestCase):
         self.assertEqual(self.page.get_by_label("Word for Door", exact=True).input_value(), "entry")
         self.assertEqual(self.page.get_by_label("Word for Window", exact=True).input_value(), "glazing")
         self.assertEqual(self.page.get_by_label("Aggregation marker for Temperature", exact=True).input_value(), "mean")
-        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output = screenshot_dir()
         output.mkdir(parents=True, exist_ok=True)
         self.page.get_by_role("heading", name="Aggregation markers", exact=True).scroll_into_view_if_needed()
         self.page.screenshot(path=str(output / "separate-helper-names.png"))
@@ -340,9 +363,11 @@ class AreaCodesRegression(unittest.TestCase):
         self.page.get_by_label("Capability", exact=True).select_option("motion")
         self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).check()
         table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
-        self.assertIn("No areas have entities", table.inner_text())
-        self.assertEqual(table.locator("tbody td").get_attribute("colspan"), "3")
+        # With nothing to show the table gives way to a message that says how to get the areas back.
+        self.page.get_by_role("region", name="Helper coverage", exact=True).get_by_text("No areas have entities", exact=False).wait_for()
+        self.assertEqual(table.count(), 0)
         self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).uncheck()
+        table.wait_for()
         self.assertEqual(table.locator("tbody tr").count(), len(h["areas"]))
         self.assertEqual(self.puts, [])
 
@@ -352,15 +377,18 @@ class AreaCodesRegression(unittest.TestCase):
         table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
         self.assertTrue(self.page.get_by_role("checkbox", name="Hide not needed", exact=True).is_checked())
         table.get_by_role("columnheader").first.wait_for()
-        self.page.wait_for_function("document.querySelector('table[aria-label=\"Area helper coverage\"]')?.dataset.contentSized === 'true'")
         widths = [cell.bounding_box()["width"] for cell in self.coverage_row().locator("td").all()]
-        # 192px content + cell padding and the shared resize engine's breathing room.
+        # A cell's content is at most 208px (max-w-52) plus the data table's cell padding.
         self.assertTrue(all(width <= 232 for width in widths), widths)
-        self.assertTrue(all(content.bounding_box()["width"] <= 192 for content in self.coverage_row().locator("td > div").all()))
+        self.assertTrue(all(content.bounding_box()["width"] <= 208 for content in self.coverage_row().locator("td > div").all()))
+        # All the capabilities do not fit: the table scrolls inside its own region, not the page.
+        region = self.page.get_by_role("region", name="Area helper coverage", exact=True)
+        self.assertTrue(region.evaluate("e => e.scrollWidth > e.clientWidth"))
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
         self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).check()
         self.coverage_row().get_by_label("Living room Motion helper details", exact=True).click()
         self.assertTrue(self.coverage_row().get_by_label("Living room Motion helper details", exact=True).locator("..").get_by_role("button", name="Add to changes", exact=True).is_visible())
-        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output = screenshot_dir()
         output.mkdir(parents=True, exist_ok=True)
         self.page.get_by_role("region", name="Helper coverage", exact=True).screenshot(path=str(output / "helper-overview-filters.png"))
         self.page.get_by_label("Capability", exact=True).select_option("motion")
@@ -438,7 +466,7 @@ class AreaCodesRegression(unittest.TestCase):
         self.assertIn("No helper in Taxis", row.locator("td").nth(10).inner_text())
         row.get_by_label("Living room Windows helper details", exact=True).click()
         row.get_by_text("binary_sensor.living_old_windows", exact=True).wait_for()
-        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output = screenshot_dir()
         output.mkdir(parents=True, exist_ok=True)
         self.page.screenshot(path=str(output / "helpers-coverage.png"))
         self.page.set_viewport_size({"width": 390, "height": 844})
@@ -483,24 +511,22 @@ class AreaCodesRegression(unittest.TestCase):
         h["looseAreaIds"].append("detached_annex")
         self.open()
         table = self.page.get_by_role("table", name="Area and floor codes", exact=True)
-        expected_groups = [floor["name"] for floor in h["floors"]] + ["No floor"]
-        self.assertEqual(table.locator("tbody").evaluate_all("groups => groups.map(group => group.getAttribute('aria-label'))"), expected_groups)
+        expected = [[floor["name"], [h["areas"][a]["name"] for a in floor["areaIds"]]] for floor in h["floors"]]
+        expected.append(["No floor", [h["areas"][a]["name"] for a in h["looseAreaIds"]]])
+        self.assertEqual(self.code_groups(table), expected)
+        self.assertIn("Detached annex", expected[-1][1])
+        self.assertEqual(expected[-2], ["Empty floor", []])
         for floor in h["floors"]:
-            group = table.get_by_role("rowgroup", name=floor["name"], exact=True)
-            self.assertIn(floor["name"], group.locator("th[scope=rowgroup]").inner_text())
-            self.assertEqual(group.locator(":scope > tr").count(), len(floor["areaIds"]) + 1)
             self.page.get_by_role("textbox", name="Code for floor " + floor["name"], exact=True).wait_for()
-        loose = table.get_by_role("rowgroup", name="No floor", exact=True)
-        self.assertIn("Detached annex", loose.inner_text())
-        for key in ["area", "id", "found", "code", "fit"]:
+        # Sorting reorders the areas within a floor, never the floors or which floor an area is under.
+        for header in ["Area / floor", "Area / floor id", "Detected / default", "Code", "Fit"]:
             for _ in range(2):
-                table.locator("thead th[data-column-key^='" + key + ":'] button").first.click()
-                self.assertEqual(table.locator("tbody").evaluate_all("groups => groups.map(group => group.getAttribute('aria-label'))"), expected_groups)
-                for floor in h["floors"]:
-                    group = table.get_by_role("rowgroup", name=floor["name"], exact=True)
-                    names = [h["areas"][area_id]["name"] for area_id in floor["areaIds"]]
-                    self.assertCountEqual(group.locator("td:first-child button").all_text_contents(), names)
-        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+                table.locator("thead th").filter(has_text=re.compile("^" + re.escape(header) + "$")).get_by_role("button").first.click()
+                groups = self.code_groups(table)
+                self.assertEqual([name for name, _ in groups], [name for name, _ in expected])
+                for (name, areas), (_, original) in zip(groups, expected):
+                    self.assertCountEqual(areas, original, name)
+        output = screenshot_dir()
         output.mkdir(parents=True, exist_ok=True)
         self.page.screenshot(path=str(output / "area-codes-by-floor.png"), full_page=True)
         self.page.set_viewport_size({"width": 390, "height": 844})

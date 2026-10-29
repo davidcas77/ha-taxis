@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { sortRows } from "../../shared/sort.ts";
 import type { ChangeInput, EntityItem, Hierarchy } from "../../shared/types.ts";
 import { NewForm } from "./new-form.tsx";
-import { AreaMultiSelect, Pagination, ResizeHandle, usePagination, useWidths } from "./records.tsx";
+import { AreaMultiSelect, Pagination, usePagination } from "./records.tsx";
 import { useTaxis } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
-import { Button, ConfirmAction, LabelChip, inputClass } from "./ui.tsx";
+import { DataTable, useSortState, type Column } from "./data-table.tsx";
+import { Button, ConfirmAction, EmptyState, LabelChip, SearchField, Toolbar, inputClass } from "./ui.tsx";
 
 // A single table for area and global label assignment. Labels always shows the
 // entity's complete label list; choosing an action never changes the inventory.
@@ -46,21 +47,17 @@ export function EntityLabels({
         (!q || `${e.name} ${e.entityId} ${deviceName(e)} ${labelNames(e)}`.toLowerCase().includes(q)),
     );
   }, [h, fixedArea, areas, query]);
-  const {
-    rows,
-    sort,
-    toggle: sortBy,
-  } = useSort(
-    filtered,
-    {
-      name: (e) => e.name,
-      entityId: (e) => e.entityId,
+  const { sort, toggle: sortBy } = useSortState({ key: "name", dir: "asc" });
+  const rows = useMemo(() => {
+    const get = {
+      name: (e: EntityItem) => e.name,
+      entityId: (e: EntityItem) => e.entityId,
       device: deviceName,
-      area: (e) => (e.areaId ? (h.areas[e.areaId]?.name ?? e.areaId) : ""),
+      area: (e: EntityItem) => (e.areaId ? (h.areas[e.areaId]?.name ?? e.areaId) : ""),
       labels: labelNames,
-    },
-    { key: "name", dir: "asc" },
-  );
+    }[sort.key as "name" | "entityId" | "device" | "area" | "labels"];
+    return sortRows(filtered, get, sort.dir);
+  }, [filtered, sort, h]);
   const paging = usePagination(rows.length, JSON.stringify([fixedArea, query, [...areas], sort]));
   const shown = rows.slice(paging.start, paging.end);
   const eligible = shown.filter((e) => e.inRegistry);
@@ -84,25 +81,109 @@ export function EntityLabels({
     }));
     if (changes.length) await propose(changes);
   };
-  const { widths, setWidth, savedWidth } = useWidths("taxis:entity-labels:columns", { name: 230, entityId: 270, device: 200, area: 140, labels: 260 });
-  const columns = [
-    { key: "name", label: "Name" },
-    { key: "entityId", label: "Entity ID" },
-    { key: "device", label: "Device" },
-    { key: "area", label: "Area" },
-    { key: "labels", label: "Labels" },
+  const columns: Column<EntityItem>[] = [
+    {
+      id: "pick",
+      header: "Select",
+      srOnlyHeader: true,
+      locked: true,
+      sticky: true,
+      width: 32,
+      priority: 1,
+      cell: (e) =>
+        e.inRegistry ? (
+          <input type="checkbox" disabled={busy} aria-label={`Select ${e.name}`} checked={picked.has(e.entityId)} onChange={() => choose(e.entityId)} />
+        ) : (
+          <span title="Not in the entity registry">—</span>
+        ),
+    },
+    {
+      id: "name",
+      header: "Name",
+      priority: 1,
+      sticky: true,
+      minWidth: 180,
+      maxWidth: 320,
+      sort: (e) => e.name,
+      cell: (e) => (
+        <>
+          {e.name}
+          {(!e.inRegistry || e.disabled || e.hidden || e.maintenance) && (
+            <span className="block text-xs text-muted">
+              {[!e.inRegistry && "Read-only · not in registry", e.disabled && "Disabled", e.hidden && "Hidden", e.maintenance && "Diagnostic"]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      id: "entityId",
+      header: "Entity ID",
+      priority: 2,
+      minWidth: 160,
+      maxWidth: 280,
+      truncate: true,
+      sort: (e) => e.entityId,
+      text: (e) => e.entityId,
+      cell: (e) => <span className="font-mono text-xs">{e.entityId}</span>,
+    },
+    {
+      id: "device",
+      header: "Device",
+      priority: 3,
+      minWidth: 140,
+      maxWidth: 240,
+      truncate: true,
+      sort: deviceName,
+      text: (e) => deviceName(e) || "No device",
+      cell: (e) => deviceName(e) || "No device",
+    },
+    {
+      id: "area",
+      header: "Area",
+      priority: 2,
+      minWidth: 110,
+      sort: (e) => (e.areaId ? (h.areas[e.areaId]?.name ?? e.areaId) : ""),
+      cell: (e) => (e.areaId ? (h.areas[e.areaId]?.name ?? e.areaId) : "No area"),
+    },
+    {
+      id: "labels",
+      header: "Labels",
+      priority: 1,
+      minWidth: 180,
+      sort: labelNames,
+      text: (e) => labelNames(e) || "No labels",
+      cell: (e) => (
+        <div className="flex flex-wrap gap-1">
+          {e.labels.length ? (
+            [...new Set(e.labels)].map((id) =>
+              h.labels[id] ? (
+                <LabelChip key={id} label={h.labels[id]} />
+              ) : (
+                <span key={id} className="break-all text-xs text-muted">
+                  {id}
+                </span>
+              ),
+            )
+          ) : (
+            <span className="text-muted">No labels</span>
+          )}
+        </div>
+      ),
+    },
   ];
   return (
     <section aria-label="Entity label assignment" className="flex min-w-0 flex-col gap-3">
       <h2 className="text-sm font-semibold">{title}</h2>
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          aria-label="Search label entities"
-          className={`${inputClass} max-w-md`}
+      <Toolbar label="Find and filter" className="gap-2">
+        <SearchField
+          label="Search label entities"
           placeholder="Search name, entity ID, device or label"
           value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
+          onChange={(value) => {
+            setQuery(value);
             setPicked(new Set());
           }}
         />
@@ -131,7 +212,7 @@ export function EntityLabels({
         <span className="text-xs text-muted">
           {rows.length} matching entities · {selected.length} selected on this page
         </span>
-      </div>
+      </Toolbar>
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-xs">
           <input
@@ -191,102 +272,19 @@ export function EntityLabels({
         </div>
       )}
       <p className="text-xs text-muted">
-        Labels shows every label on each entity, including queued changes. Add label keeps existing labels. Only selected registry entities on the current page
-        and under the current filters are changed; other entities remain visible and read-only.
+        Labels shows every label on each entity, including changes waiting in Changes. Add label keeps existing labels. Only selected registry entities on the
+        current page and under the current filters are changed; other entities remain visible and read-only.
       </p>
-      {!rows.length ? (
-        <p role="status" className="p-3 text-sm text-muted">
-          No entities match these filters.
-        </p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-line">
-          <table
-            aria-label="Entities and labels"
-            className="records-table table-fixed text-[13px]"
-            style={{ width: 44 + Object.values(widths).reduce((sum, width) => sum + width, 0), minWidth: "100%" }}
-          >
-            <colgroup>
-              <col style={{ width: 44 }} />
-              {columns.map((column) => (
-                <col key={column.key} style={{ width: widths[column.key] }} />
-              ))}
-            </colgroup>
-            <thead className="bg-sunken text-left text-xs text-muted">
-              <tr>
-                <th scope="col" className="px-3 py-2">
-                  <span className="sr-only">Select</span>
-                </th>
-                {columns.map((column) => (
-                  <SortHeader
-                    key={column.key}
-                    label={column.label}
-                    k={column.key}
-                    sort={sort}
-                    onToggle={sortBy}
-                    resize={
-                      <ResizeHandle
-                        label={`Resize label entities ${column.label} column`}
-                        value={widths[column.key]}
-                        savedWidth={savedWidth(column.key)}
-                        onChange={(width) => setWidth(column.key, width)}
-                      />
-                    }
-                  />
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((e) => (
-                <tr key={e.entityId} className="border-t border-line hover:bg-sunken">
-                  <td className="px-3 py-2">
-                    {e.inRegistry ? (
-                      <input
-                        type="checkbox"
-                        disabled={busy}
-                        aria-label={`Select ${e.name}`}
-                        checked={picked.has(e.entityId)}
-                        onChange={() => choose(e.entityId)}
-                      />
-                    ) : (
-                      <span title="Not in the entity registry">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {e.name}
-                    {(!e.inRegistry || e.disabled || e.hidden || e.maintenance) && (
-                      <span className="block text-xs text-muted">
-                        {[!e.inRegistry && "Read-only · not in registry", e.disabled && "Disabled", e.hidden && "Hidden", e.maintenance && "Diagnostic"]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs">{e.entityId}</td>
-                  <td className="px-3 py-2">{deviceName(e) || "No device"}</td>
-                  <td className="px-3 py-2">{e.areaId ? (h.areas[e.areaId]?.name ?? e.areaId) : "No area"}</td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      {e.labels.length ? (
-                        [...new Set(e.labels)].map((id) =>
-                          h.labels[id] ? (
-                            <LabelChip key={id} label={h.labels[id]} />
-                          ) : (
-                            <span key={id} className="break-all text-xs text-muted">
-                              {id}
-                            </span>
-                          ),
-                        )
-                      ) : (
-                        <span className="text-muted">No labels</span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        id="entity-labels"
+        label="Entities and labels"
+        rows={shown}
+        rowKey={(e) => e.entityId}
+        columns={columns}
+        sort={sort}
+        onSort={sortBy}
+        empty={<EmptyState>No entities match these filters.</EmptyState>}
+      />
       <Pagination {...paging} />
     </section>
   );

@@ -3,15 +3,7 @@ import type { Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
 import { Button } from "./ui.tsx";
 
-export function HouseModes({
-  h,
-  areaId = null,
-  go,
-}: {
-  h: Hierarchy;
-  areaId?: string | null;
-  go: (route: Route) => void;
-}) {
+export function HouseModes({ h, areaId = null, go }: { h: Hierarchy; areaId?: string | null; go: (route: Route) => void }) {
   const { parameters, inventory, changes, propose, busy } = useTaxis();
   const rows = planHouseModes(h, parameters, inventory, changes, areaId);
   return (
@@ -24,8 +16,7 @@ export function HouseModes({
         {areaId
           ? "Effective switches for this area, including any parameter overrides."
           : "House defaults; individual areas may override the selected switches in Parameters."}{" "}
-        Use these toggles in Home Assistant after creating them. Mode changes are manual; Taxis does not infer that the
-        house is empty from residents leaving.
+        Use these toggles in Home Assistant after creating them. Mode changes are manual; Taxis does not infer that the house is empty from residents leaving.
       </p>
       <ul className="mt-4 grid gap-3 md:grid-cols-3">
         {rows.map((row) => (
@@ -43,10 +34,9 @@ export function HouseModes({
         ))}
       </ul>
       <p className="mt-3 text-xs text-muted">
-        Adding a switch only queues its creation. Review Changes and Apply when ready, then refresh and review each
-        room's recipe updates. Existing automations keep their saved inputs until updated. Per-area Pause always wins.
-        Guest lighting and media behavior can be changed per area in Parameters; climate keeps window, season, sleep and
-        night protections.
+        Adding a switch only adds its creation to the changes. Review Changes and Apply when ready, then refresh and review each room's recipe updates. Existing
+        automations keep their saved inputs until updated. Per-area Pause always wins. Guest lighting and media behavior can be changed per area in Parameters;
+        climate keeps window, season, sleep and night protections.
       </p>
     </section>
   );

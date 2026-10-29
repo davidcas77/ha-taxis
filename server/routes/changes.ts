@@ -5,6 +5,8 @@ import type { ChangeInput, ChangesResponse } from "../../shared/types.ts";
 import type { AppContext } from "../context.ts";
 
 const BUSY = "Changes are being applied. Try again in a moment.";
+// The most edits one batch may hold: a bulk edit of a big home, not a bulk import.
+export const MAX_BATCH = 500;
 
 // The change list: what the user has queued, kept in Taxis until Apply. Nothing
 // here writes to Home Assistant. While an Apply runs the list is frozen, so an
@@ -29,6 +31,34 @@ export function changeRoutes(ctx: AppContext): Hono {
       if (reader.isApplying()) return c.json<ChangesResponse>({ ok: false, error: BUSY }, 409);
       const refused = changes.add(input!, read.live);
       if (refused) return c.json<ChangesResponse>({ ok: false, error: refused }, 409);
+      return c.json<ChangesResponse>(listResponse());
+    } catch (e) {
+      return c.json<ChangesResponse>({ ok: false, error: ctx.errorText(e) }, 502);
+    }
+  });
+
+  // Several edits at once, all or nothing: `{ "changes": ChangeInput[] }`. Each is
+  // checked like the single endpoint checks one; if any is invalid (400) or
+  // refused (409) nothing from the batch is kept and the list is as it was.
+  app.post("/changes/batch", async (c) => {
+    if (reader.isApplying()) return c.json<ChangesResponse>({ ok: false, error: BUSY }, 409);
+    const body = (await c.req.json().catch(() => null)) as { changes?: unknown } | null;
+    const inputs = body && typeof body === "object" ? body.changes : undefined;
+    if (!Array.isArray(inputs) || inputs.length === 0)
+      return c.json<ChangesResponse>({ ok: false, error: 'Send { "changes": [...] } with at least one change.' }, 400);
+    if (inputs.length > MAX_BATCH)
+      return c.json<ChangesResponse>({ ok: false, error: `Too many changes at once: ${inputs.length}. The most is ${MAX_BATCH}.` }, 400);
+    const where = (i: number) => (inputs.length > 1 ? `Change ${i + 1} of ${inputs.length}: ` : "");
+    for (const [i, input] of inputs.entries()) {
+      const invalid = input && typeof input === "object" ? validateInput(input as ChangeInput) : "That change wasn't an object.";
+      if (invalid) return c.json<ChangesResponse>({ ok: false, error: `${where(i)}${invalid} Nothing was added.` }, 400);
+    }
+    try {
+      const { read } = await reader.read(false);
+      // Apply may have started while Home Assistant was being read.
+      if (reader.isApplying()) return c.json<ChangesResponse>({ ok: false, error: BUSY }, 409);
+      const refused = changes.addMany(inputs as ChangeInput[], read.live);
+      if (refused) return c.json<ChangesResponse>({ ok: false, error: `${where(refused.index)}${refused.error} Nothing was added.` }, 409);
       return c.json<ChangesResponse>(listResponse());
     } catch (e) {
       return c.json<ChangesResponse>({ ok: false, error: ctx.errorText(e) }, 502);

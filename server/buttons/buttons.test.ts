@@ -156,6 +156,20 @@ const matches = (
       .map((g) => [g.eventType ?? g.gesture, c.existing[g.key].find((a) => a.id === id)?.match ?? null]),
   );
 
+describe("gesture labels", () => {
+  it("keep the integration's own spelling, not a title-cased one", async () => {
+    const f = buttonFixture();
+    addEvent(f, "event.desk_remote_button_event_1", "remote3", "Desk remote button 1", { event_types: ["Double press", "long_press"] });
+    const c = (await f.read()).inventory.controls.find((c) => c.id === "device:remote3")!;
+    expect(
+      c.gestures
+        .filter((g) => g.eventEntity === "event.desk_remote_button_event_1")
+        .map((g) => g.gesture)
+        .sort(),
+    ).toEqual(["Double press", "Long press"]);
+  });
+});
+
 describe("matching existing automations to the gesture they handle", () => {
   const DESK1 = "event.desk_remote_button_event_1",
     DESK2 = "event.desk_remote_button_event_2";

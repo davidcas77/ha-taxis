@@ -9,8 +9,8 @@ import os
 import unittest
 import urllib.request
 from playwright.sync_api import sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:5173")
 ITEMS = [
     {"domain": "automation", "path": "community/shared.yaml", "name": "Community motion", "description": "Turns a room light on after motion.", "author": "Community author", "sourceUrl": "https://github.com/example/blueprints", "error": None, "inputs": {
         "motion": {"name": "Motion sensor", "description": "The sensor to watch.", "selector": {"entity": {"domain": "binary_sensor"}}},
@@ -29,7 +29,7 @@ class BlueprintRecordsRegression(unittest.TestCase):
         if not cls.hierarchy.get("ok"):
             raise RuntimeError("Start mock HA and Taxis before running browser checks")
         cls.playwright = sync_playwright().start()
-        cls.browser = cls.playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), headless=True, args=["--no-sandbox"])
+        cls.browser = launch(cls.playwright)
 
     @classmethod
     def tearDownClass(cls):

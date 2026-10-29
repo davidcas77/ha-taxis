@@ -1,20 +1,31 @@
-import { CheckCircle2, CircleAlert, ShieldCheck, Trash2, TriangleAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert, Trash2, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { closureFor, renameGate } from "../../shared/apply-plan.ts";
 import { describePeriods } from "../../shared/periods.ts";
-import { validButtonMap } from '../../shared/buttons.ts';
+import { validButtonMap } from "../../shared/buttons.ts";
 import { RECIPE_LABEL } from "../../shared/recipes.ts";
 import type { ApplyResult, Change, Hierarchy, RenameRefs } from "../../shared/types.ts";
 import { ApplyHistory } from "./history.tsx";
 import { api } from "./api.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
 import { useTaxis } from "./state.tsx";
-import { Button, ConfirmAction } from "./ui.tsx";
+import { Badge, Button, Card, ConfirmAction, ConfirmPanel, EmptyState, Page, PageHeader } from "./ui.tsx";
 
 // The list of changes, in words, and Apply.
 
-const KIND_NAMES: Record<Change["kind"], string> = { entity: "entity", device: "device", area: "area", floor: "floor", label: "label", category: "category", helper: "helper", blueprint: "blueprint", automation: "automation", script: "script" };
+const KIND_NAMES: Record<Change["kind"], string> = {
+  entity: "entity",
+  device: "device",
+  area: "area",
+  floor: "floor",
+  label: "label",
+  category: "category",
+  helper: "helper",
+  blueprint: "blueprint",
+  automation: "automation",
+  script: "script",
+};
 
 function nameOf(h: Hierarchy, c: Change): string {
   if (c.op === "create") return String(c.after.name ?? "new");
@@ -51,7 +62,15 @@ function memberChange(c: Change): { added: string[]; removed: string[] } {
   return { added: now.filter((m) => !was.includes(m)), removed: was.filter((m) => !now.includes(m)) };
 }
 
-const HELPER_KINDS: Record<string, string> = { group: "group", min_max: "min/max sensor", timer: "timer", input_boolean: "toggle", template: "template sensor", schedule: "schedule", derivative: "rate sensor" };
+const HELPER_KINDS: Record<string, string> = {
+  group: "group",
+  min_max: "min/max sensor",
+  timer: "timer",
+  input_boolean: "toggle",
+  template: "template sensor",
+  schedule: "schedule",
+  derivative: "rate sensor",
+};
 
 const minutes = (seconds: unknown) => `${Number(seconds) / 60} min`;
 
@@ -72,7 +91,8 @@ function helperTitle(h: Hierarchy, c: Change): string {
 }
 
 function recipeTitle(h: Hierarchy, c: Change): string {
-  if(validButtonMap(c.after.button_map)) return `${c.op==='create'?'Create':'Update'} button automation for ${h.entities[c.after.button_map.output]?.name??c.after.button_map.output} · ${c.after.button_map.bindings.length} assignments`;
+  if (validButtonMap(c.after.button_map))
+    return `${c.op === "create" ? "Create" : "Update"} button automation for ${h.entities[c.after.button_map.output]?.name ?? c.after.button_map.output} · ${c.after.button_map.bindings.length} assignments`;
   if (c.kind === "blueprint") return `${c.op === "create" ? "Write" : "Update"} blueprint ${c.targetId}`;
   if (c.kind === "script") return `${c.op === "create" ? "Install" : "Update"} the Announce script (script.${c.targetId})`;
   const recipe = RECIPE_LABEL[c.after.recipe as keyof typeof RECIPE_LABEL] ?? "recipe";
@@ -91,15 +111,37 @@ function title(h: Hierarchy, c: Change): string {
 // One field, in words: "Area: Kitchen → Attic".
 function describe(h: Hierarchy, c: Change, key: string): { label: string; from: ReactNode; to: ReactNode } {
   const mono = (v: unknown) => <span className="font-mono text-xs">{String(v)}</span>;
-  const areaName = (v: unknown) => (v ? h.areas[String(v)]?.name ?? String(v) : c.kind === "entity" ? "same as its device" : "no area");
-  const floorName = (v: unknown) => (v ? h.floors.find((f) => f.id === v)?.name ?? String(v) : "no floor");
+  const areaName = (v: unknown) => (v ? (h.areas[String(v)]?.name ?? String(v)) : c.kind === "entity" ? "same as its device" : "no area");
+  const floorName = (v: unknown) => (v ? (h.floors.find((f) => f.id === v)?.name ?? String(v)) : "no floor");
   const labelNames = (v: unknown) => ((v as string[] | undefined) ?? []).map((id) => h.labels[id]?.name ?? id);
   const plain = (v: unknown, empty = "default") => (v === null || v === undefined || v === "" ? empty : String(v));
   const b = c.before[key];
   const a = c.after[key];
   switch (key) {
-    case 'button_map':
-      return {label:'Button assignments',from:c.op==='create'?'No managed map':'Existing map, checked again before replacing',to:validButtonMap(a)?<ul className="flex flex-col gap-2">{a.bindings.map(binding=><li key={binding.key}><p>{h.devices[binding.controlId.replace(/^device:/,'')]?.name??binding.controlId} · {binding.button} · {binding.gesture}</p><code className="text-xs">{binding.action.service} → {binding.action.entityId??'Service action'} · {binding.enabled?'Enabled':'Disabled'}</code>{Object.keys(binding.action.data).length>0 && <pre className="mt-1 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(binding.action.data,null,2)}</pre>}</li>)}</ul>:'Invalid map'};
+    case "button_map":
+      return {
+        label: "Button assignments",
+        from: c.op === "create" ? "No managed map" : "Existing map, checked again before replacing",
+        to: validButtonMap(a) ? (
+          <ul className="flex flex-col gap-2">
+            {a.bindings.map((binding) => (
+              <li key={binding.key}>
+                <p>
+                  {h.devices[binding.controlId.replace(/^device:/, "")]?.name ?? binding.controlId} · {binding.button} · {binding.gesture}
+                </p>
+                <code className="text-xs">
+                  {binding.action.service} → {binding.action.entityId ?? "Service action"} · {binding.enabled ? "Enabled" : "Disabled"}
+                </code>
+                {Object.keys(binding.action.data).length > 0 && (
+                  <pre className="mt-1 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(binding.action.data, null, 2)}</pre>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          "Invalid map"
+        ),
+      };
     case "name":
     case "name_by_user":
       return { label: "Name", from: plain(b, c.op === "create" ? "" : "default"), to: plain(a) };
@@ -112,12 +154,16 @@ function describe(h: Hierarchy, c: Change, key: string): { label: string; from: 
       const after = new Set(labelNames(a));
       const added = [...after].filter((x) => !before.has(x));
       const removed = [...before].filter((x) => !after.has(x));
-      return { label: "Labels", from: removed.length ? `− ${removed.join(", ")}` : "", to: added.length ? `+ ${added.join(", ")}` : removed.length ? "" : "none" };
+      return {
+        label: "Labels",
+        from: removed.length ? `− ${removed.join(", ")}` : "",
+        to: added.length ? `+ ${added.join(", ")}` : removed.length ? "" : "none",
+      };
     }
     case "categories": {
       const parts = Object.entries((a as Record<string, string | null>) ?? {})
         .filter(([s, id]) => (((b as Record<string, string>) ?? {})[s] ?? null) !== id)
-        .map(([s, id]) => `${SCOPE_NAMES[s] ?? s}: ${id ? h.categories[s as keyof Hierarchy["categories"]]?.find((x) => x.id === id)?.name ?? id : "none"}`);
+        .map(([s, id]) => `${SCOPE_NAMES[s] ?? s}: ${id ? (h.categories[s as keyof Hierarchy["categories"]]?.find((x) => x.id === id)?.name ?? id) : "none"}`);
       return { label: "Category", from: "", to: parts.join(", ") };
     }
     case "new_entity_id":
@@ -154,7 +200,10 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
   // Renames whose uses to update by hand the user has read. Asked again when the list changes.
   const [understood, setUnderstood] = useState<ReadonlySet<number>>(new Set());
   useEffect(() => setUnderstood(new Set()), [version]);
-  const knowledge = useMemo(() => ({ loading: refs.loading, error: refs.error, renames: refs.renames.map((r) => ({ changeId: r.changeId, manual: r.manual.length })) }), [refs]);
+  const knowledge = useMemo(
+    () => ({ loading: refs.loading, error: refs.error, renames: refs.renames.map((r) => ({ changeId: r.changeId, manual: r.manual.length })) }),
+    [refs],
+  );
   const gateFor = (scope: typeof changes) => renameGate(scope, knowledge, understood);
   const gateAll = gateFor(changes);
   const flip = (id: number) =>
@@ -173,7 +222,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
     setStep("applying");
     setError(null);
     const res = await api.apply(version, allowWithoutBackup, only ?? undefined);
-    setHistoryVersion(v => v + 1);
+    setHistoryVersion((v) => v + 1);
     if (!res.ok) {
       if (/without one/.test(res.error)) {
         setStep("confirmNoBackup");
@@ -195,37 +244,39 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
   };
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="mx-auto flex max-w-3xl flex-col gap-5">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold">Changes</h1>
-          <p className="text-[13px] text-muted">
-            Queued for Home Assistant: edits made in Taxis wait here. Taxis shows the house as if they were done, but Home Assistant doesn't change until you apply them.
-          </p>
+    <Page width="3xl">
+      <PageHeader
+        title="Changes"
+        description="Edits made in Taxis wait here. Taxis shows the house as if they were done, but Home Assistant doesn't change until you apply them."
+        actions={changes.length > 0 ? <Badge tone="warn">{changes.length} waiting</Badge> : undefined}
+      />
+
+      {result && <Outcome result={result} onClose={() => setResult(null)} />}
+      {error && (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
+          <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+          {error}
         </div>
+      )}
 
-        {result && <Outcome result={result} onClose={() => setResult(null)} />}
-        {error && (
-          <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
-            <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-            {error}
-          </div>
-        )}
-
-        {changes.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-[13px] text-muted">No changes waiting. Edit an area, device, entity, label or category to start.</p>
-        ) : (
-          <>
-            <ul className="flex flex-col gap-2">
-              {changes.map((c) => {
-                const needed = closureFor(changes, [c.id]);
-                const extra = needed.filter((x) => x.id !== c.id);
-                const gate = gateFor(needed);
-                const blocked = busy || step !== "list" || gate.waiting.length > 0 || gate.unacknowledged.length > 0;
-                const mine = only !== null && only.length === needed.length && needed.every((x) => only.includes(x.id)) && only.includes(c.id);
-                const keys = c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" || c.kind === "script" ? [] : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
-                return (
-                  <li key={c.id} className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2.5">
+      {changes.length === 0 ? (
+        <EmptyState title="No changes waiting">Edit an area, device, entity, label or category to start.</EmptyState>
+      ) : (
+        <>
+          <ul className="flex flex-col gap-2">
+            {changes.map((c) => {
+              const needed = closureFor(changes, [c.id]);
+              const extra = needed.filter((x) => x.id !== c.id);
+              const gate = gateFor(needed);
+              const blocked = busy || step !== "list" || gate.waiting.length > 0 || gate.unacknowledged.length > 0;
+              const mine = only !== null && only.length === needed.length && needed.every((x) => only.includes(x.id)) && only.includes(c.id);
+              const keys =
+                c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" || c.kind === "script"
+                  ? []
+                  : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
+              return (
+                <li key={c.id}>
+                  <Card padded={false} className="flex flex-col gap-1.5 px-3.5 py-2.5">
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 text-[13px] font-medium">{title(h, c)}</span>
                       <Button
@@ -249,11 +300,11 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                       <ConfirmAction
                         tone="ghost"
                         disabled={busy || step === "applying"}
-                        ariaLabel={`Remove: ${title(h, c)}`}
-                        question="Remove this change? Nothing was applied to Home Assistant."
+                        ariaLabel={`Discard: ${title(h, c)}`}
+                        question="Discard this change? Nothing was applied to Home Assistant."
                         onConfirm={() => void removeChange(c.id)}
                       >
-                        <Trash2 className="size-3.5" aria-hidden /> Remove
+                        <Trash2 className="size-3.5" aria-hidden /> Discard
                       </ConfirmAction>
                     </div>
                     {keys.length > 0 && (
@@ -281,82 +332,90 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                     )}
                     {extra.length > 0 && <p className="text-xs text-muted">Also applies: {extra.map((x) => title(h, x)).join("; ")}.</p>}
                     {mine && step === "confirm" && (
-                      <Confirm onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
-                        Taxis first makes a backup of Home Assistant, then applies {extra.length > 0 ? `this change and the ${extra.length} it needs` : "this change"}, then reads Home Assistant back to
-                        check {extra.length > 0 ? "them" : "it"}. The rest of the list stays as it is. If the backup fails, nothing is changed.
-                      </Confirm>
+                      <ConfirmPanel onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
+                        Taxis first makes a backup of Home Assistant, then applies{" "}
+                        {extra.length > 0 ? `this change and the ${extra.length} it needs` : "this change"}, then reads Home Assistant back to check{" "}
+                        {extra.length > 0 ? "them" : "it"}. The rest of the list stays as it is. If the backup fails, nothing is changed.
+                      </ConfirmPanel>
                     )}
                     {mine && step === "confirmNoBackup" && (
-                      <Confirm onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
+                      <ConfirmPanel onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
                         Taxis is running outside Home Assistant (development), so it can not make a backup. Apply anyway?
-                      </Confirm>
+                      </ConfirmPanel>
                     )}
-                  </li>
-                );
-              })}
-            </ul>
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
 
-            {step === "list" && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  tone="primary"
-                  disabled={busy || gateAll.waiting.length > 0 || gateAll.unacknowledged.length > 0}
-                  onClick={() => {
-                    setOnly(null);
-                    setStep("confirm");
-                  }}
-                >
-                  Apply {changes.length} change{changes.length === 1 ? "" : "s"} to Home Assistant
-                </Button>
-                {gateAll.unacknowledged.length > 0 && (
-                  <span role="status" className="text-xs text-warn">
-                    Tick I understand on {gateAll.unacknowledged.length === 1 ? "the renamed entity" : `the ${gateAll.unacknowledged.length} renamed entities`} that need{gateAll.unacknowledged.length === 1 ? "s" : ""} a hand first.
-                  </span>
-                )}
-                <ConfirmAction
-                  tone="ghost"
-                  disabled={busy}
-                  question={`Discard all ${changes.length} change${changes.length === 1 ? "" : "s"}? Nothing was applied to Home Assistant.`}
-                  onConfirm={() => void clearChanges()}
-                >
-                  Discard all
-                </ConfirmAction>
-              </div>
-            )}
-            {step === "confirm" && only === null && (
-              <Confirm onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
-                Taxis first makes a backup of Home Assistant, then applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home Assistant back to check each one.
-                If the backup fails, nothing is changed.
-                {hasHelper && (
-                  <span className="mt-2 block">
-                    Helpers: Taxis makes them the way Home Assistant's own helper dialogs do, then gives each its entity id and area. A helper is never deleted.
-                  </span>
-                )}
-                {hasRecipe && (
-                  <span className="mt-2 block">
-                    Recipes: Taxis saves its blueprint in Home Assistant (under taxis/), makes the helpers the recipe needs, then saves the automation (or the Announce script) and checks that Home Assistant
-                    loaded it. Nothing is deleted, and an area's recipes can be paused with its pause switch.
-                  </span>
-                )}
-                {hasButtons && <span className="mt-2 block">Buttons: Taxis saves one native automation per output, rechecks supported gestures and existing handlers, then verifies the stored config and enabled state. Enabled assignments can control their targets when those buttons are pressed. Existing external handlers are preserved.</span>}
-                {hasRename && (
-                  <span className="mt-2 block">
-                    Renamed entities: Taxis also rewrites the old id in the automations, scripts, scenes and dashboards listed, each only if it hasn't changed since Taxis read it.
-                  </span>
-                )}
-              </Confirm>
-            )}
-            {step === "confirmNoBackup" && only === null && (
-              <Confirm onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
-                Taxis is running outside Home Assistant (development), so it can't make a backup. Apply anyway?
-              </Confirm>
-            )}
-            {step === "applying" && <p className="text-[13px] text-muted">Backing up and applying{only ? " this change" : ""}… this can take a minute.</p>}
-          </>
-        )}
-        <ApplyHistory refreshKey={historyVersion} applying={step === "applying"} />
-      </div>
-    </main>
+          {step === "list" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                tone="primary"
+                disabled={busy || gateAll.waiting.length > 0 || gateAll.unacknowledged.length > 0}
+                onClick={() => {
+                  setOnly(null);
+                  setStep("confirm");
+                }}
+              >
+                Apply {changes.length} change{changes.length === 1 ? "" : "s"} to Home Assistant
+              </Button>
+              {gateAll.unacknowledged.length > 0 && (
+                <span role="status" className="text-xs text-warn">
+                  Tick I understand on {gateAll.unacknowledged.length === 1 ? "the renamed entity" : `the ${gateAll.unacknowledged.length} renamed entities`}{" "}
+                  that need{gateAll.unacknowledged.length === 1 ? "s" : ""} a hand first.
+                </span>
+              )}
+              <ConfirmAction
+                tone="ghost"
+                disabled={busy}
+                question={`Discard all ${changes.length} change${changes.length === 1 ? "" : "s"}? Nothing was applied to Home Assistant.`}
+                onConfirm={() => void clearChanges()}
+              >
+                Discard all
+              </ConfirmAction>
+            </div>
+          )}
+          {step === "confirm" && only === null && (
+            <ConfirmPanel onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
+              Taxis first makes a backup of Home Assistant, then applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home Assistant
+              back to check each one. If the backup fails, nothing is changed.
+              {hasHelper && (
+                <span className="mt-2 block">
+                  Helpers: Taxis makes them the way Home Assistant's own helper dialogs do, then gives each its entity id and area. A helper is never deleted.
+                </span>
+              )}
+              {hasRecipe && (
+                <span className="mt-2 block">
+                  Recipes: Taxis saves its blueprint in Home Assistant (under taxis/), makes the helpers the recipe needs, then saves the automation (or the
+                  Announce script) and checks that Home Assistant loaded it. Nothing is deleted, and an area's recipes can be paused with its pause switch.
+                </span>
+              )}
+              {hasButtons && (
+                <span className="mt-2 block">
+                  Buttons: Taxis saves one native automation per output, rechecks supported gestures and existing handlers, then verifies the stored config and
+                  enabled state. Enabled assignments can control their targets when those buttons are pressed. Existing external handlers are preserved.
+                </span>
+              )}
+              {hasRename && (
+                <span className="mt-2 block">
+                  Renamed entities: Taxis also rewrites the old id in the automations, scripts, scenes and dashboards listed, each only if it hasn't changed
+                  since Taxis read it.
+                </span>
+              )}
+            </ConfirmPanel>
+          )}
+          {step === "confirmNoBackup" && only === null && (
+            <ConfirmPanel onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
+              Taxis is running outside Home Assistant (development), so it can't make a backup. Apply anyway?
+            </ConfirmPanel>
+          )}
+          {step === "applying" && <p className="text-[13px] text-muted">Backing up and applying{only ? " this change" : ""}… this can take a minute.</p>}
+        </>
+      )}
+      <ApplyHistory refreshKey={historyVersion} applying={step === "applying"} />
+    </Page>
   );
 }
 
@@ -371,17 +430,33 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
     return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Keeps its state through a restart.</p>;
   }
   if (c.op === "create" && c.after.helper === "input_boolean" && !("area_id" in c.after)) {
-    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Starts off. A house switch with no area: turn it on yourself, or from an automation of yours, to tell Area climate the house is {String(c.after.entity_id).endsWith("away") ? "away" : "asleep"}.</p>;
+    return (
+      <p className="text-xs text-muted">
+        Named “{String(c.after.name)}”. Starts off. A house switch with no area: turn it on yourself, or from an automation of yours, to tell Area climate the
+        house is {String(c.after.entity_id).endsWith("away") ? "away" : "asleep"}.
+      </p>
+    );
   }
   if (c.op === "create" && c.after.helper === "input_boolean") {
     return <p className="text-xs text-muted">Named “{String(c.after.name)}”. Starts off. Turn it on to pause the area's recipes.</p>;
   }
   if (c.op === "create" && c.after.helper === "schedule") {
-    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. On during the comfort periods: {describePeriods(String(c.after.periods))}. Edit the periods here (Parameters, Climate) or in Home Assistant.</p>;
+    return (
+      <p className="text-xs text-muted">
+        Named “{String(c.after.name)}”. On during the comfort periods: {describePeriods(String(c.after.periods))}. Edit the periods here (Parameters, Climate)
+        or in Home Assistant.
+      </p>
+    );
   }
-  if (c.op === "update" && "periods" in c.after) return <p className="text-xs text-muted">Replaces the periods of this schedule with the comfort periods setting.</p>;
+  if (c.op === "update" && "periods" in c.after)
+    return <p className="text-xs text-muted">Replaces the periods of this schedule with the comfort periods setting.</p>;
   if (c.op === "create" && c.after.helper === "derivative") {
-    return <p className="text-xs text-muted">Named “{String(c.after.name)}”. How fast {((c.after.entities as string[]) ?? []).join(", ")} changes, in % per second, smoothed over two minutes. The Bathroom fan recipe starts on it.</p>;
+    return (
+      <p className="text-xs text-muted">
+        Named “{String(c.after.name)}”. How fast {((c.after.entities as string[]) ?? []).join(", ")} changes, in % per second, smoothed over two minutes. The
+        Bathroom fan recipe starts on it.
+      </p>
+    );
   }
   if (c.op === "create" && c.after.helper === "template") {
     return (
@@ -395,7 +470,9 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
     const sensor = c.after.set_area_sensor;
     return (
       <div className="flex flex-col gap-1 text-xs">
-        {!("area_id" in c.after) && c.after.group_type === "light" && <p className="text-muted">The light group of a floor or of the house, in no area. Its members are light groups.</p>}
+        {!("area_id" in c.after) && c.after.group_type === "light" && (
+          <p className="text-muted">The light group of a floor or of the house, in no area. Its members are light groups.</p>
+        )}
         <details>
           <summary className="cursor-pointer text-muted">
             Named “{String(c.after.name)}”, {plural(((c.after.entities as string[]) ?? []).length, "member")}
@@ -429,14 +506,31 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
 function showInput(v: unknown): string {
   if (Array.isArray(v)) {
     if (v.length === 0) return "none";
-    return v.map((x) => (x && typeof x === "object" ? Object.values(x as Record<string, unknown>).map((y) => (Array.isArray(y) ? y.join("+") : String(y))).join(" / ") : String(x))).join(", ");
+    return v
+      .map((x) =>
+        x && typeof x === "object"
+          ? Object.values(x as Record<string, unknown>)
+              .map((y) => (Array.isArray(y) ? y.join("+") : String(y)))
+              .join(" / ")
+          : String(x),
+      )
+      .join(", ");
   }
   return String(v);
 }
 
 // A blueprint, or one recipe's automation (or the Announce script) with the inputs it fills in.
 function RecipeBody({ h, c }: { h: Hierarchy; c: Change }) {
-  if(validButtonMap(c.after.button_map)) return <div className="text-xs"><p className="mb-2 text-muted">One native automation for this output. Each enabled assignment runs its action when its gesture occurs.</p>{describe(h,c,'button_map').to}{c.after.button_map.allowExisting && <p className="mt-2 text-warn">Coexistence acknowledged: other handlers or unreadable configurations may also respond.</p>}</div>;
+  if (validButtonMap(c.after.button_map))
+    return (
+      <div className="text-xs">
+        <p className="mb-2 text-muted">One native automation for this output. Each enabled assignment runs its action when its gesture occurs.</p>
+        {describe(h, c, "button_map").to}
+        {c.after.button_map.allowExisting && (
+          <p className="mt-2 text-warn">Coexistence acknowledged: other handlers or unreadable configurations may also respond.</p>
+        )}
+      </div>
+    );
   if (c.kind === "blueprint") {
     return <p className="text-xs text-muted">Version {String(c.after.version)}. Taxis writes it once; every area that uses the recipe shares it.</p>;
   }
@@ -485,7 +579,11 @@ function RenameRefsView({ refs, change, understood, onUnderstood }: { refs: Refs
   const oldId = change.targetId;
   const newId = String(change.after.new_entity_id);
   const warn = (children: ReactNode) => (
-    <div role="group" aria-label={`What uses ${oldId}`} className="flex flex-col gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2.5 py-2 text-xs text-warn">
+    <div
+      role="group"
+      aria-label={`What uses ${oldId}`}
+      className="flex flex-col gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2.5 py-2 text-xs text-warn"
+    >
       <p className="flex items-start gap-1.5 font-medium">
         <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         <span>This changes the entity id. Home Assistant does not rewrite what uses the old one.</span>
@@ -497,7 +595,8 @@ function RenameRefsView({ refs, change, understood, onUnderstood }: { refs: Refs
     return warn(
       <>
         <p>
-          Taxis could not look for what uses <code className="font-mono">{oldId}</code> ({refs.error}). Check the automations, scripts, scenes and dashboards by hand.
+          Taxis could not look for what uses <code className="font-mono">{oldId}</code> ({refs.error}). Check the automations, scripts, scenes and dashboards by
+          hand.
         </p>
         <Understand checked={understood} onChange={onUnderstood} />
       </>,
@@ -560,46 +659,38 @@ function Understand({ checked, onChange }: { checked: boolean; onChange: () => v
   );
 }
 
-function Confirm({ children, onYes, onNo, yes, danger }: { children: React.ReactNode; onYes: () => void; onNo: () => void; yes: string; danger?: boolean }) {
-  return (
-    <div role="alertdialog" aria-label="Confirm" className="flex flex-col gap-3 rounded-lg border border-accent/40 bg-surface p-3.5">
-      <p className="flex items-start gap-2 text-[13px]">
-        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
-        <span>{children}</span>
-      </p>
-      <div className="flex gap-2">
-        <Button tone={danger ? "danger" : "primary"} onClick={onYes}>
-          {yes}
-        </Button>
-        <Button tone="ghost" onClick={onNo}>
-          Cancel
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 function Outcome({ result, onClose }: { result: { outcome: ApplyResult; titles: Map<number, string> }; onClose: () => void }) {
   const { outcome, titles } = result;
   const ok = outcome.results.filter((r) => r.ok).length;
   const failed = outcome.results.length - ok;
-  const warnings = outcome.results.filter(r => r.status === "partial" || r.status === "unverified" || (r.details ?? []).some(detail => /^(Needs a hand:|Not updated:)/.test(detail))).length;
+  const warnings = outcome.results.filter(
+    (r) => r.status === "partial" || r.status === "unverified" || (r.details ?? []).some((detail) => /^(Needs a hand:|Not updated:)/.test(detail)),
+  ).length;
   return (
-    <section aria-label="Result" className={`flex flex-col gap-2 rounded-lg border px-3.5 py-3 ${failed || warnings ? "border-warn/50 bg-warn-soft" : "border-on/40 bg-surface"}`}>
+    <section
+      aria-label="Result"
+      className={`flex flex-col gap-2 rounded-lg border px-3.5 py-3 ${failed || warnings ? "border-warn/50 bg-warn-soft" : "border-on/40 bg-surface"}`}
+    >
       <div className="flex items-center gap-2">
-        <h2 className="flex-1 text-sm font-semibold">
-          {failed ? `${ok} applied, ${failed} not applied` : `${ok} change${ok === 1 ? "" : "s"} applied`}
-        </h2>
+        <h2 className="flex-1 text-sm font-semibold">{failed ? `${ok} applied, ${failed} not applied` : `${ok} change${ok === 1 ? "" : "s"} applied`}</h2>
         <Button tone="ghost" onClick={onClose}>
           Close
         </Button>
       </div>
-      {warnings > 0 && <p className="text-xs text-warn">{warnings} change{warnings === 1 ? " needs" : "s need"} attention. Review the details and saved repair reminders below.</p>}
+      {warnings > 0 && (
+        <p className="text-xs text-warn">
+          {warnings} change{warnings === 1 ? " needs" : "s need"} attention. Review the details and saved repair reminders below.
+        </p>
+      )}
       <p className="text-xs text-muted">{outcome.backup.made ? `Backup made first: “${outcome.backup.name}”.` : outcome.backup.reason}</p>
       <ul className="flex flex-col gap-1 text-[13px]">
         {outcome.results.map((r) => (
           <li key={r.changeId} className="flex items-start gap-2">
-            {r.ok ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-on" aria-hidden /> : <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />}
+            {r.ok ? (
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-on" aria-hidden />
+            ) : (
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />
+            )}
             <span>
               {titles.get(r.changeId) ?? `Change ${r.changeId}`}
               {r.status && <span className="block text-xs text-muted">Status: {r.status}</span>}

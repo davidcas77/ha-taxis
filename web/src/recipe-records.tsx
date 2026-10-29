@@ -1,21 +1,14 @@
 import { useMemo, useState } from "react";
-import {
-  RECIPE_LABEL,
-  automationIdFor,
-  planAnnounce,
-  planRecipes,
-  recipeChangeInputs,
-  type RecipeCell,
-  type RecipeInstalled,
-  type RecipeStatus,
-} from "../../shared/recipes.ts";
+
+import { RECIPE_LABEL, automationIdFor, recipeChangeInputs, type RecipeCell, type RecipeInstalled, type RecipeStatus } from "../../shared/recipes.ts";
 import { areaCodes } from "../../shared/naming.ts";
+import { sortRows } from "../../shared/sort.ts";
 import type { Hierarchy } from "../../shared/types.ts";
-import { AreaMultiSelect, FilterChips, Pagination, RecordsSplit, ResizeHandle, usePagination, useWidths } from "./records.tsx";
+import { DataTable, useSortState, type Column } from "./data-table.tsx";
+import { AreaMultiSelect, FilterChips, Pagination, RecordsSplit, usePagination } from "./records.tsx";
 import { useStoredSet, useStoredValue } from "./storage.ts";
 import { useTaxis } from "./state.tsx";
-import { SortHeader, useSort } from "./table.tsx";
-import { Button, inputClass } from "./ui.tsx";
+import { Button, EmptyState, inputClass } from "./ui.tsx";
 
 const STATUS: Record<RecipeStatus, string> = {
   ready: "Ready",
@@ -25,6 +18,12 @@ const STATUS: Record<RecipeStatus, string> = {
   installed: "Installed",
 };
 const keyOf = (cell: RecipeCell) => `${cell.areaId}|${cell.recipe}`;
+const SORT: Record<string, (cell: RecipeCell) => string> = {
+  area: (cell) => cell.areaName,
+  recipe: (cell) => RECIPE_LABEL[cell.recipe],
+  status: (cell) => STATUS[cell.status],
+};
+const areaLabel = (cell: RecipeCell) => (cell.recipe === "announce" ? "House" : cell.areaName);
 const BEHAVIOR: Record<RecipeCell["recipe"], string[]> = {
   occupancy: [
     "Activity starts a hold timer; further activity keeps the room occupied.",
@@ -66,8 +65,8 @@ const BEHAVIOR: Record<RecipeCell["recipe"], string[]> = {
 
 const REQUIREMENTS: Record<RecipeCell["recipe"], string[]> = {
   occupancy: ["At least one counted motion or presence sensor.", "Available IDs for the hold timer, occupied sensor and pause switch."],
-  motion_lights: ["Occupancy installed or queued for this room.", "The room's canonical light group, plus the lighting parameters."],
-  media_off: ["Occupancy installed or queued for this room.", "At least one counted speaker or TV, with configured off delays."],
+  motion_lights: ["Occupancy installed or in changes for this room.", "The room's canonical light group, plus the lighting parameters."],
+  media_off: ["Occupancy installed or in changes for this room.", "At least one counted speaker or TV, with configured off delays."],
   area_climate: [
     "A counted thermostat eligible for the selected heating/cooling season.",
     "Valid comfort periods, temperatures and available schedule/helper IDs.",
@@ -93,8 +92,18 @@ const PARAMETER_TAB: Record<RecipeCell["recipe"], string> = {
   announce: "house",
 };
 
-export function RecipeRecords({ h, installed, descriptions }: { h: Hierarchy; installed: RecipeInstalled; descriptions: Record<string, string> }) {
-  const { inventory, naming, parameters, changes, propose, busy } = useTaxis();
+export function RecipeRecords({
+  h,
+  installed,
+  descriptions,
+  cells,
+}: {
+  h: Hierarchy;
+  installed: RecipeInstalled;
+  descriptions: Record<string, string>;
+  cells: readonly RecipeCell[];
+}) {
+  const { naming, propose, busy } = useTaxis();
   const [query, setQuery] = useStoredValue("taxis:recipes:query", "", (value): value is string => typeof value === "string");
   const [areas, changeAreas] = useStoredSet("taxis:recipes:areas");
   const setAreas = (next: ReadonlySet<string>) =>
@@ -104,10 +113,6 @@ export function RecipeRecords({ h, installed, descriptions }: { h: Hierarchy; in
     });
   const [status, setStatus] = useState("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const cells = useMemo(
-    () => [...planRecipes(h, inventory, naming, parameters, installed, changes), planAnnounce(h, inventory, naming, parameters, installed, changes)],
-    [h, inventory, naming, parameters, installed, changes],
-  );
   const filtered = useMemo(
     () =>
       cells.filter(
@@ -118,23 +123,29 @@ export function RecipeRecords({ h, installed, descriptions }: { h: Hierarchy; in
       ),
     [cells, areas, status, query],
   );
-  const getters = useMemo(
-    () => ({
-      area: (cell: RecipeCell) => cell.areaName,
-      recipe: (cell: RecipeCell) => RECIPE_LABEL[cell.recipe],
-      status: (cell: RecipeCell) => STATUS[cell.status],
-    }),
-    [],
-  );
-  const { rows, sort, toggle } = useSort(filtered, getters, { key: "area", dir: "asc" });
+  const { sort, toggle } = useSortState({ key: "area", dir: "asc" });
+  // The page owns the order: the pages below are cut from the sorted rows.
+  const rows = useMemo(() => sortRows(filtered, SORT[sort.key] ?? SORT.area, sort.dir), [filtered, sort]);
   const paging = usePagination(rows.length, JSON.stringify([query, [...areas], status, sort]));
   const pageRows = rows.slice(paging.start, paging.end);
   const selected = pageRows.find((cell) => keyOf(cell) === selectedKey) ?? pageRows[0];
-  const { widths, setWidth, savedWidth } = useWidths("taxis:records:columns:recipes", { area: 140, recipe: 170, status: 150 });
-  const columns = [
-    { key: "area", label: "Area" },
-    { key: "recipe", label: "Recipe" },
-    { key: "status", label: "Status" },
+  const columns: Column<RecipeCell>[] = [
+    {
+      id: "area",
+      header: "Area",
+      priority: 1,
+      sticky: true,
+      minWidth: 120,
+      sort: (cell) => cell.areaName,
+      text: (cell) => areaLabel(cell),
+      cell: (cell) => (
+        <button type="button" className="w-full text-left" onClick={() => setSelectedKey(keyOf(cell))}>
+          {areaLabel(cell)}
+        </button>
+      ),
+    },
+    { id: "recipe", header: "Recipe", priority: 1, minWidth: 110, sort: (cell) => RECIPE_LABEL[cell.recipe], cell: (cell) => RECIPE_LABEL[cell.recipe] },
+    { id: "status", header: "Status", priority: 2, minWidth: 110, nowrap: true, sort: (cell) => STATUS[cell.status], cell: (cell) => STATUS[cell.status] },
   ];
   const reset = () => {
     setQuery("");
@@ -180,65 +191,29 @@ export function RecipeRecords({ h, installed, descriptions }: { h: Hierarchy; in
               clear={reset}
             />
           </div>
-          <div className="min-h-0 flex-1 overflow-auto">
-            {!rows.length ? (
-              <p role="status" className="p-3 text-sm text-muted">
-                No recipes match these filters.{" "}
-                <button type="button" className="text-accent underline" onClick={reset}>
-                  Reset filters
-                </button>
-              </p>
-            ) : (
-              <table className="records-table table-fixed text-[13px]" style={{ width: Object.values(widths).reduce((sum, width) => sum + width, 0) }}>
-                <colgroup>
-                  {columns.map((column) => (
-                    <col key={column.key} style={{ width: widths[column.key] }} />
-                  ))}
-                </colgroup>
-                <thead className="sticky top-0 bg-sunken text-left text-xs text-muted">
-                  <tr>
-                    {columns.map((column) => (
-                      <SortHeader
-                        key={column.key}
-                        label={column.label}
-                        k={column.key}
-                        sort={sort}
-                        onToggle={toggle}
-                        resize={
-                          <ResizeHandle
-                            label={`Resize recipe ${column.label} column`}
-                            value={widths[column.key]}
-                            savedWidth={savedWidth(column.key)}
-                            onChange={(width) => setWidth(column.key, width)}
-                          />
-                        }
-                      />
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((cell) => (
-                    <tr
-                      key={keyOf(cell)}
-                      tabIndex={0}
-                      aria-selected={selected && keyOf(selected) === keyOf(cell)}
-                      className={`cursor-pointer border-t border-line ${selected && keyOf(selected) === keyOf(cell) ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`}
-                      onClick={() => setSelectedKey(keyOf(cell))}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          setSelectedKey(keyOf(cell));
-                        }
-                      }}
-                    >
-                      <td className="px-3 py-2">{cell.recipe === "announce" ? "House" : cell.areaName}</td>
-                      <td className="px-3 py-2">{RECIPE_LABEL[cell.recipe]}</td>
-                      <td className="px-3 py-2">{STATUS[cell.status]}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+          <div className="min-h-0 flex-1 overflow-auto p-2">
+            <DataTable
+              id="recipe-records"
+              label="Recipes"
+              rows={pageRows}
+              rowKey={keyOf}
+              columns={columns}
+              sort={sort}
+              onSort={toggle}
+              maxHeight="none"
+              columnsMenu={false}
+              rowTone={(cell) => (selected && keyOf(selected) === keyOf(cell) ? "selected" : "default")}
+              rowAttrs={(cell) => ({ "aria-selected": Boolean(selected && keyOf(selected) === keyOf(cell)) })}
+              onRowClick={(cell) => setSelectedKey(keyOf(cell))}
+              empty={
+                <EmptyState>
+                  No recipes match these filters.{" "}
+                  <button type="button" className="text-accent underline" onClick={reset}>
+                    Reset filters
+                  </button>
+                </EmptyState>
+              }
+            />
             <Pagination {...paging} />
           </div>
         </>
@@ -308,7 +283,7 @@ function RecipeDetail({
           {cell.missing.length
             ? "Resolve these before installation:"
             : cell.status === "in-changes"
-              ? "The installation is already queued. It relies on:"
+              ? "The installation is already in Changes. It relies on:"
               : "The planner checked these requirements against your counted entities and settings:"}
         </p>
         <ul className={`list-disc space-y-1 pl-4 text-[13px] ${cell.missing.length ? "text-warn" : "text-muted"}`}>
@@ -370,7 +345,7 @@ function RecipeDetail({
         </h3>
         <p className="mb-2 text-xs text-muted">Adds the required configuration to Changes for review. Home Assistant is changed only when you apply it.</p>
         <Button tone="primary" disabled={adding || !cell.actionable || inputs.length === 0} onClick={() => void add()}>
-          {adding ? "Adding…" : cell.status === "in-changes" ? "Already queued" : "Add to changes"}
+          {adding ? "Adding…" : cell.status === "in-changes" ? "Already in changes" : "Add to changes"}
         </Button>
         {inputs.length > 0 && (
           <details className="mt-3 text-xs text-muted">

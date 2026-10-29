@@ -3,14 +3,14 @@ import os
 import re
 import unittest
 from playwright.sync_api import sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:8099")
 
 
 class OrganizeSidebarRegression(unittest.TestCase):
     def test_background_toggle_icons_navigation_and_persistence(self):
         with sync_playwright() as p:
-            browser = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), headless=True, args=["--no-sandbox"])
+            browser = launch(p)
             context = browser.new_context(viewport={"width": 1600, "height": 1100}, color_scheme="dark")
             page = context.new_page()
             page.set_default_timeout(60000)
@@ -35,7 +35,7 @@ class OrganizeSidebarRegression(unittest.TestCase):
                 self.assertTrue(nav.get_by_role("button", name="Expand Organize sidebar", exact=True).is_visible())
                 page.reload(wait_until="domcontentloaded")
                 nav.get_by_role("button", name="Expand Organize sidebar", exact=True).wait_for()
-                page.screenshot(path="/workspace/.cache/ha-taxis/inspection/organize-compact.png")
+                page.screenshot(path=str(screenshot_dir() / "organize-compact.png"))
                 nav.click(position={"x": nav.bounding_box()["width"]/2, "y": nav.bounding_box()["height"]-20})
                 nav.get_by_role("button", name="Collapse Organize sidebar", exact=True).wait_for()
                 self.assertAlmostEqual(nav.bounding_box()["width"], expanded, delta=1)

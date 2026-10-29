@@ -1,12 +1,5 @@
 import { helperExclusions, hasPendingChange, planHelpers, type HelperKey, type HelperRow } from "./helpers.ts";
-import {
-  areaInventory,
-  areaChoice,
-  defaultCapability,
-  INVENTORY_AREA_ID,
-  type Capability,
-  type InventorySettings,
-} from "./inventory.ts";
+import { areaInventory, areaChoice, defaultCapability, INVENTORY_AREA_ID, type Capability, type InventorySettings } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import { automationIdFor, planRecipes, type RecipeCell, type RecipeInstalled } from "./recipes.ts";
 import { blueprintForRecipe, type AreaRecipeKey } from "./blueprints.ts";
@@ -71,8 +64,7 @@ export const ROOM_PROFILES = [
     key: "bathroom",
     label: "Bathroom",
     goals: ["lighting", "night", "ventilation"],
-    advice:
-      "Check presence at the shower and toilet. Place humidity sensing where it follows the room, not direct spray.",
+    advice: "Check presence at the shower and toilet. Place humidity sensing where it follows the room, not direct spray.",
   },
   {
     key: "kitchen",
@@ -96,8 +88,7 @@ export const ROOM_PROFILES = [
     key: "utility",
     label: "Utility / laundry",
     goals: ["lighting", "appliances"],
-    advice:
-      "Use power sensing appropriate for the appliance's electrical load; learn its normal cycle before setting thresholds.",
+    advice: "Use power sensing appropriate for the appliance's electrical load; learn its normal cycle before setting thresholds.",
   },
   {
     key: "exterior",
@@ -115,8 +106,7 @@ export const ROOM_PROFILES = [
     key: "other",
     label: "Other area",
     goals: ["lighting"],
-    advice:
-      "Choose only outcomes that are useful here. Equipment is recommended for your chosen goals, not a universal checklist.",
+    advice: "Choose only outcomes that are useful here. Equipment is recommended for your chosen goals, not a universal checklist.",
   },
 ] as const satisfies readonly { key: string; label: string; goals: readonly GuideGoal[]; advice: string }[];
 export type RoomProfile = (typeof ROOM_PROFILES)[number]["key"];
@@ -125,32 +115,22 @@ export type GuideSettings = { areas: Record<string, AreaGuideChoice>; tests?: Re
 export const EMPTY_GUIDE: GuideSettings = { areas: {} };
 export type GuideResponse = { ok: true; guide: GuideSettings; revision?: string } | { ok: false; error: string };
 
-const record = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 export function validateGuide(input: unknown): { ok: true; value: GuideSettings } | { ok: false; error: string } {
   if (!record(input) || !record(input.areas)) return { ok: false, error: "The area guide choices weren't readable." };
   const entries = Object.entries(input.areas);
   if (entries.length > 500) return { ok: false, error: "Choose up to 500 areas in the guide." };
   const areas: [string, AreaGuideChoice][] = [];
   for (const [id, value] of entries) {
-    if (
-      !INVENTORY_AREA_ID.test(id) ||
-      !record(value) ||
-      !ROOM_PROFILES.some((profile) => profile.key === value.profile)
-    )
+    if (!INVENTORY_AREA_ID.test(id) || !record(value) || !ROOM_PROFILES.some((profile) => profile.key === value.profile))
       return { ok: false, error: "Choose a valid room type for each area." };
-    if (
-      !Array.isArray(value.goals) ||
-      value.goals.length > GUIDE_GOALS.length ||
-      value.goals.some((goal) => !GUIDE_GOALS.some((item) => item.key === goal))
-    )
+    if (!Array.isArray(value.goals) || value.goals.length > GUIDE_GOALS.length || value.goals.some((goal) => !GUIDE_GOALS.some((item) => item.key === goal)))
       return { ok: false, error: "Choose valid automation goals for each area." };
     areas.push([id, { profile: value.profile as RoomProfile, goals: [...new Set(value.goals)] as GuideGoal[] }]);
   }
   const value: GuideSettings = { areas: Object.fromEntries(areas) };
   if (input.tests !== undefined) {
-    if (!record(input.tests) || Object.keys(input.tests).length > 500)
-      return { ok: false, error: "Store room tests for up to 500 areas." };
+    if (!record(input.tests) || Object.keys(input.tests).length > 500) return { ok: false, error: "Store room tests for up to 500 areas." };
     const tests: [string, GuideTestRecord][] = [];
     for (const [id, test] of Object.entries(input.tests)) {
       if (
@@ -200,7 +180,7 @@ export const GUIDE_STAGES = {
   unplanned: "No automation goals selected",
   equipment: "Review equipment",
   helpers: "Prepare helpers",
-  changes: "Review queued changes",
+  changes: "Review changes, then Apply",
   unread: "Read automation status",
   recipes: "Set up automations",
   check: "Check installed automations",
@@ -225,8 +205,7 @@ export type AreaReadiness = {
   testRecord: GuideTestRecord | null;
   testCurrent: boolean;
 };
-const known = (state: string | null | undefined): boolean =>
-  state !== null && state !== undefined && !["", "unknown", "unavailable"].includes(state);
+const known = (state: string | null | undefined): boolean => state !== null && state !== undefined && !["", "unknown", "unavailable"].includes(state);
 
 export function assessHouse(
   h: Hierarchy,
@@ -250,25 +229,18 @@ export function assessHouse(
       const choice = guideChoice(guide, area.id);
       const selected = new Set(choice?.goals ?? []);
       const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
-      const actual = area.entityIds
-        .map((id) => h.entities[id])
-        .filter((entity) => Boolean(entity) && !exclusions(area.id).has(entity.entityId));
+      const actual = area.entityIds.map((id) => h.entities[id]).filter((entity) => Boolean(entity) && !exclusions(area.id).has(entity.entityId));
       const areaEntities = new Set(area.entityIds);
       const pendingAreaChanges = changes.some(
         (change) =>
           (change.kind === "area" && change.targetId === area.id) ||
-          (change.kind === "entity" &&
-            (areaEntities.has(change.targetId) || areaEntities.has(String(change.after.new_entity_id ?? "")))) ||
+          (change.kind === "entity" && (areaEntities.has(change.targetId) || areaEntities.has(String(change.after.new_entity_id ?? "")))) ||
           (change.kind === "device" && area.deviceIds.includes(change.targetId)) ||
           change.after.area_id === area.id ||
           change.before?.area_id === area.id,
       );
       const equipment: EquipmentCheck[] = [];
-      if (
-        choice?.profile === "bedroom" &&
-        (selected.has("night") || selected.has("climate")) &&
-        !areaChoice(inventory, area.id).bedroom
-      ) {
+      if (choice?.profile === "bedroom" && (selected.has("night") || selected.has("climate")) && !areaChoice(inventory, area.id).bedroom) {
         equipment.push({
           key: "bedroom_behavior",
           label: "Bedroom behavior in Capabilities",
@@ -279,23 +251,12 @@ export function assessHouse(
             "This guide profile is a bedroom. Mark the area as a bedroom in Capabilities before preparing sleep-sensitive lighting or climate. Changing guide goals does not overwrite your inventory choices.",
         });
       }
-      const equipmentFor = (
-        key: string,
-        label: string,
-        caps: Capability[],
-        required: boolean,
-        advice: string,
-        predicate?: (id: string) => boolean,
-      ) => {
-        const counted = caps
-          .flatMap((cap) => inv[cap])
-          .filter((row) => row.counts && (!predicate || predicate(row.entityId)));
+      const equipmentFor = (key: string, label: string, caps: Capability[], required: boolean, advice: string, predicate?: (id: string) => boolean) => {
+        const counted = caps.flatMap((cap) => inv[cap]).filter((row) => row.counts && (!predicate || predicate(row.entityId)));
         const healthy = counted.filter((row) => {
           const entity = h.entities[row.entityId];
           return (
-            known(entity.state) &&
-            (!["temperature", "humidity", "illuminance", "power"].includes(row.capability) ||
-              Number.isFinite(Number(entity.state)))
+            known(entity.state) && (!["temperature", "humidity", "illuminance", "power"].includes(row.capability) || Number.isFinite(Number(entity.state)))
           );
         });
         const existing = actual.filter((entity) => caps.includes(defaultCapability(entity) as Capability));
@@ -304,9 +265,7 @@ export function assessHouse(
           label,
           required,
           status: healthy.length ? "ready" : counted.length || existing.length ? "review" : "missing",
-          entityIds: [
-            ...new Set([...counted.map((row) => row.entityId), ...existing.map((entity) => entity.entityId)]),
-          ],
+          entityIds: [...new Set([...counted.map((row) => row.entityId), ...existing.map((entity) => entity.entityId)])],
           advice: healthy.length
             ? advice
             : existing.length
@@ -314,9 +273,7 @@ export function assessHouse(
               : advice,
         });
       };
-      const occupiedGoal = ["lighting", "night", "occupancy", "climate", "media"].some((goal) =>
-        selected.has(goal as GuideGoal),
-      );
+      const occupiedGoal = ["lighting", "night", "occupancy", "climate", "media"].some((goal) => selected.has(goal as GuideGoal));
       if (selected.has("lighting") || selected.has("night") || selected.has("exterior"))
         equipmentFor(
           "lights",
@@ -435,12 +392,7 @@ export function assessHouse(
       if (!choice) stage = "choose";
       else if (!choice.goals.length) stage = "unplanned";
       else if (equipment.some((check) => check.required && check.status !== "ready")) stage = "equipment";
-      else if (
-        neededHelpers.some(
-          (helper) =>
-            !helper.pending && (helper.row.status !== "in-place" || helper.row.actionable || !helper.available),
-        )
-      )
+      else if (neededHelpers.some((helper) => !helper.pending && (helper.row.status !== "in-place" || helper.row.actionable || !helper.available)))
         stage = "helpers";
       else if (neededHelpers.some((helper) => helper.pending) || pendingAreaChanges) stage = "changes";
       else if (installed === null) stage = "unread";
@@ -504,12 +456,8 @@ export function assessHouse(
         equipment,
         helpers: neededHelpers,
         recipes: neededRecipes,
-        switches: actual
-          .filter((entity) => entity.domain === "switch" || entity.domain === "button")
-          .map((entity) => entity.entityId),
-        unavailable: actual
-          .filter((entity) => !known(entity.state) && !entity.disabled && !entity.maintenance)
-          .map((entity) => entity.entityId),
+        switches: actual.filter((entity) => entity.domain === "switch" || entity.domain === "button").map((entity) => entity.entityId),
+        unavailable: actual.filter((entity) => !known(entity.state) && !entity.disabled && !entity.maintenance).map((entity) => entity.entityId),
         hasEntities: area.entityIds.some((id) => Boolean(h.entities[id])),
       };
     })

@@ -1,8 +1,16 @@
 import { Check, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
-import { HELPERS, HELPER_SUFFIX_RE, canonicalId, helperSuffixes, helperNamingErrors, sharedHelperNaming, defaultAggregationMarker } from "../../shared/helpers.ts";
+import {
+  HELPERS,
+  HELPER_SUFFIX_RE,
+  canonicalId,
+  helperSuffixes,
+  helperNamingErrors,
+  sharedHelperNaming,
+  defaultAggregationMarker,
+} from "../../shared/helpers.ts";
 import {
   DEFAULT_HOUSE_GROUP,
   DEFAULT_NAMING,
@@ -15,16 +23,24 @@ import {
   type NamingSettings,
   type NamingStatus,
 } from "../../shared/naming.ts";
-import { allIgnored, anyIgnored, fieldIgnored, hasSuggestion, ignoreSuggestions, namingFit, restoreSuggestions, type NamingField } from "../../shared/naming-ignores.ts";
-import { ROLE_ORDER } from "../../shared/roles.ts";
+import {
+  allIgnored,
+  anyIgnored,
+  fieldIgnored,
+  hasSuggestion,
+  ignoreSuggestions,
+  namingFit,
+  restoreSuggestions,
+  type NamingField,
+} from "../../shared/naming-ignores.ts";
+import { ROLE_ORDER, sectionsByRole } from "../../shared/roles.ts";
 import type { AreaNode, ChangeInput, EntityRole, Hierarchy } from "../../shared/types.ts";
-import { AiSection } from "./ai.tsx";
 import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis, type Route } from "./state.tsx";
-import { JevSection } from "./jev.tsx";
 import { useStoredFlag } from "./storage.ts";
-import { GroupToggle, GroupedRows, SortHeader, useSort } from "./table.tsx";
-import { Button, Field, inputClass } from "./ui.tsx";
+import { sortRows, type SortValue } from "../../shared/sort.ts";
+import { DataTable, GroupToggle, useSortState, type Column } from "./data-table.tsx";
+import { Button, Chip, EmptyState, Field, Section, Toolbar, inputClass } from "./ui.tsx";
 
 // Naming: the Settings panel (patterns, type words and helper names)
 // and an area's Naming tab (how its entities measure up, and suggestions).
@@ -36,13 +52,21 @@ const STATUS: Record<NamingStatus, { label: string; tone: string }> = {
   "no-area": { label: "No area in the id", tone: "text-muted" },
 };
 
-const TYPE_WORD_FIELDS = ROLE_ORDER.flatMap<{ role: keyof NamingSettings["typeWords"]; label: string }>(row => row.role === "opening" ? [{ role: "door" as const, label: "Door" }, { role: "window" as const, label: "Window" }] : [row]);
+const TYPE_WORD_FIELDS = ROLE_ORDER.flatMap<{ role: keyof NamingSettings["typeWords"]; label: string }>((row) =>
+  row.role === "opening"
+    ? [
+        { role: "door" as const, label: "Door" },
+        { role: "window" as const, label: "Window" },
+      ]
+    : [row],
+);
 
-export function SettingsPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
+// The General tab of Settings: the naming patterns, type words and helper names.
+export function GeneralSettings({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
   const { naming, namingLoaded } = useTaxis();
   // The form starts from the saved settings; before they arrive, saving would
   // write the defaults over them.
-  if (!namingLoaded) return <main className="flex-1 p-6 text-[13px] text-muted">Loading the naming settings…</main>;
+  if (!namingLoaded) return <p className="text-[13px] text-muted">Loading the naming settings…</p>;
   return <SettingsForm h={h} go={go} naming={naming} />;
 }
 
@@ -58,7 +82,12 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
   // Two areas with the same effective code (detected or set): area id -> the other areas' names.
   const clashes = useMemo(() => {
     const out = new Map<string, string[]>();
-    for (const ids of duplicateCodes(codes).values()) for (const id of ids) out.set(id, ids.filter((x) => x !== id).map((x) => h.areas[x]?.name ?? x));
+    for (const ids of duplicateCodes(codes).values())
+      for (const id of ids)
+        out.set(
+          id,
+          ids.filter((x) => x !== id).map((x) => h.areas[x]?.name ?? x),
+        );
     return out;
   }, [codes, h]);
   // Codes are edited in Parameters, but their uniqueness still gates a settings save.
@@ -87,40 +116,41 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
   };
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
-      <fieldset disabled={saving} className="contents">
-      <div className="mx-auto flex max-w-4xl flex-col gap-8">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold">Settings</h1>
-          <p className="max-w-[68ch] text-[13px] text-muted">
-            Naming and optional AI services. These settings live in Taxis; they don't change anything in Home Assistant. Each area's Naming tab uses the naming settings to measure its entities and suggest names.
-          </p>
-          <nav aria-label="Settings sections" className="mt-3 flex flex-wrap gap-2">
-            <Button onClick={() => document.getElementById("ai-settings")?.scrollIntoView({ block: "start" })}>AI models</Button>
-            <Button onClick={() => document.getElementById("jev-settings")?.scrollIntoView({ block: "start" })}>Jev decisions</Button>
-            <Button onClick={() => go({ page: "ai-admin" })}>AI administration</Button>
-          </nav>
-        </div>
+    <fieldset disabled={saving} className="contents">
+      <div className="flex min-w-0 flex-col gap-8">
+        <p className="max-w-[68ch] text-[13px] text-muted">
+          How entities and helpers are named. Each area's Naming tab uses these to measure its entities and suggest names. The optional AI services are under
+          the AI tab.
+        </p>
 
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold">Patterns</h2>
+        <Section title="Patterns">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Entity id" htmlFor="id-pattern" hint="Parts: {area} {type} {name}. Example: {area}_{type}_{name}">
-              <input id="id-pattern" className={`${inputClass} font-mono`} value={draft.idPattern} onChange={(e) => setDraft({ ...draft, idPattern: e.target.value })} />
+              <input
+                id="id-pattern"
+                className={`${inputClass} font-mono`}
+                value={draft.idPattern}
+                onChange={(e) => setDraft({ ...draft, idPattern: e.target.value })}
+              />
             </Field>
             <Field label="Display name" htmlFor="name-pattern" hint="Parts: {Area} {Name}. Example: {Area} {Name}">
-              <input id="name-pattern" className={`${inputClass} font-mono`} value={draft.namePattern} onChange={(e) => setDraft({ ...draft, namePattern: e.target.value })} />
+              <input
+                id="name-pattern"
+                className={`${inputClass} font-mono`}
+                value={draft.namePattern}
+                onChange={(e) => setDraft({ ...draft, namePattern: e.target.value })}
+              />
             </Field>
           </div>
           {preview && (
             <p className="text-xs text-muted">
-              For example <code className="font-mono">{preview.from}</code> → <code className="font-mono text-fg">{preview.id}</code>, shown as “<span className="text-fg">{preview.name}</span>”.
+              For example <code className="font-mono">{preview.from}</code> → <code className="font-mono text-fg">{preview.id}</code>, shown as “
+              <span className="text-fg">{preview.name}</span>”.
             </p>
           )}
-        </section>
+        </Section>
 
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold">House light group</h2>
+        <Section title="House light group">
           <div className="flex max-w-sm flex-col gap-1">
             <label htmlFor="house-group" className="text-xs font-medium text-muted">
               Light group of the whole house
@@ -147,13 +177,9 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
               </p>
             )}
           </div>
-        </section>
+        </Section>
 
-        <section className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <h2 className="text-sm font-semibold">Type words</h2>
-            <p className="text-xs text-muted">The {"{type}"} part of an entity id, for each kind of entity.</p>
-          </div>
+        <Section title="Type words" description={<>The {"{type}"} part of an entity id, for each kind of entity.</>}>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
             {TYPE_WORD_FIELDS.map((r) => (
               <label key={r.role} className="flex items-center gap-2 text-[13px]">
@@ -173,56 +199,84 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
               </label>
             ))}
           </div>
-        </section>
+        </Section>
 
-        <section className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <h2 className="text-sm font-semibold">Aggregation markers</h2>
-            <p className="text-xs text-muted">
-              Built from <code className="font-mono">{"<domain>.<area code>_<capability word>_<aggregation marker>"}</code>. Empty parts are omitted. Each combined name is used once.
-            </p>
-          </div>
+        <Section
+          title="Aggregation markers"
+          description={
+            <>
+              Built from <code className="font-mono">{"<domain>.<area code>_<capability word>_<aggregation marker>"}</code>. Empty parts are omitted. Each
+              combined name is used once.
+            </>
+          }
+        >
           <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
             {HELPERS.map((s) => {
               const error = helperErrors[s.key];
               return (
                 <div key={s.key} className="flex min-w-0 flex-col gap-1">
-                  <label className="text-xs font-medium text-muted" htmlFor={`aggregation-${s.key}`}>{s.label}</label>
-                  <input id={`aggregation-${s.key}`} aria-label={`Aggregation marker for ${s.label}`} className={`${inputClass} font-mono ${error ? "border-danger text-danger" : ""}`} value={draft.aggregationMarkers?.[s.key] ?? defaultAggregationMarker(s.key)} spellCheck={false} aria-invalid={error ? true : undefined} onChange={e => setDraft(current => ({ ...current, aggregationMarkers: { ...current.aggregationMarkers, [s.key]: e.target.value } }))} />
+                  <label className="text-xs font-medium text-muted" htmlFor={`aggregation-${s.key}`}>
+                    {s.label}
+                  </label>
+                  <input
+                    id={`aggregation-${s.key}`}
+                    aria-label={`Aggregation marker for ${s.label}`}
+                    className={`${inputClass} font-mono ${error ? "border-danger text-danger" : ""}`}
+                    value={draft.aggregationMarkers?.[s.key] ?? defaultAggregationMarker(s.key)}
+                    spellCheck={false}
+                    aria-invalid={error ? true : undefined}
+                    onChange={(e) => setDraft((current) => ({ ...current, aggregationMarkers: { ...current.aggregationMarkers, [s.key]: e.target.value } }))}
+                  />
                   {error ? (
                     <p role="alert" className="text-[11px] text-danger">
                       {error}
                     </p>
                   ) : (
-                    firstArea && <p className="break-all font-mono text-[11px] text-muted">{canonicalId(s.domain, codes[firstArea.id].code, suffixes[s.key])}</p>
+                    firstArea && (
+                      <p className="break-all font-mono text-[11px] text-muted">{canonicalId(s.domain, codes[firstArea.id].code, suffixes[s.key])}</p>
+                    )
                   )}
                 </div>
               );
             })}
           </div>
-          <p className="text-xs text-muted">Capability names come from Type words above. These markers name the helpers; they do not change group logic or averaging. Saving adopts these generated helper names in Taxis; existing HA entities stay unchanged until you review and apply changes.</p>
-        </section>
+          <p className="text-xs text-muted">
+            Capability names come from Type words above. These markers name the helpers; they do not change group logic or averaging. Saving adopts these
+            generated helper names in Taxis; existing HA entities stay unchanged until you review and apply changes.
+          </p>
+        </Section>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
-          <Button tone="primary" disabled={saving || clashes.size > 0 || floorClashes.size > 0 || Object.keys(helperErrors).length > 0 || houseGroupError !== null} onClick={() => void save()}>
+          <Button
+            tone="primary"
+            disabled={saving || clashes.size > 0 || floorClashes.size > 0 || Object.keys(helperErrors).length > 0 || houseGroupError !== null}
+            onClick={() => void save()}
+          >
             Save settings
           </Button>
           <Button tone="ghost" onClick={() => setDraft(sharedHelperNaming(naming))}>
             Undo changes
           </Button>
-          <Button tone="ghost" onClick={() => setDraft({ ...sharedHelperNaming(structuredClone(DEFAULT_NAMING)), areaCodes: draft.areaCodes, floorCodes: draft.floorCodes })}>
+          <Button
+            tone="ghost"
+            onClick={() => setDraft({ ...sharedHelperNaming(structuredClone(DEFAULT_NAMING)), areaCodes: draft.areaCodes, floorCodes: draft.floorCodes })}
+          >
             Back to defaults
           </Button>
           {clashes.size > 0 && (
             <span role="alert" className="text-xs text-danger">
               Two areas share a code. Give each area its own before saving.{" "}
-              <button type="button" className="underline" onClick={() => go({ page: "parameters", tab: "area-codes" })}>Edit area codes in Parameters</button>
+              <button type="button" className="underline" onClick={() => go({ page: "parameters", tab: "area-codes" })}>
+                Edit area codes in Parameters
+              </button>
             </span>
           )}
           {floorClashes.size > 0 && (
             <span role="alert" className="text-xs text-danger">
               Two floors share a code. Give each floor its own before saving.{" "}
-              <button type="button" className="underline" onClick={() => go({ page: "parameters", tab: "area-codes" })}>Edit floor codes in Parameters</button>
+              <button type="button" className="underline" onClick={() => go({ page: "parameters", tab: "area-codes" })}>
+                Edit floor codes in Parameters
+              </button>
             </span>
           )}
           {error && (
@@ -231,15 +285,9 @@ function SettingsForm({ h, go, naming }: { h: Hierarchy; go: (r: Route) => void;
             </span>
           )}
         </div>
-        <p className="text-xs text-muted">
-          Renaming an id also updates the automations, scripts, scenes and dashboards that use it, when you apply.
-        </p>
-
-        <AiSection />
-        <JevSection />
+        <p className="text-xs text-muted">Renaming an id also updates the automations, scripts, scenes and dashboards that use it, when you apply.</p>
       </div>
-      </fieldset>
-    </main>
+    </fieldset>
   );
 }
 
@@ -274,7 +322,9 @@ function SuggestionField({
 }) {
   const button = "rounded p-0.5 disabled:cursor-not-allowed disabled:opacity-50";
   return (
-    <div className={`flex min-w-0 max-w-full flex-wrap items-center gap-1 rounded-md border border-line bg-bg pr-1 focus-within:border-accent ${state === "accepted" ? "border-on! bg-ok-soft!" : ""}`}>
+    <div
+      className={`flex min-w-0 max-w-full flex-wrap items-center gap-1 rounded-md border border-line bg-bg pr-1 focus-within:border-accent ${state === "accepted" ? "border-on! bg-ok-soft!" : ""}`}
+    >
       <input
         aria-label={`New ${kind} for ${entity}`}
         className={`${inputClass} min-w-0 max-w-full flex-1 basis-32 border-0! bg-transparent! ${mono ? "font-mono" : ""} ${state === "ignored" ? "text-muted opacity-60" : ""}`}
@@ -329,25 +379,46 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
   const open = (r: NamingRow) => hasSuggestion(r) && !allIgnored(r, namingIgnores);
   const ignoredRows = analysis.rows.filter((r) => anyIgnored(r, namingIgnores));
   const fit = namingFit(analysis, namingIgnores);
-  const filtered = analysis.rows.filter((r) => (filter === "all" ? true : filter === "suggested" ? open(r) : filter === "ignored" ? anyIgnored(r, namingIgnores) : r.status === filter));
-  const sortColumns = useMemo(
-    () => ({
-      name: (r: NamingRow) => r.name,
-      id: (r: NamingRow) => r.entityId,
-      suggestedName: (r: NamingRow) => (fieldIgnored(r, namingIgnores, "name") ? null : r.suggestedName),
-      suggestedId: (r: NamingRow) => (fieldIgnored(r, namingIgnores, "id") ? null : r.suggestedId),
-    }),
-    [namingIgnores],
+  const filtered = useMemo(
+    () =>
+      analysis.rows.filter((r) =>
+        filter === "all"
+          ? true
+          : filter === "suggested"
+            ? hasSuggestion(r) && !allIgnored(r, namingIgnores)
+            : filter === "ignored"
+              ? anyIgnored(r, namingIgnores)
+              : r.status === filter,
+      ),
+    [analysis, filter, namingIgnores],
   );
-  const { rows, sort, toggle: toggleSort } = useSort(filtered, sortColumns, { key: "name", dir: "asc" });
-  const roleOf = useCallback((r: NamingRow): EntityRole => h.entities[r.entityId]?.role ?? "other", [h]);
+  const { sort, toggle: toggleSort } = useSortState({ key: "name", dir: "asc" });
+  const roleOf = (r: NamingRow): EntityRole => h.entities[r.entityId]?.role ?? "other";
+  // The page orders the rows: sorted by the chosen column, and with "Group by
+  // type" on, gathered into the kinds of entity (each kept in that order).
+  const { rows, sections } = useMemo(() => {
+    const get: Record<string, (r: NamingRow) => SortValue> = {
+      name: (r) => r.name,
+      id: (r) => r.entityId,
+      suggestedName: (r) => (fieldIgnored(r, namingIgnores, "name") ? null : r.suggestedName),
+      suggestedId: (r) => (fieldIgnored(r, namingIgnores, "id") ? null : r.suggestedId),
+    };
+    const sorted = sortRows(filtered, get[sort.key] ?? get.name, sort.dir);
+    if (!grouped) return { rows: sorted, sections: new Map<string, { key: string; label: string }>() };
+    const by = sectionsByRole(sorted, roleOf);
+    const labels = new Map<string, { key: string; label: string }>();
+    for (const sec of by) for (const r of sec.rows) labels.set(r.entityId, { key: sec.role, label: sec.label });
+    return { rows: by.flatMap((sec) => sec.rows), sections: labels };
+    // roleOf reads h: the rows only change with the hierarchy.
+  }, [filtered, sort, grouped, namingIgnores, h]);
   const nameFor = (id: string, fallback: string | null) => names[id] ?? fallback ?? "";
   const idFor = (id: string, fallback: string | null) => ids[id] ?? fallback ?? "";
   const ignoreLocked = !namingIgnoresLoaded || namingIgnoresSaving;
   // The server refuses another domain, so an id is valid only in the entity's own.
   const idValid = (entityId: string, v: string) => ENTITY_ID_RE.test(v) && v.split(".")[0] === entityId.split(".")[0];
 
-  const stateOf = (r: NamingRow, field: NamingField): FieldState => (fieldIgnored(r, namingIgnores, field) ? "ignored" : accepted[r.entityId]?.[field] ? "accepted" : "neutral");
+  const stateOf = (r: NamingRow, field: NamingField): FieldState =>
+    fieldIgnored(r, namingIgnores, field) ? "ignored" : accepted[r.entityId]?.[field] ? "accepted" : "neutral";
   const setAcceptedField = (entityId: string, field: NamingField, on: boolean) =>
     setAccepted((a) => {
       if ((a[entityId]?.[field] ?? false) === on) return a;
@@ -417,7 +488,9 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
         done.push("id");
       }
     }
-    return done.length > 0 ? [{ entityId: r.entityId, done, input: { kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields } satisfies ChangeInput }] : [];
+    return done.length > 0
+      ? [{ entityId: r.entityId, done, input: { kind: "entity" as const, op: "update" as const, targetId: r.entityId, fields } satisfies ChangeInput }]
+      : [];
   });
   const pendingCount = pending.reduce((n, p) => n + p.done.length, 0);
 
@@ -434,69 +507,112 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
       }
       return n;
     });
-    setNames((n) => omit(n, pending.filter((p) => p.done.includes("name")).map((p) => p.entityId)));
-    setIds((n) => omit(n, pending.filter((p) => p.done.includes("id")).map((p) => p.entityId)));
-  };
-
-  if (total === 0) return <p className="text-[13px] text-muted">No entities in this area to check.</p>;
-
-  const renderRow = (r: NamingRow) => {
-    const st = STATUS[r.status];
-    const other = r.otherAreaId ? h.areas[r.otherAreaId]?.name : null;
-    return (
-      <tr key={r.entityId} className="border-t border-line align-top">
-        <td className="px-3 py-1.5">
-          <div>{r.name}</div>
-          <div className={`text-[11px] ${st.tone}`}>
-            {st.label}
-            {r.status === "old-prefix" && r.foundPrefix && ` (${r.foundPrefix})`}
-            {other && ` (${other})`}
-          </div>
-        </td>
-        <td className="px-3 py-1.5 font-mono text-xs">{r.entityId}</td>
-        <td className="min-w-[12rem] px-3 py-1.5">
-          {r.suggestedName !== null && r.editable ? (
-            <SuggestionField
-              kind="name"
-              entity={r.name}
-              state={stateOf(r, "name")}
-              value={nameFor(r.entityId, r.suggestedName)}
-              locked={ignoreLocked}
-              onChange={(v) => {
-                setNames((n) => ({ ...n, [r.entityId]: v }));
-                setAcceptedField(r.entityId, "name", true);
-              }}
-              onAccept={() => void onAccept(r, "name")}
-              onIgnore={() => void onIgnore(r, "name")}
-            />
-          ) : (
-            <span className="text-xs text-muted">{r.editable ? "fits" : "can't be renamed (no unique id)"}</span>
-          )}
-        </td>
-        <td className="min-w-[14rem] px-3 py-1.5 font-mono text-xs">
-          {r.suggestedId && r.editable ? (
-            <SuggestionField
-              kind="id"
-              entity={r.name}
-              mono
-              state={stateOf(r, "id")}
-              value={idFor(r.entityId, r.suggestedId)}
-              invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
-              locked={ignoreLocked}
-              onChange={(v) => {
-                setIds((n) => ({ ...n, [r.entityId]: v }));
-                setAcceptedField(r.entityId, "id", true);
-              }}
-              onAccept={() => void onAccept(r, "id")}
-              onIgnore={() => void onIgnore(r, "id")}
-            />
-          ) : (
-            <span className="font-sans text-muted">{r.suggestedId ? "can't be renamed" : "fits"}</span>
-          )}
-        </td>
-      </tr>
+    setNames((n) =>
+      omit(
+        n,
+        pending.filter((p) => p.done.includes("name")).map((p) => p.entityId),
+      ),
+    );
+    setIds((n) =>
+      omit(
+        n,
+        pending.filter((p) => p.done.includes("id")).map((p) => p.entityId),
+      ),
     );
   };
+
+  if (total === 0) return <EmptyState>No entities in this area to check.</EmptyState>;
+
+  const nameField = (r: NamingRow) =>
+    r.suggestedName !== null && r.editable ? (
+      <SuggestionField
+        kind="name"
+        entity={r.name}
+        state={stateOf(r, "name")}
+        value={nameFor(r.entityId, r.suggestedName)}
+        locked={ignoreLocked}
+        onChange={(v) => {
+          setNames((n) => ({ ...n, [r.entityId]: v }));
+          setAcceptedField(r.entityId, "name", true);
+        }}
+        onAccept={() => void onAccept(r, "name")}
+        onIgnore={() => void onIgnore(r, "name")}
+      />
+    ) : (
+      <span className="text-xs text-muted">{r.editable ? "fits" : "can't be renamed (no unique id)"}</span>
+    );
+  const idField = (r: NamingRow) =>
+    r.suggestedId && r.editable ? (
+      <SuggestionField
+        kind="id"
+        entity={r.name}
+        mono
+        state={stateOf(r, "id")}
+        value={idFor(r.entityId, r.suggestedId)}
+        invalid={!idValid(r.entityId, idFor(r.entityId, r.suggestedId).trim())}
+        locked={ignoreLocked}
+        onChange={(v) => {
+          setIds((n) => ({ ...n, [r.entityId]: v }));
+          setAcceptedField(r.entityId, "id", true);
+        }}
+        onAccept={() => void onAccept(r, "id")}
+        onIgnore={() => void onIgnore(r, "id")}
+      />
+    ) : (
+      <span className="text-xs text-muted">{r.suggestedId ? "can't be renamed" : "fits"}</span>
+    );
+  const columns: Column<NamingRow>[] = [
+    {
+      id: "name",
+      header: "Entity",
+      priority: 1,
+      sticky: true,
+      minWidth: 170,
+      sort: (r) => r.name,
+      text: (r) => r.name,
+      cell: (r) => {
+        const st = STATUS[r.status];
+        const other = r.otherAreaId ? h.areas[r.otherAreaId]?.name : null;
+        return (
+          <>
+            <div>{r.name}</div>
+            <div className={`text-[11px] ${st.tone}`}>
+              {st.label}
+              {r.status === "old-prefix" && r.foundPrefix && ` (${r.foundPrefix})`}
+              {other && ` (${other})`}
+            </div>
+          </>
+        );
+      },
+    },
+    {
+      id: "id",
+      header: "Id",
+      priority: 3,
+      minWidth: 150,
+      maxWidth: 260,
+      truncate: true,
+      sort: (r) => r.entityId,
+      text: (r) => r.entityId,
+      cell: (r) => <code className="font-mono text-xs">{r.entityId}</code>,
+    },
+    {
+      id: "suggestedName",
+      header: "Suggested name",
+      priority: 1,
+      minWidth: 200,
+      sort: (r) => (fieldIgnored(r, namingIgnores, "name") ? null : r.suggestedName),
+      cell: nameField,
+    },
+    {
+      id: "suggestedId",
+      header: "Suggested id",
+      priority: 2,
+      minWidth: 220,
+      sort: (r) => (fieldIgnored(r, namingIgnores, "id") ? null : r.suggestedId),
+      cell: idField,
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-4">
@@ -518,8 +634,8 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div role="group" aria-label="Show" className="flex flex-wrap gap-1 text-xs">
+      <Toolbar>
+        <div role="group" aria-label="Show" className="flex flex-wrap gap-1">
           {(
             [
               ["all", `All ${total}`],
@@ -528,29 +644,25 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
               ["ignored", `Ignored ${ignoredRows.length}`],
             ] as [typeof filter, string][]
           ).map(([v, l]) => (
-            <button key={v} type="button" aria-pressed={filter === v} onClick={() => setFilter(v)} className={`rounded-md border px-2 py-1 ${filter === v ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}>
+            <Chip key={v} pressed={filter === v} onClick={() => setFilter(v)}>
               {l}
-            </button>
+            </Chip>
           ))}
         </div>
         <GroupToggle on={grouped} onChange={setGrouped} />
-      </div>
+      </Toolbar>
 
-      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-        <table className="w-full text-[13px]">
-          <thead className="bg-sunken text-left text-xs text-muted">
-            <tr>
-              <SortHeader label="Entity" k="name" sort={sort} onToggle={toggleSort} />
-              <SortHeader label="Id" k="id" sort={sort} onToggle={toggleSort} />
-              <SortHeader label="Suggested name" k="suggestedName" sort={sort} onToggle={toggleSort} />
-              <SortHeader label="Suggested id" k="suggestedId" sort={sort} onToggle={toggleSort} />
-            </tr>
-          </thead>
-          <tbody>
-            <GroupedRows rows={rows} grouped={grouped} roleOf={roleOf} colSpan={4} row={renderRow} />
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        id="area-naming"
+        label="Entity naming"
+        rows={rows}
+        rowKey={(r) => r.entityId}
+        columns={columns}
+        sort={sort}
+        onSort={toggleSort}
+        groupOf={grouped ? (r) => sections.get(r.entityId) ?? null : undefined}
+        empty={<EmptyState>No entities match this filter.</EmptyState>}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <Button disabled={nameCount === 0} onClick={() => acceptAll("name")}>
@@ -565,8 +677,8 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
           </Button>
         )}
         <span className="text-xs text-muted">
-          Tick a suggestion to accept it, cross it to ignore it. For an entity of a device, Home Assistant may still put the device's name in front of the name you set. The preview shows what you
-          set; after Apply, Taxis shows what Home Assistant settles on.
+          Tick a suggestion to accept it, cross it to ignore it. For an entity of a device, Home Assistant may still put the device's name in front of the name
+          you set. The preview shows what you set; after Apply, Taxis shows what Home Assistant settles on.
         </span>
       </div>
     </div>

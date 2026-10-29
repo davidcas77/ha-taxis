@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.7.6
+
+A UI release: one table engine, one set of page building blocks, a Guide that leads
+the way, and a leaner navigation. Nothing written to Home Assistant has changed.
+
+- **One table everywhere.** Every data table (Organize, Devices & entities, the
+  area tabs, Parameters, Helpers, Health, Recipes, Buttons, Settings → AI) is now one
+  component. It scrolls inside its own card and never makes the page scroll
+  sideways (Devices & entities used to push the whole page 150–200 px wide). Columns
+  that don't fit hide, least important first, and an arrow at the start of the row
+  opens their values; a **Columns** menu shows or hides any column and is
+  remembered per table in this browser. Entity ids end in an ellipsis with the full
+  id in a tooltip, not broken mid-word. The header and the first column stay in
+  view while scrolling. The Capabilities and Helpers matrices have short headers with
+  an icon and the full name in a tooltip, compact cells and a sticky Area column;
+  Lighting, Bathroom fan and Safety have grouped headers and show their most used
+  columns first.
+  Dragging a column's edge to resize it is gone (the Columns menu replaces it);
+  **Reset layout** in Organize also resets the column choices.
+- **Navigation.** Guide · Areas · Organize · **Automations** (Recipes and Buttons
+  as tabs) · Parameters · Health · Changes, with **Settings** at the right and the
+  AI administration as a tab inside it. Every item has its own icon. The header is
+  one scrolling row on a phone. Old links keep working: `#recipes`, `#buttons`,
+  `#ai-admin`, `#ai` and `#parameters/recipes` redirect to the new places, and an
+  empty or unknown link opens the Guide (`#ai` used to open Areas).
+- **The Guide leads the way.** It is the home page and opens with **Your path**:
+  areas, entities in an area, naming, capabilities, helpers, parameters, recipes,
+  buttons, Health, each with a status worked out from what Taxis has read (for
+  example "38/46 match", "12 to create", "6 controls, 4 press types without an
+  action", "3 errors"), a button to the exact place, a progress bar and a **Next
+  step** card. The room-by-room guide is below it, unchanged.
+- **Recipes show what fits.** Each area lists only the recipes that can apply to it
+  (interior or exterior, a bedroom, a bathroom-like room for the fan, power sensors
+  for Appliance done, ...), with **Show all recipes** to see the rest, so "Missing
+  requirements" now means something.
+- **Buttons: one table per control.** Rows are buttons, columns are the control's
+  press types, and each cell shows the automations that handle it or a faint "+" to
+  assign. The repeated "no readable automation matched" blocks are one collapsible
+  line. Press types keep the integration's own spelling ("Double press", not
+  "Double Press").
+- **One wording.** **Add to changes**, **Apply** and **Discard** everywhere (no more
+  "Queue" or "queued").
+- **Faster edits.** The app's data, settings and notices are separate, so a toast
+  no longer redraws every page; a bulk edit sends one request
+  (`POST /api/changes/batch`, up to 500, all-or-nothing: if one edit is refused,
+  none is added) instead of one per change; area codes, helper rows and sorting no
+  longer redo their work on every keystroke or comparison.
+- Internal: shared page primitives (`PageHeader`, `Section`, `Card`, `Badge` with
+  one status colour map, `EmptyState`, `Toolbar`, `Tabs`, ...), pure and tested
+  rules for column fit, recipe fit, the button matrix, the Guide path and the
+  routes, `useSavedSetting`'s save logic, and the removal of the old column-resize
+  machinery and unused code. The `scripts/*-browser.py` scenarios were updated for
+  the new markup (no fixed paths any more, shared setup in `scripts/browser_common.py`),
+  and `scripts/ui-engine-browser.py` checks every page at 1280 and 375 px: no page
+  scrolls sideways, tables scroll inside their card, old links redirect.
+
 ## 0.7.5
 
 - **Faster Apply on big installs.** Apply used to read the whole of Home Assistant

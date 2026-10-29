@@ -9,8 +9,8 @@ from pathlib import Path
 import re
 import unittest
 from playwright.sync_api import sync_playwright, expect
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:5173")
 MODE_KEY = "taxis:devices-entities:mode:v2"
 
 
@@ -18,7 +18,7 @@ class DeviceViews(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.playwright = sync_playwright().start()
-        cls.browser = cls.playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), headless=True, args=["--no-sandbox"])
+        cls.browser = launch(cls.playwright)
 
     @classmethod
     def tearDownClass(cls):
@@ -74,7 +74,9 @@ class DeviceViews(unittest.TestCase):
         entity = self.page.locator('tr[data-entity-id="' + entity_id + '"]')
         expect(entity.get_by_role("checkbox")).to_be_checked()
         expect(entity.get_by_role("button", name=re.compile("^Open "))).to_be_visible()
-        self.assertGreater(self.page.get_by_role("separator", name="Resize name column", exact=True).count(), 0)
+        # Column widths are no longer dragged; the table's Columns menu shows and hides columns.
+        self.assertEqual(self.page.get_by_role("separator", name=re.compile(r"^Resize .* column")).count(), 0)
+        expect(self.page.get_by_role("button", name=re.compile(r"^Columns of "))).to_have_count(1)
         self.mode("Devices")
         expect(self.page.locator('tr[data-device-child="true"]').first).to_be_visible()
         expect(search).to_have_value(entity_id)
@@ -107,7 +109,7 @@ class DeviceViews(unittest.TestCase):
             else:
                 self.assertGreater(self.page.locator('tr[data-entity-id]').count(), 0)
                 expect(self.page.locator('tr[data-branch]')).to_have_count(0)
-            output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "/workspace/.cache/ha-taxis/inspection"))
+            output = screenshot_dir()
             output.mkdir(parents=True, exist_ok=True)
             self.page.screenshot(path=str(output / ("view-mode-" + name.lower() + ".png")))
 

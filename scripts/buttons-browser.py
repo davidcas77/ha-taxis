@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 import unittest
+from playwright.sync_api import expect
 import urllib.request
 
 spec = importlib.util.spec_from_file_location('guide_fixture', Path(__file__).with_name('guide-browser.py'))
@@ -79,29 +80,37 @@ class ButtonsRegression(fixture.GuideRegression):
         self.page.route('**/api/buttons/*/ai-review', ai_review)
 
     def open_control(self, id='demo_wall_buttons'):
-        self.page.goto(fixture.BASE + '/#buttons/' + 'device%3A' + id, wait_until='networkidle')
-        self.page.get_by_role('heading', name='Buttons', exact=True).wait_for()
+        self.page.goto(fixture.BASE + '/#automations/buttons/' + 'device%3A' + id, wait_until='networkidle')
+        self.assertEqual(self.page.get_by_role('tab', name='Buttons', exact=True).get_attribute('aria-selected'), 'true')
         c = next(c for c in self.inv['controls'] if c['deviceId'] == id)
         self.page.get_by_role('heading', name=c['name'], exact=True).wait_for()
 
-    def row(self, button='Right', gesture='Short Press', source='aqara device trigger'):
-        return self.page.get_by_role('region', name='Button ' + button, exact=True).get_by_role('group', name=gesture + ' · ' + source, exact=True)
+    def table(self, control='Bedroom wall control'):
+        # One table per control: a row for each button, a column for each press type.
+        return self.page.get_by_role('table', name='Buttons of ' + control, exact=True)
+
+    def row(self, button='Right', gesture='Short press', source='aqara device trigger', control='Bedroom wall control'):
+        """The cell of one button and press type: its assignments, the handlers that exist, and the +."""
+        line = self.table(control).locator('tbody tr').filter(has=self.page.get_by_text(button, exact=True))
+        return line.get_by_role('group', name=gesture + ' · ' + source, exact=True)
 
     def editor(self, row, target='light.living_all', service='light.toggle'):
-        row.get_by_role('button', name='Assign action', exact=True).click()
-        form = row.get_by_role('form')
+        row.get_by_role('button', name=re.compile(r'^Assign action to ')).click()
+        form = self.page.get_by_role('form', name=re.compile(r'^Assign '))
         form.get_by_label('Button action target', exact=True).select_option(target)
         form.get_by_label('Button action service', exact=True).select_option(service)
         return form
 
     def save(self, form):
         form.get_by_role('button', name='Add to changes', exact=True).click()
-        self.page.get_by_role('status').filter(has_text='Button mapping queued').wait_for()
+        self.page.get_by_role('status').filter(has_text='Button mapping added to changes').first.wait_for()
+        # An earlier notice can still be on screen; the form closing is what says this one went in.
+        expect(form).to_have_count(0)
 
     def test_buttons_across_integrations_and_combined_presses_are_visible_without_writes(self):
         self.open_control()
-        self.assertTrue(self.page.get_by_role('region', name='Button Both', exact=True).is_visible())
-        for label in ['Short Press', 'Double Press', 'Long Press']:
+        self.assertTrue(self.table().locator('tbody tr').filter(has=self.page.get_by_text('Both', exact=True)).is_visible())
+        for label in ['Short press', 'Double press', 'Long press']:
             self.assertTrue(self.row(gesture=label).is_visible())
         sidebar = self.page.get_by_role('complementary', name='Button controls')
         for label in ['Six-button remote', 'Matter bedside button', 'Bedroom wall control']:
@@ -110,7 +119,7 @@ class ButtonsRegression(fixture.GuideRegression):
 
     def test_buttons_three_inputs_share_one_group_map_with_on_off_toggle(self):
         self.open_control()
-        for gesture, service in [('Short Press', 'light.turn_on'), ('Double Press', 'light.turn_off'), ('Long Press', 'light.toggle')]:
+        for gesture, service in [('Short press', 'light.turn_on'), ('Double press', 'light.turn_off'), ('Long press', 'light.toggle')]:
             self.save(self.editor(self.row(gesture=gesture), service=service))
         self.assertEqual(len(self.queued), 1)
         mappings = self.queued[0]['after']['button_map']['bindings']
@@ -122,7 +131,7 @@ class ButtonsRegression(fixture.GuideRegression):
         self.open_control()
         self.save(self.editor(self.row()))
         self.page.get_by_role('complementary', name='Button controls').get_by_role('button', name=re.compile('^Six-button remote')).click()
-        self.save(self.editor(self.row(button='1', source='mqtt device trigger')))
+        self.save(self.editor(self.row(button='2', source='mqtt device trigger', control='Six-button remote')))
         self.page.get_by_role('button', name='By output', exact=True).click()
         self.page.get_by_role('complementary', name='Button controls').get_by_role('button', name=re.compile('light.living_all')).click()
         table = self.page.get_by_role('table', name='Buttons controlling output')
@@ -144,8 +153,8 @@ class ButtonsRegression(fixture.GuideRegression):
         self.open_control()
         row = self.row()
         self.save(self.editor(row))
-        row.get_by_role('button', name='Edit assignment', exact=True).click()
-        form = row.get_by_role('form')
+        row.get_by_role('button', name=re.compile(r'^Edit assignment of ')).click()
+        form = self.page.get_by_role('form', name=re.compile(r'^Assign '))
         form.get_by_label('Button action service').select_option('light.turn_off')
         form.get_by_role('checkbox', name='Enable this assignment after Apply').uncheck()
         self.save(form)
@@ -159,7 +168,7 @@ class ButtonsRegression(fixture.GuideRegression):
         form.get_by_label('Button action data').fill('{"variables":{"room":"bedroom"}}')
         self.save(form)
         self.assertEqual(self.queue_calls[0]['action']['data'], {'variables': {'room': 'bedroom'}})
-        form = self.editor(self.row(gesture='Double Press'), target='', service='persistent_notification.create')
+        form = self.editor(self.row(gesture='Double press'), target='', service='persistent_notification.create')
         self.assertNotIn('light.turn_on', form.get_by_label('Button action service').inner_text())
         self.save(form)
         self.assertEqual(len(self.queued), 2)
@@ -186,7 +195,7 @@ class ButtonsRegression(fixture.GuideRegression):
     def test_buttons_missing_metadata_is_explicit_and_does_not_invent_clicks(self):
         self.open_control('unknown')
         self.assertIn('HA did not expose button gestures', self.page.get_by_role('main').inner_text())
-        self.assertEqual(self.page.get_by_role('button', name='Assign action', exact=True).count(), 0)
+        self.assertEqual(self.page.get_by_role('button', name=re.compile(r'^Assign action')).count(), 0)
 
     def test_buttons_ai_is_manual_and_has_a_reviewable_payload(self):
         self.open_control()
@@ -206,7 +215,7 @@ class ButtonsRegression(fixture.GuideRegression):
         self.page.get_by_role('button', name='Review changes', exact=True).click()
         self.page.get_by_role('heading', name='Changes', exact=True).wait_for()
         self.assertIn('button automation', self.page.get_by_role('main').inner_text())
-        self.assertIn('Short Press', self.page.get_by_role('main').inner_text())
+        self.assertIn('Short press', self.page.get_by_role('main').inner_text())
         self.assertIn('light.toggle', self.page.get_by_role('main').inner_text())
         self.assertNotIn('recipe for undefined', self.page.get_by_role('main').inner_text())
 

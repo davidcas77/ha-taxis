@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { buttonTargetDomains, defaultButtonService, domainAllowsService, offeredButtonServices } from "../../shared/button-actions.ts";
+import { buttonMatrix, type MatrixCell } from "../../shared/button-matrix.ts";
 import {
   buttonOutput,
   validButtonAction,
@@ -13,11 +15,20 @@ import {
 } from "../../shared/buttons.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
+import { DataTable, type Column } from "./data-table.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { confirmDraftNavigation, useDraftGuard } from "./draft-guard.ts";
-import { Button, inputClass } from "./ui.tsx";
+import { Badge, Button, Card, Chip, EmptyState, inputClass, Toolbar } from "./ui.tsx";
 
-export function ButtonsPage({ h, controlId, go }: { h: Hierarchy; controlId: string | null; go: (r: Route) => void }) {
+// What a Taxis assignment is, as the pages below hold it.
+type Binding = ButtonMapping & { queued: boolean; output: string; automationId: string; blocked: string | null };
+type Editing = { key: string; action: ButtonAction | null; enabled: boolean };
+
+const haAutomation = (id: string) => `/config/automation/edit/${encodeURIComponent(id)}`;
+
+// The Buttons tab of the Automations page: the controls on the left, and for the
+// one picked, its buttons by press types. Content only; the page supplies the header.
+export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: string | null; go: (r: Route) => void }) {
   const { changes, reload, notify } = useTaxis();
   const [data, setData] = useState<{ inventory: ButtonInventory; fingerprint: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +38,7 @@ export function ButtonsPage({ h, controlId, go }: { h: Hierarchy; controlId: str
   const [mode, setMode] = useState<"controls" | "targets">("controls");
   const [output, setOutput] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const [editing, setEditing] = useState<{ key: string; action: ButtonAction | null; enabled: boolean } | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
   const [submitting, setSubmitting] = useState(false);
   useEffect(() => {
     let stale = false;
@@ -47,7 +58,7 @@ export function ButtonsPage({ h, controlId, go }: { h: Hierarchy; controlId: str
   const maps = new Map((data?.inventory.managed ?? []).map((m) => [m.id, { map: m.map, queued: false, blocked: m.blocked }]));
   for (const c of changes)
     if (c.kind === "automation" && validButtonMap(c.after.button_map)) maps.set(c.targetId, { map: c.after.button_map, queued: true, blocked: [] });
-  const bindings = [...maps.entries()].flatMap(([automationId, m]) =>
+  const bindings: Binding[] = [...maps.entries()].flatMap(([automationId, m]) =>
     m.map.bindings.map((b) => ({
       ...b,
       queued: m.queued,
@@ -66,54 +77,50 @@ export function ButtonsPage({ h, controlId, go }: { h: Hierarchy; controlId: str
       (all || potentials(c)) &&
       `${c.name} ${c.model} ${c.integrations.join(" ")} ${h.areas[c.areaId ?? ""]?.name ?? ""}`.toLowerCase().includes(query.toLowerCase()),
   );
-  const queued = async () => {
+  const added = async () => {
     await reload(false);
-    notify({ tone: "ok", text: "Button mapping queued. Review Changes, then Apply to enable it in Home Assistant." });
+    notify({ tone: "ok", text: "Button mapping added to changes. Review Changes, then Apply to enable it in Home Assistant." });
   };
+  const selectControl = (id: string | null) => go({ page: "automations", tab: "buttons", controlId: id });
   return (
-    <main className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b border-line px-4 py-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl font-semibold">Buttons</h1>
-          <Button disabled={loading || submitting} onClick={() => setRefresh((v) => v + 1)}>
-            {loading ? "Reading buttons…" : "Refresh buttons and automations"}
-          </Button>
-          <Button onClick={() => go({ page: "changes" })}>Review changes</Button>
-        </div>
-        <p className="mt-2 text-sm text-muted">
-          Every remote, wall control and HA button input. One automation per light, group or other output combines its assigned buttons; each gesture can run
+    <div className="flex min-w-0 flex-col gap-3">
+      <Toolbar label="Buttons actions">
+        <p className="min-w-[16rem] flex-1 text-[13px] text-muted">
+          Every remote, wall control and HA button input. One automation per light, group or other output combines its assigned buttons; each press type can run
           its own action. Nothing changes in HA until Apply.
         </p>
-      </header>
+        <Button disabled={loading || submitting} onClick={() => setRefresh((v) => v + 1)}>
+          {loading ? "Reading buttons…" : "Refresh buttons and automations"}
+        </Button>
+        <Button onClick={() => go({ page: "changes" })}>Review changes</Button>
+      </Toolbar>
       {error && (
-        <p role="alert" className="px-4 py-2 text-sm text-danger">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-start">
         <aside
           aria-label="Button controls"
-          className="max-h-[35vh] shrink-0 overflow-auto border-b border-line bg-surface p-3 md:max-h-none md:w-72 md:border-r md:border-b-0"
+          className="max-h-[35vh] shrink-0 overflow-auto rounded-lg border border-line bg-surface p-3 md:max-h-[75vh] md:w-72"
         >
-          <div className="mb-3 flex gap-2">
-            <Button
-              disabled={submitting}
-              aria-pressed={mode === "controls"}
+          <div className="mb-3 flex gap-1">
+            <Chip
+              pressed={mode === "controls"}
               onClick={() => {
-                if (confirmDraftNavigation()) setMode("controls");
+                if (!submitting && confirmDraftNavigation()) setMode("controls");
               }}
             >
               By control
-            </Button>
-            <Button
-              disabled={submitting}
-              aria-pressed={mode === "targets"}
+            </Chip>
+            <Chip
+              pressed={mode === "targets"}
               onClick={() => {
-                if (confirmDraftNavigation()) setMode("targets");
+                if (!submitting && confirmDraftNavigation()) setMode("targets");
               }}
             >
               By output
-            </Button>
+            </Chip>
           </div>
           {mode === "controls" ? (
             <>
@@ -133,7 +140,7 @@ export function ButtonsPage({ h, controlId, go }: { h: Hierarchy; controlId: str
                   type="button"
                   key={c.id}
                   disabled={submitting}
-                  onClick={() => go({ page: "buttons", controlId: c.id })}
+                  onClick={() => selectControl(c.id)}
                   className={`mb-1 block w-full rounded-lg p-2 text-left text-sm ${source?.id === c.id ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`}
                 >
                   <span className="font-medium">{c.name}</span>
@@ -169,217 +176,273 @@ export function ButtonsPage({ h, controlId, go }: { h: Hierarchy; controlId: str
             </>
           )}
         </aside>
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto p-4 pb-24 md:p-6">
-          {data && (
-            <details className="mb-4 text-xs text-muted">
-              <summary className="cursor-pointer">
-                Discovery coverage · {data.inventory.coverage.readable} of {data.inventory.coverage.automations} automation configs readable
-              </summary>
-              <ul className="mt-2 list-disc pl-4">
-                {data.inventory.notes.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-              </ul>
-            </details>
-          )}
+        <div className="min-w-0 flex-1">
           {mode === "targets" ? (
-            <>
-              <h2 className="text-lg font-semibold">{output ? (h.entities[output]?.name ?? output) : "Select an output"}</h2>
-              {output && (
-                <div className="mt-3 overflow-auto">
-                  <table aria-label="Buttons controlling output" className="w-full text-left text-sm">
-                    <thead className="text-muted">
-                      <tr>
-                        {["Control", "Button", "Gesture", "Action", "Status"].map((t) => (
-                          <th key={t} className="p-2">
-                            {t}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bindings
-                        .filter((b) => b.output === output)
-                        .map((b) => (
-                          <tr key={b.key} className="border-t border-line">
-                            <td className="p-2">
-                              <button
-                                type="button"
-                                className="text-accent"
-                                onClick={() => {
-                                  setMode("controls");
-                                  go({ page: "buttons", controlId: b.controlId });
-                                }}
-                              >
-                                {data?.inventory.controls.find((c) => c.id === b.controlId)?.name ?? b.controlId}
-                              </button>
-                            </td>
-                            <td className="p-2">{b.button}</td>
-                            <td className="p-2">{b.gesture}</td>
-                            <td className="p-2">{b.action.service}</td>
-                            <td className="p-2">
-                              {b.blocked ? "Blocked by Taxis's safety rules" : b.queued ? "In changes" : b.enabled ? "Enabled" : "Disabled"}
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
+            <OutputView
+              h={h}
+              output={output}
+              bindings={bindings}
+              controls={data?.inventory.controls ?? []}
+              coverage={data}
+              onOpen={(id) => {
+                setMode("controls");
+                selectControl(id);
+              }}
+            />
           ) : source && data ? (
-            <>
-              <h2 className="text-lg font-semibold">{source.name}</h2>
-              <p className="mt-1 text-sm text-muted">{[source.manufacturer, source.model, ...source.integrations].filter(Boolean).join(" · ")}</p>
-              {source.notes.map((n) => (
-                <p key={n} className="mt-2 text-xs text-warn">
-                  {n}
-                </p>
-              ))}
-              {!source.gestures.length && (
-                <p className="mt-4 text-sm text-muted">
-                  HA did not expose button gestures for this device. Its button count and click combinations will not be guessed. Check its integration's
-                  event/device-trigger support, then refresh.
-                </p>
-              )}
-              {!!source.related?.length && (
-                <div className="mt-3 text-sm">
-                  <p className="text-muted">Other automations that may use this device (they reference it but not a specific gesture):</p>
-                  {source.related.map((a) => (
-                    <p key={a.id} className="mt-2">
-                      <a className="text-accent" href={`/config/automation/edit/${encodeURIComponent(a.id)}`} target="_blank" rel="noreferrer">
-                        {a.name}
-                      </a>{" "}
-                      · {a.enabled ? "On" : a.enabled === false ? "Off" : "State unknown"} · {a.services.join(", ")} · {a.targets.join(", ")}
-                    </p>
-                  ))}
-                </div>
-              )}
-              <ButtonAiReview key={source.id + data.fingerprint} control={source} />
-              {[...new Set(source.gestures.map((g) => g.button))].map((button) => (
-                <section aria-label={`Button ${button}`} key={button} className="mt-5 rounded-xl border border-line p-3">
-                  <h3 className="font-semibold">{button}</h3>
-                  {source.gestures
-                    .filter((g) => g.button === button)
-                    .map((g) => (
-                      <GestureRow
-                        key={g.key}
-                        control={source}
-                        gesture={g}
-                        h={h}
-                        data={data}
-                        bindings={bindings.filter((b) => b.controlId === source.id && b.gestureKey === g.key)}
-                        onQueued={queued}
-                        editing={editing?.key === source.id + g.key ? editing : null}
-                        busy={submitting}
-                        onEdit={(action, enabled) => {
-                          if (!submitting && confirmDraftNavigation()) setEditing({ key: source.id + g.key, action, enabled });
-                        }}
-                        onClose={() => setEditing(null)}
-                        onBusy={setSubmitting}
-                      />
-                    ))}
-                </section>
-              ))}
-            </>
+            <ControlView
+              key={source.id}
+              h={h}
+              control={source}
+              data={data}
+              bindings={bindings.filter((b) => b.controlId === source.id)}
+              editing={editing}
+              busy={submitting}
+              onEdit={(gesture, action, enabled) => {
+                if (!submitting && confirmDraftNavigation()) setEditing({ key: source.id + gesture.key, action, enabled });
+              }}
+              onClose={() => setEditing(null)}
+              onBusy={setSubmitting}
+              onAdded={added}
+            />
           ) : (
-            <p className="text-sm text-muted">
-              {loading ? "Reading supported gestures and existing automations…" : "Select a control to inspect its buttons and gestures."}
-            </p>
+            <EmptyState>
+              {loading ? "Reading supported gestures and existing automations…" : "Select a control to inspect its buttons and press types."}
+            </EmptyState>
           )}
         </div>
       </div>
-    </main>
+    </div>
   );
 }
 
-function GestureRow({
-  control,
-  gesture,
+// Until the Automations page carries it, Buttons is a page of its own.
+// One line, collapsed, about what discovery could and could not read.
+function Coverage({ data, summary }: { data: { inventory: ButtonInventory }; summary?: string }) {
+  const { coverage, notes } = data.inventory;
+  return (
+    <details className="text-xs text-muted">
+      <summary className="cursor-pointer">
+        {summary ? `${summary} · ` : ""}Discovery coverage: {coverage.readable} of {coverage.automations} automation configs readable
+      </summary>
+      <ul className="mt-2 list-disc pl-4">
+        {notes.map((n) => (
+          <li key={n}>{n}</li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+// The buttons of one output, from every control that drives it.
+function OutputView({
   h,
+  output,
+  bindings,
+  controls,
+  coverage,
+  onOpen,
+}: {
+  h: Hierarchy;
+  output: string | null;
+  bindings: Binding[];
+  controls: ButtonControl[];
+  coverage: { inventory: ButtonInventory } | null;
+  onOpen: (controlId: string) => void;
+}) {
+  const rows = bindings.filter((b) => b.output === output);
+  const columns: Column<Binding>[] = [
+    {
+      id: "control",
+      header: "Control",
+      priority: 1,
+      sticky: true,
+      minWidth: 130,
+      sort: (b) => controls.find((c) => c.id === b.controlId)?.name ?? b.controlId,
+      cell: (b) => (
+        <button type="button" className="text-left text-accent hover:underline" onClick={() => onOpen(b.controlId)}>
+          {controls.find((c) => c.id === b.controlId)?.name ?? b.controlId}
+        </button>
+      ),
+    },
+    { id: "button", header: "Button", priority: 2, minWidth: 90, sort: (b) => b.button, cell: (b) => b.button },
+    { id: "gesture", header: "Press type", priority: 2, minWidth: 100, sort: (b) => b.gesture, cell: (b) => b.gesture },
+    {
+      id: "action",
+      header: "Action",
+      priority: 2,
+      minWidth: 140,
+      truncate: true,
+      maxWidth: 280,
+      sort: (b) => b.action.service,
+      text: (b) => b.action.service,
+      cell: (b) => b.action.service,
+    },
+    {
+      id: "status",
+      header: "Status",
+      priority: 1,
+      minWidth: 120,
+      sort: (b) => (b.blocked ? "Blocked" : b.queued ? "In changes" : b.enabled ? "Enabled" : "Disabled"),
+      cell: (b) => (b.blocked ? "Blocked by Taxis's safety rules" : b.queued ? "In changes" : b.enabled ? "Enabled" : "Disabled"),
+    },
+  ];
+  return (
+    <div className="flex flex-col gap-3">
+      {coverage && <Coverage data={coverage} />}
+      <h2 className="text-lg font-semibold">{output ? (h.entities[output]?.name ?? output) : "Select an output"}</h2>
+      {output && (
+        <DataTable
+          id="buttons-output"
+          label="Buttons controlling output"
+          rows={rows}
+          rowKey={(b) => b.key}
+          columns={columns}
+          defaultSort={{ key: "control", dir: "asc" }}
+          maxHeight="none"
+          empty={<EmptyState>No buttons control this output yet.</EmptyState>}
+        />
+      )}
+    </div>
+  );
+}
+
+// A control: what it is, then its buttons by press types, one cell each.
+function ControlView({
+  h,
+  control,
   data,
   bindings,
-  onQueued,
   editing,
   busy,
   onEdit,
   onClose,
   onBusy,
+  onAdded,
 }: {
-  control: ButtonControl;
-  gesture: ButtonGesture;
   h: Hierarchy;
+  control: ButtonControl;
   data: { inventory: ButtonInventory; fingerprint: string };
-  bindings: (ButtonMapping & { queued: boolean; automationId: string; blocked: string | null })[];
-  onQueued: () => Promise<void>;
-  editing: { key: string; action: ButtonAction | null; enabled: boolean } | null;
+  bindings: Binding[];
+  editing: Editing | null;
   busy: boolean;
-  onEdit: (action: ButtonAction | null, enabled: boolean) => void;
+  onEdit: (gesture: ButtonGesture, action: ButtonAction | null, enabled: boolean) => void;
   onClose: () => void;
   onBusy: (value: boolean) => void;
+  onAdded: () => Promise<void>;
 }) {
-  const external = (control.existing[gesture.key] ?? []).filter((a) => !a.managed);
+  const matrix = buttonMatrix(control.gestures, bindings, control.existing);
+  // The form opens below the table; bring it into view.
+  const editor = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (editing) editor.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [editing]);
+  type Row = (typeof matrix.rows)[number];
+  const editingGesture = control.gestures.find((g) => control.id + g.key === editing?.key) ?? null;
+  const blocked = bindings.filter((b) => b.blocked);
+  const columns: Column<Row>[] = [
+    {
+      id: "button",
+      header: "Button",
+      priority: 1,
+      sticky: true,
+      minWidth: 110,
+      sort: (r) => r.button,
+      text: (r) => r.button,
+      cell: (r) => <span className="font-medium">{r.button}</span>,
+    },
+    ...matrix.columns.map<Column<Row>>((press, i) => ({
+      id: `press:${press}`,
+      header: press,
+      label: press,
+      priority: i < 3 ? 2 : 3,
+      minWidth: 180,
+      cell: (r) => {
+        const cell = r.cells[press];
+        return cell ? (
+          <GestureCell button={r.button} cell={cell} busy={busy} onEdit={(action, enabled) => onEdit(cell.gesture, action, enabled)} />
+        ) : (
+          <span className="text-muted/60" title="This button has no such press type">
+            –
+          </span>
+        );
+      },
+    })),
+  ];
   return (
-    <div role="group" aria-label={`${gesture.gesture} · ${gesture.source}`} className="mt-3 border-t border-line pt-3 text-sm">
-      <div className="flex flex-wrap items-center gap-3">
-        <p className="font-medium">{gesture.gesture}</p>
-        <span className="text-xs text-muted">{gesture.source}</span>
-        <Button className="ml-auto" disabled={busy} onClick={() => onEdit(null, true)}>
-          Assign action
-        </Button>
+    <div className="flex flex-col gap-3">
+      <Coverage
+        data={data}
+        summary={`${control.gestures.length} press type${control.gestures.length === 1 ? "" : "s"}: ${matrix.counts.assigned} with a handler, ${matrix.counts.empty} free`}
+      />
+      <div>
+        <h2 className="text-lg font-semibold">{control.name}</h2>
+        <p className="mt-1 text-sm text-muted">{[control.manufacturer, control.model, ...control.integrations].filter(Boolean).join(" · ")}</p>
       </div>
-      {bindings.map((b) => (
-        <div key={buttonOutput(b.action)} className="mt-2 flex flex-wrap items-center gap-2 rounded bg-surface p-2">
-          <code className="break-all text-xs">
-            {b.action.service} → {b.action.entityId ?? "Service action"}
-          </code>
-          {b.blocked ? (
-            <>
-              <span className="text-xs font-medium text-danger">Blocked by Taxis's safety rules</span>
-              <p className="basis-full text-xs text-muted">
-                {b.blocked} This automation is still active in Home Assistant, and Taxis won't write it again as it is.{" "}
-                <a className="text-accent" href={`/config/automation/edit/${encodeURIComponent(b.automationId)}`} target="_blank" rel="noreferrer">
-                  Open it in HA
-                </a>{" "}
-                to change or remove it, or assign this button a new action here to replace it.
-              </p>
-            </>
-          ) : (
-            <>
-              <span className="text-xs text-muted">{b.queued ? "In changes" : b.enabled ? "Enabled" : "Disabled"}</span>
-              <Button disabled={busy} onClick={() => onEdit(b.action, b.enabled)}>
-                Edit assignment
-              </Button>
-            </>
-          )}
-        </div>
+      {control.notes.map((n) => (
+        <p key={n} className="text-xs text-warn">
+          {n}
+        </p>
       ))}
-      {external.map((a) => (
-        <details key={a.id} className="mt-2 rounded border border-line p-2 text-xs">
-          <summary className="cursor-pointer">
-            {a.name} · {a.enabled === true ? "On" : a.enabled === false ? "Off" : "State unknown"} ·{" "}
-            {a.match === "exact" ? "Trigger match" : "Possible match — inspect logic"}
-          </summary>
-          <p className="mt-1">
-            {a.services.join(", ") || "No service summary"} · {a.targets.join(", ") || "No explicit target summary"}
-          </p>
-          <a className="mt-1 inline-block text-accent" href={`/config/automation/edit/${encodeURIComponent(a.id)}`} target="_blank" rel="noreferrer">
-            Open existing automation in HA
-          </a>
-          <p className="mt-1 text-muted">
-            Conditions, choose branches and blueprint inputs can change what this gesture does. This handler is not modified by assigning a new Taxis action.
-          </p>
-        </details>
-      ))}
-      {!bindings.length && !external.length && (
-        <p className="mt-2 text-xs text-muted">No readable automation matched this gesture. See discovery coverage for gaps.</p>
+      {!control.gestures.length && (
+        <p className="text-sm text-muted">
+          HA did not expose button gestures for this device. Its button count and click combinations will not be guessed. Check its integration's
+          event/device-trigger support, then refresh.
+        </p>
       )}
-      {editing && (
+      {!!control.related?.length && (
+        <div className="text-sm">
+          <p className="text-muted">Other automations that may use this device (they reference it but not a specific gesture):</p>
+          {control.related.map((a) => (
+            <p key={a.id} className="mt-2">
+              <a className="text-accent" href={haAutomation(a.id)} target="_blank" rel="noreferrer">
+                {a.name}
+              </a>{" "}
+              · {a.enabled ? "On" : a.enabled === false ? "Off" : "State unknown"} · {a.services.join(", ")} · {a.targets.join(", ")}
+            </p>
+          ))}
+        </div>
+      )}
+      <ButtonAiReview key={control.id + data.fingerprint} control={control} />
+      {matrix.rows.length > 0 && (
+        <>
+          <DataTable
+            id="buttons-control"
+            label={`Buttons of ${control.name}`}
+            rows={matrix.rows}
+            rowKey={(r) => r.button}
+            columns={columns}
+            maxHeight="none"
+            columnsMenu={false}
+          />
+          <p className="text-xs text-muted">
+            An existing handler is not changed by assigning a new Taxis action. Its conditions, choose branches and blueprint inputs can change what a press
+            does, so open it in HA before relying on it. A faint + means no readable automation matched that press type; see the discovery coverage line for
+            gaps.
+          </p>
+        </>
+      )}
+      {blocked.map((b) => (
+        <Card key={b.key} tone="danger">
+          <p className="text-xs font-medium text-danger">
+            {b.button} · {b.gesture}: Blocked by Taxis's safety rules
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            {b.blocked} This automation is still active in Home Assistant, and Taxis won't write it again as it is.{" "}
+            <a className="text-accent" href={haAutomation(b.automationId)} target="_blank" rel="noreferrer">
+              Open it in HA
+            </a>{" "}
+            to change or remove it, or assign this button a new action here to replace it.
+          </p>
+        </Card>
+      ))}
+      <div ref={editor} />
+      {editing && editingGesture && (
         <AssignmentEditor
-          key={`${gesture.key}:${JSON.stringify(editing.action)}:${editing.enabled}`}
+          key={`${editingGesture.key}:${JSON.stringify(editing.action)}:${editing.enabled}`}
           h={h}
           control={control}
-          gesture={gesture}
+          gesture={editingGesture}
           inventory={data.inventory}
           fingerprint={data.fingerprint}
           initial={editing.action}
@@ -387,11 +450,81 @@ function GestureRow({
           onBusy={onBusy}
           onCancel={onClose}
           onQueued={async () => {
-            await onQueued();
+            await onAdded();
             onClose();
           }}
         />
       )}
+    </div>
+  );
+}
+
+// One button, one press type: what is assigned, what already handles it, and a
+// "+" to assign. Nothing assigned is a faint "+" alone.
+function GestureCell({
+  button,
+  cell,
+  busy,
+  onEdit,
+}: {
+  button: string;
+  cell: MatrixCell<Binding>;
+  busy: boolean;
+  onEdit: (action: ButtonAction | null, enabled: boolean) => void;
+}) {
+  const { gesture, bindings, external } = cell;
+  const label = `${button} · ${gesture.gesture}`;
+  const empty = bindings.length === 0 && external.length === 0;
+  return (
+    <div role="group" aria-label={`${gesture.gesture} · ${gesture.source}`} className="flex flex-col gap-1">
+      {bindings.map((b) => (
+        <div key={`${b.key}:${buttonOutput(b.action)}`} className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <code className="break-all text-xs" title={`${b.action.service} → ${b.action.entityId ?? "Service action"}`}>
+            {b.action.service} → {b.action.entityId ?? "Service action"}
+          </code>
+          {b.blocked ? (
+            <Badge tone="error">Blocked</Badge>
+          ) : (
+            <>
+              <Badge tone={b.queued ? "info" : b.enabled ? "ok" : "muted"}>{b.queued ? "In changes" : b.enabled ? "Enabled" : "Disabled"}</Badge>
+              <Button
+                tone="ghost"
+                className="px-1.5 py-0.5 text-xs"
+                disabled={busy}
+                aria-label={`Edit assignment of ${label}`}
+                onClick={() => onEdit(b.action, b.enabled)}
+              >
+                Edit assignment
+              </Button>
+            </>
+          )}
+        </div>
+      ))}
+      {external.map((a) => (
+        <div
+          key={a.id}
+          className="text-xs"
+          title={`${a.services.join(", ") || "No service summary"} · ${a.targets.join(", ") || "No explicit target summary"}`}
+        >
+          <a className="text-accent hover:underline" href={haAutomation(a.id)} target="_blank" rel="noreferrer">
+            {a.name}
+          </a>{" "}
+          <span className="text-muted">
+            {a.enabled === true ? "On" : a.enabled === false ? "Off" : "State unknown"} · {a.match === "exact" ? "Trigger match" : "Possible match"}
+          </span>
+        </div>
+      ))}
+      <button
+        type="button"
+        disabled={busy}
+        aria-label={`Assign action to ${label}`}
+        title={empty ? "Nothing matched this press type. Assign an action." : "Assign another action"}
+        onClick={() => onEdit(null, true)}
+        className={`inline-flex w-fit items-center gap-1 rounded px-1 py-0.5 text-xs hover:bg-sunken hover:text-accent disabled:opacity-50 ${empty ? "text-muted/60" : "text-muted"}`}
+      >
+        <Plus className="size-3.5" aria-hidden />
+        {!empty && "Add"}
+      </button>
     </div>
   );
 }
@@ -576,7 +709,7 @@ function AssignmentEditor({
       )}
       <div className="flex gap-2 sm:col-span-2">
         <Button type="submit" tone="primary" disabled={busy || !service}>
-          {busy ? "Queuing…" : "Add to changes"}
+          {busy ? "Adding…" : "Add to changes"}
         </Button>
         <Button
           disabled={busy}

@@ -5,8 +5,8 @@ import os
 import unittest
 import urllib.request
 from playwright.sync_api import sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:8101")
 
 
 class AreaCapabilitiesRegression(unittest.TestCase):
@@ -26,7 +26,7 @@ class AreaCapabilitiesRegression(unittest.TestCase):
         area["entityIds"] = list(h["entities"])
         area["deviceIds"] = []
         with sync_playwright() as p:
-            browser = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), headless=True, args=["--no-sandbox"])
+            browser = launch(p)
             context = browser.new_context(viewport={"width": 1600, "height": 1100}, color_scheme="dark")
             page = context.new_page()
             page.set_default_timeout(60000)
@@ -48,7 +48,7 @@ class AreaCapabilitiesRegression(unittest.TestCase):
                 row("Door").get_by_role("button").hover()
                 page.get_by_role("tooltip").get_by_text("binary_sensor.overview_door", exact=True).wait_for()
                 page.keyboard.press("Escape")
-                page.screenshot(path="/workspace/.cache/ha-taxis/inspection/area-capabilities.png")
+                page.screenshot(path=str(screenshot_dir() / "area-capabilities.png"))
                 for state, expected in [("on", "Open"), ("unavailable", "Unavailable"), (None, "Unknown")]:
                     h["entities"]["binary_sensor.overview_door"]["state"] = state
                     page.reload(wait_until="domcontentloaded")
