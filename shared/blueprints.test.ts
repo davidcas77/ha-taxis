@@ -1178,14 +1178,53 @@ describe("covers and sun", () => {
     expect(tree.mode).toBe("restart");
   });
 
-  it("triggers on the sun rising above the elevation, the temperature rising above the level, the window start, the open time and sunrise", () => {
+  it("is version 2: it asks which side the sun is on (facing_from and facing_to, 0 to 360 by default)", () => {
+    expect(BLUEPRINTS.find((b) => b.path === "taxis/covers_sun.yaml")!.version).toBe(2);
+    const input = obj(obj(tree.blueprint).input);
+    for (const [key, def] of [
+      ["facing_from", 0],
+      ["facing_to", 360],
+    ] as const) {
+      const i = obj(input[key]);
+      expect(i.default, key).toBe(def);
+      expect(obj(obj(i.selector).number), key).toMatchObject({ min: 0, max: 360 });
+    }
+    // The inputs of version 1 are all still there, under the same keys.
+    for (const key of [
+      "cover_entities",
+      "window_entities",
+      "temperature_entity",
+      "sun_elevation",
+      "temperature_above",
+      "window_start",
+      "window_end",
+      "open_time",
+      "open_at_sunrise",
+      "sunrise_offset",
+      "pause_switch",
+    ])
+      expect(Object.keys(input), key).toContain(key);
+  });
+
+  it("triggers on the sun rising above the elevation, the temperature rising above the level, the sun coming round to the facing side, the window start, the open time and sunrise", () => {
     const triggers = list(tree.triggers).map(obj);
-    expect(triggers.map((t) => t.id)).toEqual(["sun", "temperature", "window_start", "open_time", "sunrise"]);
+    expect(triggers.map((t) => t.id)).toEqual(["sun", "temperature", "facing", "window_start", "open_time", "sunrise"]);
     expect(triggers[0]).toEqual({ trigger: "numeric_state", id: "sun", entity_id: "sun.sun", attribute: "elevation", above: { input: "sun_elevation" } });
-    expect(triggers[2]).toEqual({ trigger: "time", id: "window_start", at: { input: "window_start" } });
-    expect(triggers[3]).toEqual({ trigger: "time", id: "open_time", at: { input: "open_time" } });
-    expect(triggers[4]).toEqual({ trigger: "sun", id: "sunrise", event: "sunrise", offset: { input: "sunrise_offset" } });
+    expect(triggers[2].trigger).toBe("template");
+    expect(triggers[3]).toEqual({ trigger: "time", id: "window_start", at: { input: "window_start" } });
+    expect(triggers[4]).toEqual({ trigger: "time", id: "open_time", at: { input: "open_time" } });
+    expect(triggers[5]).toEqual({ trigger: "sun", id: "sunrise", event: "sunrise", offset: { input: "sunrise_offset" } });
     checkTriggerIds(tree);
+  });
+
+  it("gives the facing trigger the range as trigger variables, with the same template as the close condition", () => {
+    const vars = obj(tree.trigger_variables);
+    for (const name of ["facing_from", "facing_to"]) {
+      expect(vars[name]).toEqual({ input: name });
+      expect(obj(tree.variables)[name]).toEqual({ input: name });
+    }
+    const conditions = list(choose[0].conditions).map(obj);
+    expect(String(obj(list(tree.triggers)[2]).value_template)).toBe(String(conditions[3].value_template));
   });
 
   it("makes the temperature trigger false without a sensor, with the sensor and the level as trigger variables", () => {
@@ -1201,19 +1240,54 @@ describe("covers and sun", () => {
     expect(list(tree.conditions).map(obj)).toEqual([PAUSED_OFF]);
   });
 
-  it("closes only inside the window, with the sun high, above the temperature, and no window of the area open", () => {
+  it("closes only inside the window, with the sun high and on the facing side, above the temperature, and no window of the area open", () => {
     const conditions = list(choose[0].conditions).map(obj);
-    expect(list(conditions[0].conditions).map((c) => obj(c).id)).toEqual(["sun", "temperature", "window_start"]);
+    expect(list(conditions[0].conditions).map((c) => obj(c).id)).toEqual(["sun", "temperature", "facing", "window_start"]);
     expect(conditions[1]).toEqual({ condition: "time", after: { input: "window_start" }, before: { input: "window_end" } });
     expect(String(conditions[2].value_template)).toBe("{{ (state_attr('sun.sun', 'elevation') | float(-90)) > (sun_elevation | float(0)) }}");
-    expect(String(conditions[3].value_template)).toBe(
+    expect(String(conditions[3].value_template)).toMatch(/state_attr\('sun\.sun', 'azimuth'\)/);
+    expect(String(conditions[4].value_template)).toBe(
       "{{ temperature_entity == '' or (states(temperature_entity) | float(-100)) > (temperature_above | float(0)) }}",
     );
-    expect(String(conditions[4].value_template)).toBe("{{ (window_entities | select('is_state', 'on') | list | count) == 0 }}");
+    expect(String(conditions[5].value_template)).toBe("{{ (window_entities | select('is_state', 'on') | list | count) == 0 }}");
     expect(obj(list(choose[0].sequence)[0])).toEqual({
       action: "cover.close_cover",
       continue_on_error: true,
       target: { entity_id: { input: "cover_entities" } },
+    });
+  });
+
+  // The facing template is evaluated here by turning its few Jinja forms into JavaScript, so the range logic itself is tested, not a copy of it.
+  describe("the facing side", () => {
+    const template = String(list(choose[0].conditions).map(obj)[3].value_template);
+    const body = template
+      .replace(/\{%\s*set (\w+) = (.*?)\s*%\}/g, "const $1 = $2;")
+      .replace(/\{\{\s*(.*?)\s*\}\}/, "return $1;")
+      .replace(/state_attr\('sun\.sun', 'azimuth'\)/g, "azimuth")
+      .replace(/(\w+) \| float\((-?\d+)\)/g, "num($1, $2)")
+      .replace(/ and /g, " && ")
+      .replace(/ or /g, " || ");
+    const fn = new Function("azimuth", "facing_from", "facing_to", "num", body) as (az: number | null, from: number, to: number, num: unknown) => boolean;
+    const num = (v: unknown, d: number) => (v === null || v === undefined || Number.isNaN(Number(v)) ? d : Number(v));
+    const faces = (az: number | null, from: number, to: number) => fn(az, from, to, num);
+
+    it("is any side with the defaults 0 and 360", () => {
+      for (const az of [0, 45, 180, 270, 359.9, 360]) expect(faces(az, 0, 360), String(az)).toBe(true);
+      expect(faces(null, 0, 360)).toBe(true);
+    });
+
+    it("is the range from..to when from is not larger than to (south: 135 to 225)", () => {
+      for (const az of [135, 180, 225]) expect(faces(az, 135, 225), String(az)).toBe(true);
+      for (const az of [0, 90, 134.9, 225.1, 300, 360]) expect(faces(az, 135, 225), String(az)).toBe(false);
+    });
+
+    it("crosses north when from is larger than to (300 to 60)", () => {
+      for (const az of [300, 330, 359, 0, 10, 60]) expect(faces(az, 300, 60), String(az)).toBe(true);
+      for (const az of [61, 120, 180, 299]) expect(faces(az, 300, 60), String(az)).toBe(false);
+    });
+
+    it("is false for a narrowed range when the sun's azimuth is unknown", () => {
+      expect(faces(null, 135, 225)).toBe(false);
     });
   });
 
@@ -1649,6 +1723,8 @@ describe("checkBlueprintInput", () => {
             window_entities: ["binary_sensor.living_window"],
             temperature_entity: "sensor.outdoor_temperature",
             sun_elevation: 25,
+            facing_from: 135,
+            facing_to: 225,
             temperature_above: 24,
             window_start: "10:00:00",
             window_end: "20:00:00",
@@ -1662,6 +1738,7 @@ describe("checkBlueprintInput", () => {
       expect(checkBlueprintInput(path, { ...base, cover_entities: ["light.living"] }, isId)).toMatch(/cover_entities/);
       expect(checkBlueprintInput(path, { ...base, window_start: "10:00" }, isId)).toMatch(/window_start/);
       expect(checkBlueprintInput(path, { ...base, open_at_sunrise: "yes" }, isId)).toMatch(/open_at_sunrise/);
+      expect(checkBlueprintInput(path, { ...base, facing_from: "135" }, isId)).toMatch(/facing_from/);
       expect(checkBlueprintInput(path, { ...base, temperature_entity: "binary_sensor.x" }, isId)).toMatch(/temperature_entity/);
     });
 

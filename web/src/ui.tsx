@@ -119,16 +119,10 @@ export function LabelPicker({ h, value, onChange, id }: { h: Hierarchy; value: s
         const on = value.includes(l.id);
         const color = labelColor(l.color);
         return (
-          <button
-            key={l.id}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onChange(on ? value.filter((x) => x !== l.id) : [...value, l.id])}
-            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${on ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}
-          >
+          <Chip key={l.id} pressed={on} compact onClick={() => onChange(on ? value.filter((x) => x !== l.id) : [...value, l.id])}>
             <span aria-hidden className="size-2 rounded-full" style={{ background: color ?? "var(--off)" }} />
             {l.name}
-          </button>
+          </Chip>
         );
       })}
     </div>
@@ -484,14 +478,34 @@ export function SearchField({ value, onChange, placeholder, label }: { value: st
 }
 
 // A filter or view choice: a pill that is pressed or not.
-export function Chip({ pressed, onClick, children, title }: { pressed: boolean; onClick: () => void; children: ReactNode; title?: string }) {
+// `ariaLabel` names it when the text alone is not enough; `compact` is the
+// shorter one for a table cell.
+export function Chip({
+  pressed,
+  onClick,
+  children,
+  title,
+  ariaLabel,
+  disabled,
+  compact,
+}: {
+  pressed: boolean;
+  onClick: () => void;
+  children: ReactNode;
+  title?: string;
+  ariaLabel?: string;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
   return (
     <button
       type="button"
       title={title}
+      aria-label={ariaLabel}
       aria-pressed={pressed}
+      disabled={disabled}
       onClick={onClick}
-      className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${pressed ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}
+      className={`inline-flex items-center gap-1 rounded-md border px-2 ${compact ? "py-0.5" : "py-1"} text-xs disabled:cursor-not-allowed disabled:opacity-50 ${pressed ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}
     >
       {children}
     </button>

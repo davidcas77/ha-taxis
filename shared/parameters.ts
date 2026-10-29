@@ -136,6 +136,8 @@ export const PARAM_KEYS = [
   "battery_report_time",
   "unavailable_watch_minutes",
   "covers_sun_elevation",
+  "covers_facing_from",
+  "covers_facing_to",
   "covers_temp_above",
   "covers_window_start",
   "covers_window_end",
@@ -291,6 +293,10 @@ export const PARAMS: readonly ParamDef[] = [
   },
   // Covers and sun.
   { key: "covers_sun_elevation", tab: "covers", label: "Close when the sun is above", unit: "°", kind: "number", min: 0, max: 90, step: 1, default: 25 },
+  // Which side the sun is on, as a compass range of its azimuth: 0 north, 90 east, 180 south, 270 west. 0 to 360 is any side;
+  // From larger than To crosses north (300 to 60).
+  { key: "covers_facing_from", tab: "covers", label: "Facing from", unit: "°", kind: "number", min: 0, max: 360, step: 1, default: 0 },
+  { key: "covers_facing_to", tab: "covers", label: "Facing to", unit: "°", kind: "number", min: 0, max: 360, step: 1, default: 360 },
   { key: "covers_temp_above", tab: "covers", label: "and it is warmer outside than", unit: "°", kind: "number", min: -20, max: 60, step: 0.5, default: 24 },
   { key: "covers_window_start", tab: "covers", label: "Close from", unit: null, kind: "time", default: "10:00" },
   { key: "covers_window_end", tab: "covers", label: "Close until", unit: null, kind: "time", default: "20:00" },

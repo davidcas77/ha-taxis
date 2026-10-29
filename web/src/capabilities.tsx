@@ -34,7 +34,7 @@ import { useTaxis, type Route } from "./state.tsx";
 import { CapabilityIcon } from "./capability-icons.tsx";
 import { DataTable, type Column } from "./data-table.tsx";
 import { TooltipButton } from "./tooltip.tsx";
-import { AreaSelect, Button, EditedDot, EmptyState, Toolbar } from "./ui.tsx";
+import { AreaSelect, Button, Chip, EditedDot, EmptyState, Toolbar } from "./ui.tsx";
 
 // The capability inventory: a matrix of areas by capability, and for each area
 // the entities behind it with the choices Taxis keeps (what counts, roles).
@@ -474,9 +474,6 @@ function EntryLightPicker({ area, rows }: { area: AreaNode; rows: InventoryRow[]
 
 type RunEdit = (edit: (s: InventorySettings) => InventorySettings) => Promise<void>;
 
-const chipClass = (active: boolean) =>
-  `rounded-md border px-2 py-0.5 text-xs outline-none focus-visible:border-accent disabled:cursor-not-allowed disabled:opacity-50 ${active ? "border-accent bg-accent-soft text-accent" : "border-line bg-bg text-muted hover:text-fg"}`;
-
 // A row of buttons in place of a select: the active one is pressed, and a click picks another.
 function Chips<T extends string>({
   options,
@@ -494,17 +491,16 @@ function Chips<T extends string>({
   return (
     <span role="group" className="inline-flex flex-wrap gap-1">
       {options.map((o) => (
-        <button
+        <Chip
           key={o.value}
-          type="button"
-          aria-pressed={o.value === value}
-          aria-label={ariaLabel(o.label)}
+          compact
+          pressed={o.value === value}
+          ariaLabel={ariaLabel(o.label)}
           disabled={disabled}
           onClick={() => o.value !== value && onPick(o.value)}
-          className={chipClass(o.value === value)}
         >
           {o.label}
-        </button>
+        </Chip>
       ))}
     </span>
   );

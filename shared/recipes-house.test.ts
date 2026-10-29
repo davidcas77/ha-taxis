@@ -195,6 +195,8 @@ describe("covers and sun", () => {
       cover_entities: ["cover.living_blind"],
       window_entities: ["binary_sensor.living_window"],
       sun_elevation: 25,
+      facing_from: 0,
+      facing_to: 360,
       temperature_above: 24,
       window_start: "10:00:00",
       window_end: "20:00:00",
@@ -211,8 +213,17 @@ describe("covers and sun", () => {
     params = setParameter(params, { level: "house" }, "covers_block_if_window_open", false);
     params = setParameter(params, { level: "area", id: "living_room" }, "covers_open_at_sunrise", true);
     params = setParameter(params, { level: "area", id: "living_room" }, "covers_sun_elevation", 40);
+    params = setParameter(params, { level: "area", id: "living_room" }, "covers_facing_from", 135);
+    params = setParameter(params, { level: "area", id: "living_room" }, "covers_facing_to", 225);
     const c = area(planAreas([cover, window, { id: "sensor.garden_temp", dc: "temperature", area: "" }], { params }), "covers_sun");
-    expect(autoInput(c)).toMatchObject({ temperature_entity: "sensor.garden_temp", window_entities: [], open_at_sunrise: true, sun_elevation: 40 });
+    expect(autoInput(c)).toMatchObject({
+      temperature_entity: "sensor.garden_temp",
+      window_entities: [],
+      open_at_sunrise: true,
+      sun_elevation: 40,
+      facing_from: 135,
+      facing_to: 225,
+    });
     expect(c.notes.join(" ")).not.toMatch(/No outdoor temperature/);
     // The kitchen has no cover and keeps the default elevation.
     expect(area(planAreas([cover], { params }), "covers_sun", "kitchen").status).toBe("missing");

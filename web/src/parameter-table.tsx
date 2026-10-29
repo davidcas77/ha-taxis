@@ -120,7 +120,7 @@ const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> 
     topics: [
       [
         "Close",
-        "Covers close while the sun is above the elevation, the outdoor temperature is above the limit (when a sensor is set on the House tab) and the time is inside the window. They never move while the area is paused, and by default not while a window of the area is open.",
+        "Covers close while the sun is above the elevation and on the side the windows face (Facing from and to, in degrees: a north-facing room can keep them open), the outdoor temperature is above the limit (when a sensor is set on the House tab) and the time is inside the window. They never move while the area is paused, and by default not while a window of the area is open.",
       ],
       ["Open", "Covers open at the opening time, or at sunrise plus the offset when Open at sunrise is on."],
     ],
@@ -442,6 +442,8 @@ const CLIMATE_GROUPS: { key: string; label: string; keys: ParamKey[] }[] = [
 const COLUMN_ORDER: Partial<Record<ParamTab, ParamKey[]>> = {
   covers: [
     "covers_sun_elevation",
+    "covers_facing_from",
+    "covers_facing_to",
     "covers_temp_above",
     "covers_window_start",
     "covers_window_end",
@@ -505,6 +507,8 @@ const GROUP: Partial<Record<ParamTab, Partial<Record<ParamKey, string>>>> = {
   },
   covers: {
     covers_sun_elevation: "Close",
+    covers_facing_from: "Close",
+    covers_facing_to: "Close",
     covers_temp_above: "Close",
     covers_window_start: "Close",
     covers_window_end: "Close",
@@ -542,6 +546,8 @@ const SHORT: Partial<Record<ParamKey, string>> = {
   battery_report_time: "Report at",
   unavailable_watch_minutes: "For (min)",
   covers_sun_elevation: "Sun above (°)",
+  covers_facing_from: "Facing from (°)",
+  covers_facing_to: "Facing to (°)",
   covers_temp_above: "Warmer than (°)",
   covers_window_start: "From",
   covers_window_end: "Until",

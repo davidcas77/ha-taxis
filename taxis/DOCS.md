@@ -482,6 +482,7 @@ the next change you make.
 | Safety       | Repeat every                                                | 0 min (once)                                                                                  | 0 to 1440                                                                                                         |
 | Safety       | Running above, Running for                                  | 10 W, 2 min                                                                                   | 1 to 10000, 1 to 120                                                                                              |
 | Covers       | Close when the sun is above                                 | 25 °                                                                                          | 0 to 90                                                                                                           |
+| Covers       | Facing from, Facing to                                      | 0 °, 360 ° (any side)                                                                         | 0 to 360; from larger than to crosses north                                                                       |
 | Covers       | and it is warmer outside than                               | 24 °                                                                                          | -20 to 60, in steps of 0.5                                                                                        |
 | Covers       | Close from, Close until                                     | 10:00, 20:00                                                                                  | a time; from has to be before until                                                                               |
 | Covers       | Open at                                                     | 08:00                                                                                         | a time                                                                                                            |
@@ -651,8 +652,7 @@ Installing a recipe adds these changes (the Changes page shows each):
   that uses the blueprint with its inputs.
 
 Everything is an ordinary Home Assistant object. The automations keep working if
-Taxis is stopped or uninstalled. Not in this version: boost, and covers that know
-which way each window faces (Covers and sun uses the sun's height, not its direction).
+Taxis is stopped or uninstalled. Not in this version: boost.
 
 The Occupancy blueprint is now version 4: an installed Occupancy automation shows
 as out of date until it is updated (blueprint version, and _Shower holds occupied
@@ -887,16 +887,27 @@ adds `taxis/leak_alert.yaml`, the area's pause switch and `taxis_leak_alert_<cod
 
 Closes an area's covers against the sun and opens them again. **Needs** a cover that
 counts. They close when the sun is higher than _Close when the sun is above_ (25°),
-the outdoor temperature (the sensor you pick on the House tab) is above _and it is
+the sun is on the side the windows face (_Facing from_ and _Facing to_, below), the
+outdoor temperature (the sensor you pick on the House tab) is above _and it is
 warmer outside than_ (24°) and it is between _Close from_ (10:00) and _Close until_
-(20:00); the check runs when the sun crosses the height, when the temperature
-crosses its limit and when the window starts. Without an outdoor sensor the
+(20:00); the check runs when the sun crosses the height, when it comes round to the
+facing side, when the temperature crosses its limit and when the window starts.
+Without an outdoor sensor the
 temperature is not looked at (the cell says so). They do not close while a window the
 area counts is open (turn _Not while a window is open_ off to ignore windows), and
 nothing moves while the area's pause switch is on. They open at _Open at_ (08:00), or
-at sunrise plus _Sunrise offset_ (30 min) when _Open at sunrise instead_ is on. Taxis
-cannot tell which way a window faces, so one setting covers the whole area. Installing
-adds `taxis/covers_sun.yaml`, the pause switch and `taxis_covers_sun_<code>`.
+at sunrise plus _Sunrise offset_ (30 min) when _Open at sunrise instead_ is on.
+Installing adds `taxis/covers_sun.yaml`, the pause switch and `taxis_covers_sun_<code>`.
+
+**Which side the sun is on.** Taxis cannot tell which way a window faces, so you say
+which part of the sky matters, per area, with _Facing from_ and _Facing to_: the
+sun's compass direction (azimuth) in degrees, 0 north, 90 east, 180 south, 270 west.
+The covers close only while the sun is between the two. The defaults, 0 and 360,
+mean any side, which is how the recipe behaved before. A south-facing window might
+use 135 to 225; a window facing north-west to north-east, which crosses north, 300
+to 60 (_Facing from_ larger than _Facing to_ is fine). A north-facing window then
+no longer closes for the afternoon sun in the south-west. An installed Covers and
+sun automation (blueprint version 1) shows as out of date until it is updated.
 
 ### House recipes
 
@@ -966,6 +977,21 @@ never counted as done) and a button that opens the exact place. A progress bar a
 7. **Recipes**: rooms ready, installed, and changes waiting (Automations → Recipes).
 8. **Buttons**: controls found and press types still without an action (Automations → Buttons).
 9. **Health**: errors and warnings of the last check (Health).
+
+Under the nine steps, **Safety, the house and covers** lists goals that lead you to
+the recipes that look after the whole house. A goal is listed only when it applies,
+and is _Done_ when its recipes are installed or waiting in Changes (_Needs attention_
+when only some are, or one is out of date; _Not started_ when none is). Each one
+opens Automations → Recipes:
+
+- **Add a leak alert for every area with a leak sensor**: only when an area has one;
+  done when every such area has Leak alert installed or in Changes.
+- **Watch batteries and sensors that stop reporting**: Low batteries and Not
+  reporting, both.
+- **Know when everyone is away**: House presence.
+- **Say goodbye to the house in one go**: the Goodbye script.
+- **Close the covers against the sun in every area with covers**: only when an area
+  has a cover; done when every such area has Covers and sun installed or in Changes.
 
 Below the path, **Room by room** is the guide for each area: you say what a room is
 for, and Taxis shows what the room has and what is still missing. It shows:
