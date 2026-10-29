@@ -125,6 +125,11 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
           onChange={setArea}
           noneLabel={device ? `Same as its device${deviceArea ? ` (${deviceArea})` : " (no area)"}` : "No area"}
         />
+        <p className="mt-1 text-xs text-muted">
+          {device
+            ? `Device: ${device.name} · ${deviceArea ? `Device area: ${deviceArea}` : "Device has no area"}`
+            : "No device; choose an area for this entity."}
+        </p>
       </Field>
       <Field label="Labels" htmlFor="ent-labels">
         <LabelPicker h={h} id="ent-labels" value={labels} onChange={setLabels} />

@@ -239,7 +239,6 @@ export function RecipeRecords({
               sort={sort}
               onSort={toggle}
               maxHeight="none"
-              columnsMenu={false}
               rowTone={(cell) => (selected && keyOf(selected) === keyOf(cell) ? "selected" : "default")}
               rowAttrs={(cell) => ({ "aria-selected": Boolean(selected && keyOf(selected) === keyOf(cell)) })}
               onRowClick={(cell) => setSelectedKey(keyOf(cell))}

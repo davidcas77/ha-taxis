@@ -68,6 +68,44 @@ class TableLayoutRegression(unittest.TestCase):
             .filter(r => r.right > r.inner + 1 || (r.scrolls !== 'auto' && r.scrolls !== 'scroll'))""")
         self.assertEqual(bad, [], context)
 
+    def assert_every_table_has_a_chooser_above_it(self, context=""):
+        for table in self.page.get_by_role("table").all():
+            label = table.get_attribute("aria-label")
+            self.assertTrue(label, context)
+            wrapper = table.locator("xpath=../..")
+            chooser = wrapper.get_by_role("button", name="Columns of " + label, exact=True)
+            expect(chooser).to_have_count(1)
+            toolbar = wrapper.get_by_role("toolbar", name="Table controls for " + label, exact=True)
+            self.assertLessEqual(toolbar.bounding_box()["y"] + toolbar.bounding_box()["height"], table.bounding_box()["y"] + 1, context)
+
+    def test_small_tables_have_a_chooser_and_locked_columns_stay_required(self):
+        self.open("#home")
+        self.assert_every_table_has_a_chooser_above_it("Home summary")
+        table = self.page.get_by_role("table").first
+        label = table.get_attribute("aria-label")
+        wrapper = table.locator("xpath=../..")
+        wrapper.get_by_role("button", name="Columns of " + label, exact=True).click()
+        columns = wrapper.get_by_role("group", name="Columns", exact=True)
+        first = columns.get_by_role("checkbox").first
+        first.uncheck()
+        self.assertEqual(table.get_by_role("columnheader").count(), 3)
+        columns.get_by_role("button", name="Reset columns", exact=True).click()
+        self.assertEqual(table.get_by_role("columnheader").count(), 4)
+        self.page.keyboard.press("Escape")
+        self.open("#unassigned")
+        self.section = self.page.get_by_role("region", name="Unassigned entities", exact=True)
+        self.section.get_by_role("button", name="Columns of Unassigned entities table", exact=True).click()
+        columns = self.section.get_by_role("group", name="Columns", exact=True)
+        self.assertTrue(columns.get_by_label("Select", exact=False).is_disabled())
+        self.assertTrue(columns.get_by_label("Area", exact=False).is_disabled())
+        self.page.keyboard.press("Escape")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assert_every_table_has_a_chooser_above_it("Narrow unassigned table")
+        self.section.get_by_role("button", name="Columns of Unassigned entities table", exact=True).click()
+        columns = self.section.get_by_role("group", name="Columns", exact=True)
+        self.assertTrue(columns.evaluate("e => {const r=e.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth;}"))
+        self.page.screenshot(path=str(screenshot_dir() / "table-column-chooser.png"))
+
     def test_tables_fit_their_card_or_scroll_inside_it_at_any_width(self):
         area = next(iter(self.body["hierarchy"]["areas"]))
         self.open("#area/" + area)
@@ -176,6 +214,7 @@ class TableLayoutRegression(unittest.TestCase):
         tested_tables = 0
         for route in routes:
             self.open(route)
+            self.assert_every_table_has_a_chooser_above_it(route)
             if route == "#automations/recipes":
                 self.page.get_by_role("button", name="Table", exact=True).click()
             tested_tables += self.page.locator("table").evaluate_all("""(tables, token) => {

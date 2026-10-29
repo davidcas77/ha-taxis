@@ -406,15 +406,7 @@ function ControlView({
       <ButtonAiReview key={control.id + data.fingerprint} control={control} />
       {matrix.rows.length > 0 && (
         <>
-          <DataTable
-            id="buttons-control"
-            label={`Buttons of ${control.name}`}
-            rows={matrix.rows}
-            rowKey={(r) => r.button}
-            columns={columns}
-            maxHeight="none"
-            columnsMenu={false}
-          />
+          <DataTable id="buttons-control" label={`Buttons of ${control.name}`} rows={matrix.rows} rowKey={(r) => r.button} columns={columns} maxHeight="none" />
           <p className="text-xs text-muted">
             An existing handler is not changed by assigning a new Taxis action. Its conditions, choose branches and blueprint inputs can change what a press
             does, so open it in HA before relying on it. A faint + means no readable automation matched that press type; see the discovery coverage line for

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Unassigned entities.** An Area dropdown on each row, header select-all with
+  partial-selection state and an always-visible bulk area assignment make it
+  easier to place entities through Changes. Exact name matches suggest an area
+  with a one-click accept action; ambiguous names stay manual. Device identity
+  and inherited area are shown explicitly, including devices with no area.
+- **Shared table engine.** Every table has a Columns chooser above it, including
+  small tables, button matrices and Records lists. Required controls stay visible;
+  optional choices persist per table and can be reset. The existing shared engine
+  retains responsive fitting, row details, sorting and scrolling inside the table.
+
 ## 0.7.8
 
 - **The Guide leads to the 0.7.7 recipes.** Under the nine steps of _Your path_ a new

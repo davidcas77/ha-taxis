@@ -7,7 +7,8 @@ import { TooltipButton } from "./tooltip.tsx";
 
 // The one table of the app. It never makes the page scroll: it sits in a scroll
 // area of its own, hides its least important columns when they do not fit
-// (shared/table-fit.ts), lets the person show or hide any column, keeps the
+// (shared/table-fit.ts), always offers a Columns chooser above the table,
+// lets the person show or hide optional columns, keeps the
 // first column and the header in view while scrolling, and never wraps an id in
 // the middle of a token. The values of a hidden column stay one click away, in
 // the row's details.
@@ -100,8 +101,6 @@ export type DataTableProps<T> = {
   maxHeight?: string;
   // Left of the Columns menu, above the table: a count, a note.
   summary?: ReactNode;
-  // Show the Columns menu. Default: with more than five columns, or once any is hidden.
-  columnsMenu?: boolean;
   // Shown instead of the table when there are no rows.
   empty?: ReactNode;
   className?: string;
@@ -186,7 +185,6 @@ export function DataTable<T>({
   density = "normal",
   maxHeight = "70vh",
   summary,
-  columnsMenu,
   empty,
   className = "",
 }: DataTableProps<T>) {
@@ -251,10 +249,6 @@ export function DataTable<T>({
   const grouped = headerRuns(visible).some((r) => r.group !== null);
   const compact = density === "compact";
   const pad = compact ? "px-2 py-1" : "px-3 py-1.5";
-
-  const hideable = columns.filter((c) => !c.locked);
-  // Small tables get the menu only once something is hidden, so it never costs a row of chrome for nothing.
-  const showMenu = columnsMenu ?? (hideable.length > 5 || fit.autoHidden.length > 0 || prefs.show.length > 0 || prefs.hide.length > 0);
 
   const cellStyle = (c: Column<T>, header = false): CSSProperties => {
     const style: CSSProperties = {};
@@ -536,18 +530,20 @@ export function DataTable<T>({
 
   return (
     <div className={`w-full min-w-0 max-w-full rounded-lg border border-line bg-surface ${className}`}>
-      {(showMenu || summary) && (
-        <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1 text-xs text-muted">
-          <div className="min-w-0 flex-1">{summary}</div>
-          {fit.autoHidden.length > 0 && (
-            <span>
-              {fit.autoHidden.length} column{fit.autoHidden.length === 1 ? "" : "s"} don't fit: open a row's arrow to see{" "}
-              {fit.autoHidden.length === 1 ? "it" : "them"}
-            </span>
-          )}
-          {showMenu && <ColumnsMenu label={label} columns={hideable} fit={fit} prefs={prefs} onChange={setPrefs} />}
-        </div>
-      )}
+      <div
+        role="toolbar"
+        aria-label={`Table controls for ${label}`}
+        className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1 text-xs text-muted"
+      >
+        <div className="min-w-0 flex-1">{summary}</div>
+        {fit.autoHidden.length > 0 && (
+          <span>
+            {fit.autoHidden.length} column{fit.autoHidden.length === 1 ? "" : "s"} don't fit: open a row's arrow to see{" "}
+            {fit.autoHidden.length === 1 ? "it" : "them"}
+          </span>
+        )}
+        <ColumnsMenu label={label} columns={columns} fit={fit} prefs={prefs} onChange={setPrefs} />
+      </div>
       {noRows && empty ? (
         <div className="p-3">{empty}</div>
       ) : (
@@ -646,8 +642,15 @@ function ColumnsMenu<T>({
             const noRoom = fit.autoHidden.includes(c.id);
             return (
               <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-sunken">
-                <input type="checkbox" checked={visible} onChange={() => onChange(togglePref(prefs, c.id, visible))} className="accent-[var(--accent)]" />
+                <input
+                  type="checkbox"
+                  checked={visible}
+                  disabled={c.locked}
+                  onChange={() => onChange(togglePref(prefs, c.id, visible))}
+                  className="accent-[var(--accent)]"
+                />
                 <span className="min-w-0 flex-1 truncate">{textOf(c as Column<never>)}</span>
+                {c.locked && <span className="text-[11px] text-muted">required</span>}
                 {noRoom && <span className="text-[11px] text-muted">no room</span>}
               </label>
             );

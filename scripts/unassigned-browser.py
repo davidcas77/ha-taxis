@@ -43,6 +43,15 @@ class UnassignedRegression(unittest.TestCase):
         self.area = next(iter(h["areas"]))
         self.posted = []
         self.queue = []
+        self.errors, self.unexpected = [], []
+        self.page.on("pageerror", lambda error: self.errors.append(str(error)))
+        def guard(route):
+            if route.request.method in ["GET", "HEAD"]:
+                route.continue_()
+            else:
+                self.unexpected.append(route.request.url)
+                route.fulfill(status=409, json={"ok": False, "error": "Unexpected write blocked"})
+        self.page.route("**/api/**", guard)
         self.page.route("**/api/hierarchy*", lambda route: route.fulfill(json=self.body))
         def changes(route):
             if route.request.method == "POST":
@@ -60,6 +69,7 @@ class UnassignedRegression(unittest.TestCase):
 
     def tearDown(self):
         self.context.close()
+        self.assertEqual(self.errors + self.unexpected, [])
 
     def table(self):
         self.section.get_by_role("button", name="Table", exact=True).click()
@@ -126,7 +136,79 @@ class UnassignedRegression(unittest.TestCase):
         self.assertEqual(self.posted, [{"kind": "entity", "op": "update", "targetId": "sensor.unplaced_000", "fields": {"area_id": self.area}}])
         search.fill("Unplaced 450")
         self.assertEqual(table.locator("tbody tr").count(), 1)
-        self.assertEqual(self.section.get_by_role("region", name="Change the selected entities").count(), 0)
+        self.assertIn("0 selected", bulk.inner_text())
+        self.assertTrue(bulk.get_by_role("button", name="Move", exact=True).is_disabled())
+
+    def test_header_checkbox_is_visible_mixed_and_selects_only_current_page(self):
+        table = self.table()
+        header = table.locator("thead").get_by_role("checkbox", name="Select all shown entities", exact=True)
+        self.assertTrue(header.is_visible())
+        table.get_by_role("checkbox", name="Select Unplaced 000", exact=True).check()
+        self.assertTrue(header.evaluate("e => e.indeterminate"))
+        header.check()
+        bulk = self.section.get_by_role("region", name="Change the selected entities")
+        self.assertIn("99 selected", bulk.inner_text())
+        self.assertFalse(header.evaluate("e => e.indeterminate"))
+        header.uncheck()
+        self.assertIn("0 selected", bulk.inner_text())
+        self.section.get_by_role("button", name="Next page", exact=True).click()
+        header.check()
+        self.assertIn("100 selected", bulk.inner_text())
+        bulk.locator("select#bulk-area").select_option(self.area)
+        bulk.get_by_role("button", name="Move", exact=True).click()
+        self.page.wait_for_function("() => document.querySelector('[aria-label=\"Change the selected entities\"]').textContent.includes('0 selected')")
+        self.assertEqual(len(self.posted), 100)
+        self.assertTrue(all(100 <= int(v["targetId"].rsplit("_", 1)[1]) < 200 for v in self.posted))
+
+    def test_inline_area_assignment_is_visible_and_respects_entity_restrictions(self):
+        table = self.table()
+        table.get_by_role("columnheader", name="Area", exact=True).wait_for()
+        bulk = self.section.get_by_role("region", name="Change the selected entities")
+        self.assertTrue(bulk.locator("select#bulk-area").is_disabled())
+        self.assertTrue(bulk.get_by_role("button", name="Move", exact=True).is_disabled())
+        self.assertTrue(table.get_by_role("combobox", name="Area for Unplaced 001", exact=True).is_disabled())
+        self.assertTrue(table.get_by_role("combobox", name="Area for Unplaced 002", exact=True).is_disabled())
+        table.get_by_role("combobox", name="Area for Unplaced 000", exact=True).select_option(self.area)
+        self.page.get_by_role("status").filter(has_text="Added").wait_for()
+        self.assertEqual(self.posted, [{"kind": "entity", "op": "update", "targetId": "sensor.unplaced_000", "fields": {"area_id": self.area}}])
+        self.page.set_viewport_size({"width": 480, "height": 900})
+        self.assertTrue(table.get_by_role("columnheader", name="Area", exact=True).is_visible())
+        self.assertTrue(table.locator("thead").get_by_role("checkbox").is_visible())
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+
+
+    def test_suggestion_queues_only_the_exact_area_after_acceptance(self):
+        h = self.body["hierarchy"]
+        template = next(iter(h["areas"].values()))
+        for area_id, name in [("workshop", "Workshop"), ("annex", "Workshop Annex"), ("porch", "Porch")]:
+            h["areas"][area_id] = {**template, "id": area_id, "name": name, "floorId": None, "entityIds": [], "deviceIds": []}
+            h["looseAreaIds"].append(area_id)
+        for index, name in [(0, "Workshop Annex lamp"), (1, "Workshop main switch"), (2, "Workshop unregistered"), (3, "Between Workshop and Porch")]:
+            h["entities"][f"sensor.unplaced_{index:03}"]["name"] = name
+        self.page.reload(wait_until="domcontentloaded")
+        table = self.table()
+        self.section.get_by_role("textbox", name="Find unassigned entities").fill("Workshop")
+        chosen = table.get_by_role("button", name="Use suggested area Workshop Annex for Workshop Annex lamp", exact=True)
+        self.assertTrue(chosen.is_visible())
+        self.assertTrue(table.get_by_role("button", name="Use suggested area Workshop for Workshop main switch", exact=True).is_disabled())
+        self.assertTrue(table.get_by_role("button", name="Use suggested area Workshop for Workshop unregistered", exact=True).is_disabled())
+        self.assertEqual(table.get_by_role("button", name="Use suggested area", exact=False).count(), 3)
+        self.assertEqual(self.posted, [])
+        chosen.click()
+        self.page.get_by_role("status").filter(has_text="Added").wait_for()
+        self.assertEqual(self.posted, [{"kind": "entity", "op": "update", "targetId": "sensor.unplaced_000", "fields": {"area_id": "annex"}}])
+
+    def test_device_and_inherited_area_are_explicit_in_row_and_editor(self):
+        table = self.table()
+        row = table.locator("tbody tr").filter(has=self.page.get_by_role("button", name="Unplaced 000", exact=True))
+        self.assertIn("Device: Unplaced fixture bridge", row.inner_text())
+        self.assertIn("Device has no area", row.inner_text())
+        row.get_by_role("button", name="Unplaced 000", exact=True).click()
+        editor = self.page.get_by_role("region", name="Editor", exact=True)
+        editor.get_by_text("Device: Unplaced fixture bridge · Device has no area", exact=True).wait_for()
+        self.assertIn("no area", editor.locator("select#ent-area").locator("option:checked").inner_text())
+        self.assertEqual(self.posted, [])
+
 
 
 if __name__ == "__main__":

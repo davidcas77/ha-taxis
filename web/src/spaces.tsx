@@ -5,6 +5,7 @@ import {
   Battery,
   Blinds,
   Camera,
+  Check,
   ChevronDown,
   ChevronRight,
   DoorOpen,
@@ -32,6 +33,7 @@ import {
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { ROLE_ORDER, displayRole } from "../../shared/roles.ts";
+import { suggestEntityArea } from "../../shared/area-suggestion.ts";
 import { sortRows } from "../../shared/sort.ts";
 import { arrangeGroups, membershipIndex, summarizeRoom, type BinarySummary, type NumericSummary } from "../../shared/rooms.ts";
 import type { AreaNode, ChangeInput, EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
@@ -408,6 +410,17 @@ export function SpaceView({
 }
 
 function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; edit: (id: string) => void }) {
+  const { propose, busy: applying } = useTaxis();
+  const [assigning, setAssigning] = useState(false);
+  const assignArea = async (entity: EntityItem, area: string | null) => {
+    if (!area || !h.areas[area] || !entity.inRegistry || (entity.needsOwnName && !entity.customName) || applying || assigning) return;
+    setAssigning(true);
+    try {
+      await propose({ kind: "entity", op: "update", targetId: entity.entityId, fields: { area_id: area } });
+    } finally {
+      setAssigning(false);
+    }
+  };
   const [view, setView] = useStoredChoice("taxis:unassigned:view", ["cards", "table"] as const, "cards");
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -431,6 +444,18 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
   // Selection never follows an entity hidden by the current query, filters or page.
   const selected = eligible.filter((e) => picked.has(e.entityId)).map((e) => e.entityId);
   const all = eligible.length > 0 && selected.length === eligible.length;
+  const selectionCheckbox = (
+    <input
+      type="checkbox"
+      aria-label="Select all shown entities"
+      checked={all}
+      ref={(node) => {
+        if (node) node.indeterminate = selected.length > 0 && !all;
+      }}
+      disabled={!eligible.length || applying || assigning}
+      onChange={() => setPicked(all ? new Set() : new Set(eligible.map((e) => e.entityId)))}
+    />
+  );
   const toggle = (id: string) =>
     setPicked((previous) => {
       const next = new Set(previous);
@@ -440,8 +465,8 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
   const columns: Column<EntityItem>[] = [
     {
       id: "pick",
-      header: "Select",
-      srOnlyHeader: true,
+      header: selectionCheckbox,
+      label: "Select",
       locked: true,
       sticky: true,
       width: 32,
@@ -473,6 +498,56 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
           )}
         </>
       ),
+    },
+    {
+      id: "area",
+      header: "Area",
+      priority: 1,
+      locked: true,
+      minWidth: 190,
+      maxWidth: 260,
+      cell: (e) => {
+        const suggestion = suggestEntityArea(e.name, e.entityId, Object.values(h.areas));
+        const device = e.deviceId ? h.devices[e.deviceId] : undefined;
+        const deviceArea = device?.areaId ? h.areas[device.areaId]?.name : null;
+        const reason = !e.inRegistry
+          ? "Not in the entity registry"
+          : e.needsOwnName && !e.customName
+            ? "Name this entity first, or move its device in Organize."
+            : null;
+        return (
+          <div className="min-w-0">
+            <label className="sr-only" htmlFor={`unassigned-area-${e.entityId}`}>
+              Area for {e.name}
+            </label>
+            <AreaSelect
+              h={h}
+              id={`unassigned-area-${e.entityId}`}
+              value={e.ownAreaId}
+              noneLabel="Choose an area…"
+              disabled={!!reason || applying || assigning}
+              onChange={(area) => void assignArea(e, area)}
+            />
+            {suggestion && (
+              <div className="mt-1 flex items-center gap-1 text-xs">
+                <span className="min-w-0 break-words text-muted">Suggested: {h.areas[suggestion.areaId].name}</span>
+                <Button
+                  disabled={!!reason || applying || assigning}
+                  aria-label={`Use suggested area ${h.areas[suggestion.areaId].name} for ${e.name}`}
+                  title="Add this area assignment to Changes"
+                  onClick={() => void assignArea(e, suggestion.areaId)}
+                >
+                  <Check className="size-3" aria-hidden />
+                </Button>
+              </div>
+            )}
+            <p className="mt-1 break-words text-xs text-muted">
+              {device ? `Device: ${device.name} · ${deviceArea ? `Area: ${deviceArea}` : "Device has no area"}` : "No device"}
+            </p>
+            {reason && <p className="mt-1 text-xs text-muted">{reason}</p>}
+          </div>
+        );
+      },
     },
     {
       id: "entityId",
@@ -531,17 +606,12 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
           </Button>
         )}
       </Toolbar>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          aria-label="Select all shown entities"
-          checked={all}
-          disabled={!eligible.length}
-          onChange={() => setPicked(all ? new Set() : new Set(eligible.map((e) => e.entityId)))}
-        />
-        Select all shown ({eligible.length})
-      </label>
-      {selected.length > 0 && <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} />}
+      {view === "cards" && (
+        <label className="flex items-center gap-2 text-sm">
+          {selectionCheckbox}Select all shown ({eligible.length})
+        </label>
+      )}
+      <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea />
       <p className="text-xs text-muted">
         Only selected entities on this page are changed. Entities outside the registry cannot be selected. A device’s main entity needs its own name to take an
         area; otherwise move its device in Organize.
@@ -1132,7 +1202,7 @@ function EntityRow({ e, rows, device, badge, note }: { e: EntityItem; rows: Rows
 }
 
 // Changes to several entities at once.
-export function BulkBar({ h, ids, onDone }: { h: Hierarchy; ids: string[]; onDone: () => void }) {
+export function BulkBar({ h, ids, onDone, requireArea = false }: { h: Hierarchy; ids: string[]; onDone: () => void; requireArea?: boolean }) {
   const { propose } = useTaxis();
   const [area, setArea] = useState<string | null>(null);
   const [label, setLabel] = useState("");
@@ -1165,10 +1235,20 @@ export function BulkBar({ h, ids, onDone }: { h: Hierarchy; ids: string[]; onDon
       <span className="self-center text-[13px] font-medium">{ids.length} selected</span>
       <div className="flex items-end gap-1.5">
         <div className="w-48">
-          <AreaSelect h={h} id="bulk-area" value={area} onChange={setArea} noneLabel="Same as their device" />
+          <label htmlFor="bulk-area" className="mb-1 block text-xs text-muted">
+            Assign area to selected entities
+          </label>
+          <AreaSelect
+            h={h}
+            id="bulk-area"
+            value={area}
+            onChange={setArea}
+            disabled={busy || !ids.length}
+            noneLabel={requireArea ? "Choose an area…" : "Same as their device"}
+          />
         </div>
         <Button
-          disabled={busy}
+          disabled={busy || !ids.length || (requireArea && !area)}
           onClick={() =>
             void run(
               (e) => (e.ownAreaId === area ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { area_id: area } }),
@@ -1181,49 +1261,53 @@ export function BulkBar({ h, ids, onDone }: { h: Hierarchy; ids: string[]; onDon
           Move
         </Button>
       </div>
-      <div className="flex items-end gap-1.5">
-        <select aria-label="Label" className={`${inputClass} w-40!`} value={label} onChange={(ev) => setLabel(ev.target.value)}>
-          <option value="">Choose a label…</option>
-          {labels.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-        <Button
-          disabled={busy || !label}
-          onClick={() =>
-            void run((e) =>
-              e.labels.includes(label) ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { labels: [...e.labels, label] } },
-            )
-          }
-        >
-          Add label
-        </Button>
-        <ConfirmAction
-          tone="plain"
-          disabled={busy || !label}
-          question={`Take “${h.labels[label]?.name ?? label}” off ${ids.length} selected?`}
-          onConfirm={() =>
-            void run((e) =>
-              !e.labels.includes(label)
-                ? null
-                : { kind: "entity", op: "update", targetId: e.entityId, fields: { labels: e.labels.filter((x) => x !== label) } },
-            )
-          }
-        >
-          Remove label
-        </ConfirmAction>
-      </div>
-      <Button
-        disabled={busy}
-        onClick={() => void run((e) => (e.hidden ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { hidden_by: "user" } }))}
-      >
-        Hide
-      </Button>
-      <Button tone="ghost" className="ml-auto" onClick={onDone}>
-        Clear selection
-      </Button>
+      {ids.length > 0 && (
+        <>
+          <div className="flex items-end gap-1.5">
+            <select aria-label="Label" className={`${inputClass} w-40!`} value={label} onChange={(ev) => setLabel(ev.target.value)}>
+              <option value="">Choose a label…</option>
+              {labels.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+            <Button
+              disabled={busy || !label}
+              onClick={() =>
+                void run((e) =>
+                  e.labels.includes(label) ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { labels: [...e.labels, label] } },
+                )
+              }
+            >
+              Add label
+            </Button>
+            <ConfirmAction
+              tone="plain"
+              disabled={busy || !label}
+              question={`Take “${h.labels[label]?.name ?? label}” off ${ids.length} selected?`}
+              onConfirm={() =>
+                void run((e) =>
+                  !e.labels.includes(label)
+                    ? null
+                    : { kind: "entity", op: "update", targetId: e.entityId, fields: { labels: e.labels.filter((x) => x !== label) } },
+                )
+              }
+            >
+              Remove label
+            </ConfirmAction>
+          </div>
+          <Button
+            disabled={busy}
+            onClick={() => void run((e) => (e.hidden ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { hidden_by: "user" } }))}
+          >
+            Hide
+          </Button>
+          <Button tone="ghost" className="ml-auto" onClick={onDone}>
+            Clear selection
+          </Button>
+        </>
+      )}
     </div>
   );
 }
