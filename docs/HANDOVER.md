@@ -1,10 +1,9 @@
 # Taxis handover
 
-State at **0.7.3** (tag `v0.7.3`) plus the unreleased 0.7.4 safety-and-honesty
-batch described in `taxis/CHANGELOG.md` under _Unreleased_ (button action
-allowlist, AI key and address, Ingress-only, deletion wording, privacy text,
-documentation). Written for whoever continues the work: what Taxis is, how it got
-here, what is in it, how to work on it, and what is left. Details of the
+State at **0.7.8** (tag `v0.7.8`, 2026-10-29). `main` is clean and every branch
+of this work is merged; nothing is unreleased. Written for whoever continues the
+work (a person, Claude or another assistant): what Taxis is, how it got here, what
+is in it, how to work on it, and what is left (§9). Details of the
 smart-areas design are in [design/smart-areas.md](design/smart-areas.md); the
 newer features have their own notes in `docs/design/` (`house-guide.md`,
 `ask-taxis.md`, `jev-decisions.md`, `button-map.md`); user-facing text is in
@@ -61,20 +60,24 @@ Hard rules that hold everywhere:
 
 ## 2. History
 
-| Version    | What it added                                                                                                                                                                                                      |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0.1        | Read HA, show the hierarchy                                                                                                                                                                                        |
-| 0.2        | Edit entities, devices, areas, floors                                                                                                                                                                              |
-| 0.3        | Labels and categories, bulk edits                                                                                                                                                                                  |
-| 0.4        | Naming scheme and checks, entity-id rename together with the automations, scripts, scenes and dashboards that use the id                                                                                           |
-| 0.5.0      | Smart areas: capabilities, canonical helpers, parameters, recipes, blueprints, climate, Health, optional AI                                                                                                        |
-| 0.5.1      | Devices and entities in Organize (table or records), apply one change, impact of an id rename, "why" for failing entities, AC / heating / valve, no floor-level parameters, many UI refinements                    |
-| 0.6.x      | Recipes page, shared Records layouts, Apply recovery and history, installed blueprints browser, Area codes tab with floor codes, three AI tiers (Low / Medium / Strong), shared Type words and Aggregation markers |
-| 0.7.0      | House guide: room type and goals, equipment, helpers, comfort settings, guided automations, room test records, guest / away / sleep modes                                                                          |
-| 0.7.1      | Ask Taxis, AI administration, Jev decisions (room-note review)                                                                                                                                                     |
-| 0.7.2      | Ask Taxis as a compact floating window                                                                                                                                                                             |
-| 0.7.3      | Buttons: input inventory, grouped output automations, AI review of button automations                                                                                                                              |
-| Unreleased | Button matching per press; the safety-and-honesty batch (§1)                                                                                                                                                       |
+| Version | What it added                                                                                                                                                                                                                                                          |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1     | Read HA, show the hierarchy                                                                                                                                                                                                                                            |
+| 0.2     | Edit entities, devices, areas, floors                                                                                                                                                                                                                                  |
+| 0.3     | Labels and categories, bulk edits                                                                                                                                                                                                                                      |
+| 0.4     | Naming scheme and checks, entity-id rename together with the automations, scripts, scenes and dashboards that use the id                                                                                                                                               |
+| 0.5.0   | Smart areas: capabilities, canonical helpers, parameters, recipes, blueprints, climate, Health, optional AI                                                                                                                                                            |
+| 0.5.1   | Devices and entities in Organize (table or records), apply one change, impact of an id rename, "why" for failing entities, AC / heating / valve, no floor-level parameters, many UI refinements                                                                        |
+| 0.6.x   | Recipes page, shared Records layouts, Apply recovery and history, installed blueprints browser, Area codes tab with floor codes, three AI tiers (Low / Medium / Strong), shared Type words and Aggregation markers                                                     |
+| 0.7.0   | House guide: room type and goals, equipment, helpers, comfort settings, guided automations, room test records, guest / away / sleep modes                                                                                                                              |
+| 0.7.1   | Ask Taxis, AI administration, Jev decisions (room-note review)                                                                                                                                                                                                         |
+| 0.7.2   | Ask Taxis as a compact floating window                                                                                                                                                                                                                                 |
+| 0.7.3   | Buttons: input inventory, grouped output automations, AI review of button automations                                                                                                                                                                                  |
+| 0.7.4   | Button matching per press; the safety-and-honesty batch (§1): button action allowlist, AI key re-entry on a new address, Ingress only                                                                                                                                  |
+| 0.7.5   | Testable server: `createApp(deps)`, routes in `server/routes/*`, partial HA reads, one redactor                                                                                                                                                                        |
+| 0.7.6   | One table engine (`DataTable`, `shared/table-fit.ts`), page primitives in `web/src/ui.tsx`, Guide as the start page, leaner navigation, recipes filtered to the areas they fit, browser scenarios rewritten                                                            |
+| 0.7.7   | Health checks for automations (start-up actions, conflicts, lost first press, duplicate ids, unknown persons, impossible conditions); six new recipes (leak alert, covers and sun, low batteries, not reporting, house presence, goodbye); leak capability; Covers tab |
+| 0.7.8   | Guide goals for the house recipes; covers_sun v2 knows which side the window faces (azimuth range); Chip / Card used for role toggles, label pills and house modes                                                                                                     |
 
 Full notes per version: `taxis/CHANGELOG.md`.
 
@@ -434,21 +437,35 @@ working branch and leave versions alone.
 
 ## 9. Open items
 
-Planned next, in order:
+The owner's own Home Assistant was audited and partly fixed on 2026-10-29. Those
+findings name real entities, so they are **not in this repository**: they are in
+`private/HA-OPEN-ITEMS.md` in the owner's local checkout (the `private/` folder is
+git-ignored). Read it before touching the owner's HA, and ask the owner before
+every write there.
 
-1. **0.7.5:** a testable server (split `server/index.ts` so routes can be exercised
-   without a running HA), fewer HA reads per page load, and a formatter for the
-   dense button code.
-2. **0.7.6:** UI simplification, splitting the store (`web/src/state.tsx`), recipe
-   filtering, and a buttons table view.
+Releases stay on **0.7.x** until the owner says otherwise; release only when asked.
 
-Also open:
+Taxis, not done:
 
-- **Not done:** renaming an area id (HA does not allow it); extending "no area" handling beyond lights to the other sensor
+- **Per-area Guide goals for leak and covers.** 0.7.8 put the leak, covers and
+  house goals in the Guide path list (`shared/guide-path.ts`), not in the per-area
+  `GUIDE_GOALS` (`shared/guide.ts`). Adding them there also touches equipment
+  checks, profile defaults and the room-test checks.
+- **Pages still read the store through the `useTaxis()` facade** (about 56 uses in
+  `web/src`). 0.7.6 split the store into data, settings and notices contexts; pages
+  can move to the narrow hooks one at a time.
+- **Health ideas the audit turned up** that Taxis does not check yet: a time
+  condition with only `after` (true until midnight); `wait_for_trigger` without a
+  timeout; a trigger on a timer going `active → idle` (fires on `timer.cancel` too,
+  `timer.finished` is meant); an absolute-value trigger with a signed condition; an
+  automation whose message text names a different duration than its trigger.
+- **Renaming an area id** (HA does not allow it); extending "no area" handling beyond lights to the other sensor
   capabilities, with an option to use a sensor from another area.
 - **Unverified:** button automations against real remotes, real AI-provider calls
   and Jev with a real key have been exercised only against fakes and the mock.
-  Browser scenarios were not rerun for the 0.7.4 safety batch.
+  The 16 browser scenarios pass on the GitHub runner (`browser.yml`) as of 0.7.8.
+- **covers_sun v2** (azimuth range) and the 0.7.7 recipes have run only against the
+  mock, not in a real house.
 - **To watch:** the "stale" rule (24 h) may flag door sensors that rarely report;
   an id rename with a backup has been exercised mostly against the mock.
 - **After updating a real install:** a Taxis button automation made before the
