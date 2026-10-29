@@ -29,6 +29,7 @@ import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx"
 import { useStoredFlag } from "./storage.ts";
 import { TaxisProvider, useNotices, useRoute, useTaxis, type Route, type Selection } from "./state.tsx";
 import { timeAgo } from "./time.ts";
+import { pageMainClass } from "./ui.tsx";
 
 export function App() {
   return (
@@ -218,7 +219,7 @@ function Shell() {
               </Toggle>
             </div>
           </aside>
-          <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
+          <main className={pageMainClass}>
             {query.trim() ? (
               <SearchResults h={hierarchy} query={query} filters={filters} select={select} />
             ) : (

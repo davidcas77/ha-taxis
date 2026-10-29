@@ -358,10 +358,12 @@ export function Badge({ tone = "muted", icon, children, title }: { tone?: Tone; 
 
 // A full page: scrolls on its own, content centred and capped. `min-w-0` lets
 // wide children (tables) scroll inside themselves instead of widening the page.
+export const pageMainClass = "min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 pt-3 md:px-6 md:pb-6";
+
 export function Page({ children, width = "6xl" }: { children: ReactNode; width?: "3xl" | "4xl" | "6xl" | "7xl" }) {
   const max = { "3xl": "max-w-3xl", "4xl": "max-w-4xl", "6xl": "max-w-6xl", "7xl": "max-w-7xl" }[width];
   return (
-    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
+    <main className={pageMainClass}>
       <div className={`mx-auto flex min-w-0 flex-col gap-5 ${max}`}>{children}</div>
     </main>
   );

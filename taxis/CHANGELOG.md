@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Page layout.** Shared top spacing brings page titles level with the sidebar
+  search field while preserving the side and bottom spacing.
+
 - **Guide path.** The next step is marked inside its checklist row, with a
   primary action button, instead of appearing again in a separate card.
 
