@@ -623,45 +623,74 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
   ];
   return (
     <section aria-label="Unassigned entities" className="flex min-w-0 flex-col gap-4">
-      <Toolbar label="Unassigned entities toolbar" className="gap-3">
-        <Toolbar label="Unassigned view" className="gap-x-1">
-          {(["cards", "table"] as const).map((value) => (
-            <Chip key={value} pressed={view === value} onClick={() => setView(value)}>
-              {value === "cards" ? "Cards" : "Table"}
-            </Chip>
-          ))}
-        </Toolbar>
-        <SearchField
-          label="Find unassigned entities"
-          placeholder="Search name, entity ID or device"
-          value={query}
-          onChange={(value) => {
-            setQuery(value);
-            setPicked(new Set());
-          }}
-        />
-        <span className="text-xs text-muted">{matches.length} matching entities</span>
-        {query && (
-          <Button
-            tone="ghost"
-            onClick={() => {
-              setQuery("");
-              setPicked(new Set());
-            }}
-          >
-            Clear search
-          </Button>
-        )}
-      </Toolbar>
-      <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea />
-      {!shown.length ? (
+      {view === "cards" && (
+        <>
+          <Toolbar label="Unassigned entities toolbar" className="gap-3">
+            <Toolbar label="Unassigned view" className="gap-x-1">
+              {(["cards", "table"] as const).map((value) => (
+                <Chip key={value} pressed={view === value} onClick={() => setView(value)}>
+                  {value === "cards" ? "Cards" : "Table"}
+                </Chip>
+              ))}
+            </Toolbar>
+            <SearchField
+              label="Find unassigned entities"
+              placeholder="Search name, entity ID or device"
+              value={query}
+              onChange={(value) => {
+                setQuery(value);
+                setPicked(new Set());
+              }}
+            />
+            <span className="text-xs text-muted">{matches.length} matching entities</span>
+            {query && (
+              <Button
+                tone="ghost"
+                onClick={() => {
+                  setQuery("");
+                  setPicked(new Set());
+                }}
+              >
+                Clear search
+              </Button>
+            )}
+          </Toolbar>
+
+          <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea />
+        </>
+      )}
+      {view === "cards" && !shown.length ? (
         <EmptyState>{query ? "No unassigned entities match your search." : "No entities without an area match the current visibility filters."}</EmptyState>
       ) : view === "cards" ? (
         <RoleSections h={h} ids={shown.map((e) => e.entityId)} filters={filters} rows={{ picked: new Set(selected), toggle, edit }} showDevice />
       ) : (
         <DataTable
           id="unassigned-entities"
+          search={{
+            label: "Find unassigned entities",
+            placeholder: "Search name, entity ID or device",
+            value: query,
+            onChange: (value) => {
+              setQuery(value);
+              setPicked(new Set());
+            },
+          }}
+          filters={
+            <Toolbar label="Unassigned view" className="gap-x-1">
+              {(["cards", "table"] as const).map((value) => (
+                <Chip key={value} pressed={view === value} onClick={() => setView(value)}>
+                  {value === "cards" ? "Cards" : "Table"}
+                </Chip>
+              ))}
+            </Toolbar>
+          }
+          summary={<span>{matches.length} matching entities</span>}
+          actions={<BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea inline />}
+
           label="Unassigned entities table"
+          empty={
+            <EmptyState>{query ? "No unassigned entities match your search." : "No entities without an area match the current visibility filters."}</EmptyState>
+          }
           rows={shown}
           rowKey={(e) => e.entityId}
           columns={columns}
@@ -1240,7 +1269,19 @@ function EntityRow({ e, rows, device, badge, note }: { e: EntityItem; rows: Rows
 }
 
 // Changes to several entities at once.
-export function BulkBar({ h, ids, onDone, requireArea = false }: { h: Hierarchy; ids: string[]; onDone: () => void; requireArea?: boolean }) {
+export function BulkBar({
+  h,
+  ids,
+  onDone,
+  requireArea = false,
+  inline = false,
+}: {
+  h: Hierarchy;
+  ids: string[];
+  onDone: () => void;
+  requireArea?: boolean;
+  inline?: boolean;
+}) {
   const { propose } = useTaxis();
   const [area, setArea] = useState<string | null>(null);
   const [label, setLabel] = useState("");
@@ -1268,7 +1309,11 @@ export function BulkBar({ h, ids, onDone, requireArea = false }: { h: Hierarchy;
     <div
       role="region"
       aria-label="Change the selected entities"
-      className="sticky top-0 z-10 flex min-w-0 max-w-full flex-nowrap items-center gap-3 overflow-x-auto rounded-lg border border-accent/40 bg-surface p-2 shadow-sm"
+      className={
+        inline
+          ? "flex shrink-0 flex-nowrap items-center gap-3"
+          : "sticky top-0 z-10 flex min-w-0 max-w-full flex-nowrap items-center gap-3 overflow-x-auto rounded-lg border border-accent/40 bg-surface p-2 shadow-sm"
+      }
     >
       <span className="shrink-0 whitespace-nowrap text-[13px] font-medium">{ids.length} selected</span>
       <div className="flex shrink-0 items-center gap-1.5">

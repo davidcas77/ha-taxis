@@ -5,7 +5,26 @@ provide typed rows, a stable table ID, a readable label and column definitions;
 they do not render their own HTML tables or column choosers. All current app
 tables use this component, including compact Records lists and button matrices.
 
-Every table has a toolbar above its scroll region with a **Columns** chooser.
+Every table has an exterior toolbar immediately above its separately bordered
+scroll region. Its compact search comes first, then batch actions and filters;
+the **Columns** chooser stays at the far right, outside the table border. The
+left controls scroll horizontally on narrow screens while Columns remains
+reachable and its popup stays outside the scroll clipping. The table's first
+row contains its actual column headers, including on an empty search result.
+
+Pages may pass `search: {value, onChange, label?, placeholder?}` to use their own
+query and filtering. This is required when a page owns pagination or selection:
+the engine forwards input changes without filtering that page's rows again.
+The `actions` and `filters` ReactNode slots place the page's controls beside the
+search; `summary` supplies inline counts or context. Cards views can retain a
+separate toolbar. A page must not show a second table-search control elsewhere.
+
+Without controlled `search`, a table filters its supplied rows and pinned rows
+locally using declared column text, sort values and plain rendered children.
+The search never serializes raw row data, reads arbitrary element props or form
+values, or executes components. Hidden column display text remains searchable.
+This fallback searches only the supplied rows, not records the page has not loaded.
+
 Small tables and tables whose columns all fit use the same toolbar. Pages cannot
 hide it. A chooser shows every declared column: required (`locked`) columns stay
 checked and cannot be hidden; other columns can be shown or hidden. Choices are

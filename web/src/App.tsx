@@ -29,6 +29,7 @@ import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx"
 import { useStoredFlag } from "./storage.ts";
 import { TaxisProvider, useNotices, useRoute, useTaxis, type Route, type Selection } from "./state.tsx";
 import { timeAgo } from "./time.ts";
+import { pageMainClass } from "./ui.tsx";
 
 export function App() {
   return (
@@ -68,6 +69,9 @@ function Shell() {
 
   const page: Route["page"] = route.page;
   const open = (r: Route) => () => go(r);
+  const homeSummary = hierarchy
+    ? `${hierarchy.home.name} · ${hierarchy.counts.floors} floors · ${hierarchy.counts.areas} areas · ${hierarchy.counts.devices} devices · ${hierarchy.counts.entities.toLocaleString()} entities${hierarchy.counts.disabledEntities > 0 ? ` (${hierarchy.counts.disabledEntities.toLocaleString()} disabled)` : ""} · Read ${timeAgo(hierarchy.fetchedAt)}`
+    : null;
 
   return (
     <div className="flex h-full min-w-0 flex-col">
@@ -114,7 +118,16 @@ function Shell() {
               Changes
               {changes.length > 0 && <Count tone="warn">{changes.length}</Count>}
             </Tab>
-            <span className="ml-auto" aria-hidden />
+            {homeSummary ? (
+              <div className="flex min-w-32 flex-1 items-center gap-2 px-1 text-[12px] tabular-nums text-muted">
+                <span aria-hidden="true">|</span>
+                <p className="min-w-0 truncate" title={homeSummary}>
+                  {homeSummary}
+                </p>
+              </div>
+            ) : (
+              <span className="ml-auto" aria-hidden />
+            )}
             <Tab
               active={page === "settings"}
               onClick={open(route.page === "settings" ? route : SETTINGS)}
@@ -135,13 +148,6 @@ function Shell() {
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
-        {hierarchy && (
-          <p className="truncate px-3 pb-1.5 text-[12px] tabular-nums text-muted md:px-4">
-            <span className="font-medium text-fg">{hierarchy.home.name}</span> · {hierarchy.counts.floors} floors · {hierarchy.counts.areas} areas ·{" "}
-            {hierarchy.counts.devices} devices · {hierarchy.counts.entities.toLocaleString()} entities
-            {hierarchy.counts.disabledEntities > 0 && ` (${hierarchy.counts.disabledEntities.toLocaleString()} disabled)`} · Read {timeAgo(hierarchy.fetchedAt)}
-          </p>
-        )}
       </header>
 
       {changes.length > 0 && route.page !== "changes" && (
@@ -218,7 +224,7 @@ function Shell() {
               </Toggle>
             </div>
           </aside>
-          <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
+          <main className={pageMainClass}>
             {query.trim() ? (
               <SearchResults h={hierarchy} query={query} filters={filters} select={select} />
             ) : (

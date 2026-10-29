@@ -5,7 +5,7 @@ import { api } from "./api.ts";
 import { RecordsSplit, Pagination, usePagination } from "./records.tsx";
 import { useStoredChoice, useStoredValue } from "./storage.ts";
 import { DataTable, useSortState, type Column } from "./data-table.tsx";
-import { Button, EmptyState, PageHeader, SearchField, Toolbar, inputClass } from "./ui.tsx";
+import { Button, EmptyState, PageHeader, Toolbar, inputClass } from "./ui.tsx";
 
 const keyOf = (blueprint: BlueprintItem) => `${blueprint.domain}:${blueprint.path}`;
 const domainName = (domain: BlueprintItem["domain"]) => (domain === "automation" ? "Automation" : "Script");
@@ -138,7 +138,6 @@ export function BlueprintRecords({ onCount, refreshKey }: { onCount?: (count: nu
           list={
             <>
               <div className="flex shrink-0 flex-col gap-2 border-b border-line p-2.5">
-                <SearchField label="Find blueprints" placeholder="Find a blueprint, author or path" value={query} onChange={setQuery} />
                 <Toolbar label="Filter blueprints" className="gap-2">
                   <label htmlFor="blueprint-domain" className="text-xs text-muted">
                     Type
@@ -168,6 +167,7 @@ export function BlueprintRecords({ onCount, refreshKey }: { onCount?: (count: nu
                 <div className="p-2.5">
                   <DataTable
                     id="blueprints"
+                    search={{ label: "Find blueprints", placeholder: "Find a blueprint, author or path", value: query, onChange: setQuery }}
                     label="Blueprints"
                     rows={pageRows}
                     rowKey={keyOf}

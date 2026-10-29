@@ -1,4 +1,4 @@
-import { ArrowRight, CheckCircle2, CircleAlert, CircleDashed, Loader2, RefreshCw } from "lucide-react";
+import { CheckCircle2, CircleAlert, CircleDashed, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -168,27 +168,11 @@ export function GuidePath({
             The home is organised. Come back after changes in Home Assistant: new devices show up here as steps to do again.
           </p>
         </Card>
-      ) : path.next ? (
-        <Card tone="accent">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <div className="min-w-[14rem] flex-1">
-              <p className="text-xs font-medium uppercase tracking-wide text-accent">Next step</p>
-              <p className="mt-0.5 text-sm font-semibold">
-                {path.next.number}. {path.next.title}
-              </p>
-              <p className="mt-0.5 text-[13px] text-muted">{path.next.summary}</p>
-            </div>
-            <Button tone="primary" onClick={() => open(path.next!)}>
-              {path.next.action}
-              <ArrowRight className="size-4" aria-hidden />
-            </Button>
-          </div>
-        </Card>
-      ) : (
+      ) : !path.next ? (
         <Card>
           <p className="text-[13px] text-muted">Taxis is still reading some of the steps below. The next step shows once it has.</p>
         </Card>
-      )}
+      ) : null}
 
       <ol aria-label="Steps" className="flex flex-col gap-2">
         {path.steps.map((step) => {
@@ -198,7 +182,7 @@ export function GuidePath({
             <li
               key={step.key}
               aria-current={isNext ? "step" : undefined}
-              className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-surface p-3 ${isNext ? "border-accent/60" : "border-line"}`}
+              className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-surface p-3 ${isNext ? "border-2 border-accent/60" : "border-line"}`}
             >
               <StatusIcon step={step} />
               <div className="min-w-[14rem] flex-1">
@@ -206,6 +190,7 @@ export function GuidePath({
                   <h3 className="text-[13px] font-semibold">
                     {step.number}. {step.title}
                   </h3>
+                  {isNext && <Badge tone="info">Next step</Badge>}
                   <Badge tone={step.error ? "error" : status.tone}>{step.error ? "Couldn't read" : step.loading ? "Reading" : status.label}</Badge>
                 </div>
                 <p className={`mt-0.5 text-xs ${step.error ? "text-danger" : "text-muted"}`}>{step.summary}</p>
@@ -216,7 +201,7 @@ export function GuidePath({
                     <RefreshCw className="size-3.5" aria-hidden /> Retry
                   </Button>
                 )}
-                <Button tone={step.status === "attention" || step.status === "todo" ? "plain" : "ghost"} onClick={() => open(step)}>
+                <Button tone={isNext ? "primary" : step.status === "attention" || step.status === "todo" ? "plain" : "ghost"} onClick={() => open(step)}>
                   {step.action}
                 </Button>
               </div>

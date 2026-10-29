@@ -5,7 +5,7 @@ import { sortRows } from "../../shared/sort.ts";
 import type { EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
 import { DataTable, useSortState, type Column } from "./data-table.tsx";
-import { Button, Chip, ConfirmAction, EmptyState, SearchField, Toolbar, inputClass } from "./ui.tsx";
+import { Button, Chip, ConfirmAction, EmptyState, Toolbar, inputClass } from "./ui.tsx";
 
 // Pick entities with filters, then add them to something (a label, a
 // category) or take them out. Used by the Labels and Categories pages and an
@@ -138,7 +138,6 @@ export function AssignTool({
     <section className="flex flex-col gap-3" aria-label={title}>
       <h2 className="text-sm font-semibold">{title}</h2>
       <Toolbar label="Find and filter" className="gap-2">
-        <SearchField value={query} onChange={setQuery} placeholder="Name or entity id" label="Search entities" />
         {!fixedArea && (
           <div className="w-48">
             <select
@@ -190,47 +189,50 @@ export function AssignTool({
           ))}
         </Toolbar>
       </Toolbar>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-muted">
-          {rows.length.toLocaleString()} match{rows.length === 1 ? "" : "es"}
-          {rows.length > shown.length && `, showing ${shown.length}`} · {pickedList.length} selected
-        </span>
-        <Button tone="ghost" onClick={() => setPicked(new Set([...picked, ...shown.filter(selectable).map((e) => e.entityId)]))}>
-          Select all shown
-        </Button>
-        {picked.size > 0 && (
-          <Button tone="ghost" onClick={() => setPicked(new Set())}>
-            Clear selection
-          </Button>
-        )}
-        <span className="ml-auto flex gap-2">
-          <Button
-            tone="primary"
-            disabled={busy || toAdd.length === 0}
-            onClick={() => {
-              onAdd(toAdd);
-              setPicked(new Set());
-            }}
-          >
-            Add {toAdd.length || ""}
-          </Button>
-          {onRemove && (
-            <ConfirmAction
-              tone="plain"
-              disabled={busy || toRemove.length === 0}
-              question={`Remove ${toRemove.length} ${toRemove.length === 1 ? "entity" : "entities"} from ${title}?`}
-              onConfirm={() => {
-                onRemove(toRemove);
-                setPicked(new Set());
-              }}
-            >
-              Remove {toRemove.length || ""}
-            </ConfirmAction>
-          )}
-        </span>
-      </div>
       <DataTable
         id="assign"
+        search={{ value: query, onChange: setQuery, placeholder: "Name or entity id", label: "Search entities" }}
+        actions={
+          <div className="flex shrink-0 flex-nowrap items-center gap-2 text-xs">
+            <span className="text-muted">
+              {rows.length.toLocaleString()} match{rows.length === 1 ? "" : "es"}
+              {rows.length > shown.length && `, showing ${shown.length}`} · {pickedList.length} selected
+            </span>
+            <Button tone="ghost" onClick={() => setPicked(new Set([...picked, ...shown.filter(selectable).map((e) => e.entityId)]))}>
+              Select all shown
+            </Button>
+            {picked.size > 0 && (
+              <Button tone="ghost" onClick={() => setPicked(new Set())}>
+                Clear selection
+              </Button>
+            )}
+            <span className="ml-auto flex gap-2">
+              <Button
+                tone="primary"
+                disabled={busy || toAdd.length === 0}
+                onClick={() => {
+                  onAdd(toAdd);
+                  setPicked(new Set());
+                }}
+              >
+                Add {toAdd.length || ""}
+              </Button>
+              {onRemove && (
+                <ConfirmAction
+                  tone="plain"
+                  disabled={busy || toRemove.length === 0}
+                  question={`Remove ${toRemove.length} ${toRemove.length === 1 ? "entity" : "entities"} from ${title}?`}
+                  onConfirm={() => {
+                    onRemove(toRemove);
+                    setPicked(new Set());
+                  }}
+                >
+                  Remove {toRemove.length || ""}
+                </ConfirmAction>
+              )}
+            </span>
+          </div>
+        }
         label={title}
         rows={shown}
         rowKey={(e) => e.entityId}

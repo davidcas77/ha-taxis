@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **Organize layout.** Reset layout shares the list title row; the floors and
+  areas search shares one row with New floor and New area.
+
+- **Navigation.** Home counts and read time sit after Changes in the main bar,
+  with the full summary available on hover, removing the extra header row.
+
+- **Table toolbars.** Search, batch actions and Columns share a compact row
+  immediately above each table. Existing page filters and selection scope are
+  preserved; table headers are the first row inside the border.
+
+- **Page layout.** Shared top spacing brings page titles level with the sidebar
+  search field while preserving the side and bottom spacing.
+
+- **Guide path.** The next step is marked inside its checklist row, with a
+  primary action button, instead of appearing again in a separate card.
+
 ## 0.7.9
 
 - **Device-first area assignment.** Not in any area opens separate Devices and

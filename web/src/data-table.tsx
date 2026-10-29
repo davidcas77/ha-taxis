@@ -1,9 +1,10 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Columns3 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Columns3, Search } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type HTMLAttributes, type ReactNode } from "react";
 
 import { sortRows, type Dir, type Sort, type SortValue } from "../../shared/sort.ts";
 import { fitColumns, headerRuns, NO_PREFS, parseColumnPrefs, stickyOffsets, togglePref, type ColumnPrefs, type Priority } from "../../shared/table-fit.ts";
 import { TooltipButton } from "./tooltip.tsx";
+import { tableSearchText, tableTextMatches } from "./table-search.ts";
 
 // The one table of the app. It never makes the page scroll: it sits in a scroll
 // area of its own, hides its least important columns when they do not fit
@@ -71,6 +72,7 @@ export type Column<T> = {
 };
 
 export type RowTone = "default" | "muted" | "selected";
+export type TableSearch = { value: string; onChange: (value: string) => void; placeholder?: string; label?: string };
 
 export type DataTableProps<T> = {
   // Names the table for screen readers and keeps the person's column choices
@@ -103,6 +105,11 @@ export type DataTableProps<T> = {
   maxHeight?: string;
   // Left of the Columns menu, above the table: a count, a note.
   summary?: ReactNode;
+  // A caller with pagination/selection owns filtering. This control only edits
+  // its query; DataTable never filters controlled rows a second time.
+  search?: TableSearch;
+  actions?: ReactNode;
+  filters?: ReactNode;
   // All tables resize by default. Set false only for an explicit exception.
   resizable?: boolean;
   // Shown instead of the table when there are no rows.
@@ -196,11 +203,18 @@ export function DataTable<T>({
   density = "normal",
   maxHeight = "70vh",
   summary,
+  search,
+  actions,
+  filters,
   resizable = true,
   empty,
   className = "",
 }: DataTableProps<T>) {
   const [prefs, setPrefs] = useColumnPrefs(id);
+  const [ownQuery, setOwnQuery] = useState("");
+  useEffect(() => setOwnQuery(""), [id]);
+  const query = search?.value ?? ownQuery;
+  const setQuery = search?.onChange ?? setOwnQuery;
   const scroller = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState(Number.POSITIVE_INFINITY);
   const drag = useRef<{ id: string; pointer: number; x: number; width: number; sizes: Record<string, number> } | null>(null);
@@ -234,12 +248,20 @@ export function DataTable<T>({
 
   const colsRef = useRef(columns);
   colsRef.current = columns;
+  const matchesQuery = (row: T) =>
+    !ownQuery.trim() ||
+    tableTextMatches(
+      columns.flatMap((c) => [c.text?.(row) ?? "", tableSearchText(c.sort?.(row)), tableSearchText(c.cell(row, { inDetails: false }))]),
+      ownQuery,
+    );
+  const filteredRows = useMemo(() => (search ? rows : rows.filter(matchesQuery)), [rows, columns, ownQuery, search]);
+  const filteredPinned = useMemo(() => (search ? pinned : pinned?.filter(matchesQuery)), [pinned, columns, ownQuery, search]);
   const sorted = useMemo(() => {
     // A page that gives `sort` and `onSort` orders the rows itself.
-    if (controlledSort) return rows;
+    if (controlledSort) return filteredRows;
     const get = colsRef.current.find((c) => c.id === sort.key)?.sort;
-    return get ? sortRows(rows, get, sort.dir) : rows;
-  }, [rows, sort.key, sort.dir, controlledSort]);
+    return get ? sortRows(filteredRows, get, sort.dir) : filteredRows;
+  }, [filteredRows, sort.key, sort.dir, controlledSort]);
 
   // Which columns are drawn. The minimum widths decide first; a column's
   // content can be wider than its minimum, so after drawing the table measures
@@ -568,7 +590,7 @@ export function DataTable<T>({
   };
 
   const body: ReactNode[] = [];
-  for (const row of pinned ?? []) body.push(renderRow(row));
+  for (const row of filteredPinned ?? []) body.push(renderRow(row));
   let previousGroup: string | null = null;
   for (const row of sorted) {
     const g = groupOf?.(row) ?? null;
@@ -610,33 +632,42 @@ export function DataTable<T>({
   }
 
   const footers = visible.some((c) => c.footer !== undefined);
-  const noRows = rows.length === 0 && !(pinned?.length ?? 0);
+  const noRows = sorted.length === 0 && !(filteredPinned?.length ?? 0);
 
   return (
-    <div className={`w-full min-w-0 max-w-full rounded-lg border border-line bg-surface ${className}`}>
-      <div
-        role="toolbar"
-        aria-label={`Table controls for ${label}`}
-        className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-1 text-xs text-muted"
-      >
-        <div className="min-w-0 flex-1">{summary}</div>
-        {fit.autoHidden.length > 0 && (
-          <span>
-            {fit.autoHidden.length} column{fit.autoHidden.length === 1 ? "" : "s"} don't fit: open a row's arrow to see{" "}
-            {fit.autoHidden.length === 1 ? "it" : "them"}
-          </span>
-        )}
+    <div data-table-id={id} className={`flex w-full min-w-0 max-w-full flex-col gap-2 ${className}`}>
+      <div role="toolbar" aria-label={`Table controls for ${label}`} className="flex min-h-9 min-w-0 items-center gap-2 text-xs text-muted">
+        <div data-table-toolbar-content className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto py-1">
+          <label className="flex w-64 shrink-0 items-center gap-2 rounded-md border border-line bg-bg px-2 py-1.5 focus-within:border-accent">
+            <Search className="size-4 shrink-0" aria-hidden />
+            <input
+              data-table-search
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={search?.placeholder ?? "Search table…"}
+              aria-label={search?.label ?? `Search ${label}`}
+              className="w-full min-w-0 bg-transparent text-[13px] text-fg outline-none placeholder:text-muted"
+            />
+          </label>
+          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+          {filters && <div className="flex shrink-0 items-center gap-2">{filters}</div>}
+          {summary && <div className="shrink-0 whitespace-nowrap">{summary}</div>}
+          {fit.autoHidden.length > 0 && (
+            <span className="shrink-0 whitespace-nowrap">
+              {fit.autoHidden.length} column{fit.autoHidden.length === 1 ? "" : "s"} don't fit: open a row's arrow to see{" "}
+              {fit.autoHidden.length === 1 ? "it" : "them"}
+            </span>
+          )}
+        </div>
         <ColumnsMenu label={label} columns={columns} fit={fit} prefs={prefs} onChange={setPrefs} />
       </div>
-      {noRows && empty ? (
-        <div className="p-3">{empty}</div>
-      ) : (
+      <div className="min-w-0 max-w-full rounded-lg border border-line bg-surface">
         <div
           ref={scroller}
           role="region"
           aria-label={label}
           tabIndex={0}
-          className="relative max-w-full overflow-auto rounded-b-lg"
+          className="relative max-w-full overflow-auto rounded-lg"
           style={{ maxHeight: maxHeight === "none" ? undefined : maxHeight }}
         >
           <table
@@ -657,7 +688,17 @@ export function DataTable<T>({
               </colgroup>
             )}
             {head}
-            <tbody>{body}</tbody>
+            <tbody>
+              {noRows ? (
+                <tr>
+                  <td colSpan={Math.max(1, span)} className="p-3">
+                    {search && empty != null ? empty : query.trim() ? "No rows match your search." : (empty ?? "No rows to display.")}
+                  </td>
+                </tr>
+              ) : (
+                body
+              )}
+            </tbody>
             {footers && (
               <tfoot>
                 <tr className="bg-sunken font-medium">
@@ -672,7 +713,7 @@ export function DataTable<T>({
             )}
           </table>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -712,7 +753,7 @@ function ColumnsMenu<T>({
       ref={root}
       // ml-auto: when the toolbar wraps (a narrow pane) the button would sit at the left,
       // and its menu, right-aligned to it, would open outside the table, behind the sidebar.
-      className="relative ml-auto"
+      className="relative ml-auto shrink-0 self-center"
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           setOpen(false);

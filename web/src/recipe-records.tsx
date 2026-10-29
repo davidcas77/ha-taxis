@@ -197,13 +197,6 @@ export function RecipeRecords({
         <>
           <div className="flex shrink-0 flex-col gap-2 border-b border-line p-2.5">
             <div className="flex flex-wrap gap-2">
-              <input
-                aria-label="Find recipes"
-                placeholder="Find a room or recipe"
-                className={`${inputClass} min-w-0 flex-1`}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
               <AreaMultiSelect areas={areaOptions} selected={areas} onChange={setAreas} />
             </div>
             <label className="flex items-center gap-2 text-xs text-muted">
@@ -232,6 +225,7 @@ export function RecipeRecords({
           <div className="min-h-0 flex-1 overflow-auto p-2">
             <DataTable
               id="recipe-records"
+              search={{ label: "Find recipes", placeholder: "Find a room or recipe", value: query, onChange: setQuery }}
               label="Recipes"
               rows={pageRows}
               rowKey={keyOf}
