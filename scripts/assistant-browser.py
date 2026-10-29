@@ -162,8 +162,16 @@ class AssistantRegression(fixture.GuideRegression):
         self.assertIsNotNone(self.held)
         self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Settings", exact=True).click()
         self.page.get_by_role("tab", name="AI", exact=True).click()
+        # The route changes on hashchange; release the reply only once it has.
+        self.page.wait_for_function("location.hash === '#settings/ai'")
         self.held.fulfill(json=self.answer())
         panel.get_by_role("status").filter(has_text="Preparing context").wait_for(state="hidden")
+        # The context for the new page is prepared after the route change, which a
+        # slow runner may not have reached yet: give it up to five seconds.
+        for _ in range(50):
+            if self.previews and self.previews[-1]["page"] == "ai-admin":
+                break
+            self.page.wait_for_timeout(100)
         self.assertEqual(self.previews[-1]["page"], "ai-admin")
         self.assertEqual(panel.get_by_role("log").inner_text(), "")
 
