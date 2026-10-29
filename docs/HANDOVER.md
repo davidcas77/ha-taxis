@@ -102,9 +102,12 @@ warn / error / info / muted; `toneOfSeverity`), `Button`, `ConfirmAction`,
 `pinned` rows, `groupOf` sections and `rowDetail` panels. It lives in its own scroll
 container so a table never makes the page scroll, measures its width (and, after
 drawing, whether it still overflows) and hides the lowest-priority columns that don't
-fit; the values of a hidden column are in the row's details. The Columns menu is
-remembered per table in `localStorage` (`taxis:table:v3:<id>`). The fit rules are
-pure and tested in `shared/table-fit.ts`. Never write a hand-rolled `<table>`.
+fit; the values of an automatically hidden column are in the row's details.
+Every table has a Columns chooser in its toolbar, above the scroll region,
+including small tables and compact Records lists. Required (`locked`) columns
+are checked and cannot be hidden; other choices are remembered per table in
+`localStorage` (`taxis:table:v3:<id>`). See [design/table-engine.md](design/table-engine.md).
+The fit rules are pure and tested in `shared/table-fit.ts`. Never write a hand-rolled `<table>`.
 
 ### Guide
 

@@ -78,6 +78,42 @@ body {
   font-size: 14px;
 }
 
+/* Keep the native select and its keyboard/label semantics. Browsers supporting
+   customizable selects can size the open picker to its longest area/floor name
+   independently of the compact closed field. Other browsers keep their native
+   OS picker. The top-layer picker is not clipped by table scroll containers. */
+@supports (appearance: base-select) and selector(select::picker(select)) {
+  select.area-select,
+  select.area-select::picker(select) {
+    appearance: base-select;
+  }
+
+  select.area-select {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  select.area-select::picker(select) {
+    inline-size: max-content;
+    min-inline-size: anchor-size(self-inline);
+    max-inline-size: calc(100vw - 16px);
+    max-block-size: min(24rem, 60vh);
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--fg);
+    padding: 4px;
+  }
+
+  select.area-select option,
+  select.area-select optgroup {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 .assistant-window {
   position: fixed;
   right: 20px;

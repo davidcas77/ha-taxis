@@ -112,7 +112,7 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
         htmlFor="ent-area"
         hint={
           entity.needsOwnName && !name.trim()
-            ? "This is its device's main entity, with no name of its own. Home Assistant only allows it an area of its own once it has a name: give it one above, or move the device instead."
+            ? "Uses its device name. Give this entity its own display name above to assign a separate area, or move the device in Organize."
             : device
               ? "Setting an area here overrides the device's area for this entity only."
               : undefined
@@ -125,6 +125,11 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
           onChange={setArea}
           noneLabel={device ? `Same as its device${deviceArea ? ` (${deviceArea})` : " (no area)"}` : "No area"}
         />
+        <p className="mt-1 text-xs text-muted">
+          {device
+            ? `Device: ${device.name} · ${deviceArea ? `Device area: ${deviceArea}` : "Device has no area"}`
+            : "No device; choose an area for this entity."}
+        </p>
       </Field>
       <Field label="Labels" htmlFor="ent-labels">
         <LabelPicker h={h} id="ent-labels" value={labels} onChange={setLabels} />

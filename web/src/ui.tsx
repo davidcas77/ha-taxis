@@ -137,16 +137,18 @@ export function AreaSelect({
   onChange,
   id,
   noneLabel,
+  disabled,
 }: {
   h: Hierarchy;
   value: string | null;
   onChange: (v: string | null) => void;
   id: string;
   noneLabel: string;
+  disabled?: boolean;
 }) {
   const groups = [...h.floors.map((f) => ({ name: f.name, ids: f.areaIds })), ...(h.looseAreaIds.length ? [{ name: "No floor", ids: h.looseAreaIds }] : [])];
   return (
-    <select id={id} className={inputClass} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+    <select disabled={disabled} id={id} className={`${inputClass} area-select`} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
       <option value="">{noneLabel}</option>
       {groups.map((g) => (
         <optgroup key={g.name} label={g.name}>
@@ -383,12 +385,16 @@ export function PageHeader({
   const Heading = level === 1 ? "h1" : "h2";
   return (
     <header className="flex min-w-0 flex-wrap items-start gap-x-4 gap-y-2">
-      <div className="flex min-w-[12rem] flex-1 flex-col gap-1">
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
         <Heading className={`flex items-center gap-2 font-semibold tracking-tight ${level === 1 ? "text-xl" : "text-base"}`}>
           {icon}
           {title}
         </Heading>
-        {description && <p className="max-w-[72ch] text-[13px] text-muted">{description}</p>}
+        {description && (
+          <p className="max-w-full truncate text-[13px] text-muted" title={typeof description === "string" ? description : undefined}>
+            {description}
+          </p>
+        )}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </header>

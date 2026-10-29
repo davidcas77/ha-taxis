@@ -49,9 +49,10 @@ class TableLayoutRegression(unittest.TestCase):
         self.context.close()
         self.assertEqual(self.writes, [])
 
-    def open(self, route):
+    def open(self, route, entities=False):
         self.page.goto(BASE + "/" + route, wait_until="domcontentloaded")
-        if route == "#unassigned":
+        if route == "#unassigned" and entities:
+            self.page.get_by_role("tab", name=re.compile(r"^Entities \(")).click()
             self.page.get_by_role("group", name="Unassigned view", exact=True).get_by_role("button", name="Table", exact=True).click()
         self.page.locator("table").first.wait_for()
 
@@ -67,6 +68,45 @@ class TableLayoutRegression(unittest.TestCase):
             .map(region => ({label: region.getAttribute('aria-label'), right: region.getBoundingClientRect().right, inner: innerWidth, scrolls: getComputedStyle(region).overflowX}))
             .filter(r => r.right > r.inner + 1 || (r.scrolls !== 'auto' && r.scrolls !== 'scroll'))""")
         self.assertEqual(bad, [], context)
+
+    def assert_every_table_has_a_chooser_above_it(self, context=""):
+        for table in self.page.get_by_role("table").all():
+            label = table.get_attribute("aria-label")
+            self.assertTrue(label, context)
+            wrapper = table.locator("xpath=../..")
+            chooser = wrapper.get_by_role("button", name="Columns of " + label, exact=True)
+            expect(chooser).to_have_count(1)
+            self.assertEqual(table.get_by_role("separator").count(), table.locator("th[data-column-id]").count(), context)
+            toolbar = wrapper.get_by_role("toolbar", name="Table controls for " + label, exact=True)
+            self.assertLessEqual(toolbar.bounding_box()["y"] + toolbar.bounding_box()["height"], table.bounding_box()["y"] + 1, context)
+
+    def test_small_tables_have_a_chooser_and_locked_columns_stay_required(self):
+        self.open("#home")
+        self.assert_every_table_has_a_chooser_above_it("Home summary")
+        table = self.page.get_by_role("table").first
+        label = table.get_attribute("aria-label")
+        wrapper = table.locator("xpath=../..")
+        wrapper.get_by_role("button", name="Columns of " + label, exact=True).click()
+        columns = wrapper.get_by_role("group", name="Columns", exact=True)
+        first = columns.get_by_role("checkbox").first
+        first.uncheck()
+        self.assertEqual(table.get_by_role("columnheader").count(), 3)
+        columns.get_by_role("button", name="Reset columns", exact=True).click()
+        self.assertEqual(table.get_by_role("columnheader").count(), 4)
+        self.page.keyboard.press("Escape")
+        self.open("#unassigned", entities=True)
+        self.section = self.page.get_by_role("region", name="Unassigned entities", exact=True)
+        self.section.get_by_role("button", name="Columns of Unassigned entities table", exact=True).click()
+        columns = self.section.get_by_role("group", name="Columns", exact=True)
+        self.assertTrue(columns.get_by_label("Select", exact=False).is_disabled())
+        self.assertTrue(columns.get_by_label("Area", exact=False).is_disabled())
+        self.page.keyboard.press("Escape")
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assert_every_table_has_a_chooser_above_it("Narrow unassigned table")
+        self.section.get_by_role("button", name="Columns of Unassigned entities table", exact=True).click()
+        columns = self.section.get_by_role("group", name="Columns", exact=True)
+        self.assertTrue(columns.evaluate("e => {const r=e.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth;}"))
+        self.page.screenshot(path=str(screenshot_dir() / "table-column-chooser.png"))
 
     def test_tables_fit_their_card_or_scroll_inside_it_at_any_width(self):
         area = next(iter(self.body["hierarchy"]["areas"]))
@@ -112,6 +152,41 @@ class TableLayoutRegression(unittest.TestCase):
         expect(area).to_have_count(0)
         self.page.evaluate("window.dispatchEvent(new Event('taxis:reset-layout'))")
         expect(area).to_have_count(1)
+
+    def test_column_drag_and_keyboard_widths_survive_reload_and_reset(self):
+        self.open("#home")
+        table = self.page.get_by_role("table", name="Floors", exact=True)
+        table.wait_for()
+        header = table.get_by_role("columnheader", name="Floor", exact=True)
+        handle = header.get_by_role("separator", name="Resize Floor column", exact=True)
+        original = header.bounding_box()["width"]
+        original_sort = header.get_attribute("aria-sort")
+        box = handle.bounding_box()
+        self.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        self.page.mouse.down()
+        self.page.mouse.move(box["x"] + box["width"] / 2 + 85, box["y"] + box["height"] / 2, steps=5)
+        self.page.mouse.up()
+        self.assertAlmostEqual(header.bounding_box()["width"], original + 85, delta=3)
+        self.assertEqual(header.get_attribute("aria-sort"), original_sort)
+        resized = header.bounding_box()["width"]
+        self.page.reload(wait_until="domcontentloaded")
+        header.wait_for()
+        self.assertAlmostEqual(header.bounding_box()["width"], resized, delta=2)
+        handle.focus()
+        handle.press("ArrowRight")
+        self.assertAlmostEqual(header.bounding_box()["width"], resized + 10, delta=2)
+        self.page.get_by_role("button", name="Columns of Floors", exact=True).click()
+        self.page.get_by_role("group", name="Columns", exact=True).get_by_role("button", name="Reset columns", exact=True).click()
+        self.page.keyboard.press("Escape")
+        self.assertAlmostEqual(header.bounding_box()["width"], original, delta=2)
+        handle.focus()
+        handle.press("ArrowRight")
+        self.page.evaluate("window.dispatchEvent(new Event('taxis:reset-layout'))")
+        self.assertAlmostEqual(header.bounding_box()["width"], original, delta=2)
+        self.page.reload(wait_until="domcontentloaded")
+        header.wait_for()
+        self.assertAlmostEqual(header.bounding_box()["width"], original, delta=2)
+        self.assert_page_does_not_scroll()
 
     def test_view_changes_keep_the_table_inside_the_page(self):
         self.page.add_init_script("localStorage.setItem('taxis:organize-view:devices', 'table')")
@@ -168,14 +243,18 @@ class TableLayoutRegression(unittest.TestCase):
         device = next(iter(h["devices"]))
         category = h["categories"]["automation"][0]["id"]
         label = next(iter(h["labels"]))
-        routes = ["#health", "#unassigned", "#organize/entities", "#organize/devices/" + device,
+        routes = ["#health", "#unassigned", "#unassigned", "#organize/entities", "#organize/devices/" + device,
                   "#organize/category-automation/" + category, "#organize/labels/" + label,
                   "#organize/blueprints", "#automations/recipes", "#automations/buttons/device%3Ademo_wall_buttons",
                   "#parameters/capabilities", "#parameters/helpers", "#parameters/area-codes", "#settings/ai",
                   "#area/" + area, "#area/" + area + "/capabilities", "#area/" + area + "/naming", "#parameters/house"]
         tested_tables = 0
+        unassigned_seen = False
         for route in routes:
-            self.open(route)
+            self.open(route, entities=route == "#unassigned" and unassigned_seen)
+            if route == "#unassigned":
+                unassigned_seen = True
+            self.assert_every_table_has_a_chooser_above_it(route)
             if route == "#automations/recipes":
                 self.page.get_by_role("button", name="Table", exact=True).click()
             tested_tables += self.page.locator("table").evaluate_all("""(tables, token) => {

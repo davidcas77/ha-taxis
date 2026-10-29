@@ -20,7 +20,7 @@ export type FitColumn = {
 };
 
 // What the person chose by hand, kept per table in the browser.
-export type ColumnPrefs = { show: string[]; hide: string[] };
+export type ColumnPrefs = { show: string[]; hide: string[]; widths?: Record<string, number> };
 export const NO_PREFS: ColumnPrefs = { show: [], hide: [] };
 
 export type Fit = {
@@ -80,16 +80,27 @@ export function fitColumns(columns: readonly FitColumn[], prefs: ColumnPrefs, av
 // A saved preference that is not the expected shape is ignored, not trusted.
 export function parseColumnPrefs(raw: unknown): ColumnPrefs {
   if (typeof raw !== "object" || raw === null) return NO_PREFS;
-  const { show, hide } = raw as Record<string, unknown>;
+  const { show, hide, widths } = raw as Record<string, unknown>;
   const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
-  return { show: ids(show), hide: ids(hide) };
+  const sizes =
+    widths && typeof widths === "object" && !Array.isArray(widths)
+      ? Object.fromEntries(
+          Object.entries(widths).filter(
+            ([key, value]) =>
+              !["__proto__", "constructor", "prototype"].includes(key) && typeof value === "number" && Number.isFinite(value) && value >= 32 && value <= 2000,
+          ),
+        )
+      : {};
+  return { show: ids(show), hide: ids(hide), ...(Object.keys(sizes).length ? { widths: sizes as Record<string, number> } : {}) };
 }
 
 // The person ticks or unticks a column in the menu. `visibleNow` is whether it
 // is drawn at this moment; the choice is remembered either way.
 export function togglePref(prefs: ColumnPrefs, id: string, visibleNow: boolean): ColumnPrefs {
   const without = (list: string[]) => list.filter((x) => x !== id);
-  return visibleNow ? { show: without(prefs.show), hide: [...without(prefs.hide), id] } : { show: [...without(prefs.show), id], hide: without(prefs.hide) };
+  return visibleNow
+    ? { ...prefs, show: without(prefs.show), hide: [...without(prefs.hide), id] }
+    : { ...prefs, show: [...without(prefs.show), id], hide: without(prefs.hide) };
 }
 
 // The `left` of each sticky column: the widths of the sticky columns before it.
