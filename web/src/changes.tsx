@@ -94,9 +94,10 @@ function recipeTitle(h: Hierarchy, c: Change): string {
   if (validButtonMap(c.after.button_map))
     return `${c.op === "create" ? "Create" : "Update"} button automation for ${h.entities[c.after.button_map.output]?.name ?? c.after.button_map.output} · ${c.after.button_map.bindings.length} assignments`;
   if (c.kind === "blueprint") return `${c.op === "create" ? "Write" : "Update"} blueprint ${c.targetId}`;
-  if (c.kind === "script") return `${c.op === "create" ? "Install" : "Update"} the Announce script (script.${c.targetId})`;
+  if (c.kind === "script")
+    return `${c.op === "create" ? "Install" : "Update"} the ${c.targetId === "taxis_goodbye" ? "Goodbye" : "Announce"} script (script.${c.targetId})`;
   const recipe = RECIPE_LABEL[c.after.recipe as keyof typeof RECIPE_LABEL] ?? "recipe";
-  const area = h.areas[String(c.after.area_id)]?.name ?? String(c.after.area_id);
+  const area = c.after.area_id === undefined ? "the house" : (h.areas[String(c.after.area_id)]?.name ?? String(c.after.area_id));
   return `${c.op === "create" ? "Install" : "Update"} ${recipe} for ${area}`;
 }
 

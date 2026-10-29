@@ -21,6 +21,7 @@ export const CAPABILITIES = [
   { key: "cover", label: "Covers", short: "Covers" },
   { key: "fan", label: "Fans", short: "Fans" },
   { key: "power", label: "Power", short: "Power" },
+  { key: "leak", label: "Leak sensors", short: "Leaks" },
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number]["key"];
@@ -59,11 +60,20 @@ export const isClimateKind = (v: unknown): v is ClimateKind => typeof v === "str
 
 // From the hvac_modes the entity reports. One that reports none (unavailable, or
 // an integration that says nothing) is taken for heating, the common case.
-export const detectClimateKind = (hvacModes: readonly string[]): ClimateKind => (hvacModes.includes("cool") || hvacModes.includes("heat_cool") ? "ac" : "heating");
+export const detectClimateKind = (hvacModes: readonly string[]): ClimateKind =>
+  hvacModes.includes("cool") || hvacModes.includes("heat_cool") ? "ac" : "heating";
 
 // bed: a presence sensor that senses a bed. appliance: a power sensor that is a
 // machine (a washer, an oven) whose end Appliance done reports.
-export type EntityChoice = { counts?: boolean; kind?: Capability; climate?: ClimateKind; role?: MotionRole; light?: LightRole; bed?: boolean; appliance?: boolean };
+export type EntityChoice = {
+  counts?: boolean;
+  kind?: Capability;
+  climate?: ClimateKind;
+  role?: MotionRole;
+  light?: LightRole;
+  bed?: boolean;
+  appliance?: boolean;
+};
 export type AreaChoice = { type?: AreaType; bedroom?: boolean };
 export type InventorySettings = { entities: Record<string, EntityChoice>; areas: Record<string, AreaChoice> };
 
@@ -88,6 +98,8 @@ const BINARY_SENSOR: Record<string, Capability> = {
   window: "window",
   // The user can switch it to a door.
   opening: "window",
+  // A water leak sensor: the Leak alert recipe watches these.
+  moisture: "leak",
 };
 
 const SENSOR: Record<string, Capability> = {
@@ -119,7 +131,20 @@ export function defaultCapability(e: Pick<EntityItem, "domain" | "deviceClass">)
 // Entities made by a helper integration summarise or derive from others. They
 // are listed but don't count, or a room would count the same sensor twice.
 // switch_as_x is not here: it is a real switch shown as a light.
-const HELPER_PLATFORMS = new Set(["template", "group", "min_max", "threshold", "derivative", "statistics", "bayesian", "trend", "filter", "utility_meter", "integration", "history_stats"]);
+const HELPER_PLATFORMS = new Set([
+  "template",
+  "group",
+  "min_max",
+  "threshold",
+  "derivative",
+  "statistics",
+  "bayesian",
+  "trend",
+  "filter",
+  "utility_meter",
+  "integration",
+  "history_stats",
+]);
 
 // Camera sensors report what the camera sees, which may not be this room.
 const CAMERA_CAPABILITIES = new Set<Capability>(["motion", "presence", "door", "window"]);
@@ -159,7 +184,8 @@ function candidate(h: Hierarchy, e: EntityItem): Candidate | null {
   return { entity: e, base, countsDefault: !flags.includes("helper") && !flags.includes("camera") && e.domain !== "switch", flags, never: isLightGroup(e) };
 }
 
-const ownChoice = (s: InventorySettings, entityId: string): EntityChoice | undefined => (Object.hasOwn(s.entities, entityId) ? s.entities[entityId] : undefined);
+const ownChoice = (s: InventorySettings, entityId: string): EntityChoice | undefined =>
+  Object.hasOwn(s.entities, entityId) ? s.entities[entityId] : undefined;
 const ownArea = (s: InventorySettings, areaId: string): AreaChoice | undefined => (Object.hasOwn(s.areas, areaId) ? s.areas[areaId] : undefined);
 
 export function kindAllowed(base: Capability, kind: Capability): boolean {
@@ -217,7 +243,7 @@ export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string
     found.push({
       c,
       capability: choice.kind && kindAllowed(c.base, choice.kind) ? choice.kind : c.base,
-      counts: c.never ? false : choice.counts ?? c.countsDefault,
+      counts: c.never ? false : (choice.counts ?? c.countsDefault),
       choice,
     });
   }
@@ -287,7 +313,8 @@ export type MatrixRow = {
   total: number;
 };
 
-const emptyTallies = (): Record<Capability, Tally> => Object.fromEntries(CAPABILITIES.map((c) => [c.key, { counted: 0, total: 0 }])) as Record<Capability, Tally>;
+const emptyTallies = (): Record<Capability, Tally> =>
+  Object.fromEntries(CAPABILITIES.map((c) => [c.key, { counted: 0, total: 0 }])) as Record<Capability, Tally>;
 
 export function inventoryMatrix(h: Hierarchy, s: InventorySettings, exclude?: (areaId: string) => ReadonlySet<string>): MatrixRow[] {
   return Object.values(h.areas).map((area) => {
@@ -320,7 +347,13 @@ export function matrixTotals(rows: MatrixRow[]): Record<Capability, Tally> {
 // A value equal to its default is removed, and an entry left empty goes too.
 // ---------------------------------------------------------------------------
 
-function patchEntity<K extends keyof EntityChoice>(s: InventorySettings, entityId: string, key: K, value: EntityChoice[K], dflt: EntityChoice[K]): InventorySettings {
+function patchEntity<K extends keyof EntityChoice>(
+  s: InventorySettings,
+  entityId: string,
+  key: K,
+  value: EntityChoice[K],
+  dflt: EntityChoice[K],
+): InventorySettings {
   const cur = ownChoice(s, entityId);
   const stored = value === dflt ? undefined : value;
   if (cur?.[key] === stored) return s;
@@ -394,7 +427,8 @@ export const setLightRole = (s: InventorySettings, entityId: string, light: Ligh
 
 export const setBed = (s: InventorySettings, entityId: string, bed: boolean): InventorySettings => patchEntity(s, entityId, "bed", bed, false);
 
-export const setAppliance = (s: InventorySettings, entityId: string, appliance: boolean): InventorySettings => patchEntity(s, entityId, "appliance", appliance, false);
+export const setAppliance = (s: InventorySettings, entityId: string, appliance: boolean): InventorySettings =>
+  patchEntity(s, entityId, "appliance", appliance, false);
 
 // Back to detection, for one entity.
 export function resetEntity(s: InventorySettings, entityId: string): InventorySettings {

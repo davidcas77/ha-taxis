@@ -46,6 +46,10 @@ const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> 
       ["Away and sleep", "Choose existing switches, or leave them blank so Taxis creates its own when you install Area climate."],
       ["Notifications", "Enter notify services separated by commas, such as notify.mobile_app_phone. Leave blank to use Home Assistant notifications."],
       ["Speech", "Choose the text-to-speech entity for Announce. Notification destinations and speech are set for the whole house."],
+      [
+        "House presence",
+        "The house counts as occupied while any area is occupied or any person is home. After everyone has been away for the time, away mode is switched on (and off again on return when you allow it). The outdoor temperature sensor is read by Covers and sun.",
+      ],
     ],
   },
   occupancy: {
@@ -111,13 +115,31 @@ const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> 
       ["Activity", "Motion or someone arriving home restarts the timer. Applies to areas marked exterior."],
     ],
   },
+  covers: {
+    summary: "Set when covers close against the sun and when they open again.",
+    topics: [
+      [
+        "Close",
+        "Covers close while the sun is above the elevation, the outdoor temperature is above the limit (when a sensor is set on the House tab) and the time is inside the window. They never move while the area is paused, and by default not while a window of the area is open.",
+      ],
+      ["Open", "Covers open at the opening time, or at sunrise plus the offset when Open at sunrise is on."],
+    ],
+  },
   safety: {
-    summary: "Set open-door alerts and appliance-finished detection.",
+    summary: "Set open-door, leak, battery and unavailable alerts, and appliance-finished detection.",
     topics: [
       ["Left open", "Notify after a door or window has stayed open for the delay. Repeat 0 sends one notification."],
       [
         "Appliance done",
         "Mark a power sensor as an appliance in Capabilities. Above the running threshold for its duration means running; below the done threshold for its duration means finished. Thresholds use watts.",
+      ],
+      [
+        "Leak",
+        "A leak (moisture) sensor going wet sends a message and a notification in Home Assistant, repeating until it is dry. Choose a water valve, or a switch that shuts the water, to have it closed. Empty closes nothing. Never turns a light on.",
+      ],
+      [
+        "Batteries and unavailable",
+        "One summary a day lists batteries below the level. Entities the area recipes rely on that stay unavailable or unknown for the time are reported once, and the message clears when they come back.",
       ],
     ],
   },
@@ -175,7 +197,7 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
   const suggestions = useMemo(() => {
     if (def.kind === "entity")
       return Object.values(h.entities)
-        .filter((e) => e.domain === def.domain && !e.disabled)
+        .filter((e) => (def.domains ?? [def.domain]).includes(e.domain) && !e.disabled)
         .map((e) => e.entityId)
         .sort();
     if (def.kind === "text") return presetNames(h, row);
@@ -418,6 +440,16 @@ const CLIMATE_GROUPS: { key: string; label: string; keys: ParamKey[] }[] = [
 // is the tooltip and the Columns menu), and which columns are the first to give
 // way when there is no room. A tab that is not listed has plain columns.
 const COLUMN_ORDER: Partial<Record<ParamTab, ParamKey[]>> = {
+  covers: [
+    "covers_sun_elevation",
+    "covers_temp_above",
+    "covers_window_start",
+    "covers_window_end",
+    "covers_block_if_window_open",
+    "covers_open_time",
+    "covers_open_at_sunrise",
+    "covers_sunrise_offset",
+  ],
   lighting: [
     "lux_threshold",
     "day_brightness",
@@ -465,6 +497,21 @@ const GROUP: Partial<Record<ParamTab, Partial<Record<ParamKey, string>>>> = {
     appliance_run_minutes: "Appliance done",
     appliance_idle_watts: "Appliance done",
     appliance_idle_minutes: "Appliance done",
+    leak_repeat: "Leak",
+    leak_valve_entity: "Leak",
+    battery_threshold: "Batteries",
+    battery_report_time: "Batteries",
+    unavailable_watch_minutes: "Not reporting",
+  },
+  covers: {
+    covers_sun_elevation: "Close",
+    covers_temp_above: "Close",
+    covers_window_start: "Close",
+    covers_window_end: "Close",
+    covers_open_time: "Open",
+    covers_open_at_sunrise: "Open",
+    covers_sunrise_offset: "Open",
+    covers_block_if_window_open: "Close",
   },
 };
 
@@ -489,6 +536,19 @@ const SHORT: Partial<Record<ParamKey, string>> = {
   door_open_after: "Doors (min)",
   window_open_after: "Windows (min)",
   left_open_repeat: "Repeat every (min)",
+  leak_repeat: "Repeat every (min)",
+  leak_valve_entity: "Water valve",
+  battery_threshold: "Below (%)",
+  battery_report_time: "Report at",
+  unavailable_watch_minutes: "For (min)",
+  covers_sun_elevation: "Sun above (°)",
+  covers_temp_above: "Warmer than (°)",
+  covers_window_start: "From",
+  covers_window_end: "Until",
+  covers_open_time: "Open at",
+  covers_open_at_sunrise: "At sunrise",
+  covers_sunrise_offset: "Offset (min)",
+  covers_block_if_window_open: "Not if a window is open",
 };
 
 // Lighting shows its everyday columns at 1280px; the others are one click away in Columns.

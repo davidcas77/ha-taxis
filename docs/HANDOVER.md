@@ -166,7 +166,7 @@ Apply).
 ### Parameters
 
 Tabs: **Capabilities · Helpers · Area codes · House · Occupancy · Lighting ·
-Media · Climate · Bathroom fan · Exterior · Safety**.
+Media · Climate · Bathroom fan · Exterior · Covers · Safety**.
 
 - **Capabilities:** matrix of areas × capabilities with counts, per-entity role
   overrides (start / hold for presence, light roles, bed sensors, AC / heating /
@@ -189,8 +189,11 @@ longer exist, devices that stopped reporting, automations that never fire,
 conditions that can never pass, switches only ever turned one way, automations
 fighting over the same lights, unused helpers, broken groups (members missing),
 and Taxis's own setup (area without a canonical helper, helper that cannot be the
-canonical one, area with lights but no occupancy, and so on). A fix is a link or
-a change for the list.
+canonical one, area with lights but no occupancy, and so on), and how automations
+are written (`shared/health/automations.ts`: start-up actions, conflicting
+automations, a button's lost first press, a button automation that drops presses,
+duplicate ids, away logic on an unknown person, and the entity that could replace a
+device id). A fix is a link or a change for the list.
 
 ### Changes
 
@@ -258,13 +261,29 @@ Blueprints are written by Taxis; the description carries
 `Taxis blueprint version N`, which is how out-of-date detection works. Each area
 gets a pause switch `input_boolean.<code>_paused`, created **without** `initial`
 (so a restart never resets the user's choice) and checked as `state: "off"`.
-Blueprint versions are listed in `taxis/CHANGELOG.md` and `shared/blueprints.ts`
+Blueprint versions are listed in `taxis/CHANGELOG.md` and in `shared/blueprints/<recipe>.ts`
 (the table that was here at 0.5.1 went stale; do not copy numbers into prose).
-Recipes: occupancy, motion lights, media off, area climate, bathroom fan,
-exterior lights, left open, appliance done, plus the announce script.
+Recipes per area: occupancy, motion lights, media off, area climate, bathroom fan,
+exterior lights, left open, appliance done, **leak alert**, **covers and sun**. For
+the house (`shared/recipes-house.ts`, one cell each, no area, automation id
+`taxis_<recipe>_house`): the announce and **goodbye** scripts, and the automations
+**house presence**, **low batteries** and **not reporting**. The house automations
+share the pause switch `input_boolean.taxis_paused`; House presence makes
+`binary_sensor.taxis_areas_occupied` (a group of the areas' occupied sensors) and the
+template `binary_sensor.taxis_occupied` over it.
 
-Automations from blueprints are created **disabled**; the user enables what they
-want to try.
+| Recipe                                                                                                      | Scope                                                             | Blueprint (`blueprints/automation/taxis/` unless a script)          | Planned in                         |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------- |
+| occupancy, motion_lights, media_off, area_climate, bathroom_fan, exterior_lights, left_open, appliance_done | area                                                              | `<recipe>.yaml`                                                     | `planRecipes`                      |
+| leak_alert, covers_sun                                                                                      | area                                                              | `leak_alert.yaml`, `covers_sun.yaml`                                | `planRecipes`                      |
+| announce, goodbye                                                                                           | house, a script (`script.taxis_announce`, `script.taxis_goodbye`) | `blueprints/script/taxis/announce.yaml`, `goodbye.yaml`             | `planAnnounce`, `planHouseRecipes` |
+| house_presence, battery_low, unavailable_watch                                                              | house, an automation `taxis_<recipe>_house`                       | `house_presence.yaml`, `battery_low.yaml`, `unavailable_watch.yaml` | `planHouseRecipes`                 |
+
+Automations from blueprints are meant to be tried one at a time. **Check this before
+saying it again:** nothing in Apply turns a new automation off (it would take a service
+call, which Taxis never makes, or an `initial_state` that a restart would apply again),
+and the tests expect the automation to be `on` once installed. The blueprints are written
+so that a restart never fires an action; the user turns a recipe off in Home Assistant.
 
 **Button actions** (`shared/button-actions.ts`, tested in its `.test.ts`):
 
@@ -304,7 +323,7 @@ only).
 
 | Path                                    | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shared/`                               | Pure logic and types, no IO, tested directly (inventory, helpers, parameters, recipes, blueprints, climate, health, naming, roles, device-tree, entity-diagnosis, apply-plan, route-hash, sort, table-fit, recipe-fit, button-matrix, area-codes-cache, guide and guide-path and guide-checks, house-modes, area-capabilities, ai and ai-form and ai-url, assistant, jev, **buttons, button-match, button-actions**)                                                                                                                                                                                                                                                                                                                                                   |
+| `shared/`                               | Pure logic and types, no IO, tested directly (inventory, helpers, parameters, recipes, **recipes-house**, **blueprints/** (one file per blueprint, with `blueprints.ts` as the barrel), climate, **health/** (one file per family of checks, with `health.ts` as the barrel; `health/automations.ts` checks how automations are written), naming, roles, device-tree, entity-diagnosis, apply-plan, route-hash, sort, table-fit, recipe-fit, button-matrix, area-codes-cache, guide and guide-path and guide-checks, house-modes, area-capabilities, ai and ai-form and ai-url, assistant, jev, **buttons, button-match, button-actions**)                                                                                                                             |
 | `server/`                               | Hono server, split so the HTTP app can be tested without a server, a database file or a Home Assistant (see _Server layout_ below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `web/src/`                              | React 19 + Tailwind SPA. `state.tsx` is the store: separate data, settings and notices contexts (`useTaxisData`, `useSettings`, `useNotices`; `useTaxis()` is the data+settings facade) and `saved-setting.ts`, the load-save-rollback core; `route.ts` is the route type and hash parser; `ui.tsx` the page primitives and `data-table.tsx` the table engine (see section 3); one file per area of the UI (`spaces`, `organize`, `devices-view`, `capabilities`, `capability-icons`, `helpers`, `parameters`, `parameter-table`, `area-codes`, `automations` (Recipes and Buttons tabs), `recipes`, `recipe-records`, `health`, `changes`, `naming` (Settings), `settings-page`, `labels`, `guide*`, `house-modes`, `buttons`, `assistant`, `ai`, `ai-admin`, `jev*`) |
 | `scripts/mock-ha.ts`, `mock-ha-core.ts` | The fake Home Assistant with an invented house, including broken groups, an orphan, a failed integration, an offline device, a low battery                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -414,8 +433,8 @@ Planned next, in order:
 
 Also open:
 
-- **Not done:** renaming an area id (HA does not allow it); a covers-by-sun
-  recipe; extending "no area" handling beyond lights to the other sensor
+- **Not done:** renaming an area id (HA does not allow it); covers that know a
+  window's orientation (Covers and sun uses the sun's height only); extending "no area" handling beyond lights to the other sensor
   capabilities, with an option to use a sensor from another area.
 - **Unverified:** button automations against real remotes, real AI-provider calls
   and Jev with a real key have been exercised only against fakes and the mock.

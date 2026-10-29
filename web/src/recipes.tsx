@@ -1,8 +1,35 @@
-import { DoorOpen, Fan, Lightbulb, Megaphone, Sunset, Thermometer, Tv, Users, WashingMachine, type LucideIcon } from "lucide-react";
+import {
+  BatteryLow,
+  Blinds,
+  DoorOpen,
+  Droplet,
+  Fan,
+  House,
+  Lightbulb,
+  LogOut,
+  Megaphone,
+  Sunset,
+  Thermometer,
+  Tv,
+  Users,
+  WashingMachine,
+  WifiOff,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { isHouseRecipe, type HouseRecipeKey } from "../../shared/blueprints.ts";
 import { splitByFit } from "../../shared/recipe-fit.ts";
-import { RECIPES, planAnnounce, planRecipes, recipeChangeInputs, type RecipeCell, type RecipeInstalled, type RecipeStatus } from "../../shared/recipes.ts";
+import { planHouseRecipes } from "../../shared/recipes-house.ts";
+import {
+  HOUSE_RECIPE_LABEL,
+  RECIPES,
+  planRecipes,
+  recipeChangeInputs,
+  type RecipeCell,
+  type RecipeInstalled,
+  type RecipeStatus,
+} from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { DataTable, type Column } from "./data-table.tsx";
@@ -17,7 +44,8 @@ import { Button, Chip, EmptyState, TONE_TEXT, Toolbar, type Tone } from "./ui.ts
 // recipes. A cell says whether the recipe can be installed, what is missing when
 // it can't, and whether an installed one still matches. Adding cells puts
 // changes in the list; nothing reaches Home Assistant until the list is applied.
-// Announce is the exception: one script for the whole house, in a row of its own.
+// The recipes of the house (Announce, Goodbye, House presence, Low batteries, Not
+// reporting) are not for one room: they are listed under the table, one row each.
 //
 // Only the recipes that fit an area are listed for it (shared/recipe-fit.ts), so
 // "Missing requirements" always means something; "Show all recipes" lists the rest.
@@ -33,6 +61,13 @@ const RECIPE_HELP: Record<string, string> = {
   exterior_lights: "Controls outdoor lights using sunset and activity.",
   left_open: "Notifies when a door or window stays open too long.",
   appliance_done: "Notifies when an appliance's power use indicates it has finished.",
+  leak_alert: "Notifies, repeatedly while wet, when a leak sensor reports water, and closes a water valve if one is chosen.",
+  covers_sun: "Closes covers against the sun on warm days and opens them again in the morning.",
+  announce: "Speaks a message in occupied rooms using text-to-speech.",
+  goodbye: "A script that turns off lights and media and switches away mode on.",
+  house_presence: "Makes the house occupied sensor and switches away mode on when everyone has left.",
+  battery_low: "One daily message listing the batteries that are low.",
+  unavailable_watch: "Notifies when a sensor the recipes rely on stops reporting.",
 };
 
 const RECIPE_ICON: Record<string, LucideIcon> = {
@@ -44,7 +79,13 @@ const RECIPE_ICON: Record<string, LucideIcon> = {
   exterior_lights: Sunset,
   left_open: DoorOpen,
   appliance_done: WashingMachine,
+  leak_alert: Droplet,
+  covers_sun: Blinds,
   announce: Megaphone,
+  goodbye: LogOut,
+  house_presence: House,
+  battery_low: BatteryLow,
+  unavailable_watch: WifiOff,
 };
 
 // The recipes the table shows beside the area; the rest wait behind their
@@ -58,7 +99,8 @@ const RECIPE_PRIORITY: Record<string, 2 | 3> = {
   exterior_lights: 3,
   left_open: 3,
   appliance_done: 3,
-  announce: 2,
+  leak_alert: 3,
+  covers_sun: 3,
 };
 
 // Most useful first.
@@ -74,7 +116,7 @@ const FILTERS: { key: RecipeStatus | "all" | "todo"; label: string }[] = [
   { key: "in-changes", label: "In changes" },
 ];
 
-type Line = { key: string; areaId: string; areaName: string; floorName: string; house: boolean; cells: Record<string, RecipeCell> };
+type Line = { key: string; areaId: string; areaName: string; floorName: string; cells: Record<string, RecipeCell> };
 
 const keyOf = (c: RecipeCell) => `${c.areaId}|${c.recipe}`;
 
@@ -186,39 +228,33 @@ export function RecipesTable({ h, cells, shown }: { h: Hierarchy; cells: readonl
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
-  const { lines, announce } = useMemo(() => {
+  const { lines, houseCells } = useMemo(() => {
     const byArea = new Map<string, Line>();
-    let house: RecipeCell | null = null;
+    const house: RecipeCell[] = [];
     for (const c of cells) {
-      if (c.recipe === "announce") {
-        house = c;
+      if (isHouseRecipe(c.recipe)) {
+        house.push(c);
         continue;
       }
       let line = byArea.get(c.areaId);
       if (!line) {
         const floor = h.floors.find((f) => f.id === h.areas[c.areaId]?.floorId);
-        line = { key: c.areaId, areaId: c.areaId, areaName: c.areaName, floorName: floor?.name ?? "", house: false, cells: {} };
+        line = { key: c.areaId, areaId: c.areaId, areaName: c.areaName, floorName: floor?.name ?? "", cells: {} };
         byArea.set(c.areaId, line);
       }
       line.cells[c.recipe] = c;
     }
-    return { lines: [...byArea.values()], announce: house };
+    return { lines: [...byArea.values()], houseCells: house };
   }, [cells, h]);
 
   const visible = (c: RecipeCell) => shown.has(keyOf(c));
   const rows = useMemo(() => lines.filter((l) => Object.values(l.cells).some((c) => visible(c) && matches(c, filter))), [lines, filter, shown]);
-  const houseLine = useMemo<Line | null>(
-    () =>
-      announce && matches(announce, filter)
-        ? { key: "house", areaId: "house", areaName: "House", floorName: "one script", house: true, cells: { announce } }
-        : null,
-    [announce, filter],
-  );
+  const houseRows = useMemo(() => houseCells.filter((c) => visible(c) && matches(c, filter)), [houseCells, filter, shown]);
 
   const shownCells = useMemo(() => cells.filter(visible), [cells, shown]);
   const count = (f: (typeof FILTERS)[number]["key"]) => shownCells.filter((c) => matches(c, f)).length;
   // Only cells that are on screen and can still be added count as picked.
-  const selectable = [...rows.flatMap((l) => Object.values(l.cells).filter(visible)), ...(houseLine && announce ? [announce] : [])].filter((c) => c.actionable);
+  const selectable = [...rows.flatMap((l) => Object.values(l.cells).filter(visible)), ...houseRows].filter((c) => c.actionable);
   const chosen = selectable.filter((c) => picked.has(keyOf(c)));
   const allChosen = selectable.length > 0 && chosen.length === selectable.length;
 
@@ -268,20 +304,40 @@ export function RecipesTable({ h, cells, shown }: { h: Hierarchy; cells: readonl
         },
       };
     }),
+  ];
+
+  // The recipes of the whole house: a table of their own under the areas, one row each.
+  const houseColumns: Column<RecipeCell>[] = [
     {
-      id: "announce",
-      header: "Announce",
-      label: "Announce",
-      icon: <Megaphone className="size-3.5 shrink-0" aria-hidden />,
-      help: "Speaks a message in occupied rooms using text-to-speech.",
-      priority: RECIPE_PRIORITY.announce,
-      minWidth: 140,
-      cell: (l) =>
-        l.cells.announce ? (
-          <CellBox c={l.cells.announce} label="Announce" areaName="the house" picked={picked} setPicked={setPicked} />
-        ) : (
-          dash("Announce is one script for the whole house")
-        ),
+      id: "recipe",
+      header: "House",
+      help: "Recipes for the whole house, not one room.",
+      priority: 1,
+      sticky: true,
+      minWidth: 200,
+      sort: (c) => HOUSE_RECIPE_LABEL[c.recipe as HouseRecipeKey],
+      text: (c) => HOUSE_RECIPE_LABEL[c.recipe as HouseRecipeKey],
+      cell: (c) => {
+        const Icon = RECIPE_ICON[c.recipe];
+        return (
+          <>
+            <span className="inline-flex items-center gap-1.5">
+              <Icon className="size-3.5 shrink-0 text-muted" aria-hidden />
+              {HOUSE_RECIPE_LABEL[c.recipe as HouseRecipeKey]}
+            </span>
+            <div className="max-w-xs text-[11px] text-muted">{RECIPE_HELP[c.recipe]}</div>
+          </>
+        );
+      },
+    },
+    {
+      id: "status",
+      header: "Status",
+      help: "Whether the recipe can be installed, and what is missing when it can't.",
+      priority: 1,
+      minWidth: 180,
+      sort: (c) => ORDER.indexOf(c.status),
+      cell: (c) => <CellBox c={c} label={HOUSE_RECIPE_LABEL[c.recipe as HouseRecipeKey]} areaName="the house" picked={picked} setPicked={setPicked} />,
     },
   ];
 
@@ -317,13 +373,24 @@ export function RecipesTable({ h, cells, shown }: { h: Hierarchy; cells: readonl
         id="recipes"
         label="Recipes by area"
         rows={rows}
-        pinned={houseLine ? [houseLine] : undefined}
         rowKey={(l) => l.key}
         columns={columns}
         defaultSort={{ key: "area", dir: "asc" }}
-        empty={<EmptyState>Nothing here.</EmptyState>}
+        empty={<EmptyState>{houseRows.length > 0 ? "No area has a recipe to show here." : "Nothing here."}</EmptyState>}
         maxHeight="none"
       />
+      {houseRows.length > 0 && (
+        <DataTable
+          id="recipes-house"
+          label="House recipes"
+          rows={houseRows}
+          rowKey={keyOf}
+          columns={houseColumns}
+          defaultSort={{ key: "", dir: "asc" }}
+          empty={<EmptyState>Nothing here.</EmptyState>}
+          maxHeight="none"
+        />
+      )}
     </div>
   );
 }
@@ -349,7 +416,7 @@ function RecipesBody({ h, installed, view }: { h: Hierarchy; installed: RecipeIn
   const { inventory, naming, parameters, changes } = useTaxis();
   const [showAll, setShowAll] = useStoredFlag("taxis:recipes:show-all", false);
   const all = useMemo(
-    () => [...planRecipes(h, inventory, naming, parameters, installed, changes), planAnnounce(h, inventory, naming, parameters, installed, changes)],
+    () => [...planRecipes(h, inventory, naming, parameters, installed, changes), ...planHouseRecipes(h, inventory, naming, parameters, installed, changes)],
     [h, inventory, naming, parameters, installed, changes],
   );
   const split = useMemo(() => splitByFit(h, inventory, naming, all), [h, inventory, naming, all]);
@@ -390,12 +457,13 @@ export function RecipesTab({ h, view = "table" }: { h: Hierarchy; view?: "table"
       <HelpDisclosure summary={NOTE}>
         <HelpTopic title="Requirements">Recipes use the entities counted in Capabilities and your parameter values.</HelpTopic>
         <HelpTopic title="Installation">
-          Creates a reusable blueprint, required helpers and one automation per room. Announce creates one house-wide script.
+          Creates a reusable blueprint, required helpers and one automation per room. The house recipes (Announce, Goodbye, House presence, Low batteries, Not
+          reporting) are one script or automation for the whole house, listed under the areas.
         </HelpTopic>
         <HelpTopic title="Review first">Nothing changes in Home Assistant until you apply the installation in Changes.</HelpTopic>
         <HelpTopic title="Which recipes are listed">
-          Only the recipes that fit a room: Exterior lights for an exterior area, Bathroom fan for a fan or a bathroom, Media off for a speaker or a TV, and so
-          on. Show all recipes lists the rest.
+          Only the recipes that fit a room: Exterior lights for an exterior area, Bathroom fan for a fan or a bathroom, Media off for a speaker or a TV, Leak
+          alert for a leak sensor, Covers and sun for a cover, and so on. Show all recipes lists the rest. The house recipes are always listed.
         </HelpTopic>
       </HelpDisclosure>
       {!ready ? (

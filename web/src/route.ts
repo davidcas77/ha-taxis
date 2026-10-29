@@ -47,6 +47,7 @@ export const PARAMETER_TABS = [
   "climate",
   "fan",
   "exterior",
+  "covers",
   "safety",
 ] as const;
 export type ParameterTab = (typeof PARAMETER_TABS)[number];

@@ -4,7 +4,8 @@ import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { CAPABILITIES, EMPTY_INVENTORY, setAreaType, setBedroom, type Capability } from "./inventory.ts";
 import { DEFAULT_NAMING } from "./naming.ts";
 import { areaFacts, isBathroomLike, recipeFits, recipeSuitsArea, splitByFit, type AreaFacts } from "./recipe-fit.ts";
-import { NOTHING_INSTALLED, planAnnounce, planRecipes } from "./recipes.ts";
+import { NOTHING_INSTALLED, planRecipes } from "./recipes.ts";
+import { planHouseRecipes } from "./recipes-house.ts";
 import { EMPTY_PARAMETERS } from "./parameters.ts";
 
 const facts = (has: Partial<Record<Capability, number>> = {}, rest: Partial<AreaFacts> = {}): AreaFacts => ({
@@ -66,6 +67,18 @@ describe("recipeSuitsArea", () => {
     expect(recipeSuitsArea(facts(), "appliance_done")).toBe(false);
     expect(recipeSuitsArea(facts({ power: 1 }), "appliance_done")).toBe(true);
   });
+
+  it("leak alert needs a leak sensor, indoors or out", () => {
+    expect(recipeSuitsArea(facts({ lights: 2, door: 1 }), "leak_alert")).toBe(false);
+    expect(recipeSuitsArea(facts({ leak: 1 }), "leak_alert")).toBe(true);
+    expect(recipeSuitsArea(facts({ leak: 1 }, { type: "exterior" }), "leak_alert")).toBe(true);
+  });
+
+  it("covers and sun need a cover", () => {
+    expect(recipeSuitsArea(facts({ lights: 2, window: 1 }), "covers_sun")).toBe(false);
+    expect(recipeSuitsArea(facts({ cover: 1 }), "covers_sun")).toBe(true);
+    expect(recipeSuitsArea(facts({}, { bedroom: true }), "covers_sun")).toBe(false);
+  });
 });
 
 describe("recipeFits", () => {
@@ -76,6 +89,15 @@ describe("recipeFits", () => {
   it("follows the rule for a recipe that is missing or ready", () => {
     expect(recipeFits(facts(), "exterior_lights", "missing")).toBe(false);
     expect(recipeFits(facts({}, { type: "exterior" }), "exterior_lights", "ready")).toBe(true);
+    expect(recipeFits(facts(), "leak_alert", "missing")).toBe(false);
+    expect(recipeFits(facts({ leak: 1 }), "leak_alert", "ready")).toBe(true);
+    expect(recipeFits(facts(), "covers_sun", "missing")).toBe(false);
+    expect(recipeFits(facts({ cover: 1 }), "covers_sun", "ready")).toBe(true);
+  });
+
+  it("keeps an installed leak alert or covers recipe whatever the room has", () => {
+    expect(recipeFits(facts(), "leak_alert", "installed")).toBe(true);
+    expect(recipeFits(facts(), "covers_sun", "out-of-date")).toBe(true);
   });
 });
 
@@ -99,12 +121,16 @@ describe("areaFacts", () => {
       { entity_id: "sensor.bath_humidity", platform: "demo", area_id: "bathroom", unique_id: "a" },
       { entity_id: "fan.bath_fan", platform: "demo", area_id: "bathroom", unique_id: "b" },
       { entity_id: "light.garden_wall", platform: "demo", area_id: "garden", unique_id: "c" },
+      { entity_id: "binary_sensor.bath_leak", platform: "demo", area_id: "bathroom", unique_id: "d" },
+      { entity_id: "cover.garden_shutter", platform: "demo", area_id: "garden", unique_id: "e" },
     ],
     labels: [],
     states: [
       { entity_id: "sensor.bath_humidity", state: "50", attributes: { device_class: "humidity", friendly_name: "Bath humidity" } },
       { entity_id: "fan.bath_fan", state: "off", attributes: { friendly_name: "Bath fan" } },
       { entity_id: "light.garden_wall", state: "off", attributes: { friendly_name: "Garden wall" } },
+      { entity_id: "binary_sensor.bath_leak", state: "off", attributes: { device_class: "moisture", friendly_name: "Bath leak" } },
+      { entity_id: "cover.garden_shutter", state: "open", attributes: { friendly_name: "Garden shutter" } },
     ],
   };
   const h = buildHierarchy(reg, "now");
@@ -115,6 +141,18 @@ describe("areaFacts", () => {
     expect(f.has.humidity).toBe(1);
     expect(f.has.fan).toBe(1);
     expect(f.has.lights).toBe(0);
+    expect(f.has.leak).toBe(1);
+    expect(f.has.cover).toBe(0);
+    expect(areaFacts(h, EMPTY_INVENTORY, DEFAULT_NAMING, "garden").has.cover).toBe(1);
+  });
+
+  it("fits leak alert to the room with the leak sensor and covers and sun to the one with the cover", () => {
+    const bath = areaFacts(h, EMPTY_INVENTORY, DEFAULT_NAMING, "bathroom");
+    const garden = areaFacts(h, EMPTY_INVENTORY, DEFAULT_NAMING, "garden");
+    expect(recipeSuitsArea(bath, "leak_alert")).toBe(true);
+    expect(recipeSuitsArea(garden, "leak_alert")).toBe(false);
+    expect(recipeSuitsArea(bath, "covers_sun")).toBe(false);
+    expect(recipeSuitsArea(garden, "covers_sun")).toBe(true);
   });
 
   it("reads the area type and the bedroom flag from the inventory", () => {
@@ -135,19 +173,27 @@ describe("splitByFit", () => {
       { area_id: "garden", name: "Garden", floor_id: "ground" },
     ],
     devices: [],
-    entities: [{ entity_id: "binary_sensor.bath_pir", platform: "demo", area_id: "bathroom", unique_id: "a" }],
+    entities: [
+      { entity_id: "binary_sensor.bath_pir", platform: "demo", area_id: "bathroom", unique_id: "a" },
+      { entity_id: "binary_sensor.bath_leak", platform: "demo", area_id: "bathroom", unique_id: "b" },
+    ],
     labels: [],
-    states: [{ entity_id: "binary_sensor.bath_pir", state: "off", attributes: { device_class: "motion", friendly_name: "Bath PIR" } }],
+    states: [
+      { entity_id: "binary_sensor.bath_pir", state: "off", attributes: { device_class: "motion", friendly_name: "Bath PIR" } },
+      { entity_id: "binary_sensor.bath_leak", state: "off", attributes: { device_class: "moisture", friendly_name: "Bath leak" } },
+    ],
   };
   const h = buildHierarchy(reg, "now");
   const cells = [
     ...planRecipes(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []),
-    planAnnounce(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []),
+    ...planHouseRecipes(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []),
   ];
 
-  it("keeps only the recipes the room can use, and the house script", () => {
+  it("keeps only the recipes the room can use, and every house recipe", () => {
     const { fits, hidden } = splitByFit(h, EMPTY_INVENTORY, DEFAULT_NAMING, cells);
-    expect(fits.map((c) => c.recipe).sort()).toEqual(["announce", "occupancy"]);
+    expect(fits.map((c) => c.recipe).sort()).toEqual(["announce", "battery_low", "goodbye", "house_presence", "leak_alert", "occupancy", "unavailable_watch"]);
+    expect(fits.find((c) => c.recipe === "leak_alert")!.areaId).toBe("bathroom");
+    expect(hidden.some((c) => c.areaId === "garden" && c.recipe === "covers_sun")).toBe(true);
     expect(fits.find((c) => c.recipe === "occupancy")!.areaId).toBe("bathroom");
     expect(hidden).toHaveLength(cells.length - fits.length);
     expect(hidden.some((c) => c.areaId === "garden" && c.recipe === "exterior_lights")).toBe(true);

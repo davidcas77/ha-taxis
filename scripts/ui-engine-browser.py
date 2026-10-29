@@ -22,7 +22,7 @@ VIEWPORTS = [(1280, 800), (375, 800)]
 NAV = ["Guide", "Areas", "Organize", "Automations", "Parameters", "Health", "Changes", "Settings"]
 ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers",
                   "zones", "automations", "blueprints", "devices", "entities", "helpers"]
-PARAMETER_TABS = ["capabilities", "helpers", "area-codes", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety"]
+PARAMETER_TABS = ["capabilities", "helpers", "area-codes", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "covers", "safety"]
 AREA_TABS = ["overview", "capabilities", "devices-entities", "naming", "labels", "health"]
 
 # Old link -> where it opens now.

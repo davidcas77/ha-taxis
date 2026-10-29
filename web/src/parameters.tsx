@@ -22,6 +22,7 @@ const TABS: TabItem<ParameterTab>[] = [
   { key: "climate", label: "Climate" },
   { key: "fan", label: "Bathroom fan" },
   { key: "exterior", label: "Exterior" },
+  { key: "covers", label: "Covers" },
   { key: "safety", label: "Safety" },
 ];
 

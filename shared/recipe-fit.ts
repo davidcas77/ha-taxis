@@ -1,7 +1,7 @@
 import { areaChoice, areaInventory, CAPABILITIES, type AreaType, type Capability, type InventorySettings } from "./inventory.ts";
 import { helperExclusions } from "./helpers.ts";
 import type { NamingSettings } from "./naming.ts";
-import type { AreaRecipeKey } from "./blueprints.ts";
+import { isHouseRecipe, type AreaRecipeKey } from "./blueprints.ts";
 import type { RecipeCell, RecipeStatus } from "./recipes.ts";
 import type { Hierarchy } from "./types.ts";
 
@@ -25,6 +25,8 @@ import type { Hierarchy } from "./types.ts";
 //   exterior_lights  only an area marked Exterior (Capabilities, Type)
 //   left_open        a door or a window sensor
 //   appliance_done   a power sensor
+//   leak_alert       a leak (moisture) sensor
+//   covers_sun       a cover
 //
 // A recipe that is installed, out of date or already in the changes is always
 // shown, whatever the rules say: what exists is never hidden.
@@ -67,6 +69,10 @@ export function recipeSuitsArea(f: AreaFacts, recipe: AreaRecipeKey): boolean {
       return f.has.door + f.has.window > 0;
     case "appliance_done":
       return f.has.power > 0;
+    case "leak_alert":
+      return f.has.leak > 0;
+    case "covers_sun":
+      return f.has.cover > 0;
   }
 }
 
@@ -76,7 +82,8 @@ export function recipeFits(f: AreaFacts, recipe: AreaRecipeKey, status: RecipeSt
 }
 
 // The cells of a plan split into the ones that fit their area and the ones that
-// do not. Announce is the house's one script and always fits.
+// do not. The house recipes (the announce and goodbye scripts, house presence,
+// low batteries, not reporting) are not about one area and always fit.
 export function splitByFit(
   h: Hierarchy,
   inventory: InventorySettings,
@@ -87,7 +94,7 @@ export function splitByFit(
   const fits: RecipeCell[] = [];
   const hidden: RecipeCell[] = [];
   for (const cell of cells) {
-    if (cell.recipe === "announce") {
+    if (isHouseRecipe(cell.recipe)) {
       fits.push(cell);
       continue;
     }

@@ -79,7 +79,7 @@ configuration and diagnostic entities still apply.
 What this area has, and what counts. Taxis reads it from Home Assistant: each
 entity's area, domain and device class (never its name). It lists lights,
 motion, presence, door, window, temperature, humidity, light level, climate (thermostat),
-speaker, TV, cover, fan and power entities, and leaves out disabled entities and
+speaker, TV, cover, fan, power and leak (moisture) entities, and leaves out disabled entities and
 config or diagnostic ones.
 
 - **Counts.** Each entity has a "Counts" box. It is ticked unless the entity is
@@ -283,13 +283,13 @@ in the list of changes.
 
 What Taxis knows about each area, and the choices later features build on. The
 page has a bar of tabs: **Capabilities**, **Helpers**, **Area codes**, **House**,
-**Occupancy**, **Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior**
-and **Safety**.
+**Occupancy**, **Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior**,
+**Covers** and **Safety**.
 **Recipes** has its own page in the main navigation, immediately after Organize.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, climate, speakers, TVs,
-covers, fans and power. A cell shows how many entities count; when some are listed
+covers, fans, power and leak sensors. A cell shows how many entities count; when some are listed
 but left out, the rest show beside it in grey (`2 +1`). Hover or focus the counted
 number to see the names and entity IDs that count; hover or focus the grey `+N`
 separately to see those excluded. The totals row has the same separate lists.
@@ -392,12 +392,12 @@ is a **Conflict**, and so is the second of two floors with one code.
 ### The parameter tabs
 
 The numbers and times the recipes are filled in with: House, Occupancy, Lighting,
-Media, Climate, Bathroom fan, Exterior and Safety. Each tab is a table with a
+Media, Climate, Bathroom fan, Exterior, Covers and Safety. Each tab is a table with a
 row for the **House default**, one for **Interior** and one for **Exterior**
 areas, and one for each area, and a column per parameter. Floors have no values:
 they are only a heading over their areas.
 
-Each of the eight settings tabs begins with a short summary. Expand **How it
+Each of the nine settings tabs begins with a short summary. Expand **How it
 works** for its rules, inheritance and saving details. Every parameter heading
 has a short explanation on hover or keyboard focus; press Escape to dismiss it.
 Numeric and time values are centred under their headings. Lighting keeps Level
@@ -435,6 +435,9 @@ the next change you make.
 | House        | Away mode switch, Sleep mode switch                         | empty: Taxis makes `input_boolean.taxis_away` and `taxis_sleep` when it installs Area climate | an `input_boolean` you already have (the box suggests them)                                                       |
 | House        | Notify services                                             | empty: messages appear in Home Assistant's notifications                                      | notify services like `notify.mobile_app_phone`, separated by commas, up to 20; **house only**                     |
 | House        | Text-to-speech                                              | empty                                                                                         | a `tts` entity (the box suggests them); **house only**                                                            |
+| House        | Outdoor temperature sensor                                  | empty: covers close on the sun alone                                                          | a temperature `sensor` (the box suggests them); **house only**                                                    |
+| House        | Away after everyone left for                                | 30 min                                                                                        | 1 to 1440; **house only**                                                                                         |
+| House        | Away ends when someone returns                              | no                                                                                            | yes or no; **house only**                                                                                         |
 | Occupancy    | Hold timeout                                                | 5 min                                                                                         | 1 to 240                                                                                                          |
 | Occupancy    | Extended after                                              | 30 min                                                                                        | 1 to 720                                                                                                          |
 | Occupancy    | Extended hold timeout                                       | 15 min                                                                                        | 1 to 240                                                                                                          |
@@ -478,10 +481,23 @@ the next change you make.
 | Safety       | Window open for                                             | 30 min                                                                                        | 1 to 1440                                                                                                         |
 | Safety       | Repeat every                                                | 0 min (once)                                                                                  | 0 to 1440                                                                                                         |
 | Safety       | Running above, Running for                                  | 10 W, 2 min                                                                                   | 1 to 10000, 1 to 120                                                                                              |
+| Covers       | Close when the sun is above                                 | 25 °                                                                                          | 0 to 90                                                                                                           |
+| Covers       | and it is warmer outside than                               | 24 °                                                                                          | -20 to 60, in steps of 0.5                                                                                        |
+| Covers       | Close from, Close until                                     | 10:00, 20:00                                                                                  | a time; from has to be before until                                                                               |
+| Covers       | Open at                                                     | 08:00                                                                                         | a time                                                                                                            |
+| Covers       | Open at sunrise instead                                     | no                                                                                            | yes or no                                                                                                         |
+| Covers       | Sunrise offset                                              | 30 min                                                                                        | -120 to 120, in steps of 5 (negative: before sunrise)                                                             |
+| Covers       | Not while a window is open                                  | yes                                                                                           | yes or no                                                                                                         |
 | Safety       | Done below, Done for                                        | 5 W, 3 min                                                                                    | 0 to 10000, 1 to 120                                                                                              |
+| Safety       | Leak: repeat every                                          | 10 min (0: once)                                                                              | 0 to 1440                                                                                                         |
+| Safety       | Leak: water valve                                           | empty: nothing is closed                                                                      | a `valve` or `switch` entity; **house only**                                                                      |
+| Safety       | Battery low below                                           | 15 %                                                                                          | 1 to 99; **house only**                                                                                           |
+| Safety       | Battery report at                                           | 09:00                                                                                         | a time; **house only**                                                                                            |
+| Safety       | Not reporting for                                           | 60 min                                                                                        | 1 to 1440; **house only**                                                                                         |
 
-**House only.** The notify services, the text-to-speech entity and the
-announcement volume have one value for the whole house: only the House default row
+**House only.** The notify services, the text-to-speech entity, the announcement
+volume, the outdoor temperature sensor, the House presence times, the leak valve and
+the battery and not-reporting settings have one value for the whole house: only the House default row
 takes them, and every other row shows a dash.
 
 **Entry lights** are the lights that come on by day when the area becomes occupied.
@@ -509,13 +525,15 @@ an interior area with lights and a sensor; Media off a speaker or a TV; Area cli
 an interior area with a thermostat; Bathroom fan an interior area with a fan, or a
 humidity sensor in a bathroom-like area (bath, toilet, WC, shower, washroom,
 ensuite); Exterior lights only areas marked Exterior; Left open a door or window
-sensor; Appliance done a power sensor. An installed or out-of-date recipe, or one
+sensor; Appliance done a power sensor; Leak alert a leak sensor; Covers and sun a
+cover. An installed or out-of-date recipe, or one
 already in Changes, always shows. A line above the table says how many recipes
 don't fit; **Show all recipes** lists them anyway (remembered in this browser).
 
 A recipe is an automation Taxis makes for an area from a blueprint of its own,
-filled in with the area's sensors, lights and parameters. There are eight, and
-one script for the whole house (Announce):
+filled in with the area's sensors, lights and parameters. There are ten, and
+five for the whole house (Announce, Goodbye, House presence, Low batteries and Not
+reporting; see _House recipes_ below):
 
 - **Occupancy** keeps an area occupied with a hold timer. A sensor that starts
   occupancy (a motion sensor, or a presence sensor when the area has no motion
@@ -633,8 +651,8 @@ Installing a recipe adds these changes (the Changes page shows each):
   that uses the blueprint with its inputs.
 
 Everything is an ordinary Home Assistant object. The automations keep working if
-Taxis is stopped or uninstalled. Not in this version: boost, covers by the sun
-(it needs to know which way each window faces) and the other recipes of the design.
+Taxis is stopped or uninstalled. Not in this version: boost, and covers that know
+which way each window faces (Covers and sun uses the sun's height, not its direction).
 
 The Occupancy blueprint is now version 4: an installed Occupancy automation shows
 as out of date until it is updated (blueprint version, and _Shower holds occupied
@@ -849,6 +867,81 @@ things together however many speakers it has. It is a script blueprint saved at
 `taxis/announce.yaml`; the change list's Apply writes the blueprint and then the
 script (`config/script/config/taxis_announce`). When a speaker, an area's Occupancy
 or the setting changes, the cell says **Out of date** and what changed.
+
+#### Leak alert
+
+Reports water. **Needs** a leak sensor that counts (a binary sensor with the
+`moisture` device class). When one goes from dry to wet, the message names the
+sensor and goes to every notify service in _Notify services_ (House tab) and to
+Home Assistant's notifications; with _Leak: repeat every_ above 0 (10 min) it is
+sent again until the sensor is dry, and the notification is dismissed when it is.
+If you choose a _Leak: water valve_ (a `valve` or a `switch`, Safety tab, house
+only) it is closed first (`valve.close_valve`, or `switch.turn_off` for a switch);
+with none chosen nothing is closed. It never turns a light on. Pausing the area's
+automations (its pause switch) silences it too. A sensor that comes back after a
+restart or a flat battery already wet is reported too: a missed leak costs more
+than a repeated alarm. Installing
+adds `taxis/leak_alert.yaml`, the area's pause switch and `taxis_leak_alert_<code>`.
+
+#### Covers and sun
+
+Closes an area's covers against the sun and opens them again. **Needs** a cover that
+counts. They close when the sun is higher than _Close when the sun is above_ (25°),
+the outdoor temperature (the sensor you pick on the House tab) is above _and it is
+warmer outside than_ (24°) and it is between _Close from_ (10:00) and _Close until_
+(20:00); the check runs when the sun crosses the height, when the temperature
+crosses its limit and when the window starts. Without an outdoor sensor the
+temperature is not looked at (the cell says so). They do not close while a window the
+area counts is open (turn _Not while a window is open_ off to ignore windows), and
+nothing moves while the area's pause switch is on. They open at _Open at_ (08:00), or
+at sunrise plus _Sunrise offset_ (30 min) when _Open at sunrise instead_ is on. Taxis
+cannot tell which way a window faces, so one setting covers the whole area. Installing
+adds `taxis/covers_sun.yaml`, the pause switch and `taxis_covers_sun_<code>`.
+
+### House recipes
+
+These are not for one room. **Automations → Recipes** lists them in a **House** table
+under the areas (and as _House_ rows in the records view). Their automations have no
+area: `taxis_<recipe>_house`. The three automations share one pause switch,
+`input_boolean.taxis_paused` ("Taxis house automations paused"), which Taxis makes
+with the first of them and which, like the areas' switches, is off to begin with and
+keeps its state through a restart.
+
+- **Goodbye** is the script `script.taxis_goodbye` (saved as the script blueprint
+  `taxis/goodbye.yaml`). Call it from a button, an NFC tag or a voice command
+  (a Buttons assignment can run `script.taxis_goodbye`). It turns off the house light
+  group, turns off the speakers and TVs that count in any area (only the ones that
+  are on), then turns on away mode, which Area climate answers with its away setting.
+  **Needs** the house light group (Helpers tab) and a usable away switch: the one you
+  chose on the House tab, else `input_boolean.taxis_away`, which the recipe makes.
+- **House presence** makes `binary_sensor.taxis_occupied`, on while any area is
+  occupied or any person is home, and the automation that turns away mode on after
+  everyone has been away for _Away after everyone left for_ (30 min). It is two
+  helpers: the group `binary_sensor.taxis_areas_occupied` (the occupied sensors of the
+  areas that have Occupancy; when a room gains Occupancy the cell says _Out of date_
+  and the update changes the group's members) and the template sensor on top of it
+  (on while that group is on or a `person` is home), which is the same text
+  everywhere, so nothing in it ever needs rewriting. Away mode
+  is not switched on while the guest mode switch is on (when one is in place), and with
+  _Away ends when someone returns_ it is switched off again when the house becomes
+  occupied. **Needs** a room with Occupancy installed.
+- **Low batteries** sends one message a day at _Battery report at_ (09:00) listing the
+  batteries below _Battery low below_ (15 %): every `sensor` with the `battery` device
+  class under the level, and every `binary_sensor` with that class that is on (Home
+  Assistant's "battery low"). Nothing is sent when none is low. A battery added later
+  is included without changing anything.
+- **Not reporting** sends a message when a sensor the area recipes rely on has been
+  unavailable or unknown for _Not reporting for_ (60 min): the counted motion,
+  presence, door, window, temperature, humidity, light level, leak and climate
+  entities, and the power sensors marked as appliances, of every area. One message
+  per entity until it reports again (a flip between unavailable and unknown starts the
+  count again), and its notification in Home Assistant is dismissed when it does. The
+  list is written into the automation: when you start counting another sensor the cell
+  says how many were added and offers the update.
+
+Low batteries and Not reporting send their messages to the notify services on the
+House tab, or to Home Assistant's notifications when there are none, as Left open
+does.
 
 ## Guide
 
@@ -1153,6 +1246,9 @@ The checks, and the exact rules:
   open or Appliance done installed while no notify service is set, so their messages
   only appear in Home Assistant's notifications. Taxis does not check that a notify
   service exists, since that would need a read of the list of services it does not make.
+  The house recipes (Goodbye, House presence, Low batteries, Not reporting) are
+  checked like Announce: out of date, or installed but no longer something Taxis would
+  write. The notify note also covers Leak alert, Low batteries and Not reporting.
 - **Lights without an area.** Warning, one finding for all of them: a light (not a
   group, not disabled) that is in no area, its own or its device's. The link goes
   to Parameters → Capabilities, where each gets an area.
@@ -1168,8 +1264,43 @@ The checks, and the exact rules:
   and Taxis can't read those.
 - **Device-based.** Info for an automation or script with a trigger, condition or
   action that names a device by id (a device trigger, or a service whose target
-  is a device). A device id changes when the device is removed and added again.
-  Warning when the device isn't in Home Assistant any more.
+  is a device). A device id changes when the device is removed and added again,
+  which is why it breaks if the device is re-paired. Warning when the device isn't
+  in Home Assistant any more. When Taxis can name an entity that does the same, the
+  detail says so: the `event` entity of a device a button trigger names, or the
+  light, switch or other entity of the domain a service call on the device uses.
+- **Start-up actions.** An automation that is on, is not a Taxis recipe, has no
+  condition of its own and is triggered when Home Assistant starts
+  (`homeassistant` with `start`, or the `homeassistant_started` event), whose
+  actions always switch a light, switch, fan, climate, cover, media player, lock or
+  similar (directly, not behind an `if`, `choose`, `repeat` or `wait`). Warning:
+  "runs at every Home Assistant restart and changes ...". Error when it turns off the
+  house light group, a floor's, `light.all`, `entity_id: all` on lights or a light
+  group that spans three or more areas. A condition anywhere at the top decides, and
+  nothing is said.
+- **Conflicting automations.** Two automations that are on, not Taxis recipes, with
+  the same trigger (the same entity and the same `from`, `to`, `above` and `below`,
+  the same time, or both at start-up) that set the same target differently: on and
+  off, different temperatures or modes, open and close. Warning, one per pair. They
+  are not reported when they have conditions that cannot be true together (plain state
+  conditions on the same entity with different states), and when either has a
+  condition of another kind Taxis cannot tell and says nothing. This is not the
+  _Competing automations_ check: that one finds any two automations switching the
+  same light; this one needs the same trigger.
+- **Button automations.** Info. (1) A state trigger on an `event` entity whose
+  `not_from` lists `unknown`: event entities are `unknown` after a restart until the
+  first press, so that press is ignored. Take `unknown` out, or use `not_from:
+unavailable` alone. (2) An automation started by a button or remote (an `event`
+  entity, a button device trigger or a remote's event) in `mode: single` (the
+  default) whose actions wait (`delay`, `wait_template`, `wait_for_trigger`): presses
+  during the wait are dropped. Use `queued` or `restart`.
+- **Duplicate ids.** Error. Two automations whose stored config has the same
+  `id`; Home Assistant keeps one. Taxis's own automations are included.
+- **Arrival and away.** Warning. An automation or script that is on, not a Taxis
+  recipe, with a trigger or condition on a `person` entity that has been unknown or
+  unavailable for more than the _not reporting_ limit (at least 24 hours): an away or
+  arrival rule cannot work while the person is unknown. One finding per person,
+  naming the automations.
 
 What Taxis can't see limits the checks: automations and scripts written in YAML
 have no stored config to read (the page says how many), so what they use is not

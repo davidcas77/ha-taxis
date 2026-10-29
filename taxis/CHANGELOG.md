@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.7.7
+
+- **New recipes.** **Leak alert** (per area: a moisture sensor going wet sends a
+  message and a Home Assistant notification, repeating until it is dry, and closes
+  the water valve you choose on the Safety tab; it never turns a light on),
+  **Covers and sun** (per area: covers close while the sun is high and it is warm
+  outside, inside a time window, and open in the morning or at sunrise; they never
+  move while the area is paused or, if you keep that option, a window is open),
+  and four for the whole house on the Recipes page: **Goodbye** (a script,
+  `script.taxis_goodbye`, that switches off the house lights and the media and
+  turns away mode on), **House presence** (the house occupied sensor, and away
+  mode switched on after everyone has been away for a while), **Low batteries**
+  (one daily message) and **Not reporting** (a message when a sensor the recipes
+  rely on stays unavailable or unknown). Each is a Taxis blueprint at version 1
+  with its own pause switch (the house recipes share `input_boolean.taxis_paused`);
+  restarting Home Assistant never fires an action.
+- **New parameters.** A **Covers** tab, and on House: outdoor temperature sensor,
+  _Away after everyone left for_, _Away ends when someone returns_; on Safety: leak
+  repeat and water valve, battery level and time, and the _not reporting_ time.
+  Leak sensors (a binary sensor with the `moisture` device class) are a new
+  capability.
+- **New Health checks** for how automations are written (they read stored
+  configs; recipes' own automations are left out): automations that run at every
+  restart and change devices (error for the house or a floor's lights),
+  automations with the same trigger that set the same thing differently, a
+  button's first press lost after a restart (`not_from` with `unknown`), a button
+  automation in `mode: single` that waits, two automations with the same id, an
+  arrival or away automation about a person that has been unknown for days. A device
+  id that an entity could replace now names that entity under _Device-based_.
+- Internal: `shared/blueprints.ts` and `shared/health.ts` are now barrels over
+  `shared/blueprints/<recipe>.ts` and `shared/health/<family>.ts`; behaviour is
+  unchanged. A house recipe's automation has no area (`taxis_<recipe>_house`).
+
 ## 0.7.6
 
 A UI release: one table engine, one set of page building blocks, a Guide that leads

@@ -1,4 +1,4 @@
-import { ANNOUNCE_PATH, BLUEPRINT_PATH_RE } from "../../shared/blueprints.ts";
+import { BLUEPRINT_PATH_RE, SCRIPT_PATHS } from "../../shared/blueprints.ts";
 import { DAY_KEYS, MAX_RANGES_PER_DAY } from "../../shared/periods.ts";
 
 // Minimal Home Assistant WebSocket client.
@@ -103,21 +103,26 @@ const BLUEPRINT_SAVE_KEYS = new Set(["domain", "path", "yaml", "source_url", "al
 
 // blueprint/save writes a file into Home Assistant's blueprints folder, so what
 // it may write is fixed here: an automation blueprint at taxis/<name>.yaml, and
-// the script blueprint at taxis/announce.yaml (the only script Taxis makes).
+// the script blueprints at taxis/announce.yaml and taxis/goodbye.yaml (the only scripts Taxis makes).
 function assertBlueprintSave(payload: Record<string, unknown>): void {
   const stray = Object.keys(payload).find((k) => !BLUEPRINT_SAVE_KEYS.has(k));
   if (stray) throw new Error(`Refusing to save a blueprint with "${stray.slice(0, 40)}": it isn't something Taxis sends.`);
   if (payload.domain !== "automation" && payload.domain !== "script") {
-    throw new Error(`Refusing to save a blueprint for "${String(payload.domain).slice(0, 40)}": Taxis writes automation blueprints, and one script blueprint.`);
+    throw new Error(
+      `Refusing to save a blueprint for "${String(payload.domain).slice(0, 40)}": Taxis writes automation blueprints, and the announce and goodbye script blueprints.`,
+    );
   }
   if (typeof payload.path !== "string" || !BLUEPRINT_PATH_RE.test(payload.path)) {
     throw new Error(`Refusing to save a blueprint at "${String(payload.path).slice(0, 80)}": Taxis writes only to taxis/<name>.yaml.`);
   }
-  // A script blueprint is the announce one and nothing else; announce is not an automation.
-  if ((payload.domain === "script") !== (payload.path === ANNOUNCE_PATH)) {
-    throw new Error(`Refusing to save a ${String(payload.domain)} blueprint at "${payload.path.slice(0, 80)}": the only script blueprint Taxis writes is ${ANNOUNCE_PATH}.`);
+  // A script blueprint is the announce or the goodbye one and nothing else; neither is an automation.
+  if ((payload.domain === "script") !== SCRIPT_PATHS.includes(payload.path)) {
+    throw new Error(
+      `Refusing to save a ${String(payload.domain)} blueprint at "${payload.path.slice(0, 80)}": the only script blueprints Taxis writes are ${SCRIPT_PATHS.join(" and ")}.`,
+    );
   }
-  if (typeof payload.yaml !== "string" || payload.yaml.length === 0 || payload.yaml.length > 64 * 1024) throw new Error("Refusing to save a blueprint with no text or too much of it.");
+  if (typeof payload.yaml !== "string" || payload.yaml.length === 0 || payload.yaml.length > 64 * 1024)
+    throw new Error("Refusing to save a blueprint with no text or too much of it.");
 }
 
 const SCHEDULE_KEYS = new Set(["name", "icon", "schedule_id", ...DAY_KEYS]);
@@ -130,13 +135,15 @@ function assertScheduleWrite(type: string, payload: Record<string, unknown>): vo
   const stray = Object.keys(payload).find((k) => !SCHEDULE_KEYS.has(k));
   if (stray) throw new Error(`Refusing to send a schedule with "${stray.slice(0, 40)}": it isn't something Taxis sends.`);
   if (typeof payload.name !== "string" || payload.name.trim() === "" || payload.name.length > 255) throw new Error("Refusing to send a schedule with no name.");
-  if (payload.icon !== undefined && (typeof payload.icon !== "string" || !/^[a-z0-9]+:[a-z0-9-]+$/.test(payload.icon))) throw new Error("Refusing to send a schedule with an icon that isn't one.");
+  if (payload.icon !== undefined && (typeof payload.icon !== "string" || !/^[a-z0-9]+:[a-z0-9-]+$/.test(payload.icon)))
+    throw new Error("Refusing to send a schedule with an icon that isn't one.");
   if (type === "schedule/update" ? typeof payload.schedule_id !== "string" || !/^[a-z0-9_]{1,80}$/.test(payload.schedule_id) : "schedule_id" in payload) {
     throw new Error(type === "schedule/update" ? "Refusing to update a schedule without saying which." : "Refusing to create a schedule with an id.");
   }
   for (const day of DAY_KEYS) {
     const ranges = payload[day];
-    if (!Array.isArray(ranges) || ranges.length > MAX_RANGES_PER_DAY) throw new Error(`Refusing to send a schedule whose ${day} isn't a short list of periods.`);
+    if (!Array.isArray(ranges) || ranges.length > MAX_RANGES_PER_DAY)
+      throw new Error(`Refusing to send a schedule whose ${day} isn't a short list of periods.`);
     for (const r of ranges as unknown[]) {
       const keys = r && typeof r === "object" ? Object.keys(r) : [];
       const { from, to } = (r ?? {}) as { from?: unknown; to?: unknown };

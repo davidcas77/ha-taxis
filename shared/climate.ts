@@ -35,7 +35,16 @@
 export const HOUSE_AWAY_ID = "input_boolean.taxis_away";
 export const HOUSE_SLEEP_ID = "input_boolean.taxis_sleep";
 export const HOUSE_GUEST_ID = "input_boolean.taxis_guest";
-export const HOUSE_HELPER_IDS: readonly string[] = [HOUSE_AWAY_ID, HOUSE_SLEEP_ID, HOUSE_GUEST_ID];
+// The switch that pauses the house-level recipes (the ones that belong to no area).
+export const HOUSE_PAUSE_ID = "input_boolean.taxis_paused";
+export const HOUSE_HELPER_IDS: readonly string[] = [HOUSE_AWAY_ID, HOUSE_SLEEP_ID, HOUSE_GUEST_ID, HOUSE_PAUSE_ID];
+
+// The house occupied sensor: on while any area is occupied or any person is home.
+// It is a template over the group of the areas' occupied sensors, so a new area
+// is a change of the group's members, never of the template.
+export const HOUSE_AREAS_OCCUPIED_ID = "binary_sensor.taxis_areas_occupied";
+export const HOUSE_OCCUPIED_ID = "binary_sensor.taxis_occupied";
+export const HOUSE_OCCUPIED_TEMPLATE = `{{ is_state('${HOUSE_AREAS_OCCUPIED_ID}','on') or (states.person | selectattr('state','eq','home') | list | count) > 0 }}`;
 
 export type ClimateDecision = "idle" | "window" | "hold" | "away" | "sleep" | "night" | "comfort" | "eco";
 
@@ -137,7 +146,8 @@ const NORMAL: readonly ClimateDecision[] = ["comfort", "eco", "night", "sleep", 
 // uses frost protection).
 export function targetTemperature(d: ClimateDecision, p: ClimateParams): number | null {
   if (!NORMAL.includes(d)) return null;
-  if (p.season === "cooling") return { comfort: p.coolComfortTemp, eco: p.coolEcoTemp, night: p.coolNightTemp, sleep: p.coolNightTemp, away: p.coolAwayTemp }[d as "comfort"];
+  if (p.season === "cooling")
+    return { comfort: p.coolComfortTemp, eco: p.coolEcoTemp, night: p.coolNightTemp, sleep: p.coolNightTemp, away: p.coolAwayTemp }[d as "comfort"];
   const base = { comfort: p.comfortTemp, eco: p.ecoTemp, night: p.nightTemp, sleep: p.sleepTemp, away: p.awayTemp }[d as "comfort"];
   return Math.min(Math.max(base, p.minTemp), p.maxTemp);
 }
@@ -166,7 +176,8 @@ export type Thermostat = {
   step: number | null;
 };
 
-export type ThermostatAction = { service: "set_hvac_mode"; mode: string } | { service: "set_preset_mode"; preset: string } | { service: "set_temperature"; temperature: number };
+export type ThermostatAction =
+  { service: "set_hvac_mode"; mode: string } | { service: "set_preset_mode"; preset: string } | { service: "set_temperature"; temperature: number };
 
 // The setpoint for one thermostat: inside the device's limits, on its step.
 export function goalFor(t: Thermostat, raw: number): number {

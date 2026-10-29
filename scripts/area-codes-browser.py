@@ -291,7 +291,7 @@ class AreaCodesRegression(unittest.TestCase):
         self.page.get_by_role("checkbox", name="Hide not needed", exact=True).check()
         self.assertEqual(table.locator("tbody tr").count(), before)
         self.assertEqual(self.coverage_row().locator("td").nth(7).inner_text(), "")
-        self.assertEqual(self.coverage_row().locator("td").count(), 16)
+        self.assertEqual(self.coverage_row().locator("td").count(), 17)  # one cell per capability, Leak included
         for capability, status in [("Lights", "Present"), ("Motion", "Create"), ("Presence", "Update members"), ("Doors", "Conflict"), ("Windows", "Adopt")]:
             self.assertIn(status, self.coverage_row().get_by_label("Living room " + capability + " helper details", exact=True).inner_text())
         self.assertIn("No helper in Taxis", self.coverage_row().locator("td").nth(10).inner_text())
@@ -304,7 +304,7 @@ class AreaCodesRegression(unittest.TestCase):
         self.open("#parameters/helpers")
         table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
         picker = self.page.get_by_label("Capability", exact=True)
-        self.assertEqual(picker.locator("option").count(), 15)
+        self.assertEqual(picker.locator("option").count(), 16)
         picker.select_option("window")
         self.assertEqual(table.locator("thead th").count(), 3)
         self.assertIn("Windows", table.locator("thead th").nth(2).inner_text())
@@ -323,7 +323,7 @@ class AreaCodesRegression(unittest.TestCase):
         picker.select_option("thermostat")
         self.assertIn("No helper in Taxis", self.coverage_row().locator("td").nth(2).inner_text())
         picker.select_option("all")
-        self.assertEqual(table.locator("thead th").count(), 16)
+        self.assertEqual(table.locator("thead th").count(), 17)
         self.page.set_viewport_size({"width": 390, "height": 844})
         self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
         self.assertEqual(self.puts, [])

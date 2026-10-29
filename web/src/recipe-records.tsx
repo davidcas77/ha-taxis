@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 
+import { isHouseRecipe } from "../../shared/blueprints.ts";
 import { RECIPE_LABEL, automationIdFor, recipeChangeInputs, type RecipeCell, type RecipeInstalled, type RecipeStatus } from "../../shared/recipes.ts";
+import { HOUSE_AUTOMATION_CODE } from "../../shared/recipes-house.ts";
 import { areaCodes } from "../../shared/naming.ts";
 import { sortRows } from "../../shared/sort.ts";
 import type { Hierarchy } from "../../shared/types.ts";
@@ -23,7 +25,7 @@ const SORT: Record<string, (cell: RecipeCell) => string> = {
   recipe: (cell) => RECIPE_LABEL[cell.recipe],
   status: (cell) => STATUS[cell.status],
 };
-const areaLabel = (cell: RecipeCell) => (cell.recipe === "announce" ? "House" : cell.areaName);
+const areaLabel = (cell: RecipeCell) => (isHouseRecipe(cell.recipe) ? "House" : cell.areaName);
 const BEHAVIOR: Record<RecipeCell["recipe"], string[]> = {
   occupancy: [
     "Activity starts a hold timer; further activity keeps the room occupied.",
@@ -61,6 +63,30 @@ const BEHAVIOR: Record<RecipeCell["recipe"], string[]> = {
     "Creates one house-wide script that speaks a supplied message in eligible rooms.",
     "Only occupied rooms that are not asleep or paused receive the message. Configure a text-to-speech entity and counted speakers first.",
   ],
+  leak_alert: [
+    "A leak sensor going wet sends a message to your notify services and a notification in Home Assistant, repeating until it is dry.",
+    "When a water valve is chosen on the Safety tab it is closed. It never turns a light on.",
+  ],
+  covers_sun: [
+    "Covers close while the sun is high and it is warm outside, inside the time window, and open again in the morning or at sunrise.",
+    "They do not move while the area is paused or, if you keep that option, a window of the area is open.",
+  ],
+  goodbye: [
+    "A script for the whole house: lights off, media off and away mode on, to call from a button, an NFC tag or a voice command.",
+    "Area climate answers away mode with its away setting.",
+  ],
+  house_presence: [
+    "Makes the house occupied sensor (any area occupied or any person home) and switches away mode on after everyone has been away for a while.",
+    "Away mode is not switched on while guest mode is on; it can end when someone returns if you allow it.",
+  ],
+  battery_low: [
+    "Once a day, one message lists the batteries below the chosen level. Nothing is sent when none is low.",
+    "Every battery sensor in Home Assistant is looked at when it runs.",
+  ],
+  unavailable_watch: [
+    "A message when a sensor the area recipes rely on stays unavailable or unknown for the chosen time, once per entity until it comes back.",
+    "The notification is cleared when the entity reports again.",
+  ],
 };
 
 const REQUIREMENTS: Record<RecipeCell["recipe"], string[]> = {
@@ -79,6 +105,12 @@ const REQUIREMENTS: Record<RecipeCell["recipe"], string[]> = {
   left_open: ["At least one counted door or window sensor.", "Opening delays and optional notification targets."],
   appliance_done: ["A counted power sensor marked as an appliance.", "Running/idle thresholds, delays and optional notification targets."],
   announce: ["A configured text-to-speech entity.", "Eligible rooms with counted speakers and occupancy helpers."],
+  leak_alert: ["A counted leak (moisture) sensor in the room.", "Optional notify services and water valve on the House and Safety tabs."],
+  covers_sun: ["A counted cover in the room.", "Optional outdoor temperature sensor (House tab) and the Covers parameters."],
+  goodbye: ["The house light group and the away mode switch.", "Counted speakers and TVs are switched off too."],
+  house_presence: ["At least one room with Occupancy.", "The away mode switch; a guest mode switch keeps away mode off while guests are home."],
+  battery_low: ["Nothing but the house pause switch.", "Optional notify services and the level and time on the Safety tab."],
+  unavailable_watch: ["At least one counted sensor in a room.", "Optional notify services and the time on the Safety tab."],
 };
 const PARAMETER_TAB: Record<RecipeCell["recipe"], string> = {
   occupancy: "occupancy",
@@ -90,6 +122,12 @@ const PARAMETER_TAB: Record<RecipeCell["recipe"], string> = {
   left_open: "safety",
   appliance_done: "safety",
   announce: "house",
+  leak_alert: "safety",
+  covers_sun: "covers",
+  goodbye: "house",
+  house_presence: "house",
+  battery_low: "safety",
+  unavailable_watch: "safety",
 };
 
 export function RecipeRecords({
@@ -117,7 +155,7 @@ export function RecipeRecords({
     () =>
       cells.filter(
         (cell) =>
-          (!areas.size || areas.has(cell.recipe === "announce" ? "house" : cell.areaId)) &&
+          (!areas.size || areas.has(isHouseRecipe(cell.recipe) ? "house" : cell.areaId)) &&
           (status === "all" || (status === "todo" ? cell.actionable : cell.status === status)) &&
           `${cell.areaName} ${RECIPE_LABEL[cell.recipe]} ${STATUS[cell.status]}`.toLowerCase().includes(query.trim().toLowerCase()),
       ),
@@ -152,7 +190,7 @@ export function RecipeRecords({
     setAreas(new Set());
     setStatus("all");
   };
-  const areaOptions = [...Object.values(h.areas), { id: "house", name: "House (Announce)" }];
+  const areaOptions = [...Object.values(h.areas), { id: "house", name: "House" }];
   return (
     <RecordsSplit
       list={
@@ -256,15 +294,16 @@ function RecipeDetail({
   naming: Parameters<typeof areaCodes>[1];
 }) {
   const inputs = recipeChangeInputs([cell]);
-  const code = cell.recipe === "announce" ? "" : (areaCodes(h, naming)[cell.areaId]?.code ?? cell.areaId);
-  const id = cell.recipe === "announce" ? "taxis_announce" : automationIdFor(cell.recipe, code);
-  const actual = cell.recipe === "announce" ? installed.scripts[id] : installed.automations[id];
+  const code = isHouseRecipe(cell.recipe) ? HOUSE_AUTOMATION_CODE : (areaCodes(h, naming)[cell.areaId]?.code ?? cell.areaId);
+  const isScript = cell.recipe === "announce" || cell.recipe === "goodbye";
+  const id = isScript ? `taxis_${cell.recipe}` : automationIdFor(cell.recipe, code);
+  const actual = isScript ? installed.scripts[id] : installed.automations[id];
   const purpose = descriptions[cell.recipe] ?? "Speaks a message in occupied rooms using text-to-speech.";
   return (
     <article aria-label="Recipe details" className="flex flex-col gap-5 p-4">
       <header>
         <h2 className="text-lg font-semibold">
-          {RECIPE_LABEL[cell.recipe]} · {cell.recipe === "announce" ? "House" : cell.areaName}
+          {RECIPE_LABEL[cell.recipe]} · {areaLabel(cell)}
         </h2>
         <p className="mt-1 text-sm text-muted">{purpose}</p>
         <p className="mt-2 text-xs font-medium">{STATUS[cell.status]}</p>
@@ -294,7 +333,7 @@ function RecipeDetail({
         <p className="mt-2 flex flex-wrap gap-3 text-xs">
           <a
             className="text-accent hover:underline"
-            href={cell.recipe === "announce" ? "#parameters/house" : `#area/${encodeURIComponent(cell.areaId)}/capabilities`}
+            href={isHouseRecipe(cell.recipe) ? "#parameters/house" : `#area/${encodeURIComponent(cell.areaId)}/capabilities`}
           >
             Capabilities
           </a>
@@ -375,7 +414,7 @@ function RecipeDetail({
       <details className="text-xs text-muted">
         <summary className="cursor-pointer text-accent">Technical details</summary>
         <p className="mt-2">
-          {cell.recipe === "announce" ? "Script" : "Automation"}: <code className="break-all">{id}</code>
+          {isScript ? "Script" : "Automation"}: <code className="break-all">{id}</code>
         </p>
         {actual?.path && (
           <p>

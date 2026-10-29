@@ -54,10 +54,27 @@ describe("the definitions", () => {
       // A list has no value to start from: empty means not set.
       if (p.kind === "entities" || p.kind === "services") expect(p.default, p.key).toEqual([]);
       else expect(checkValue(p, p.default), p.key).toBeNull();
-      expect(["house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "safety"]).toContain(p.tab);
+      expect(["house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "covers", "safety"]).toContain(p.tab);
     }
-    expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual(["night_start", "night_end", "away_mode_entity", "sleep_mode_entity", "guest_mode_entity", "notify_targets", "tts_entity"]);
-    expect(PARAMS.filter((p) => p.tab === "occupancy").map((p) => p.key)).toEqual(["hold_timeout", "extended_after", "extended_hold", "sleep_hold", "humidity_hold_rate"]);
+    expect(PARAMS.filter((p) => p.tab === "house").map((p) => p.key)).toEqual([
+      "night_start",
+      "night_end",
+      "away_mode_entity",
+      "sleep_mode_entity",
+      "guest_mode_entity",
+      "notify_targets",
+      "tts_entity",
+      "outdoor_temperature_entity",
+      "everyone_left_minutes",
+      "away_ends_on_return",
+    ]);
+    expect(PARAMS.filter((p) => p.tab === "occupancy").map((p) => p.key)).toEqual([
+      "hold_timeout",
+      "extended_after",
+      "extended_hold",
+      "sleep_hold",
+      "humidity_hold_rate",
+    ]);
     expect(PARAMS.filter((p) => p.tab === "lighting").map((p) => p.key)).toEqual([
       "guest_pause_lighting",
       "lux_threshold",
@@ -117,12 +134,56 @@ describe("the definitions", () => {
       "appliance_run_minutes",
       "appliance_idle_watts",
       "appliance_idle_minutes",
+      "leak_repeat",
+      "leak_valve_entity",
+      "battery_threshold",
+      "battery_report_time",
+      "unavailable_watch_minutes",
     ]);
+    expect(PARAMS.filter((p) => p.tab === "covers").map((p) => p.key)).toEqual([
+      "covers_sun_elevation",
+      "covers_temp_above",
+      "covers_window_start",
+      "covers_window_end",
+      "covers_open_time",
+      "covers_open_at_sunrise",
+      "covers_sunrise_offset",
+      "covers_block_if_window_open",
+    ]);
+  });
+
+  it("has the defaults of the leak, battery, covers, presence and not-reporting parameters, and a valve that is a valve or a switch", () => {
+    const d = (k: (typeof PARAM_KEYS)[number]) => PARAM_DEF[k].default;
+    expect([d("leak_repeat"), d("leak_valve_entity"), d("battery_threshold"), d("battery_report_time"), d("unavailable_watch_minutes")]).toEqual([
+      10,
+      "",
+      15,
+      "09:00",
+      60,
+    ]);
+    expect([d("covers_sun_elevation"), d("covers_temp_above"), d("covers_window_start"), d("covers_window_end"), d("covers_open_time")]).toEqual([
+      25,
+      24,
+      "10:00",
+      "20:00",
+      "08:00",
+    ]);
+    expect([d("covers_open_at_sunrise"), d("covers_sunrise_offset"), d("covers_block_if_window_open")]).toEqual([false, 30, true]);
+    expect([d("outdoor_temperature_entity"), d("everyone_left_minutes"), d("away_ends_on_return")]).toEqual(["", 30, false]);
+    const valve = PARAM_DEF.leak_valve_entity;
+    expect(checkValue(valve, "valve.main_water")).toBeNull();
+    expect(checkValue(valve, "switch.water_shutoff")).toBeNull();
+    expect(checkValue(valve, "")).toBeNull();
+    expect(checkValue(valve, "light.kitchen")).toMatch(/valve or switch entity id/);
+    expect(checkValue(PARAM_DEF.outdoor_temperature_entity, "sensor.garden_temp")).toBeNull();
+    expect(checkValue(PARAM_DEF.outdoor_temperature_entity, "climate.x")).toMatch(/sensor entity id/);
   });
 
   it("has the defaults of the later recipes", () => {
     const d = (k: (typeof PARAM_KEYS)[number]) => PARAM_DEF[k].default;
-    expect([d("fan_rate_on"), d("fan_delta_on"), d("fan_abs_on"), d("fan_delta_off"), d("fan_flat_minutes"), d("fan_max_minutes")]).toEqual([0.03, 10, 80, 3, 20, 60]);
+    expect([d("fan_rate_on"), d("fan_delta_on"), d("fan_abs_on"), d("fan_delta_off"), d("fan_flat_minutes"), d("fan_max_minutes")]).toEqual([
+      0.03, 10, 80, 3, 20, 60,
+    ]);
     expect([d("fan_reference"), d("fan_suppress_in_sleep"), d("humidity_hold_rate")]).toEqual(["", false, 0]);
     expect([d("exterior_sunset_offset"), d("exterior_clock")]).toEqual([0, 120]);
     expect([d("door_open_after"), d("window_open_after"), d("left_open_repeat")]).toEqual([10, 30, 0]);
@@ -141,7 +202,9 @@ describe("the definitions", () => {
 
   it("has the climate defaults of the design", () => {
     const d = (k: (typeof PARAM_KEYS)[number]) => PARAM_DEF[k].default;
-    expect([d("comfort_temp"), d("eco_temp"), d("night_temp"), d("sleep_temp"), d("away_temp"), d("frost_temp"), d("min_temp"), d("max_temp")]).toEqual([21, 19, 18, 17.5, 16, 7, 16, 24]);
+    expect([d("comfort_temp"), d("eco_temp"), d("night_temp"), d("sleep_temp"), d("away_temp"), d("frost_temp"), d("min_temp"), d("max_temp")]).toEqual([
+      21, 19, 18, 17.5, 16, 7, 16, 24,
+    ]);
     expect([d("cool_comfort_temp"), d("cool_eco_temp"), d("cool_away_temp"), d("cool_night_temp")]).toEqual([24, 27, 29, 25]);
     expect([d("window_delay"), d("restore_delay"), d("eco_after_clear")]).toEqual([2, 1, 30]);
     expect([d("comfort_needs_occupancy"), d("auto_hvac_on"), d("doors_open_count"), d("season")]).toEqual([true, false, false, "heating"]);
@@ -162,18 +225,21 @@ describe("checkValue: the climate kinds", () => {
   it("takes a toggle's entity id, or nothing, for the house switches", () => {
     expect(checkValue(PARAM_DEF.away_mode_entity, "")).toBeNull();
     expect(checkValue(PARAM_DEF.away_mode_entity, "input_boolean.away_mode")).toBeNull();
-    for (const bad of ["switch.away", "input_boolean.", "input_boolean.Away", "away_mode", 5, null]) expect(checkValue(PARAM_DEF.away_mode_entity, bad), String(bad)).not.toBeNull();
+    for (const bad of ["switch.away", "input_boolean.", "input_boolean.Away", "away_mode", 5, null])
+      expect(checkValue(PARAM_DEF.away_mode_entity, bad), String(bad)).not.toBeNull();
   });
 
   it("takes a preset name of letters, digits and a few marks, up to 40", () => {
     for (const ok of ["", "eco", "Comfort", "Home 2", "away_mode", "frost-protect"]) expect(checkValue(PARAM_DEF.preset_eco, ok), ok).toBeNull();
-    for (const bad of ["x".repeat(41), "eco<script>", "a;b", "v1.2", "comfort.eco", 3, null]) expect(checkValue(PARAM_DEF.preset_eco, bad), String(bad)).not.toBeNull();
+    for (const bad of ["x".repeat(41), "eco<script>", "a;b", "v1.2", "comfort.eco", 3, null])
+      expect(checkValue(PARAM_DEF.preset_eco, bad), String(bad)).not.toBeNull();
   });
 
   it("takes comfort periods in the short form, and says what is wrong with others", () => {
     expect(checkValue(PARAM_DEF.comfort_periods, "Mon-Fri 06:30-08:30 17:00-23:00; Sat-Sun 08:00-23:00")).toBeNull();
     expect(checkValue(PARAM_DEF.comfort_periods, "Sat,Sun 10:00-12:00")).toBeNull();
-    for (const bad of ["", "Mon", "Mon-Fri 25:00-26:00", "Mon-Fri 08:00-07:00", "Funday 08:00-09:00", 5]) expect(checkValue(PARAM_DEF.comfort_periods, bad), String(bad)).toMatch(/Comfort periods:/);
+    for (const bad of ["", "Mon", "Mon-Fri 25:00-26:00", "Mon-Fri 08:00-07:00", "Funday 08:00-09:00", 5])
+      expect(checkValue(PARAM_DEF.comfort_periods, bad), String(bad)).toMatch(/Comfort periods:/);
   });
 
   it("keeps the temperatures in half degrees", () => {
@@ -253,8 +319,14 @@ describe("inheritance", () => {
     // The garden is exterior: its type, over the house.
     expect(at("garden", "hold_timeout")).toEqual({ value: 3, source: { level: "type", id: "exterior" } });
     expect(at("shed", "hold_timeout")).toEqual({ value: 10, source: { level: "house", id: null } });
-    expect(resolve(withP({ house: { hold_timeout: 10 }, types: { interior: { hold_timeout: 4 } } }), h, inv, "shed", "hold_timeout").source).toEqual({ level: "type", id: "interior" });
-    expect(resolve(withP({ house: { hold_timeout: 10 }, types: { exterior: { hold_timeout: 3 } } }), h, inv, "garden", "hold_timeout")).toEqual({ value: 3, source: { level: "type", id: "exterior" } });
+    expect(resolve(withP({ house: { hold_timeout: 10 }, types: { interior: { hold_timeout: 4 } } }), h, inv, "shed", "hold_timeout").source).toEqual({
+      level: "type",
+      id: "interior",
+    });
+    expect(resolve(withP({ house: { hold_timeout: 10 }, types: { exterior: { hold_timeout: 3 } } }), h, inv, "garden", "hold_timeout")).toEqual({
+      value: 3,
+      source: { level: "type", id: "exterior" },
+    });
     // Each key inherits on its own.
     expect(at("bedroom", "night_start")).toEqual({ value: "21:00", source: { level: "area", id: "bedroom" } });
     expect(at("bedroom", "hold_timeout")).toEqual({ value: 10, source: { level: "house", id: null } });
@@ -272,7 +344,10 @@ describe("inheritance", () => {
   it("uses the area type from the inventory", () => {
     const p = withP({ types: { exterior: { hold_timeout: 3 } } });
     expect(resolve(p, h, EMPTY_INVENTORY, "shed", "hold_timeout").value).toBe(5);
-    expect(resolve(p, h, setAreaType(EMPTY_INVENTORY, "shed", "exterior"), "shed", "hold_timeout")).toEqual({ value: 3, source: { level: "type", id: "exterior" } });
+    expect(resolve(p, h, setAreaType(EMPTY_INVENTORY, "shed", "exterior"), "shed", "hold_timeout")).toEqual({
+      value: 3,
+      source: { level: "type", id: "exterior" },
+    });
   });
 
   it("resolves every key at once", () => {
@@ -283,7 +358,11 @@ describe("inheritance", () => {
   });
 
   it("the new occupancy, lighting and media values inherit like the others", () => {
-    const p = withP({ house: { extended_after: 45, tv_off_after: 60 }, types: { exterior: { media_off_after: 5 } }, areas: { kitchen: { override_duration: 20 }, bedroom: { sleep_hold: 90 } } });
+    const p = withP({
+      house: { extended_after: 45, tv_off_after: 60 },
+      types: { exterior: { media_off_after: 5 } },
+      areas: { kitchen: { override_duration: 20 }, bedroom: { sleep_hold: 90 } },
+    });
     expect(resolve(p, h, inv, "bedroom", "sleep_hold")).toEqual({ value: 90, source: { level: "area", id: "bedroom" } });
     expect(resolve(p, h, inv, "kitchen", "override_duration")).toEqual({ value: 20, source: { level: "area", id: "kitchen" } });
     expect(resolve(p, h, inv, "living_room", "override_duration")).toEqual({ value: 0, source: { level: "default", id: null } });
@@ -293,9 +372,32 @@ describe("inheritance", () => {
   });
 
   it("does not mistake an area called 'constructor' for something Object has", () => {
-    const odd = buildHierarchy({ config: {}, floors: [], areas: [{ area_id: "constructor", name: "Odd" }, { area_id: "__proto__", name: "Worse" }], devices: [], entities: [], labels: [], states: [] }, "now");
+    const odd = buildHierarchy(
+      {
+        config: {},
+        floors: [],
+        areas: [
+          { area_id: "constructor", name: "Odd" },
+          { area_id: "__proto__", name: "Worse" },
+        ],
+        devices: [],
+        entities: [],
+        labels: [],
+        states: [],
+      },
+      "now",
+    );
     expect(resolve(EMPTY_PARAMETERS, odd, EMPTY_INVENTORY, "constructor", "hold_timeout").source.level).toBe("default");
-    expect(resolveIn(EMPTY_PARAMETERS, [{ level: "area", id: "__proto__" }, { level: "type", id: "toString" as never }], "hold_timeout").source.level).toBe("default");
+    expect(
+      resolveIn(
+        EMPTY_PARAMETERS,
+        [
+          { level: "area", id: "__proto__" },
+          { level: "type", id: "toString" as never },
+        ],
+        "hold_timeout",
+      ).source.level,
+    ).toBe("default");
   });
 
   it("names the source in words", () => {
@@ -355,13 +457,17 @@ describe("the rows of a table", () => {
       { floorId: "first", name: "First floor" },
     ]);
     expect(rest.some((r) => (r.scope.level as string) === "floor")).toBe(false);
-    const empty = buildHierarchy({ config: {}, floors: [{ floor_id: "attic", name: "Attic", level: 2 }], areas: [], devices: [], entities: [], labels: [], states: [] }, "now");
+    const empty = buildHierarchy(
+      { config: {}, floors: [{ floor_id: "attic", name: "Attic", level: 2 }], areas: [], devices: [], entities: [], labels: [], states: [] },
+      "now",
+    );
     expect(paramRows(empty, inv).floors).toEqual([]);
   });
 
   it("gives each row the levels it inherits from, most specific first", () => {
     const { fixed, rest } = paramRows(h, inv);
-    const chain = (label: string) => [...fixed, ...rest].find((r) => r.label === label)!.chain.map((s) => (s.level === "house" ? "house" : `${s.level}:${s.id}`));
+    const chain = (label: string) =>
+      [...fixed, ...rest].find((r) => r.label === label)!.chain.map((s) => (s.level === "house" ? "house" : `${s.level}:${s.id}`));
     expect(chain("House default")).toEqual(["house"]);
     expect(chain("Exterior")).toEqual(["type:exterior", "house"]);
     expect(chain("Garden")).toEqual(["area:garden", "type:exterior", "house"]);
@@ -435,7 +541,12 @@ describe("entry lights", () => {
 
     it("is the choice, when it names lights that count, and the suggestion stays available", () => {
       const rows = [row("light.a"), row("light.b"), row("light.c", "accent")];
-      expect(entryLights(set(["light.c"]), "kitchen", rows)).toEqual({ lights: ["light.c"], source: "set", set: ["light.c"], suggested: ["light.a", "light.b"] });
+      expect(entryLights(set(["light.c"]), "kitchen", rows)).toEqual({
+        lights: ["light.c"],
+        source: "set",
+        set: ["light.c"],
+        suggested: ["light.a", "light.b"],
+      });
       // Only the lights that still count: the rest of the choice is dropped.
       expect(entryLights(set(["light.c", "light.gone"]), "kitchen", rows).lights).toEqual(["light.c"]);
     });
@@ -453,13 +564,27 @@ describe("entry lights", () => {
 });
 
 describe("parameters of the house only", () => {
-  it("are the notify services, the text-to-speech entity and the announcement volume", () => {
-    expect(PARAMS.filter((p) => p.houseOnly).map((p) => p.key)).toEqual(["notify_targets", "tts_entity", "announce_volume"]);
+  it("are the notify services, the speech and outdoor sensors, the house presence and announcement settings, and the leak valve, battery and not-reporting settings", () => {
+    expect(PARAMS.filter((p) => p.houseOnly).map((p) => p.key)).toEqual([
+      "notify_targets",
+      "tts_entity",
+      "outdoor_temperature_entity",
+      "everyone_left_minutes",
+      "away_ends_on_return",
+      "announce_volume",
+      "leak_valve_entity",
+      "battery_threshold",
+      "battery_report_time",
+      "unavailable_watch_minutes",
+    ]);
   });
 
   it("are read from the house wherever they are asked, and ignore any other level", () => {
     const p = setParameter(EMPTY_PARAMETERS, { level: "house" }, "announce_volume", 25);
-    for (const scope of [{ level: "area", id: "kitchen" }, { level: "type", id: "exterior" }] as const) {
+    for (const scope of [
+      { level: "area", id: "kitchen" },
+      { level: "type", id: "exterior" },
+    ] as const) {
       // An edit at another level changes nothing...
       expect(setParameter(p, scope, "announce_volume", 90)).toBe(p);
       expect(setParameter(p, scope, "notify_targets", ["notify.a"])).toBe(p);
@@ -480,8 +605,27 @@ describe("checkValue: notify services", () => {
     expect(def.kind).toBe("services");
     expect(checkValue(def, ["notify.mobile_app_phone"])).toBeNull();
     expect(checkValue(def, ["notify.mobile_app_phone", "notify.family", "notify.notify"])).toBeNull();
-    expect(checkValue(def, Array.from({ length: 20 }, (_, i) => `notify.n${i}`))).toBeNull();
-    for (const bad of [[], ["notify.a", "notify.a"], ["light.a"], ["notify."], ["notify.A"], ["notify.a b"], ["mobile_app_phone"], "notify.a", [1], null, Array.from({ length: 21 }, (_, i) => `notify.n${i}`), ["notify.a\n"], ["notify.a.b"]]) {
+    expect(
+      checkValue(
+        def,
+        Array.from({ length: 20 }, (_, i) => `notify.n${i}`),
+      ),
+    ).toBeNull();
+    for (const bad of [
+      [],
+      ["notify.a", "notify.a"],
+      ["light.a"],
+      ["notify."],
+      ["notify.A"],
+      ["notify.a b"],
+      ["mobile_app_phone"],
+      "notify.a",
+      [1],
+      null,
+      Array.from({ length: 21 }, (_, i) => `notify.n${i}`),
+      ["notify.a\n"],
+      ["notify.a.b"],
+    ]) {
       expect(checkValue(def, bad), JSON.stringify(bad)).toMatch(/must be a list of 1 to 20 notify services/);
     }
   });

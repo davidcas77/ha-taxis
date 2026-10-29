@@ -4,6 +4,7 @@ import {
   AppWindow,
   Blinds,
   DoorOpen,
+  Droplet,
   Droplets,
   Fan,
   Lightbulb,
@@ -33,6 +34,7 @@ const ICONS: Record<Capability, LucideIcon> = {
   speaker: Speaker,
   tv: Tv,
   cover: Blinds,
+  leak: Droplet,
   fan: Fan,
   power: Zap,
 };
