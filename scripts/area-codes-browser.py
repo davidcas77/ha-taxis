@@ -114,6 +114,8 @@ class AreaCodesRegression(unittest.TestCase):
         self.assertEqual(self.puts, [])
         self.assertEqual(self.current, self.fixture)
         self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Settings", exact=True).click()
+        # Wait for Settings to render before asserting what it does not show.
+        self.page.get_by_role("heading", name="Patterns", exact=True).wait_for()
         self.assertEqual(self.page.get_by_role("heading", name="Area codes", exact=True).count(), 0)
         for heading in ("Patterns", "House light group", "Type words", "Aggregation markers"):
             self.page.get_by_role("heading", name=heading, exact=True).wait_for()

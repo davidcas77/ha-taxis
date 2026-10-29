@@ -214,6 +214,7 @@ class UiEngine(unittest.TestCase):
         nav.get_by_role("button", name="Automations", exact=True).click()
         page.wait_for_function("location.hash === '#automations/recipes'")
         tabs = page.get_by_role("tablist", name="Automations")
+        tabs.get_by_role("tab", name="Buttons", exact=True).wait_for()
         self.assertEqual([text.strip() for text in tabs.get_by_role("tab").all_inner_texts()], ["Recipes", "Buttons"])
         tabs.get_by_role("tab", name="Buttons", exact=True).click()
         page.wait_for_function("location.hash === '#automations/buttons'")
