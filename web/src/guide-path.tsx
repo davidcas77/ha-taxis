@@ -182,7 +182,7 @@ export function GuidePath({
             <li
               key={step.key}
               aria-current={isNext ? "step" : undefined}
-              className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-surface p-3 ${isNext ? "border-accent/60" : "border-line"}`}
+              className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-surface p-3 ${isNext ? "border-2 border-accent/60" : "border-line"}`}
             >
               <StatusIcon step={step} />
               <div className="min-w-[14rem] flex-1">
