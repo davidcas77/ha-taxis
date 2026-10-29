@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7.8
+
+- **The Guide leads to the 0.7.7 recipes.** Under the nine steps of _Your path_ a new
+  list, _Safety, the house and covers_, names the goals: **add a leak alert for every
+  area with a leak sensor**, **watch batteries and sensors that stop reporting** (Low
+  batteries and Not reporting), **know when everyone is away** (House presence),
+  **say goodbye to the house in one go** (the Goodbye script) and **close the covers
+  against the sun in every area with covers**. A goal is listed only when it
+  applies (no leak sensor in the house, no leak goal; no cover, no covers goal) and
+  is _Done_ when its recipes are installed or waiting in Changes, _Needs attention_
+  when only some are or one is out of date, _Not started_ when none is. Each opens
+  Automations → Recipes. The nine steps and the progress bar are unchanged.
+- **Covers and sun knows which side the sun is on.** The blueprint (now version 2)
+  has two new optional inputs, `facing_from` and `facing_to`, the sun's compass
+  direction (azimuth) in degrees; the covers close only while the sun is between them,
+  and a range that crosses north (300 to 60) works. The defaults, 0 and 360, mean any
+  side, so nothing changes until you set them. A new trigger closes the covers when the
+  sun comes round to the facing side after it has already passed the height. The
+  Covers tab has **Facing from** and **Facing to**, per area like the other settings.
+  An installed Covers and sun automation shows as out of date until it is updated.
+- **UI consistency.** The role toggles on Capabilities (Starts / Holds, the light
+  roles, and so on) and the label pills use the shared `Chip`;
+  the House modes block on the Guide uses `Card`. No behaviour or name changed.
+
 ## 0.7.7
 
 - **New recipes.** **Leak alert** (per area: a moisture sensor going wet sends a

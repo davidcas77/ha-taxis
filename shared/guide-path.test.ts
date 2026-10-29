@@ -4,11 +4,13 @@ import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import type { ButtonInventory } from "./buttons.ts";
 import {
   areaFacts,
+  buildGuideGoals,
   buildGuidePath,
   buttonFacts,
   capabilityFacts,
   entityFacts,
   failed,
+  goalFacts,
   helperFacts,
   loading,
   namingFacts,
@@ -16,6 +18,9 @@ import {
   PATH_STEPS,
   ready,
   recipeFacts,
+  PATH_GOALS,
+  type GoalFacts,
+  type PathGoalKey,
   type PathInput,
   type PathStepKey,
 } from "./guide-path.ts";
@@ -23,7 +28,9 @@ import type { HelperRow } from "./helpers.ts";
 import { EMPTY_INVENTORY, setCounts } from "./inventory.ts";
 import { DEFAULT_NAMING } from "./naming.ts";
 import { EMPTY_NAMING_IGNORES } from "./naming-ignores.ts";
-import type { RecipeCell } from "./recipes.ts";
+import { EMPTY_PARAMETERS } from "./parameters.ts";
+import { NOTHING_INSTALLED, planRecipes, type RecipeCell } from "./recipes.ts";
+import { planHouseRecipes } from "./recipes-house.ts";
 import type { Change } from "./types.ts";
 
 // Everything read and finished; each test spoils one source.
@@ -289,5 +296,166 @@ describe("the facts", () => {
       managed: [{ map: { bindings: [{ controlId: "c1", gestureKey: "g1" }] } }],
     } as unknown as ButtonInventory;
     expect(buttonFacts(inventory)).toEqual({ controls: 2, gestures: 4, unassigned: 2 });
+  });
+});
+
+describe("the goals", () => {
+  const none = { areas: 0, installed: 0, outOfDate: 0, inChanges: 0 };
+  const facts = (patch: Partial<GoalFacts> = {}): GoalFacts => ({ leak: none, covers: none, house: {}, ...patch });
+  const goalsOf = (f: GoalFacts) => {
+    const built = buildGuideGoals(ready(f));
+    if (built.state !== "ready") throw new Error("not ready");
+    return built.goals;
+  };
+  const goal = (f: GoalFacts, key: PathGoalKey) => goalsOf(f).find((g) => g.key === key);
+  const RECIPES_PAGE = { page: "automations", tab: "recipes", controlId: null };
+
+  it("names the goals in the order of the path: safety, the house, covers", () => {
+    expect(PATH_GOALS).toEqual(["leak", "watch", "presence", "goodbye", "covers"]);
+  });
+
+  it("lists a leak goal only when an area has a leak sensor, and a covers goal only when an area has a cover", () => {
+    expect(goalsOf(facts()).map((g) => g.key)).toEqual(["watch", "presence", "goodbye"]);
+    expect(goalsOf(facts({ leak: { ...none, areas: 1 } })).map((g) => g.key)).toEqual(["leak", "watch", "presence", "goodbye"]);
+    expect(goalsOf(facts({ covers: { ...none, areas: 2 } })).map((g) => g.key)).toEqual(["watch", "presence", "goodbye", "covers"]);
+  });
+
+  it("leak: not started with none, attention with some, done when every area has it installed or in changes, and it opens the recipes", () => {
+    const leak = (installed: number, inChanges: number, outOfDate = 0) => goal(facts({ leak: { areas: 3, installed, outOfDate, inChanges } }), "leak")!;
+    expect(leak(0, 0)).toMatchObject({
+      status: "todo",
+      title: "Add a leak alert for every area with a leak sensor",
+      action: "Add the leak alerts",
+      target: RECIPES_PAGE,
+    });
+    expect(leak(1, 0).status).toBe("attention");
+    expect(leak(1, 0).summary).toMatch(/^1 of 3 areas have a leak alert/);
+    expect(leak(3, 0)).toMatchObject({ status: "done", action: "Open the leak alerts", target: RECIPES_PAGE });
+    expect(leak(1, 2)).toMatchObject({ status: "done" });
+    expect(leak(1, 2).summary).toMatch(/2 in changes: review and Apply/);
+    // Installed but behind the blueprint: covered, yet worth an update.
+    expect(leak(2, 0, 1)).toMatchObject({ status: "attention", action: "Update the leak alerts" });
+  });
+
+  it("covers: the same rule over the areas with covers", () => {
+    const covers = (installed: number, inChanges: number) => goal(facts({ covers: { areas: 2, installed, outOfDate: 0, inChanges } }), "covers")!;
+    expect(covers(0, 0)).toMatchObject({ status: "todo", action: "Add covers and sun", target: RECIPES_PAGE });
+    expect(covers(1, 0).status).toBe("attention");
+    expect(covers(1, 1).status).toBe("done");
+    expect(covers(2, 0).summary).toBe("2 of 2 areas close covers against the sun.");
+  });
+
+  it("watch: done only when low batteries and not reporting are both installed or in changes", () => {
+    const watch = (battery?: "installed" | "ready" | "in-changes", unavailable?: "installed" | "ready" | "missing") =>
+      goal(facts({ house: { battery_low: battery, unavailable_watch: unavailable } }), "watch")!;
+    expect(watch("ready", "ready")).toMatchObject({ status: "todo", title: "Watch batteries and sensors that stop reporting", target: RECIPES_PAGE });
+    expect(watch("installed", "ready").status).toBe("attention");
+    expect(watch("installed", "ready").summary).toBe("Low batteries: installed. Not reporting: ready to add.");
+    expect(watch("in-changes", "installed").status).toBe("done");
+    expect(watch("installed", "installed")).toMatchObject({ status: "done", action: "Open the battery and sensor watchers" });
+    expect(watch("installed", "missing").status).toBe("attention");
+  });
+
+  it("presence and goodbye: each is done by its own recipe", () => {
+    expect(goal(facts({ house: { house_presence: "installed" } }), "presence")).toMatchObject({ status: "done", target: RECIPES_PAGE });
+    expect(goal(facts({ house: { house_presence: "installed" } }), "goodbye")).toMatchObject({ status: "todo", action: "Add the goodbye script" });
+    expect(goal(facts({ house: { goodbye: "in-changes" } }), "goodbye")?.status).toBe("done");
+    expect(goal(facts({ house: { goodbye: "out-of-date" } }), "goodbye")?.status).toBe("attention");
+    expect(goal(facts({ house: { house_presence: "missing" } }), "presence")).toMatchObject({
+      status: "todo",
+      summary: "House presence: needs something first.",
+    });
+    expect(goal(facts(), "presence")).toMatchObject({ status: "todo", summary: "House presence: not available." });
+  });
+
+  it("is loading while the recipes are read, and failed with the error when they could not be", () => {
+    expect(buildGuideGoals(loading())).toEqual({ state: "loading" });
+    expect(buildGuideGoals(failed("offline"))).toEqual({ state: "error", error: "offline" });
+  });
+
+  describe("from a real plan", () => {
+    const raw: RawRegistry = {
+      config: { location_name: "Goal test house" },
+      floors: [{ floor_id: "ground", name: "Ground", level: 0 }],
+      areas: [
+        { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
+        { area_id: "bathroom", name: "Bathroom", floor_id: "ground" },
+        { area_id: "living", name: "Living room", floor_id: "ground" },
+        { area_id: "hall", name: "Hall", floor_id: "ground" },
+      ],
+      devices: [],
+      labels: [],
+      entities: [
+        { entity_id: "binary_sensor.kitchen_leak", platform: "demo", area_id: "kitchen", unique_id: "a" },
+        { entity_id: "binary_sensor.bathroom_leak", platform: "demo", area_id: "bathroom", unique_id: "b" },
+        { entity_id: "cover.living_blind", platform: "demo", area_id: "living", unique_id: "c" },
+        { entity_id: "light.hall", platform: "demo", area_id: "hall", unique_id: "d" },
+        { entity_id: "input_boolean.kitchen_paused", platform: "input_boolean", area_id: "kitchen", unique_id: "e" },
+      ],
+      states: [
+        { entity_id: "binary_sensor.kitchen_leak", state: "off", attributes: { device_class: "moisture" } },
+        { entity_id: "binary_sensor.bathroom_leak", state: "off", attributes: { device_class: "moisture" } },
+        { entity_id: "cover.living_blind", state: "open", attributes: {} },
+        { entity_id: "light.hall", state: "off", attributes: {} },
+        { entity_id: "input_boolean.kitchen_paused", state: "off", attributes: {} },
+      ],
+    };
+    const h = buildHierarchy(raw, "2026-10-29T00:00:00Z");
+    const plan = (installed = NOTHING_INSTALLED, changes: Change[] = []) => ({
+      area: planRecipes(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, installed, changes),
+      house: planHouseRecipes(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, installed, changes),
+    });
+    const factsOf = (p: ReturnType<typeof plan>) => goalFacts(h, EMPTY_INVENTORY, DEFAULT_NAMING, p.area, p.house);
+
+    it("counts only the areas that have a leak sensor or a cover, and reads the status of each house recipe", () => {
+      const f = factsOf(plan());
+      expect(f.leak).toEqual({ areas: 2, installed: 0, outOfDate: 0, inChanges: 0 });
+      expect(f.covers).toEqual({ areas: 1, installed: 0, outOfDate: 0, inChanges: 0 });
+      // Presence and goodbye need people and lights this house does not have yet.
+      expect(f.house).toEqual({ house_presence: "missing", goodbye: "missing", battery_low: "ready", unavailable_watch: "ready" });
+      expect(goalsOf(f).map((g) => [g.key, g.status])).toEqual([
+        ["leak", "todo"],
+        ["watch", "todo"],
+        ["presence", "todo"],
+        ["goodbye", "todo"],
+        ["covers", "todo"],
+      ]);
+    });
+
+    it("lists no leak or covers goal in a house without a leak sensor or a cover", () => {
+      const bare = buildHierarchy({ ...raw, entities: raw.entities.slice(3, 4), states: raw.states.slice(3, 4) }, "2026-10-29T00:00:00Z");
+      const f = goalFacts(
+        bare,
+        EMPTY_INVENTORY,
+        DEFAULT_NAMING,
+        planRecipes(bare, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []),
+        planHouseRecipes(bare, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []),
+      );
+      expect(goalsOf(f).map((g) => g.key)).toEqual(["watch", "presence", "goodbye"]);
+    });
+
+    it("counts a leak alert that is installed, and one waiting in the change list", () => {
+      const first = plan();
+      const leakCell = (areaId: string) => first.area.find((c) => c.recipe === "leak_alert" && c.areaId === areaId)!;
+      expect(leakCell("kitchen").status).toBe("ready");
+      const fields = leakCell("kitchen").inputs.at(-1)!.fields ?? {};
+      const installed = {
+        ...NOTHING_INSTALLED,
+        blueprints: { ...NOTHING_INSTALLED.blueprints, "taxis/leak_alert.yaml": 1 },
+        automations: {
+          taxis_leak_alert_kitchen: {
+            alias: String(fields.alias),
+            path: "taxis/leak_alert.yaml",
+            input: (fields.use_blueprint as { input: Record<string, unknown> }).input,
+          },
+        },
+      };
+      const queued = { id: 1, kind: "automation", op: "create", targetId: "taxis_leak_alert_bathroom", before: {}, after: {}, label: "x" } as unknown as Change;
+      const f = factsOf(plan(installed, [queued]));
+      expect(f.leak.areas).toBe(2);
+      expect(f.leak.installed).toBe(1);
+      expect(f.leak.inChanges).toBe(1);
+      expect(goal(f, "leak")!.status).toBe("done");
+    });
   });
 });

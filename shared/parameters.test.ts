@@ -142,6 +142,8 @@ describe("the definitions", () => {
     ]);
     expect(PARAMS.filter((p) => p.tab === "covers").map((p) => p.key)).toEqual([
       "covers_sun_elevation",
+      "covers_facing_from",
+      "covers_facing_to",
       "covers_temp_above",
       "covers_window_start",
       "covers_window_end",
@@ -168,6 +170,11 @@ describe("the definitions", () => {
       "20:00",
       "08:00",
     ]);
+    expect([d("covers_facing_from"), d("covers_facing_to")]).toEqual([0, 360]);
+    expect(checkValue(PARAM_DEF.covers_facing_from, 300)).toBeNull();
+    expect(checkValue(PARAM_DEF.covers_facing_to, 60)).toBeNull();
+    expect(checkValue(PARAM_DEF.covers_facing_to, 361)).not.toBeNull();
+    expect(checkValue(PARAM_DEF.covers_facing_from, -1)).not.toBeNull();
     expect([d("covers_open_at_sunrise"), d("covers_sunrise_offset"), d("covers_block_if_window_open")]).toEqual([false, 30, true]);
     expect([d("outdoor_temperature_entity"), d("everyone_left_minutes"), d("away_ends_on_return")]).toEqual(["", 30, false]);
     const valve = PARAM_DEF.leak_valve_entity;

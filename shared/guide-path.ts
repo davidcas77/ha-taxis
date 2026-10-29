@@ -4,7 +4,8 @@ import type { ButtonInventory } from "./buttons.ts";
 import { analyzeArea, areaCodes, type NamingSettings } from "./naming.ts";
 import { namingFit, type NamingIgnores } from "./naming-ignores.ts";
 import type { ParameterSettings } from "./parameters.ts";
-import type { RecipeCell } from "./recipes.ts";
+import { areaFacts as fitFacts, recipeFits } from "./recipe-fit.ts";
+import type { RecipeCell, RecipeStatus } from "./recipes.ts";
 import type { Change, Hierarchy } from "./types.ts";
 
 // "Your path": the steps to a complete, well-organised Home Assistant, in the
@@ -13,6 +14,11 @@ import type { Change, Hierarchy } from "./types.ts";
 // Each step gets a status from data Taxis has already read. Pure: the page
 // gathers the facts (the `*Facts` functions below) and `buildGuidePath` turns
 // them into steps, so the rules are tested without a browser.
+//
+// Below the nine steps are the goals: the recipes that look after the house
+// (leaks, batteries and silent sensors, who is home, covers). A goal is listed
+// only when it applies to this house, and is done when its recipes are installed
+// or waiting in Changes.
 
 export const PATH_STEPS = ["areas", "entities", "naming", "capabilities", "helpers", "parameters", "recipes", "buttons", "health"] as const;
 export type PathStepKey = (typeof PATH_STEPS)[number];
@@ -352,4 +358,147 @@ export function buildGuidePath(input: PathInput): GuidePath {
     next: steps.find((s) => s.status === "todo" || s.status === "attention") ?? null,
     complete: done === steps.length,
   };
+}
+
+// ---- goals ----------------------------------------------------------------------
+//
+// The recipes of 0.7.7 that a house does not get by finishing the nine steps:
+// they start nothing until the user adds them on the Recipes page, so the Guide
+// leads there. Each goal looks only at the cells of the recipes it is about.
+
+export const PATH_GOALS = ["leak", "watch", "presence", "goodbye", "covers"] as const;
+export type PathGoalKey = (typeof PATH_GOALS)[number];
+
+// The house recipes a goal can be about.
+const WATCH_RECIPES = ["battery_low", "unavailable_watch"] as const;
+export type GoalHouseRecipe = "house_presence" | "goodbye" | (typeof WATCH_RECIPES)[number];
+
+// Per area recipe (leak alert, covers and sun), over the areas it applies to: an
+// area applies when it has the thing the recipe is about, or already has the recipe.
+export type AreaGoalFacts = {
+  // Areas the recipe applies to.
+  areas: number;
+  // Of those: installed and up to date, installed and out of date, waiting in Changes.
+  installed: number;
+  outOfDate: number;
+  inChanges: number;
+};
+export type GoalFacts = {
+  leak: AreaGoalFacts;
+  covers: AreaGoalFacts;
+  // The status of each house recipe's cell; absent when there is none.
+  house: Partial<Record<GoalHouseRecipe, RecipeStatus>>;
+};
+
+export type PathGoal = {
+  key: PathGoalKey;
+  title: string;
+  status: Exclude<PathStatus, "unknown">;
+  summary: string;
+  // The label of the button that opens `target`.
+  action: string;
+  target: PathTarget;
+};
+
+export type GuideGoals = { state: "loading" } | { state: "error"; error: string } | { state: "ready"; goals: PathGoal[] };
+
+const RECIPES_PAGE: PathTarget = { page: "automations", tab: "recipes", controlId: null };
+
+function areaGoalFacts(h: Hierarchy, inventory: InventorySettings, naming: NamingSettings, cells: readonly RecipeCell[], recipe: "leak_alert" | "covers_sun") {
+  const n: AreaGoalFacts = { areas: 0, installed: 0, outOfDate: 0, inChanges: 0 };
+  const facts = new Map<string, ReturnType<typeof fitFacts>>();
+  for (const cell of cells) {
+    if (cell.recipe !== recipe) continue;
+    let f = facts.get(cell.areaId);
+    if (!f) {
+      f = fitFacts(h, inventory, naming, cell.areaId);
+      facts.set(cell.areaId, f);
+    }
+    if (!recipeFits(f, recipe, cell.status)) continue;
+    n.areas += 1;
+    if (cell.status === "installed") n.installed += 1;
+    else if (cell.status === "out-of-date") n.outOfDate += 1;
+    else if (cell.status === "in-changes") n.inChanges += 1;
+  }
+  return n;
+}
+
+// `areaCells` are the area recipes (planRecipes), `houseCells` the house ones (planHouseRecipes).
+export function goalFacts(
+  h: Hierarchy,
+  inventory: InventorySettings,
+  naming: NamingSettings,
+  areaCells: readonly RecipeCell[],
+  houseCells: readonly RecipeCell[],
+): GoalFacts {
+  const house: GoalFacts["house"] = {};
+  for (const cell of houseCells)
+    if (cell.recipe === "house_presence" || cell.recipe === "goodbye" || cell.recipe === "battery_low" || cell.recipe === "unavailable_watch")
+      house[cell.recipe] = cell.status;
+  return { leak: areaGoalFacts(h, inventory, naming, areaCells, "leak_alert"), covers: areaGoalFacts(h, inventory, naming, areaCells, "covers_sun"), house };
+}
+
+// A recipe counts as looked after when it is installed (even out of date) or waiting in Changes.
+const covered = (s: RecipeStatus | undefined) => s === "installed" || s === "out-of-date" || s === "in-changes";
+const STATUS_WORDS: Record<RecipeStatus, string> = {
+  installed: "installed",
+  "out-of-date": "installed, out of date",
+  "in-changes": "in changes",
+  ready: "ready to add",
+  missing: "needs something first",
+};
+const words = (s: RecipeStatus | undefined) => (s ? STATUS_WORDS[s] : "not available");
+
+// "3 of 4 areas ...": the shared rule for a goal over several areas.
+// `what` names the recipes in the buttons: "Add the leak alerts", "Open the leak alerts", "Update the leak alerts".
+function areaGoal(key: PathGoalKey, title: string, noun: string, f: AreaGoalFacts, what: string): PathGoal | null {
+  if (f.areas === 0) return null;
+  const have = f.installed + f.outOfDate + f.inChanges;
+  const head = `${have} of ${plural(f.areas, "area")} ${noun}`;
+  const notes = [f.inChanges > 0 ? `${f.inChanges} in changes: review and Apply` : "", f.outOfDate > 0 ? `${f.outOfDate} out of date` : ""].filter(Boolean);
+  const summary = `${head}${notes.length ? ` (${notes.join(", ")})` : ""}.`;
+  if (have === f.areas && f.outOfDate === 0) return { key, title, status: "done", summary, action: `Open ${what}`, target: RECIPES_PAGE };
+  if (have === f.areas) return { key, title, status: "attention", summary, action: `Update ${what}`, target: RECIPES_PAGE };
+  return {
+    key,
+    title,
+    status: have === 0 ? "todo" : "attention",
+    summary: have === 0 ? summary : `${summary} The others need a recipe added, or something set up first.`,
+    action: `Add ${what}`,
+    target: RECIPES_PAGE,
+  };
+}
+
+// One or two house recipes: done when all are covered, started when some are.
+function houseGoal(key: PathGoalKey, title: string, recipes: readonly { recipe: GoalHouseRecipe; label: string }[], facts: GoalFacts, what: string): PathGoal {
+  const states = recipes.map((r) => facts.house[r.recipe]);
+  const have = states.filter(covered).length;
+  const summary = `${recipes.map((r, i) => `${r.label}: ${words(states[i])}`).join(". ")}.`;
+  if (have === recipes.length)
+    return states.includes("out-of-date")
+      ? { key, title, status: "attention", summary, action: `Update ${what}`, target: RECIPES_PAGE }
+      : { key, title, status: "done", summary, action: `Open ${what}`, target: RECIPES_PAGE };
+  return { key, title, status: have === 0 ? "todo" : "attention", summary, action: `Add ${what}`, target: RECIPES_PAGE };
+}
+
+export function buildGuideGoals(source: Loaded<GoalFacts>): GuideGoals {
+  if (source.state !== "ready") return source.state === "loading" ? { state: "loading" } : { state: "error", error: source.error };
+  const f = source.value;
+  const goals = [
+    areaGoal("leak", "Add a leak alert for every area with a leak sensor", "have a leak alert", f.leak, "the leak alerts"),
+    houseGoal(
+      "watch",
+      "Watch batteries and sensors that stop reporting",
+      [
+        { recipe: "battery_low", label: "Low batteries" },
+        { recipe: "unavailable_watch", label: "Not reporting" },
+      ],
+      f,
+      "the battery and sensor watchers",
+    ),
+    houseGoal("presence", "Know when everyone is away", [{ recipe: "house_presence", label: "House presence" }], f, "house presence"),
+    houseGoal("goodbye", "Say goodbye to the house in one go", [{ recipe: "goodbye", label: "Goodbye" }], f, "the goodbye script"),
+    areaGoal("covers", "Close the covers against the sun in every area with covers", "close covers against the sun", f.covers, "covers and sun"),
+  ];
+  return { state: "ready", goals: goals.filter((g): g is PathGoal => g !== null) };
 }

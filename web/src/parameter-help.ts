@@ -80,6 +80,9 @@ export const PARAM_HELP: Record<ParamKey, string> = {
   battery_report_time: "When the daily low-battery summary is sent.",
   unavailable_watch_minutes: "How long a sensor the recipes rely on stays unavailable or unknown before a message is sent.",
   covers_sun_elevation: "Covers close while the sun is higher than this above the horizon.",
+  covers_facing_from:
+    "Compass direction (0 north, 90 east, 180 south, 270 west) where the side the windows face starts. The covers close only while the sun is on that side. 0 to 360 means any side; From larger than To crosses north, for instance 300 to 60.",
+  covers_facing_to: "Where the side the windows face ends, in degrees. The sun's azimuth must be from Facing from to Facing to for the covers to close.",
   covers_temp_above: "and the outdoor temperature is above this (only when an outdoor sensor is set on the House tab).",
   covers_window_start: "Covers do not close before this time.",
   covers_window_end: "Covers do not close after this time.",

@@ -3,11 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   areaFacts,
+  buildGuideGoals,
   buildGuidePath,
   buttonFacts,
   capabilityFacts,
   entityFacts,
   failed,
+  goalFacts,
   helperFacts,
   loading,
   namingFacts,
@@ -16,12 +18,14 @@ import {
   recipeFacts,
   type ButtonFacts,
   type Loaded,
+  type PathGoal,
   type PathInput,
   type PathStatus,
   type PathStep,
 } from "../../shared/guide-path.ts";
 import { helperExclusions, planHelpers } from "../../shared/helpers.ts";
 import { planRecipes, type RecipeInstalled } from "../../shared/recipes.ts";
+import { planHouseRecipes } from "../../shared/recipes-house.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { useHealth } from "./health.tsx";
@@ -97,11 +101,22 @@ export function GuidePath({
     () => (parametersLoaded ? ready(parameterFacts(parameters)) : loading<ReturnType<typeof parameterFacts>>()),
     [parameters, parametersLoaded],
   );
+  // The recipe plan, once everything it needs has been read: the cells of the areas and of the house.
+  const plan = useMemo(() => {
+    if (!installed || !inventoryLoaded || !namingLoaded || !parametersLoaded) return null;
+    return {
+      area: planRecipes(h, inventory, naming, parameters, installed, changes),
+      house: planHouseRecipes(h, inventory, naming, parameters, installed, changes),
+    };
+  }, [h, inventory, naming, parameters, installed, changes, inventoryLoaded, namingLoaded, parametersLoaded]);
   const recipes = useMemo(() => {
     if (recipeError) return failed<ReturnType<typeof recipeFacts>>(recipeError);
-    if (!installed || !inventoryLoaded || !namingLoaded || !parametersLoaded) return loading<ReturnType<typeof recipeFacts>>();
-    return ready(recipeFacts(planRecipes(h, inventory, naming, parameters, installed, changes)));
-  }, [h, inventory, naming, parameters, installed, changes, recipeError, inventoryLoaded, namingLoaded, parametersLoaded]);
+    return plan ? ready(recipeFacts(plan.area)) : loading<ReturnType<typeof recipeFacts>>();
+  }, [plan, recipeError]);
+  const goals = useMemo(() => {
+    if (recipeError) return buildGuideGoals(failed(recipeError));
+    return buildGuideGoals(plan ? ready(goalFacts(h, inventory, naming, plan.area, plan.house)) : loading());
+  }, [h, inventory, naming, plan, recipeError]);
   const healthStep = useMemo<PathInput["health"]>(() => {
     if (health.report) return ready({ errors: health.report.counts.error, warnings: health.report.counts.warning, infos: health.report.counts.info });
     return health.error ? failed(health.error) : loading();
@@ -209,6 +224,48 @@ export function GuidePath({
           );
         })}
       </ol>
+
+      <h3 className="mt-2 text-sm font-semibold">Safety, the house and covers</h3>
+      <p className="-mt-1 text-xs text-muted">
+        Recipes that look after the house. Each is listed only when it applies, and done once its recipes are installed or waiting in Changes.
+      </p>
+      {goals.state === "loading" ? (
+        <p className="text-[13px] text-muted">Reading…</p>
+      ) : goals.state === "error" ? (
+        <div className="flex flex-wrap items-center gap-2 text-[13px] text-danger">
+          <span>Couldn&apos;t read the recipes: {goals.error}</span>
+          <Button onClick={retryRecipes}>
+            <RefreshCw className="size-3.5" aria-hidden /> Retry
+          </Button>
+        </div>
+      ) : (
+        <ul aria-label="Goals" className="flex flex-col gap-2">
+          {goals.goals.map((goal) => (
+            <GoalRow key={goal.key} goal={goal} open={() => go(goal.target)} />
+          ))}
+        </ul>
+      )}
     </Section>
+  );
+}
+
+function GoalRow({ goal, open }: { goal: PathGoal; open: () => void }) {
+  const status = STATUS[goal.status];
+  const Icon = goal.status === "done" ? CheckCircle2 : goal.status === "attention" ? CircleAlert : CircleDashed;
+  const tone = goal.status === "done" ? "text-on" : goal.status === "attention" ? "text-warn" : "text-muted";
+  return (
+    <li className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface p-3">
+      <Icon className={`size-5 shrink-0 ${tone}`} aria-hidden />
+      <div className="min-w-[14rem] flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="text-[13px] font-semibold">{goal.title}</h4>
+          <Badge tone={status.tone}>{status.label}</Badge>
+        </div>
+        <p className="mt-0.5 text-xs text-muted">{goal.summary}</p>
+      </div>
+      <Button tone={goal.status === "done" ? "ghost" : "plain"} onClick={open}>
+        {goal.action}
+      </Button>
+    </li>
   );
 }

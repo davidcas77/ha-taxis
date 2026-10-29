@@ -116,6 +116,14 @@ type and goals, review equipment (types and placement, never brands), prepare
 helpers, review comfort parameters, set up native automations, then record a room
 test (the user's observations, not a verification; a relevant configuration change
 asks for a retest). Pending proposals and failed reads never count as installed.
+Under the nine steps, **Safety, the house and covers** (`goalFacts` / `buildGuideGoals`
+in `shared/guide-path.ts`, rendered by `GoalRow` in `web/src/guide-path.tsx`) lists goals
+for the 0.7.7 recipes: leak alert per area with a leak sensor, low batteries plus not
+reporting, house presence, goodbye, and covers and sun per area with a cover. A goal is
+listed only when it applies (`recipeFits`, the same rule as the Recipes page) and is
+done when its recipes are installed, out of date (attention) or in changes; it opens
+`#automations/recipes`. They are not path steps: the nine steps and the progress bar
+did not change.
 Guest / away / sleep are manual toggles, planned as Taxis helpers. A button sends
 typed room notes to Jev on request. Saved in Taxis settings (`guide`).
 
@@ -264,7 +272,10 @@ gets a pause switch `input_boolean.<code>_paused`, created **without** `initial`
 Blueprint versions are listed in `taxis/CHANGELOG.md` and in `shared/blueprints/<recipe>.ts`
 (the table that was here at 0.5.1 went stale; do not copy numbers into prose).
 Recipes per area: occupancy, motion lights, media off, area climate, bathroom fan,
-exterior lights, left open, appliance done, **leak alert**, **covers and sun**. For
+exterior lights, left open, appliance done, **leak alert**, **covers and sun** (which closes
+only while the sun's azimuth is between `facing_from` and `facing_to`, wrap-around
+allowed, 0 to 360 meaning any side; the Covers parameters `covers_facing_from` and
+`covers_facing_to`). For
 the house (`shared/recipes-house.ts`, one cell each, no area, automation id
 `taxis_<recipe>_house`): the announce and **goodbye** scripts, and the automations
 **house presence**, **low batteries** and **not reporting**. The house automations
@@ -433,8 +444,7 @@ Planned next, in order:
 
 Also open:
 
-- **Not done:** renaming an area id (HA does not allow it); covers that know a
-  window's orientation (Covers and sun uses the sun's height only); extending "no area" handling beyond lights to the other sensor
+- **Not done:** renaming an area id (HA does not allow it); extending "no area" handling beyond lights to the other sensor
   capabilities, with an option to use a sensor from another area.
 - **Unverified:** button automations against real remotes, real AI-provider calls
   and Jev with a real key have been exercised only against fakes and the mock.
