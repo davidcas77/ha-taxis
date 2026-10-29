@@ -10,9 +10,9 @@ import re
 import unittest
 import json
 import urllib.request
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:5173")
 
 
 class DesktopRegression(unittest.TestCase):
@@ -23,10 +23,7 @@ class DesktopRegression(unittest.TestCase):
         if not cls.hierarchy_body.get("ok"):
             raise RuntimeError("Start the mock Home Assistant and Taxis server before running browser checks")
         cls.playwright = sync_playwright().start()
-        cls.browser = cls.playwright.chromium.launch(
-            executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"),
-            headless=True, args=["--no-sandbox"],
-        )
+        cls.browser = launch(cls.playwright)
 
     @classmethod
     def tearDownClass(cls):
@@ -56,8 +53,8 @@ class DesktopRegression(unittest.TestCase):
         self.page.route("**/api/changes", changes)
         self.page.route("**/api/changes/*", changes)
         self.page.goto(BASE + "/#changes", wait_until="networkidle")
-        self.page.get_by_role("button", name=re.compile(r"^Remove:")).click()
-        self.page.get_by_role("button", name="Remove", exact=True).click()
+        self.page.get_by_role("button", name=re.compile(r"^Discard:")).click()
+        self.page.get_by_role("group", name="Confirm").get_by_role("button", name="Discard", exact=True).click()
         self.page.get_by_text("Simulated remove failure", exact=True).wait_for()
         self.assertEqual(self.page.get_by_text("Regression fixture", exact=True).count(), 1)
 
@@ -123,14 +120,15 @@ class DesktopRegression(unittest.TestCase):
     def test_device_editor_cancel_can_preserve_unsaved_draft(self):
         self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")
         self.page.get_by_role("button", name="Records", exact=True).click()
-        self.page.locator(".records-table tbody tr").first.click()
+        self.page.locator("table[aria-label='Devices list'] tbody tr").first.click()
         self.page.locator("#dev-name").fill("Unsaved device draft")
         self.page.once("dialog", lambda dialog: dialog.dismiss())
         self.page.get_by_role("button", name="Cancel", exact=True).click()
         self.assertEqual(self.page.locator("#dev-name").input_value(), "Unsaved device draft")
         self.page.once("dialog", lambda dialog: dialog.accept())
         self.page.get_by_role("button", name="Cancel", exact=True).click()
-        self.assertEqual(self.page.locator("#dev-name").count(), 0)
+        # The editor closes after the hash change, so wait for it instead of reading it at once.
+        expect(self.page.locator("#dev-name")).to_have_count(0)
 
     def test_empty_table_filters_remain_recoverable(self):
         self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")
@@ -150,6 +148,9 @@ class DesktopRegression(unittest.TestCase):
         self.assertEqual(self.page.locator("tbody tr").count(), 0)
 
     def test_record_sizes_persist_and_reset(self):
+        # The list/properties divider and a table's Columns menu are both browser
+        # preferences that survive a reload and that "Reset layout" puts back. (Dragging
+        # a column edge to resize it was replaced by the Columns menu.)
         self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")
         self.page.get_by_role("button", name="Records", exact=True).click()
         pane = self.page.locator("section[aria-label='Records']")
@@ -160,18 +161,23 @@ class DesktopRegression(unittest.TestCase):
             self.page.mouse.down()
             self.page.mouse.move(box["x"] + 3 + amount, box["y"] + 8, steps=8)
             self.page.mouse.up()
+        model = self.page.locator("table[aria-label='Devices list']").get_by_role("columnheader", name="Model", exact=True)
+        expect(model).to_have_count(0)  # no room for it in the narrow list
+        self.page.get_by_role("button", name="Columns of Devices list").click()
+        self.page.get_by_role("group", name="Columns").get_by_label("Model").check()
+        expect(model).to_have_count(1)
+        self.page.keyboard.press("Escape")
         drag(self.page.get_by_role("separator", name="Resize records and properties"), 80)
         self.assertAlmostEqual(pane.bounding_box()["width"], original + 80, delta=2)
-        column = self.page.get_by_role("separator", name="Resize Name column", exact=True)
-        initial_column = column.locator("..").bounding_box()["width"]
-        drag(column, 60)
-        self.assertAlmostEqual(column.locator("..").bounding_box()["width"], initial_column + 60, delta=2)
         self.page.reload(wait_until="networkidle")
         self.assertAlmostEqual(pane.bounding_box()["width"], original + 80, delta=2)
-        self.assertAlmostEqual(column.locator("..").bounding_box()["width"], initial_column + 60, delta=2)
+        expect(model).to_have_count(1)
+        self.page.get_by_role("button", name="Columns of Devices list").click()
+        self.assertTrue(self.page.get_by_role("group", name="Columns").get_by_label("Model").is_checked())
+        self.page.keyboard.press("Escape")
         self.page.get_by_role("button", name="Reset layout", exact=True).click()
         self.assertAlmostEqual(pane.bounding_box()["width"], original, delta=2)
-        self.assertAlmostEqual(column.locator("..").bounding_box()["width"], initial_column, delta=2)
+        expect(model).to_have_count(0)
 
     def test_helpers_navigation_excludes_ordinary_entities(self):
         def fixture(h):
@@ -182,7 +188,7 @@ class DesktopRegression(unittest.TestCase):
         self.hierarchy_fixture(fixture)
         self.page.goto(BASE + "/#organize/helpers", wait_until="networkidle")
         self.page.get_by_role("navigation", name="What to organize").get_by_role("button", name=re.compile(r"^Helpers")).wait_for()
-        table = self.page.locator(".records-table")
+        table = self.page.locator("table[aria-label='Helpers list']")
         self.assertEqual(table.get_by_text("Regression helper", exact=True).count(), 1)
         self.assertEqual(table.get_by_text("Regression ordinary", exact=True).count(), 0)
 
@@ -212,7 +218,7 @@ class DesktopRegression(unittest.TestCase):
         for section, label, expected in [("entities", "Entities", "Partition ordinary"), ("automations", "Automations", "Partition automation"), ("helpers", "Helpers", "Partition helper")]:
             nav.get_by_role("button", name=re.compile(r"^" + label + r"\b")).click()
             self.page.get_by_role("button", name="Records", exact=True).click()
-            table = self.page.locator(".records-table")
+            table = self.page.locator(f"table[aria-label='{label} list']")
             self.assertEqual(table.locator("tbody tr").count(), 1)
             table.get_by_text(expected, exact=True).wait_for()
             for other in {"Partition ordinary", "Partition automation", "Partition helper"} - {expected}:
@@ -267,12 +273,13 @@ class DesktopRegression(unittest.TestCase):
                 h["entities"][entity["entityId"]] = entity
         self.hierarchy_fixture(fixture)
         self.page.goto(BASE + "/#organize/entities", wait_until="networkidle")
-        self.page.locator(".records-table tbody tr").first.wait_for()
-        self.assertEqual(self.page.locator(".records-table tbody tr").count(), 100)
+        rows = self.page.locator("table[aria-label='Entities list'] tbody tr")
+        rows.first.wait_for()
+        self.assertEqual(rows.count(), 100)
         for _ in range(5):
             self.page.get_by_role("button", name="Next page", exact=True).click()
-        self.assertEqual(self.page.locator(".records-table tbody tr").count(), 1)
-        self.page.locator(".records-table").get_by_text("Record 500", exact=True).wait_for()
+        self.assertEqual(rows.count(), 1)
+        self.page.locator("table[aria-label='Entities list']").get_by_text("Record 500", exact=True).wait_for()
 
     def test_capability_numbers_explain_counted_and_excluded_entities(self):
         def fixture(h):
@@ -323,14 +330,17 @@ class DesktopRegression(unittest.TestCase):
         posted = []
         def changes(route):
             if route.request.method == "POST":
-                value = route.request.post_data_json
-                posted.append(value)
-                fields = value.get("fields", {})
-                queued.append({"id": 1000 + len(queued), "kind": value["kind"], "op": value["op"], "scope": value.get("scope"), "targetId": value.get("targetId") or fields.get("entity_id") or fields.get("path") or fields.get("automation_id") or "fixture", "before": {}, "after": fields, "createdAt": "2026-10-27T00:00:00Z"})
+                body = route.request.post_data_json
+                # One edit goes to /api/changes, several in one request to /api/changes/batch.
+                for value in body["changes"] if "changes" in body else [body]:
+                    posted.append(value)
+                    fields = value.get("fields", {})
+                    queued.append({"id": 1000 + len(queued), "kind": value["kind"], "op": value["op"], "scope": value.get("scope"), "targetId": value.get("targetId") or fields.get("entity_id") or fields.get("path") or fields.get("automation_id") or "fixture", "before": {}, "after": fields, "createdAt": "2026-10-27T00:00:00Z"})
             route.fulfill(json={"ok": True, "changes": queued, "version": "fixture-" + str(len(queued))})
         self.page.route("**/api/changes", changes)
-        self.page.goto(BASE + "/#recipes", wait_until="networkidle")
-        self.page.get_by_role("heading", name="Recipes", exact=True).wait_for()
+        self.page.route("**/api/changes/batch", changes)
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        self.assertEqual(self.page.get_by_role("tab", name="Recipes", exact=True).get_attribute("aria-selected"), "true")
         self.page.get_by_role("group", name="Recipe view").get_by_role("button", name="Records", exact=True).click()
         self.page.get_by_role("textbox", name="Find recipes").fill("Occupancy")
         self.page.get_by_label("Recipe status", exact=True).select_option("ready")
@@ -357,7 +367,7 @@ class DesktopRegression(unittest.TestCase):
     def test_device_details_include_entities(self):
         self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")
         self.page.get_by_role("button", name="Records", exact=True).click()
-        self.page.locator(".records-table tbody tr").first.click()
+        self.page.locator("table[aria-label='Devices list'] tbody tr").first.click()
         section = self.page.locator("section[aria-label='Properties']")
         section.get_by_role("heading", name=re.compile(r"^Entities \(")).wait_for()
         self.assertGreater(section.locator("a[href^='#organize/entities/']").count(), 0)

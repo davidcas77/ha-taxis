@@ -5,11 +5,24 @@ the areas on each floor, and every device and entity in them, and lets you
 organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
-The pages along the top: **Guide**, **Areas**, **Organize**, **Recipes**, **Buttons**,
-**Parameters**, **Health**, **Changes**, **Settings** and **AI**. The sparkle button at the
-bottom right of every page opens [Ask Taxis](#ask-taxis). Devices and entities are in
-Organize, and in a tab of each area. Old links to the Devices and Entities pages (`#devices`,
-`#entities`, `#entities/<id>`) open the same section of Organize.
+The pages along the top, in the order Taxis takes you through a house: **Guide**
+(the home page), **Areas**, **Organize**, **Automations** (the tabs **Recipes** and
+**Buttons**), **Parameters**, **Health** and **Changes**, with **Settings** (the tabs
+**General** and **AI**) at the right. The sparkle button at the bottom right of every
+page opens [Ask Taxis](#ask-taxis). Devices and entities are in Organize, and in a tab
+of each area. Old links keep working: `#devices`, `#entities` and `#entities/<id>` open
+the same section of Organize, `#recipes` and `#buttons` open the tabs of Automations,
+`#ai-admin` and `#ai` open Settings → AI, and an empty or unknown link opens the Guide.
+
+**Tables.** Every table works the same way. It scrolls inside its own card, never
+the page, and its header stays in view. When the columns don't fit, the least
+important ones hide and a small arrow at the start of each row opens the hidden
+values under it. **Columns** (top right of the table) shows or hides any column and
+remembers the choice for that table in this browser; **Reset columns** puts them back.
+Long entity ids end in an ellipsis with the whole id in a tooltip, never broken in
+the middle. The first column stays in view while a wide table scrolls sideways. The
+matrices under Parameters (Capabilities and Helpers) use short headers with an icon
+and the full name in the tooltip.
 
 ## Areas
 
@@ -51,12 +64,12 @@ Organize, and in a tab of each area. Old links to the Devices and Entities pages
 Choose **Not in any area** in the Areas tree to find entities whose own area and
 device's area are both unset. Switch between **Cards** and **Table**; the choice
 is remembered in this browser. Cards keeps the lists grouped by what entities do.
-Table adds search by name, entity ID or device, paged results and resizable
-columns shared with the app's other tables.
+Table adds search by name, entity ID or device, paged results and the column
+controls shared with the app's other tables.
 
 Tick several entities, or use **Select all shown** for the current page, then
-choose an area in the bulk action bar. This queues each eligible entity's area
-change in **Changes**; Home Assistant is updated only after Apply. Entities that
+choose an area in the bulk action bar. This adds each eligible entity's area
+change to **Changes**; Home Assistant is updated only after Apply. Entities that
 Home Assistant cannot edit are not selectable, and the bulk action explains any
 selected entity it must skip. The existing filters for disabled, hidden,
 configuration and diagnostic entities still apply.
@@ -155,7 +168,7 @@ view of Devices and of Entities (the whole home). Choose one of three buttons,
   available when nothing matches, so you can change or reset them.
 - **Shared controls.** Search, kind chips, area and other available filters,
   selection and page controls use the same behavior across views; the table views
-  also share column resizing. Select all shown acts on the current page's
+  also share the Columns menu. Select all shown acts on the current page's
   editable entities.
 - **Why.** An entity that is disabled, left over, unavailable or unknown, a group
   with members that are gone, or a device that is offline says why; see
@@ -192,15 +205,13 @@ listed twice. Links to an entity open its matching section in Records; existing
 entity links continue to work.
 
 On desktop, drag the vertical divider between the records list and the selected
-item's properties to give either side more room. Drag a list column's right edge
-to change its width. The divider and column widths are remembered in this browser;
-they do not change Home Assistant or the pending change list. Data columns across
-the app, including Parameters, Health and the device's entity list, use the same
-resize control. Their widths are remembered per view. **Reset layout**
-restores the default split and column widths. Resize handles also accept the left
-and right arrow keys when focused.
-Long names, entity ids and paths wrap inside their columns, including label and
-category assignment tables. Editing controls stay within narrowed columns.
+item's properties to give either side more room. The divider position and each
+table's column choices are remembered in this browser; they do not change Home
+Assistant or the pending change list. **Reset layout** restores the default split
+and every table's default columns. The divider also accepts the left and right
+arrow keys when focused. In a narrow list, columns that don't fit hide (open a
+row's arrow to see them). Long entity ids and paths end in an ellipsis with the
+whole value in a tooltip.
 
 Automations, Devices, Entities and Helpers have an area filter beside search.
 Choose several areas to show their records together, select **No area** for unassigned records, or choose
@@ -215,14 +226,14 @@ count. Pagination makes every matching record reachable; use search and filters
 to narrow the results without losing the controls.
 
 Organize's **Helpers** list inspects helpers that already exist, with search,
-area filtering, resizable columns and the ordinary entity editor where Home
+area filtering, the Columns menu and the ordinary entity editor where Home
 Assistant permits editing. Use **Parameters → Helpers** to plan canonical helpers.
 
 **Blueprints** follows Automations, before Devices, Entities and Helpers. It reads
 all installed automation and script blueprints, including providers other than
 Taxis. Search by name, description, author or path, filter by type, and select a
 record to inspect its description, inputs, defaults and available source link.
-The list and details use the resizable Records layout. Blueprint errors remain
+The list and details use the Records layout with its draggable divider. Blueprint errors remain
 visible as entries, and an incomplete read shows a warning rather than presenting
 a partial list as complete. This page is read-only: inspecting a blueprint does
 not import, edit or delete it, or create an automation or script.
@@ -272,13 +283,13 @@ in the list of changes.
 
 What Taxis knows about each area, and the choices later features build on. The
 page has a bar of tabs: **Capabilities**, **Helpers**, **Area codes**, **House**,
-**Occupancy**, **Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior**
-and **Safety**.
+**Occupancy**, **Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior**,
+**Covers** and **Safety**.
 **Recipes** has its own page in the main navigation, immediately after Organize.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, climate, speakers, TVs,
-covers, fans and power. A cell shows how many entities count; when some are listed
+covers, fans, power and leak sensors. A cell shows how many entities count; when some are listed
 but left out, the rest show beside it in grey (`2 +1`). Hover or focus the counted
 number to see the names and entity IDs that count; hover or focus the grey `+N`
 separately to see those excluded. The totals row has the same separate lists.
@@ -506,6 +517,18 @@ latest); a day is in one group only, and a day in none has no comfort time. Taxi
 writes the line in one spelling, and hovering over it spells it out.
 
 ## Recipes
+
+**Automations → Recipes.** By default the list shows only the recipes that fit
+each area, so a row that says _Missing requirements_ means something is really
+missing: Occupancy needs a motion or presence sensor (or a bedroom); Motion lights
+an interior area with lights and a sensor; Media off a speaker or a TV; Area climate
+an interior area with a thermostat; Bathroom fan an interior area with a fan, or a
+humidity sensor in a bathroom-like area (bath, toilet, WC, shower, washroom,
+ensuite); Exterior lights only areas marked Exterior; Left open a door or window
+sensor; Appliance done a power sensor; Leak alert a leak sensor; Covers and sun a
+cover. An installed or out-of-date recipe, or one
+already in Changes, always shows. A line above the table says how many recipes
+don't fit; **Show all recipes** lists them anyway (remembered in this browser).
 
 A recipe is an automation Taxis makes for an area from a blueprint of its own,
 filled in with the area's sensors, lights and parameters. There are ten, and
@@ -877,8 +900,8 @@ adds `taxis/covers_sun.yaml`, the pause switch and `taxis_covers_sun_<code>`.
 
 ### House recipes
 
-These are not for one room. The Recipes page lists them in a **House** table under
-the areas (and as _House_ rows in the records view). Their automations have no
+These are not for one room. **Automations → Recipes** lists them in a **House** table
+under the areas (and as _House_ rows in the records view). Their automations have no
 area: `taxis_<recipe>_house`. The three automations share one pause switch,
 `input_boolean.taxis_paused` ("Taxis house automations paused"), which Taxis makes
 with the first of them and which, like the areas' switches, is off to begin with and
@@ -920,14 +943,32 @@ Low batteries and Not reporting send their messages to the notify services on th
 House tab, or to Home Assistant's notifications when there are none, as Left open
 does.
 
-## House guide
+## Guide
 
-**Guide** is the first page. It helps you build a comfortable house one area at a
-time: you say what each room is for, and Taxis shows what the room has and what is
-still missing. The guide itself changes nothing in Home Assistant. The steps that do
-add proposals to [Changes](#changes-and-apply), for you to review and apply.
+**Guide** is the home page, and the path Taxis takes you along to a complete,
+well-organised Home Assistant. It changes nothing in Home Assistant itself; the
+steps it sends you to add proposals to [Changes](#changes-and-apply), for you to
+review and apply.
 
-The first screen shows:
+**Your path** is a checklist of nine steps, each checked against what Taxis has read,
+with a short summary, a status (_Done_, _Needs attention_, _Not started_, or _Reading_
+or _Couldn't read_ while the data loads or fails; a step that couldn't be read is
+never counted as done) and a button that opens the exact place. A progress bar and a
+**Next step** card point at the first step that isn't done.
+
+1. **Floors and areas**: areas without a floor (opens them in Organize).
+2. **Every entity in an area**: entities in no area (opens _Not in any area_).
+3. **Naming**: entity ids that match their area's code, for example 38 of 46 (opens
+   the area with the most to fix, on its Naming tab).
+4. **Capabilities**: areas that have equipment but nothing counted (Parameters → Capabilities).
+5. **Helpers**: helpers to create or update, conflicts, and those in place (Parameters → Helpers).
+6. **Parameters**: whether any house, floor or room setting has been chosen yet.
+7. **Recipes**: rooms ready, installed, and changes waiting (Automations → Recipes).
+8. **Buttons**: controls found and press types still without an action (Automations → Buttons).
+9. **Health**: errors and warnings of the last check (Health).
+
+Below the path, **Room by room** is the guide for each area: you say what a room is
+for, and Taxis shows what the room has and what is still missing. It shows:
 
 - four counts: areas with chosen goals, areas ready for a room test, areas tested
   by you, and areas awaiting review and Apply;
@@ -981,7 +1022,7 @@ only suggests.
 
 ## Buttons
 
-**Buttons** is for remotes, wall controls and any other button Home Assistant can
+**Automations → Buttons** is for remotes, wall controls and any other button Home Assistant can
 see. Taxis lists them, shows which automations already react to each press, and
 lets you give a press, double press or hold an action. What you get is an ordinary
 Home Assistant automation that keeps working when Taxis is stopped. Nothing
@@ -1009,6 +1050,13 @@ it there. Under **Discovery coverage** you see how many automation configuration
 could be read. YAML-only and unavailable ones can't be, so no match is not proof
 that nothing else reacts to a button.
 
+**One table per control.** Opening a control shows a table: a row per button and a
+column per press type that the control offers (Single press, Double press, Long press,
+and so on, spelled as the integration spells them). Each cell shows the automations
+that already handle that press (Taxis's own, and existing ones as links to Home
+Assistant) or a faint **+** where nothing was found. Click a cell, or the **+**, to
+assign. The discovery coverage is one collapsible line above the table.
+
 **Assigning an action.** Open a control, choose a gesture and **Assign action**.
 Choose the **Target**, an entity, and the **Action** to run on it, or an action
 that needs no target (below). **Optional action data** takes plain JSON such as
@@ -1017,7 +1065,7 @@ device and area targets, which belong in the Target field. Tick **Enable this
 assignment after Apply** or leave it off to keep it disabled. If another automation
 may also handle the gesture, or some automations couldn't be read, tick **I
 reviewed existing handlers and any coverage gaps; allow coexistence**: without it
-Taxis refuses to add a second handler. **Add to changes** queues it. Taxis never
+Taxis refuses to add a second handler. **Add to changes** puts it in the list. Taxis never
 edits the existing handlers.
 
 **One automation per output.** Every button that controls the same output (the
@@ -1356,7 +1404,7 @@ them on the **Changes** page.
 
 Taxis-only settings, including capability choices, parameters, naming rules and
 label/category groups, are separate from that list. **Saved in Taxis** means the
-app has stored a setting; **Queued for HA** means a proposed Home Assistant edit
+app has stored a setting; **In changes** means a proposed Home Assistant edit
 is waiting for Apply; **Applied to HA** means Apply has completed its checks.
 A form's unsaved draft has reached none of those stages.
 
@@ -1558,7 +1606,7 @@ model for the task's tier; the window says what is missing and links to Settings
   up to 2,000 characters. Follow-ups include up to six earlier messages, each
   shortened to 2,000 characters. One question runs at a time. A reply cut off by the
   output limit says so.
-- **The three-dot menu.** **AI administration**, **AI settings**, **Clear chat**,
+- **The three-dot menu.** **AI administration** (Settings → AI), **Clear chat**,
   the provider and model in use, and the last reply's model, tokens and estimated
   cost.
 
@@ -1568,8 +1616,8 @@ page, context, model and result. Never the question, the reply or the room.
 
 ## AI administration
 
-**AI**, the last page in the bar, shows where AI is used and what it costs. It only
-reads: nothing on it runs a model.
+**Settings → AI** shows where AI is used and what it costs, then the model and key
+settings and Jev. The overview only reads: nothing on it runs a model.
 
 - **Generative AI** says whether it is on, the provider, this month's calls and
   estimated spend against the cap, and how many calls had no known price and so

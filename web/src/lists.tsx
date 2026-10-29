@@ -27,21 +27,46 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
   const [extra, setExtra] = useStoredValue("taxis:filters:extra", false, (v): v is boolean => typeof v === "boolean");
   const [editing, setEditing] = useState<Editing>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const makers = useMemo(() => [...new Set(Object.values(h.devices).map((d) => d.manufacturer).filter((m): m is string => Boolean(m)))].sort(), [h]);
+  const makers = useMemo(
+    () =>
+      [
+        ...new Set(
+          Object.values(h.devices)
+            .map((d) => d.manufacturer)
+            .filter((m): m is string => Boolean(m)),
+        ),
+      ].sort(),
+    [h],
+  );
 
   // The same function between renders unless a filter changes, so the table is not worked out again for nothing.
   const entityOk = useCallback(
-    (e: EntityItem) => (section !== "entities" || entityMatchesSection(e, "entities")) && (extra || (!e.disabled && !e.hidden && !e.maintenance)) && (!label || e.labels.includes(label)),
+    (e: EntityItem) =>
+      (section !== "entities" || entityMatchesSection(e, "entities")) &&
+      (extra || (!e.disabled && !e.hidden && !e.maintenance)) &&
+      (!label || e.labels.includes(label)),
     [extra, label, section],
   );
-  const deviceOk = useMemo(() => (d: { manufacturer: string | null; disabled: boolean }) => (showDisabled || !d.disabled) && (!maker || d.manufacturer === maker), [maker, showDisabled]);
-  const deviceLabelOk = useMemo(() => label ? (d: { labels: string[] }) => d.labels.includes(label) : undefined, [label]);
-  const reset = () => { setAreas(new Set()); setMaker(""); setLabel(""); setExtra(false); setShowDisabled(false); };
-  const chips = [...areas].map(id => ({ label: id ? h.areas[id]?.name ?? id : "No area", remove: () => setAreas(new Set([...areas].filter(a => a !== id))) }));
+  const deviceOk = useMemo(
+    () => (d: { manufacturer: string | null; disabled: boolean }) => (showDisabled || !d.disabled) && (!maker || d.manufacturer === maker),
+    [maker, showDisabled],
+  );
+  const deviceLabelOk = useMemo(() => (label ? (d: { labels: string[] }) => d.labels.includes(label) : undefined), [label]);
+  const reset = () => {
+    setAreas(new Set());
+    setMaker("");
+    setLabel("");
+    setExtra(false);
+    setShowDisabled(false);
+  };
+  const chips = [...areas].map((id) => ({
+    label: id ? (h.areas[id]?.name ?? id) : "No area",
+    remove: () => setAreas(new Set([...areas].filter((a) => a !== id))),
+  }));
   if (maker) chips.push({ label: maker, remove: () => setMaker("") });
   if (label) chips.push({ label: h.labels[label]?.name ?? label, remove: () => setLabel("") });
   if (extra) chips.push({ label: "Include hidden/disabled", remove: () => setExtra(false) });
-  const areaOk = useMemo(() => areas.size ? (id: string | null) => areas.has(id ?? "") : undefined, [areas]);
+  const areaOk = useMemo(() => (areas.size ? (id: string | null) => areas.has(id ?? "") : undefined), [areas]);
 
   const toggle = (id: string) =>
     setPicked((p) => {
@@ -52,10 +77,14 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
     });
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="flex flex-col gap-4">
-        {editing?.kind === "entity" && h.entities[editing.id] && <EntityEditor key={editing.id} h={h} entity={h.entities[editing.id]} onClose={() => setEditing(null)} />}
-        {editing?.kind === "device" && h.devices[editing.id] && <DeviceEditor key={editing.id} h={h} device={h.devices[editing.id]} onClose={() => setEditing(null)} />}
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
+      <div className="flex min-w-0 flex-col gap-4">
+        {editing?.kind === "entity" && h.entities[editing.id] && (
+          <EntityEditor key={editing.id} h={h} entity={h.entities[editing.id]} onClose={() => setEditing(null)} />
+        )}
+        {editing?.kind === "device" && h.devices[editing.id] && (
+          <DeviceEditor key={editing.id} h={h} device={h.devices[editing.id]} onClose={() => setEditing(null)} />
+        )}
         <DevicesEntities
           h={h}
           place={section}
@@ -65,7 +94,15 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
           deviceOk={deviceOk}
           deviceLabelOk={deviceLabelOk}
           includeLoose={!maker}
-          groups={ids => <RoleSections h={h} ids={ids} filters={{ maintenance: true, disabled: true }} rows={{ picked, toggle, edit: id => setEditing({ kind: "entity", id }) }} showDevice />}
+          groups={(ids) => (
+            <RoleSections
+              h={h}
+              ids={ids}
+              filters={{ maintenance: true, disabled: true }}
+              rows={{ picked, toggle, edit: (id) => setEditing({ kind: "entity", id }) }}
+              showDevice
+            />
+          )}
           onResetFilters={reset}
           activeFilters={<FilterChips items={chips} clear={reset} />}
           areaOk={areaOk}
@@ -99,7 +136,9 @@ export function OrganizeTable({ h, section, onRecord }: { h: Hierarchy; section:
                   </option>
                 ))}
               </select>
-              <label className="flex items-center gap-1.5 text-xs text-muted"><input type="checkbox" checked={showDisabled} onChange={e => setShowDisabled(e.target.checked)} /> Show disabled devices</label>
+              <label className="flex items-center gap-1.5 text-xs text-muted">
+                <input type="checkbox" checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} /> Show disabled devices
+              </label>
               <label className="flex items-center gap-1.5 text-xs text-muted">
                 <input type="checkbox" checked={extra} onChange={(e) => setExtra(e.target.checked)} /> Include disabled, hidden and diagnostic entities
               </label>

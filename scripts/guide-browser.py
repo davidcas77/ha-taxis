@@ -6,8 +6,8 @@ from pathlib import Path
 import unittest
 import urllib.request
 from playwright.sync_api import sync_playwright
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://127.0.0.1:8099")
 
 
 class GuideRegression(unittest.TestCase):
@@ -20,7 +20,7 @@ class GuideRegression(unittest.TestCase):
         with urllib.request.urlopen(BASE + "/api/settings/naming", timeout=20) as response:
             cls.naming = json.load(response)["naming"]
         cls.pw = sync_playwright().start()
-        cls.browser = cls.pw.chromium.launch(executable_path=os.environ["CHROMIUM_PATH"], headless=True)
+        cls.browser = launch(cls.pw)
 
     @classmethod
     def tearDownClass(cls):
@@ -76,11 +76,14 @@ class GuideRegression(unittest.TestCase):
         def changes(route):
             if route.request.method == "POST":
                 body = route.request.post_data_json
-                self.posts.append(body)
-                fields = body.get("fields", {})
-                self.queued.append({"id": len(self.queued) + 1, "kind": body["kind"], "op": body["op"], "targetId": body.get("targetId") or fields.get("entity_id") or fields.get("automation_id") or fields.get("path") or "fixture", "scope": None, "before": {}, "after": fields, "createdAt": "2026-10-28T00:00:00Z"})
+                # One edit goes to /api/changes; several edits go in one request to /api/changes/batch.
+                for item in body["changes"] if "changes" in body else [body]:
+                    self.posts.append(item)
+                    fields = item.get("fields", {})
+                    self.queued.append({"id": len(self.queued) + 1, "kind": item["kind"], "op": item["op"], "targetId": item.get("targetId") or fields.get("entity_id") or fields.get("automation_id") or fields.get("path") or "fixture", "scope": None, "before": {}, "after": fields, "createdAt": "2026-10-28T00:00:00Z"})
             route.fulfill(json={"ok": True, "changes": self.queued, "version": str(len(self.queued))})
         self.page.route("**/api/changes", changes)
+        self.page.route("**/api/changes/batch", changes)
 
     def tearDown(self):
         self.context.close()
@@ -97,7 +100,8 @@ class GuideRegression(unittest.TestCase):
 
     def open(self, area=False):
         self.page.goto(BASE + ("/#guide/living_room" if area else "/#guide"), wait_until="networkidle")
-        self.page.get_by_role("heading", name="House guide", exact=True).wait_for()
+        # The Guide opens with the path to a complete home; the room-by-room guide is below it.
+        self.page.get_by_role("heading", name="Choose this area's purpose" if area else "Room by room", exact=True).wait_for()
         if area:
             self.page.get_by_role("region", name="Area goals", exact=True).wait_for()
         else:
@@ -303,13 +307,13 @@ class GuideRegression(unittest.TestCase):
             dialogs.append(dialog.message)
             dialog.dismiss()
         self.page.once("dialog", dismiss)
-        self.page.get_by_role("button", name="All areas", exact=True).click()
+        self.page.get_by_role("button", name="Back to the path", exact=True).click()
         self.assertEqual(len(dialogs), 1)
         self.assertTrue(self.page.url.endswith("#guide/living_room"))
         self.page.get_by_role("button", name="Undo", exact=True).click()
         self.page.set_viewport_size({"width": 390, "height": 844})
         self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
-        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output = screenshot_dir()
         output.mkdir(parents=True, exist_ok=True)
         self.page.screenshot(path=str(output / "house-guide-mobile.png"), full_page=True)
         self.assertEqual(self.posts, [])

@@ -142,15 +142,16 @@ class AssistantRegression(fixture.GuideRegression):
         self.assertTrue(self.page.get_by_role("button", name="Ask Taxis", exact=True).evaluate("e => e === document.activeElement"))
 
     def test_assistant_admin_lists_functions_triggers_boundaries_and_no_requests(self):
-        self.page.goto(fixture.BASE + "/#ai-admin", wait_until="networkidle")
+        self.page.goto(fixture.BASE + "/#settings/ai", wait_until="networkidle")
         self.page.get_by_role("heading", name="AI administration", exact=True).wait_for()
         table = self.page.get_by_role("table", name="AI functions")
         for text in ["Explain", "Suggest next steps", "Naming help", "Room-note review", "Text advice only"]:
             self.assertIn(text, table.inner_text())
         self.assertEqual(self.asks, [])
         self.assertEqual(self.previews, [])
-        self.page.get_by_role("button", name="Configure models and keys").click()
-        self.page.wait_for_url("**/#settings")
+        # The model and key settings share this tab, so there is no separate page to open.
+        self.assertTrue(self.page.locator("section[aria-labelledby='ai-heading']").is_visible())
+        self.assertTrue(self.page.get_by_label("Strong model", exact=True).is_visible())
 
     def test_assistant_late_reply_cannot_appear_after_navigation(self):
         self.hold = True
@@ -159,14 +160,15 @@ class AssistantRegression(fixture.GuideRegression):
         panel.get_by_role("button", name="Send message", exact=True).click()
         self.page.wait_for_timeout(150)
         self.assertIsNotNone(self.held)
-        self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="AI", exact=True).click()
+        self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Settings", exact=True).click()
+        self.page.get_by_role("tab", name="AI", exact=True).click()
         self.held.fulfill(json=self.answer())
         panel.get_by_role("status").filter(has_text="Preparing context").wait_for(state="hidden")
         self.assertEqual(self.previews[-1]["page"], "ai-admin")
         self.assertEqual(panel.get_by_role("log").inner_text(), "")
 
     def test_assistant_available_on_every_page_without_provider_calls(self):
-        for path in ["#home", "#parameters/helpers", "#health", "#recipes", "#organize/devices", "#changes", "#settings"]:
+        for path in ["#home", "#parameters/helpers", "#health", "#automations/recipes", "#automations/buttons", "#organize/devices", "#changes", "#settings", "#settings/ai"]:
             panel = self.panel(path)
             self.assertTrue(panel.is_visible())
             panel.get_by_role("button", name="Close assistant").click()

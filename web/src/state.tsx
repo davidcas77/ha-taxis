@@ -5,33 +5,55 @@ import { EMPTY_INVENTORY, type InventorySettings } from "../../shared/inventory.
 import { DEFAULT_NAMING, type NamingSettings } from "../../shared/naming.ts";
 import { EMPTY_NAMING_IGNORES, type NamingIgnores } from "../../shared/naming-ignores.ts";
 import { EMPTY_PARAMETERS, type ParameterSettings } from "../../shared/parameters.ts";
-import { DEVICES_ENTITIES, normalizeLegacyHash } from "../../shared/route-hash.ts";
 import type { Change, ChangeInput, Hierarchy } from "../../shared/types.ts";
-import { approveHash, confirmDraftNavigation, consumeApprovedHash } from "./draft-guard.ts";
 import { api } from "./api.ts";
+import { useSavedSetting } from "./saved-setting.ts";
 
-// The app's data: the hierarchy (a preview, with the change list already laid
-// over it) and the change list itself. Every edit goes through propose(), which
-// stores it on the server and reloads the preview.
+// The app's state, in three contexts so that a change to one does not re-render
+// what only reads another:
+//
+//   data      the hierarchy (a preview, with the change list already laid over
+//             it), the change list itself, and the actions that edit it. Every
+//             edit goes through propose(), which stores it on the server and
+//             reloads the preview.
+//   settings  what Taxis keeps for itself: naming, groups, inventory,
+//             parameters, ignored naming suggestions. Saved right away, never
+//             in the change list.
+//   notices   the one-line message that fades after a few seconds (a toast).
+//             Showing or clearing it re-renders only the banner that reads it.
+//
+// useTaxis() gives data and settings together, for the many screens that read
+// both; it does not carry the notice, so a toast never re-renders them. Read the
+// notice with useNotices(); only to send one, use useNotify() (stable).
 
-type Notice = { tone: "ok" | "error"; text: string } | null;
+export type Notice = { tone: "ok" | "error"; text: string } | null;
 
-type TaxisState = {
+export type DataState = {
   hierarchy: Hierarchy | null;
   changes: Change[];
   // Fingerprint of the change list as shown; Apply sends it back.
   version: string;
   loading: boolean;
   error: string | null;
-  notice: Notice;
   // "entity:light.desk", "area:new:area:3"… for everything with a pending change.
   edited: Set<string>;
-  naming: NamingSettings;
-  // False until the saved naming settings have arrived.
-  namingLoaded: boolean;
   // True while propose() is storing changes and reloading the preview. Edits
   // made from the preview (labels in particular) wait for it.
   busy: boolean;
+  reload: (refresh?: boolean) => Promise<void>;
+  // Adds the edits to the list: one request for one edit, one all-or-nothing
+  // request for several. Resolves to whether they were all added.
+  propose: (input: ChangeInput | ChangeInput[]) => Promise<boolean>;
+  removeChange: (id: number) => Promise<void>;
+  clearChanges: () => Promise<void>;
+  setChanges: (c: Change[]) => void;
+};
+
+export type SettingsState = {
+  naming: NamingSettings;
+  // False until the saved naming settings have arrived.
+  namingLoaded: boolean;
+  saveNaming: (n: NamingSettings) => Promise<string | null>;
   // Groups for labels and categories: Taxis only, saved right away, never in
   // the change list.
   groups: GroupSettings;
@@ -42,250 +64,87 @@ type TaxisState = {
   // Applies the edit at once and rolls it back if the save fails. Resolves to
   // an error text, or null when saved.
   saveGroups: (edit: (g: GroupSettings) => GroupSettings) => Promise<string | null>;
-  // The capability inventory (what each area has, and the user's choices):
-  // Taxis only, saved right away like groups.
+  // The capability inventory (what each area has, and the user's choices).
   inventory: InventorySettings;
-  // False until the saved inventory settings have arrived; edits wait for it.
   inventoryLoaded: boolean;
-  // True while an inventory save is in flight; further edits wait for it.
   inventorySaving: boolean;
   saveInventory: (edit: (s: InventorySettings) => InventorySettings) => Promise<string | null>;
-  // The recipe parameters (house, interior/exterior, floor, area): Taxis only,
-  // saved right away like the inventory.
+  // The recipe parameters (house, interior/exterior, floor, area).
   parameters: ParameterSettings;
-  // False until the saved parameters have arrived; edits wait for it.
   parametersLoaded: boolean;
-  // True while a parameters save is in flight; further edits wait for it.
   parametersSaving: boolean;
   saveParameters: (edit: (p: ParameterSettings) => ParameterSettings) => Promise<string | null>;
-  saveNaming: (n: NamingSettings) => Promise<string | null>;
-  // The naming suggestions the user ignored: Taxis only, saved right away like
-  // the inventory.
+  // The naming suggestions the user ignored.
   namingIgnores: NamingIgnores;
-  // False until the saved list has arrived; edits wait for it.
   namingIgnoresLoaded: boolean;
-  // True while a save is in flight; further edits wait for it.
   namingIgnoresSaving: boolean;
   saveNamingIgnores: (edit: (s: NamingIgnores) => NamingIgnores) => Promise<string | null>;
-  reload: (refresh?: boolean) => Promise<void>;
-  propose: (input: ChangeInput | ChangeInput[]) => Promise<boolean>;
-  removeChange: (id: number) => Promise<void>;
-  clearChanges: () => Promise<void>;
-  setChanges: (c: Change[]) => void;
-  notify: (n: Notice) => void;
 };
 
-const Ctx = createContext<TaxisState | null>(null);
+// Everything the old single context had, except the notice itself.
+export type TaxisState = DataState & SettingsState & { notify: (n: Notice) => void };
+
+const DataCtx = createContext<DataState | null>(null);
+const SettingsCtx = createContext<SettingsState | null>(null);
+const NoticeCtx = createContext<Notice>(null);
+const NotifyCtx = createContext<((n: Notice) => void) | null>(null);
 
 export function TaxisProvider({ children }: { children: ReactNode }) {
+  const [notice, setNotice] = useState<Notice>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Notices fade on their own.
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  return (
+    <NotifyCtx.Provider value={setNotice}>
+      <NoticeCtx.Provider value={notice}>
+        <DataProvider error={error} setError={setError} notify={setNotice}>
+          <SettingsProvider onError={setError}>{children}</SettingsProvider>
+        </DataProvider>
+      </NoticeCtx.Provider>
+    </NotifyCtx.Provider>
+  );
+}
+
+function DataProvider({
+  children,
+  error,
+  setError,
+  notify,
+}: {
+  children: ReactNode;
+  error: string | null;
+  setError: (e: string | null) => void;
+  notify: (n: Notice) => void;
+}) {
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
   const [changes, setChanges] = useState<Change[]>([]);
   const [version, setVersion] = useState("");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<Notice>(null);
-  const [naming, setNaming] = useState<NamingSettings>(DEFAULT_NAMING);
-  const [namingLoaded, setNamingLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [groups, setGroups] = useState<GroupSettings>({});
-  const [groupsLoaded, setGroupsLoaded] = useState(false);
-  const [groupsSaving, setGroupsSaving] = useState(false);
-  const [inventory, setInventory] = useState<InventorySettings>(EMPTY_INVENTORY);
-  const [inventoryLoaded, setInventoryLoaded] = useState(false);
-  const [inventorySaving, setInventorySaving] = useState(false);
-  const [parameters, setParameters] = useState<ParameterSettings>(EMPTY_PARAMETERS);
-  const [parametersLoaded, setParametersLoaded] = useState(false);
-  const [parametersSaving, setParametersSaving] = useState(false);
-  const [namingIgnores, setNamingIgnores] = useState<NamingIgnores>(EMPTY_NAMING_IGNORES);
-  const [namingIgnoresLoaded, setNamingIgnoresLoaded] = useState(false);
-  const [namingIgnoresSaving, setNamingIgnoresSaving] = useState(false);
-  const namingIgnoresRef = useRef<NamingIgnores>(EMPTY_NAMING_IGNORES);
-  const namingIgnoresBusy = useRef(false);
-  const groupsRef = useRef<GroupSettings>({});
-  const groupsBusy = useRef(false);
-  const inventoryRef = useRef<InventorySettings>(EMPTY_INVENTORY);
-  const inventoryBusy = useRef(false);
-  const parametersRef = useRef<ParameterSettings>(EMPTY_PARAMETERS);
-  const parametersBusy = useRef(false);
   const proposing = useRef(false);
 
-  useEffect(() => {
-    void api.naming().then((r) => {
-      if (r.ok) {
-        setNaming(r.naming);
-        setNamingLoaded(true);
-      } else setError(r.error);
-    });
-  }, []);
-
-  useEffect(() => {
-    void api.namingIgnores().then((r) => {
-      if (r.ok) {
-        namingIgnoresRef.current = r.ignores;
-        setNamingIgnores(r.ignores);
-        setNamingIgnoresLoaded(true);
-      } else setError(r.error);
-    });
-  }, []);
-
-  const saveNamingIgnores = useCallback(
-    async (edit: (s: NamingIgnores) => NamingIgnores) => {
-      // Never save before the real list has arrived: an empty one would overwrite it.
-      if (!namingIgnoresLoaded) return "The ignored suggestions haven't loaded yet.";
-      if (namingIgnoresBusy.current) return "Still saving the last change. Try again in a moment.";
-      const before = namingIgnoresRef.current;
-      const next = edit(before);
-      if (next === before) return null;
-      namingIgnoresBusy.current = true;
-      setNamingIgnoresSaving(true);
-      namingIgnoresRef.current = next;
-      setNamingIgnores(next);
-      const r = await api.saveNamingIgnores(next);
-      namingIgnoresBusy.current = false;
-      setNamingIgnoresSaving(false);
-      if (!r.ok) {
-        namingIgnoresRef.current = before;
-        setNamingIgnores(before);
-        return r.error;
+  const reload = useCallback(
+    async (refresh = false) => {
+      setLoading(true);
+      const [h, c] = await Promise.all([api.hierarchy(refresh), api.changes()]);
+      if (h.ok) {
+        setHierarchy(h.hierarchy);
+        setError(null);
+      } else setError(h.error);
+      if (c.ok) {
+        setChanges(c.changes);
+        setVersion(c.version);
       }
-      namingIgnoresRef.current = r.ignores;
-      setNamingIgnores(r.ignores);
-      return null;
+      setLoading(false);
     },
-    [namingIgnoresLoaded],
+    [setError],
   );
-
-  useEffect(() => {
-    void api.groups().then((r) => {
-      if (r.ok) {
-        groupsRef.current = r.groups;
-        setGroups(r.groups);
-        setGroupsLoaded(true);
-      } else setError(r.error);
-    });
-  }, []);
-
-  const saveGroups = useCallback(
-    async (edit: (g: GroupSettings) => GroupSettings) => {
-      // Never save before the real groups have arrived: defaults would overwrite them.
-      if (!groupsLoaded) return "The groups haven't loaded yet.";
-      if (groupsBusy.current) return "Still saving the last change. Try again in a moment.";
-      const before = groupsRef.current;
-      const next = edit(before);
-      if (next === before) return null;
-      groupsBusy.current = true;
-      setGroupsSaving(true);
-      groupsRef.current = next;
-      setGroups(next);
-      const r = await api.saveGroups(next);
-      groupsBusy.current = false;
-      setGroupsSaving(false);
-      if (!r.ok) {
-        groupsRef.current = before;
-        setGroups(before);
-        return r.error;
-      }
-      groupsRef.current = r.groups;
-      setGroups(r.groups);
-      return null;
-    },
-    [groupsLoaded],
-  );
-
-  useEffect(() => {
-    void api.inventory().then((r) => {
-      if (r.ok) {
-        inventoryRef.current = r.inventory;
-        setInventory(r.inventory);
-        setInventoryLoaded(true);
-      } else setError(r.error);
-    });
-  }, []);
-
-  const saveInventory = useCallback(
-    async (edit: (s: InventorySettings) => InventorySettings) => {
-      // Never save before the real settings have arrived: defaults would overwrite them.
-      if (!inventoryLoaded) return "The inventory settings haven't loaded yet.";
-      if (inventoryBusy.current) return "Still saving the last change. Try again in a moment.";
-      const before = inventoryRef.current;
-      const next = edit(before);
-      if (next === before) return null;
-      inventoryBusy.current = true;
-      setInventorySaving(true);
-      inventoryRef.current = next;
-      setInventory(next);
-      const r = await api.saveInventory(next);
-      inventoryBusy.current = false;
-      setInventorySaving(false);
-      if (!r.ok) {
-        inventoryRef.current = before;
-        setInventory(before);
-        return r.error;
-      }
-      inventoryRef.current = r.inventory;
-      setInventory(r.inventory);
-      return null;
-    },
-    [inventoryLoaded],
-  );
-
-  useEffect(() => {
-    void api.parameters().then((r) => {
-      if (r.ok) {
-        parametersRef.current = r.parameters;
-        setParameters(r.parameters);
-        setParametersLoaded(true);
-      } else setError(r.error);
-    });
-  }, []);
-
-  const saveParameters = useCallback(
-    async (edit: (p: ParameterSettings) => ParameterSettings) => {
-      // Never save before the real parameters have arrived: defaults would overwrite them.
-      if (!parametersLoaded) return "The parameters haven't loaded yet.";
-      if (parametersBusy.current) return "Still saving the last change. Try again in a moment.";
-      const before = parametersRef.current;
-      const next = edit(before);
-      if (next === before) return null;
-      parametersBusy.current = true;
-      setParametersSaving(true);
-      parametersRef.current = next;
-      setParameters(next);
-      const r = await api.saveParameters(next);
-      parametersBusy.current = false;
-      setParametersSaving(false);
-      if (!r.ok) {
-        parametersRef.current = before;
-        setParameters(before);
-        return r.error;
-      }
-      parametersRef.current = r.parameters;
-      setParameters(r.parameters);
-      return null;
-    },
-    [parametersLoaded],
-  );
-
-  const saveNaming = useCallback(async (n: NamingSettings) => {
-    const r = await api.saveNaming(n);
-    if (!r.ok) return r.error;
-    setNaming(r.naming);
-    return null;
-  }, []);
-
-  const reload = useCallback(async (refresh = false) => {
-    setLoading(true);
-    const [h, c] = await Promise.all([api.hierarchy(refresh), api.changes()]);
-    if (h.ok) {
-      setHierarchy(h.hierarchy);
-      setError(null);
-    } else setError(h.error);
-    if (c.ok) {
-      setChanges(c.changes);
-      setVersion(c.version);
-    }
-    setLoading(false);
-  }, []);
 
   useEffect(() => {
     void reload(false);
@@ -297,38 +156,35 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
       // A second edit built from the preview before the first one is in it
       // would overwrite it (two labels added to one entity in quick succession).
       if (proposing.current) {
-        setNotice({ tone: "error", text: "Still adding the last change. Try again in a moment." });
+        notify({ tone: "error", text: "Still adding the last change. Try again in a moment." });
         return false;
       }
       proposing.current = true;
       setBusy(true);
       let failed: string | null = null;
       try {
-        for (const i of inputs) {
-          const res = await api.addChange(i);
-          if (!res.ok) {
-            failed = res.error;
-            break;
-          }
+        // Several edits go as one request that keeps all of them or none.
+        const res = inputs.length === 1 ? await api.addChange(inputs[0]) : await api.addChanges(inputs);
+        if (res.ok) {
           setChanges(res.changes);
           setVersion(res.version);
-        }
+        } else failed = res.error;
         await reload(false);
       } finally {
         proposing.current = false;
         setBusy(false);
       }
-      setNotice(
+      notify(
         failed
           ? { tone: "error", text: failed }
           : { tone: "ok", text: inputs.length > 1 ? `${inputs.length} changes added to the list` : "Added to the list of changes" },
       );
       return !failed;
     },
-    [reload],
+    [reload, notify],
   );
 
-  const mutateQueue = useCallback(
+  const mutateList = useCallback(
     async (removeId?: number) => {
       if (proposing.current) return;
       proposing.current = true;
@@ -336,33 +192,25 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
       try {
         const res = removeId === undefined ? await api.clearChanges() : await api.removeChange(removeId);
         if (!res.ok) {
-          setNotice({ tone: "error", text: res.error });
+          notify({ tone: "error", text: res.error });
           return;
         }
         setChanges(res.changes);
         setVersion(res.version);
         await reload(false);
-        setNotice({
+        notify({
           tone: "ok",
-          text:
-            removeId === undefined ? "Discarded the queued changes. Home Assistant was unchanged." : "Removed the queued change. Home Assistant was unchanged.",
+          text: removeId === undefined ? "Discarded the changes. Home Assistant was unchanged." : "Removed the change. Home Assistant was unchanged.",
         });
       } finally {
         proposing.current = false;
         setBusy(false);
       }
     },
-    [reload],
+    [reload, notify],
   );
-  const removeChange = useCallback((id: number) => mutateQueue(id), [mutateQueue]);
-  const clearChanges = useCallback(() => mutateQueue(), [mutateQueue]);
-
-  // Notices fade on their own.
-  useEffect(() => {
-    if (!notice) return;
-    const t = setTimeout(() => setNotice(null), 4000);
-    return () => clearTimeout(t);
-  }, [notice]);
+  const removeChange = useCallback((id: number) => mutateList(id), [mutateList]);
+  const clearChanges = useCallback(() => mutateList(), [mutateList]);
 
   const edited = useMemo(() => {
     const s = new Set<string>();
@@ -375,244 +223,166 @@ export function TaxisProvider({ children }: { children: ReactNode }) {
     return s;
   }, [changes]);
 
-  const value = useMemo(
+  const value = useMemo<DataState>(
+    () => ({ hierarchy, changes, version, loading, error, edited, busy, reload, propose, removeChange, clearChanges, setChanges }),
+    [hierarchy, changes, version, loading, error, edited, busy, reload, propose, removeChange, clearChanges],
+  );
+  return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
+}
+
+function SettingsProvider({ children, onError }: { children: ReactNode; onError: (e: string) => void }) {
+  const [naming, setNaming] = useState<NamingSettings>(DEFAULT_NAMING);
+  const [namingLoaded, setNamingLoaded] = useState(false);
+
+  useEffect(() => {
+    void api.naming().then((r) => {
+      if (r.ok) {
+        setNaming(r.naming);
+        setNamingLoaded(true);
+      } else onError(r.error);
+    });
+  }, [onError]);
+
+  const saveNaming = useCallback(async (n: NamingSettings) => {
+    const r = await api.saveNaming(n);
+    if (!r.ok) return r.error;
+    setNaming(r.naming);
+    return null;
+  }, []);
+
+  const namingIgnores = useSavedSetting<NamingIgnores>({
+    initial: EMPTY_NAMING_IGNORES,
+    load: async () => {
+      const r = await api.namingIgnores();
+      return r.ok ? { ok: true, value: r.ignores } : r;
+    },
+    persist: async (v) => {
+      const r = await api.saveNamingIgnores(v);
+      return r.ok ? { ok: true, value: r.ignores } : r;
+    },
+    notLoaded: "The ignored suggestions haven't loaded yet.",
+    onLoadError: onError,
+  });
+  const groups = useSavedSetting<GroupSettings>({
+    initial: {},
+    load: async () => {
+      const r = await api.groups();
+      return r.ok ? { ok: true, value: r.groups } : r;
+    },
+    persist: async (v) => {
+      const r = await api.saveGroups(v);
+      return r.ok ? { ok: true, value: r.groups } : r;
+    },
+    notLoaded: "The groups haven't loaded yet.",
+    onLoadError: onError,
+  });
+  const inventory = useSavedSetting<InventorySettings>({
+    initial: EMPTY_INVENTORY,
+    load: async () => {
+      const r = await api.inventory();
+      return r.ok ? { ok: true, value: r.inventory } : r;
+    },
+    persist: async (v) => {
+      const r = await api.saveInventory(v);
+      return r.ok ? { ok: true, value: r.inventory } : r;
+    },
+    notLoaded: "The inventory settings haven't loaded yet.",
+    onLoadError: onError,
+  });
+  const parameters = useSavedSetting<ParameterSettings>({
+    initial: EMPTY_PARAMETERS,
+    load: async () => {
+      const r = await api.parameters();
+      return r.ok ? { ok: true, value: r.parameters } : r;
+    },
+    persist: async (v) => {
+      const r = await api.saveParameters(v);
+      return r.ok ? { ok: true, value: r.parameters } : r;
+    },
+    notLoaded: "The parameters haven't loaded yet.",
+    onLoadError: onError,
+  });
+
+  const value = useMemo<SettingsState>(
     () => ({
-      hierarchy,
-      changes,
-      version,
-      loading,
-      error,
-      notice,
-      edited,
       naming,
       namingLoaded,
-      busy,
-      groups,
-      groupsLoaded,
-      groupsSaving,
-      saveGroups,
-      inventory,
-      inventoryLoaded,
-      inventorySaving,
-      saveInventory,
-      parameters,
-      parametersLoaded,
-      parametersSaving,
-      saveParameters,
       saveNaming,
-      namingIgnores,
-      namingIgnoresLoaded,
-      namingIgnoresSaving,
-      saveNamingIgnores,
-      reload,
-      propose,
-      removeChange,
-      clearChanges,
-      setChanges,
-      notify: setNotice,
+      groups: groups.value,
+      groupsLoaded: groups.loaded,
+      groupsSaving: groups.saving,
+      saveGroups: groups.save,
+      inventory: inventory.value,
+      inventoryLoaded: inventory.loaded,
+      inventorySaving: inventory.saving,
+      saveInventory: inventory.save,
+      parameters: parameters.value,
+      parametersLoaded: parameters.loaded,
+      parametersSaving: parameters.saving,
+      saveParameters: parameters.save,
+      namingIgnores: namingIgnores.value,
+      namingIgnoresLoaded: namingIgnores.loaded,
+      namingIgnoresSaving: namingIgnores.saving,
+      saveNamingIgnores: namingIgnores.save,
     }),
     [
-      hierarchy,
-      changes,
-      version,
-      loading,
-      error,
-      notice,
-      edited,
       naming,
       namingLoaded,
-      busy,
-      groups,
-      groupsLoaded,
-      groupsSaving,
-      saveGroups,
-      inventory,
-      inventoryLoaded,
-      inventorySaving,
-      saveInventory,
-      parameters,
-      parametersLoaded,
-      parametersSaving,
-      saveParameters,
       saveNaming,
-      namingIgnores,
-      namingIgnoresLoaded,
-      namingIgnoresSaving,
-      saveNamingIgnores,
-      reload,
-      propose,
-      removeChange,
-      clearChanges,
+      groups.value,
+      groups.loaded,
+      groups.saving,
+      groups.save,
+      inventory.value,
+      inventory.loaded,
+      inventory.saving,
+      inventory.save,
+      parameters.value,
+      parameters.loaded,
+      parameters.saving,
+      parameters.save,
+      namingIgnores.value,
+      namingIgnores.loaded,
+      namingIgnores.saving,
+      namingIgnores.save,
     ],
   );
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return <SettingsCtx.Provider value={value}>{children}</SettingsCtx.Provider>;
 }
 
+function need<T>(value: T | null, hook: string): T {
+  if (value === null) throw new Error(`${hook} outside TaxisProvider`);
+  return value;
+}
+
+// The hierarchy, the change list and the actions on it.
+export function useTaxisData(): DataState {
+  return need(useContext(DataCtx), "useTaxisData");
+}
+
+// What Taxis keeps for itself, and how to save it.
+export function useSettings(): SettingsState {
+  return need(useContext(SettingsCtx), "useSettings");
+}
+
+// The notice now showing, if any. Only the banner needs this.
+export function useNotices(): { notice: Notice; notify: (n: Notice) => void } {
+  const notice = useContext(NoticeCtx);
+  const notify = need(useContext(NotifyCtx), "useNotices");
+  return useMemo(() => ({ notice, notify }), [notice, notify]);
+}
+
+// Sends a notice. Stable, and never re-renders its caller.
+export function useNotify(): (n: Notice) => void {
+  return need(useContext(NotifyCtx), "useNotify");
+}
+
+// Data and settings together, and `notify`. Not the notice: see the top of the file.
 export function useTaxis(): TaxisState {
-  const v = useContext(Ctx);
-  if (!v) throw new Error("useTaxis outside TaxisProvider");
-  return v;
+  const data = useTaxisData();
+  const settings = useSettings();
+  const notify = useNotify();
+  return useMemo(() => ({ ...data, ...settings, notify }), [data, settings, notify]);
 }
 
-// The selected screen, kept in the URL hash so a reload or bookmark opens it.
-export const AREA_TABS = ["overview", "capabilities", DEVICES_ENTITIES, "naming", "labels", "health"] as const;
-export type AreaTab = (typeof AREA_TABS)[number];
-
-// What the Organize page lists. In "spaces" an id reads "floor:<id>" or "area:<id>".
-// Home Assistant keeps one category list per scope, so each scope is its own
-// type.
-export const ORGANIZE_TYPES = [
-  "spaces",
-  "labels",
-  "category-automation",
-  "category-script",
-  "category-scene",
-  "category-helpers",
-  "zones",
-  "automations",
-  "blueprints",
-  "devices",
-  "entities",
-  "helpers",
-] as const;
-export type OrganizeType = (typeof ORGANIZE_TYPES)[number];
-const isOrganizeType = (t: string | undefined): t is OrganizeType => (ORGANIZE_TYPES as readonly string[]).includes(t ?? "");
-
-// The sub-tabs of the Parameters page. Later stages add more.
-export const PARAMETER_TABS = [
-  "capabilities",
-  "helpers",
-  "area-codes",
-  "house",
-  "occupancy",
-  "lighting",
-  "media",
-  "climate",
-  "fan",
-  "exterior",
-  "covers",
-  "safety",
-] as const;
-export type ParameterTab = (typeof PARAMETER_TABS)[number];
-
-export type Route =
-  | { page: "areas"; sel: Selection; tab: AreaTab }
-  | { page: "organize"; type: OrganizeType; id: string | null }
-  | { page: "parameters"; tab: ParameterTab }
-  | { page: "recipes" }
-  | { page: "guide"; areaId: string | null }
-  | { page: "health" }
-  | { page: "changes" }
-  | { page: "settings" }
-  | { page: "ai-admin" }
-  | { page: "buttons"; controlId: string | null };
-
-export type Selection = { kind: "home" } | { kind: "floor"; id: string } | { kind: "area"; id: string } | { kind: "unassigned" } | { kind: "loose" };
-
-const HOME: Route = { page: "areas", sel: { kind: "home" }, tab: "overview" };
-
-export function parseHash(hash: string): Route {
-  // #devices, #entities and the area tabs of those names are the one page and tab now.
-  const parts = normalizeLegacyHash(hash).replace(/^#/, "").split("/");
-  let dec: string[];
-  try {
-    dec = parts.map(decodeURIComponent);
-  } catch {
-    return HOME; // a mangled link opens the whole home
-  }
-  const [head, a, b] = dec;
-  const tab = (t: string | undefined): AreaTab => ((AREA_TABS as readonly string[]).includes(t ?? "") ? (t as AreaTab) : "overview");
-  switch (head) {
-    case "guide":
-      return { page: "guide", areaId: a || null };
-    case "buttons":
-      return { page: "buttons", controlId: a || null };
-    case "parameters":
-      return { page: "parameters", tab: (PARAMETER_TABS as readonly string[]).includes(a ?? "") ? (a as ParameterTab) : PARAMETER_TABS[0] };
-    case "recipes":
-      return { page: "recipes" };
-    case "health":
-      return { page: "health" };
-    case "changes":
-      return { page: "changes" };
-    case "settings":
-      return { page: "settings" };
-    case "ai-admin":
-      return { page: "ai-admin" };
-    case "organize":
-      // Floors and areas used to be two types; their links still open the tree.
-      if (a === "floors" || a === "areas") return { page: "organize", type: "spaces", id: b ? `${a === "floors" ? "floor" : "area"}:${b}` : null };
-      return { page: "organize", type: isOrganizeType(a) ? a : "labels", id: b || null };
-    // Older bookmarks: #labels/<id> and #categories/<scope>/<id>.
-    case "labels":
-      return { page: "organize", type: "labels", id: a || null };
-    case "categories": {
-      const type = `category-${a}`;
-      return isOrganizeType(type) ? { page: "organize", type, id: b || null } : { page: "organize", type: "category-automation", id: null };
-    }
-    case "floor":
-      return a ? { page: "areas", sel: { kind: "floor", id: a }, tab: "overview" } : HOME;
-    case "area":
-      return a ? { page: "areas", sel: { kind: "area", id: a }, tab: tab(b) } : HOME;
-    case "unassigned":
-      return { page: "areas", sel: { kind: "unassigned" }, tab: "overview" };
-    case "loose":
-      return { page: "areas", sel: { kind: "loose" }, tab: "overview" };
-    default:
-      return HOME;
-  }
-}
-
-export function toHash(r: Route): string {
-  const enc = encodeURIComponent;
-  switch (r.page) {
-    case "guide":
-      return r.areaId ? `#guide/${enc(r.areaId)}` : "#guide";
-    case "buttons":
-      return r.controlId ? `#buttons/${enc(r.controlId)}` : "#buttons";
-    case "recipes":
-    case "health":
-    case "changes":
-    case "settings":
-    case "ai-admin":
-      return `#${r.page}`;
-    case "parameters":
-      return `#parameters/${r.tab}`;
-    case "organize":
-      return r.id ? `#organize/${r.type}/${enc(r.id)}` : `#organize/${r.type}`;
-    case "areas": {
-      const s = r.sel;
-      if (s.kind === "area") return r.tab === "overview" ? `#area/${enc(s.id)}` : `#area/${enc(s.id)}/${r.tab}`;
-      if (s.kind === "floor") return `#floor/${enc(s.id)}`;
-      return `#${s.kind}`;
-    }
-  }
-}
-
-export function useRoute(): [Route, (r: Route) => void] {
-  const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash));
-  const previousHash = useRef(window.location.hash);
-  useEffect(() => {
-    const on = () => {
-      if (window.location.hash !== previousHash.current && !consumeApprovedHash(window.location.hash) && !confirmDraftNavigation()) {
-        window.history.replaceState(null, "", previousHash.current || "#home");
-        return;
-      }
-      previousHash.current = window.location.hash;
-      // An old link is shown as the new one in the address bar too.
-      const fixed = normalizeLegacyHash(window.location.hash);
-      if (fixed !== window.location.hash) window.history.replaceState(null, "", fixed);
-      setRoute(parseHash(window.location.hash));
-    };
-    on();
-    window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
-  }, []);
-  const go = useCallback((r: Route) => {
-    const hash = toHash(r);
-    if (hash === window.location.hash || !confirmDraftNavigation()) return;
-    approveHash(hash);
-    window.location.hash = hash;
-  }, []);
-  return [route, go];
-}
+export * from "./route.ts";

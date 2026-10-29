@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import unittest
 
+from browser_common import screenshot_dir
+
 spec = importlib.util.spec_from_file_location("guide_fixture", Path(__file__).with_name("guide-browser.py"))
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
@@ -58,7 +60,8 @@ class JevRegression(fixture.GuideRegression):
         return {"ok": True, "review": {"model": self.jev["model"], "policyVersion": "room-notes-v1", "answers": {key: answer(key) for key in body["checks"]}, "inputTokens": 100, "outputTokens": 20, "estimatedUsd": 0.0000042}}
 
     def settings(self):
-        self.page.goto(fixture.BASE + "/#settings", wait_until="networkidle")
+        # Jev's settings are on the AI tab of Settings.
+        self.page.goto(fixture.BASE + "/#settings/ai", wait_until="networkidle")
         section = self.page.get_by_role("region", name="Jev decisions", exact=True)
         section.get_by_label("Jev API key", exact=True).wait_for()
         return section
@@ -120,13 +123,18 @@ class JevRegression(fixture.GuideRegression):
         self.assertFalse(self.jev["keySet"])
         self.assertEqual(self.jev_tests, [])
 
-    def test_jev_settings_shortcut_scrolls_to_the_key_field(self):
-        section = self.settings()
-        self.page.get_by_role("navigation", name="Settings sections", exact=True).get_by_role("button", name="Jev decisions", exact=True).click()
-        box = section.get_by_label("Jev API key", exact=True).bounding_box()
+    def test_jev_settings_are_one_tab_from_general_settings(self):
+        self.page.goto(fixture.BASE + "/#settings", wait_until="networkidle")
+        self.assertEqual(self.page.get_by_role("region", name="Jev decisions", exact=True).count(), 0)
+        self.page.get_by_role("tab", name="AI", exact=True).click()
+        self.page.wait_for_function("window.location.hash === '#settings/ai'")
+        section = self.page.get_by_role("region", name="Jev decisions", exact=True)
+        key = section.get_by_label("Jev API key", exact=True)
+        key.scroll_into_view_if_needed()
+        box = key.bounding_box()
         self.assertGreaterEqual(box["y"], 0)
         self.assertLess(box["y"], self.page.viewport_size["height"])
-        output = Path(os.environ.get("TAXIS_SCREENSHOT_DIR", "output/playwright"))
+        output = screenshot_dir()
         output.mkdir(parents=True, exist_ok=True)
         section.screenshot(path=str(output / "jev-settings.png"))
         self.assertEqual(self.jev_puts + self.jev_tests + self.jev_reviews, [])

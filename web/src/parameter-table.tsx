@@ -25,8 +25,8 @@ import { canonicalPeriods, describePeriods } from "../../shared/periods.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
 import { HelpDisclosure, HelpTopic } from "./help.tsx";
-import { SortHeader, useSort } from "./table.tsx";
-import { ResizeHandle, useWidths } from "./records.tsx";
+import { DataTable, useSortState, type Column } from "./data-table.tsx";
+import { Chip, EmptyState, Toolbar } from "./ui.tsx";
 import { TooltipButton } from "./tooltip.tsx";
 import { ParameterPopover } from "./parameter-popover.tsx";
 
@@ -130,16 +130,16 @@ const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> 
     topics: [
       ["Left open", "Notify after a door or window has stayed open for the delay. Repeat 0 sends one notification."],
       [
+        "Appliance done",
+        "Mark a power sensor as an appliance in Capabilities. Above the running threshold for its duration means running; below the done threshold for its duration means finished. Thresholds use watts.",
+      ],
+      [
         "Leak",
         "A leak (moisture) sensor going wet sends a message and a notification in Home Assistant, repeating until it is dry. Choose a water valve, or a switch that shuts the water, to have it closed. Empty closes nothing. Never turns a light on.",
       ],
       [
         "Batteries and unavailable",
         "One summary a day lists batteries below the level. Entities the area recipes rely on that stay unavailable or unknown for the time are reported once, and the message clears when they come back.",
-      ],
-      [
-        "Appliance done",
-        "Mark a power sensor as an appliance in Capabilities. Above the running threshold for its duration means running; below the done threshold for its duration means finished. Thresholds use watts.",
       ],
     ],
   },
@@ -436,6 +436,134 @@ const CLIMATE_GROUPS: { key: string; label: string; keys: ParamKey[] }[] = [
   { key: "presets", label: "Presets", keys: ["preset_comfort", "preset_eco", "preset_away", "preset_sleep"] },
 ];
 
+// The header over a run of columns, a shorter name for the header (the full one
+// is the tooltip and the Columns menu), and which columns are the first to give
+// way when there is no room. A tab that is not listed has plain columns.
+const COLUMN_ORDER: Partial<Record<ParamTab, ParamKey[]>> = {
+  covers: [
+    "covers_sun_elevation",
+    "covers_temp_above",
+    "covers_window_start",
+    "covers_window_end",
+    "covers_block_if_window_open",
+    "covers_open_time",
+    "covers_open_at_sunrise",
+    "covers_sunrise_offset",
+  ],
+  lighting: [
+    "lux_threshold",
+    "day_brightness",
+    "day_kelvin",
+    "night_brightness",
+    "night_kelvin",
+    "transition",
+    "dim_before_off",
+    "dim_level",
+    "override_duration",
+    "entry_lights",
+    "guest_pause_lighting",
+  ],
+};
+
+const GROUP: Partial<Record<ParamTab, Partial<Record<ParamKey, string>>>> = {
+  lighting: {
+    lux_threshold: "Darkness",
+    day_brightness: "Day",
+    day_kelvin: "Day",
+    night_brightness: "Night",
+    night_kelvin: "Night",
+    transition: "Fading",
+    dim_before_off: "Fading",
+    dim_level: "Fading",
+    override_duration: "Manual and entry",
+    entry_lights: "Manual and entry",
+    guest_pause_lighting: "Manual and entry",
+  },
+  fan: {
+    fan_rate_on: "Start",
+    fan_delta_on: "Start",
+    fan_abs_on: "Start",
+    fan_delta_off: "Stop",
+    fan_flat_minutes: "Stop",
+    fan_max_minutes: "Stop",
+    fan_reference: "Reference",
+    fan_suppress_in_sleep: "Reference",
+  },
+  safety: {
+    door_open_after: "Left open",
+    window_open_after: "Left open",
+    left_open_repeat: "Left open",
+    appliance_run_watts: "Appliance done",
+    appliance_run_minutes: "Appliance done",
+    appliance_idle_watts: "Appliance done",
+    appliance_idle_minutes: "Appliance done",
+    leak_repeat: "Leak",
+    leak_valve_entity: "Leak",
+    battery_threshold: "Batteries",
+    battery_report_time: "Batteries",
+    unavailable_watch_minutes: "Not reporting",
+  },
+  covers: {
+    covers_sun_elevation: "Close",
+    covers_temp_above: "Close",
+    covers_window_start: "Close",
+    covers_window_end: "Close",
+    covers_open_time: "Open",
+    covers_open_at_sunrise: "Open",
+    covers_sunrise_offset: "Open",
+    covers_block_if_window_open: "Close",
+  },
+};
+
+const SHORT: Partial<Record<ParamKey, string>> = {
+  lux_threshold: "Dark below (lx)",
+  day_brightness: "Brightness (%)",
+  day_kelvin: "Colour (K)",
+  night_brightness: "Brightness (%)",
+  night_kelvin: "Colour (K)",
+  transition: "Transition (s)",
+  dim_before_off: "Dim before off (s)",
+  dim_level: "Dim level (%)",
+  override_duration: "Override (min)",
+  guest_pause_lighting: "Guest pauses",
+  fan_rate_on: "Rise rate (%/s)",
+  fan_delta_on: "Above reference (%)",
+  fan_abs_on: "Humidity (%)",
+  fan_delta_off: "Within reference (%)",
+  fan_flat_minutes: "Flat for (min)",
+  fan_max_minutes: "At most (min)",
+  fan_suppress_in_sleep: "Not while asleep",
+  door_open_after: "Doors (min)",
+  window_open_after: "Windows (min)",
+  left_open_repeat: "Repeat every (min)",
+  leak_repeat: "Repeat every (min)",
+  leak_valve_entity: "Water valve",
+  battery_threshold: "Below (%)",
+  battery_report_time: "Report at",
+  unavailable_watch_minutes: "For (min)",
+  covers_sun_elevation: "Sun above (°)",
+  covers_temp_above: "Warmer than (°)",
+  covers_window_start: "From",
+  covers_window_end: "Until",
+  covers_open_time: "Open at",
+  covers_open_at_sunrise: "At sunrise",
+  covers_sunrise_offset: "Offset (min)",
+  covers_block_if_window_open: "Not if a window is open",
+};
+
+// Lighting shows its everyday columns at 1280px; the others are one click away in Columns.
+const RARELY_USED: Partial<Record<ParamKey, true>> = { dim_level: true, guest_pause_lighting: true };
+const FIRST_TO_GO: Partial<Record<ParamKey, true>> = {
+  dim_before_off: true,
+  transition: true,
+  day_kelvin: true,
+  night_kelvin: true,
+  window_open_after: true,
+  left_open_repeat: true,
+};
+
+const wide = (d: ParamDef) => d.kind === "entity" || d.kind === "entities" || d.kind === "services" || d.kind === "periods" || d.kind === "text";
+
 export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   const { inventory, inventoryLoaded, parameters, parametersLoaded, naming } = useTaxis();
   const [showAllFanAreas, setShowAllFanAreas] = useStoredFlag("taxis:parameters:fan:show-all-areas", false);
@@ -445,13 +573,13 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
     "heating",
   );
   const group = CLIMATE_GROUPS.find((group) => group.key === climateGroup) ?? CLIMATE_GROUPS[0];
-  const defs = paramsOf(tab).filter((def) => tab !== "climate" || group.keys.includes(def.key));
+  const defs = useMemo(() => {
+    const all = paramsOf(tab).filter((def) => tab !== "climate" || group.keys.includes(def.key));
+    const order = COLUMN_ORDER[tab];
+    return order ? [...all].sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key)) : all;
+  }, [tab, group]);
   const [editing, setEditing] = useState<string | null>(null);
   const ready = inventoryLoaded && parametersLoaded;
-  const { widths, setWidth, savedWidth } = useWidths("taxis:parameters:lighting:columns:v2", {
-    name: 200,
-    ...Object.fromEntries(paramsOf("lighting").map((def) => [def.key, def.kind === "entities" ? 240 : 88])),
-  });
   const { fixed, rest, floors } = useMemo(() => paramRows(h, inventory), [h, inventory]);
   const relevant = useMemo(() => {
     if (tab !== "fan" || showAllFanAreas) return rest;
@@ -466,65 +594,87 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   // Sorting covers the areas; the house, interior and exterior rows stay on top.
   // The default order groups each floor's areas under a heading with the floor's
   // name (a floor has no values); sorted by anything else, the headings go.
-  const columns = useMemo(
-    () => ({
-      order: (r: ParamRow) => r.order,
-      name: (r: ParamRow) => r.label,
-      ...Object.fromEntries(
-        defs.map((d) => [
-          d.key,
-          (r: ParamRow) => {
+  const { sort, toggle } = useSortState({ key: "order", dir: "asc" });
+  const grouped = sort.key === "order";
+  const floorName = useMemo(() => new Map(floors.map((f) => [f.floorId, f.name])), [floors]);
+  const groupOf = useMemo(
+    () =>
+      grouped
+        ? (r: ParamRow) =>
+            r.floorId
+              ? {
+                  key: r.floorId,
+                  label: (
+                    <>
+                      {floorName.get(r.floorId) ?? r.floorName}
+                      <span className="ml-2 text-[11px] font-normal text-muted">floor</span>
+                    </>
+                  ),
+                }
+              : null
+        : undefined,
+    [grouped, floorName],
+  );
+
+  const columns = useMemo<Column<ParamRow>[]>(
+    () => [
+      {
+        id: "name",
+        header: "Level",
+        help: "Choose a house default, area-type default or room override.",
+        priority: 1,
+        sticky: true,
+        width: 190,
+        sort: (r) => r.label,
+        cell: (r) => (
+          <>
+            <span className={`block text-left ${r.scope.level !== "area" ? "font-medium" : ""}`}>{r.label}</span>
+            {r.scope.level === "area" && !grouped && r.floorName && <span className="text-[11px] text-muted">{r.floorName}</span>}
+          </>
+        ),
+      },
+      ...defs.map((d): Column<ParamRow> => {
+        const short = SHORT[d.key] ?? header(d);
+        const ownGroup = GROUP[tab]?.[d.key];
+        return {
+          id: d.key,
+          header: short,
+          label: header(d),
+          help: PARAM_HELP[d.key],
+          group: ownGroup,
+          priority: FIRST_TO_GO[d.key] ? 3 : 2,
+          defaultHidden: RARELY_USED[d.key] === true,
+          minWidth: Math.max(wide(d) ? 170 : 92, Math.round(short.length * 5.8) + 40),
+          align: d.kind === "number" || d.kind === "time" ? "center" : "left",
+          sort: (r) => {
             const v = resolveIn(parameters, r.chain, d.key).value;
             return typeof v === "boolean" ? Number(v) : Array.isArray(v) ? v.join(",") : v;
           },
-        ]),
-      ),
-    }),
-    [defs, parameters],
+          cell: (r) => {
+            const here = `${rowKey(r)}|${d.key}`;
+            if (d.houseOnly && r.scope.level !== "house") {
+              return (
+                <span className="px-1.5 text-muted" title="Set for the house only: it is not set for a floor, an area or the interior or exterior areas">
+                  —
+                </span>
+              );
+            }
+            return d.kind === "entities" ? (
+              <EntryLightsCell h={h} row={r} def={d} editing={editing === here} onEdit={(on) => setEditing(on ? here : null)} />
+            ) : (
+              <Cell h={h} row={r} def={d} editing={editing === here} onEdit={(on) => setEditing(on ? here : null)} />
+            );
+          },
+        };
+      }),
+    ],
+    [defs, tab, grouped, parameters, h, editing],
   );
-  const { rows, sort, toggle } = useSort(relevant, columns, { key: "order", dir: "asc" });
 
   if (!ready) return <p className="text-[13px] text-muted">Loading the settings…</p>;
 
-  const grouped = sort.key === "order";
-  const heading = (f: { floorId: string; name: string }) => (
-    <tr key={`floor:${f.floorId}`} className="border-t border-line bg-sunken/50">
-      <th scope="rowgroup" colSpan={defs.length + 1} className="px-3 py-1.5 text-left font-normal text-muted">
-        {f.name}
-        <span className="ml-2 text-[11px]">floor</span>
-      </th>
-    </tr>
-  );
-  const line = (r: ParamRow, kind: "fixed" | "area") => (
-    <tr key={rowKey(r)} className="border-t border-line">
-      <th scope="row" className={`sticky left-0 z-10 bg-bg px-3 py-1.5 text-left font-normal ${kind === "fixed" ? "font-medium" : ""}`}>
-        <span className="block text-left">{r.label}</span>
-        {kind === "area" && !grouped && r.floorName && <span className="ml-2 text-[11px] text-muted">{r.floorName}</span>}
-      </th>
-      {defs.map((d) => (
-        <td key={d.key} className={`px-3 py-1.5 ${d.kind === "number" || d.kind === "time" ? "text-center tabular-nums" : "text-left"}`}>
-          {d.houseOnly && r.scope.level !== "house" ? (
-            <span className="px-1.5 text-muted" title="Set for the house only: it is not set for a floor, an area or the interior or exterior areas">
-              —
-            </span>
-          ) : d.kind === "entities" ? (
-            <EntryLightsCell
-              h={h}
-              row={r}
-              def={d}
-              editing={editing === `${rowKey(r)}|${d.key}`}
-              onEdit={(on) => setEditing(on ? `${rowKey(r)}|${d.key}` : null)}
-            />
-          ) : (
-            <Cell h={h} row={r} def={d} editing={editing === `${rowKey(r)}|${d.key}`} onEdit={(on) => setEditing(on ? `${rowKey(r)}|${d.key}` : null)} />
-          )}
-        </td>
-      ))}
-    </tr>
-  );
-
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-w-0 flex-col gap-3">
       <HelpDisclosure key={tab} summary={`${GUIDES[tab].summary} Click a value to edit.`}>
         <HelpTopic title="Inheritance">
           Set a house default, an interior/exterior default, or a room override. Clear a value to inherit. Floors only group rooms.
@@ -537,22 +687,20 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
         ))}
       </HelpDisclosure>
       {tab === "climate" && (
-        <div role="group" aria-label="Climate settings sections" className="flex flex-wrap gap-2">
+        <Toolbar label="Climate settings sections">
           {CLIMATE_GROUPS.map((section) => (
-            <button
+            <Chip
               key={section.key}
-              type="button"
-              aria-pressed={climateGroup === section.key}
+              pressed={climateGroup === section.key}
               onClick={() => {
                 setEditing(null);
                 setClimateGroup(section.key);
               }}
-              className={`rounded-md border px-3 py-1.5 text-[13px] ${climateGroup === section.key ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:text-fg"}`}
             >
               {section.label}
-            </button>
+            </Chip>
           ))}
-        </div>
+        </Toolbar>
       )}
       {tab === "fan" && (
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
@@ -563,83 +711,28 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
           </label>
         </div>
       )}
-      {tab === "fan" && !rows.length && (
-        <p role="status" className="rounded border border-line p-3 text-sm text-muted">
+      {tab === "fan" && !relevant.length && (
+        <EmptyState>
           No areas have both a counted fan and humidity sensor. Check{" "}
           <a className="text-accent underline" href="#parameters/capabilities">
             Capabilities
           </a>{" "}
           or enable Show all areas to inspect other areas' saved settings.
-        </p>
+        </EmptyState>
       )}
-      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-        <table
-          key={tab === "climate" ? climateGroup : tab}
-          aria-label={PARAM_TAB_LABEL[tab]}
-          className={`${tab === "lighting" ? "table-fixed" : "w-full"} text-[13px]`}
-          style={tab === "lighting" ? { width: widths.name + defs.reduce((sum, def) => sum + widths[def.key], 0) } : undefined}
-        >
-          {tab === "lighting" && (
-            <colgroup>
-              <col style={{ width: widths.name }} />
-              {defs.map((def) => (
-                <col key={def.key} style={{ width: widths[def.key] }} />
-              ))}
-            </colgroup>
-          )}
-          <thead className="bg-sunken text-left text-xs text-muted">
-            <tr>
-              <SortHeader
-                className="sticky left-0 z-20 bg-sunken px-3 py-2 text-left"
-                label="Level"
-                help="Choose a house default, area-type default or room override."
-                k="name"
-                sort={sort}
-                onToggle={toggle}
-                resize={
-                  tab === "lighting" ? (
-                    <ResizeHandle
-                      label="Resize Lighting Level column"
-                      value={widths.name}
-                      savedWidth={savedWidth("name")}
-                      onChange={(width) => setWidth("name", width)}
-                    />
-                  ) : undefined
-                }
-              />
-              {defs.map((d) => (
-                <SortHeader
-                  key={d.key}
-                  label={header(d)}
-                  help={PARAM_HELP[d.key]}
-                  k={d.key}
-                  sort={sort}
-                  onToggle={toggle}
-                  resize={
-                    tab === "lighting" ? (
-                      <ResizeHandle
-                        label={`Resize Lighting ${d.label} column`}
-                        value={widths[d.key]}
-                        savedWidth={savedWidth(d.key)}
-                        onChange={(width) => setWidth(d.key, width)}
-                      />
-                    ) : undefined
-                  }
-                  className={`px-3 py-2 ${d.kind === "number" || d.kind === "time" ? "text-center" : "text-left"}`}
-                />
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {fixed.map((r) => line(r, "fixed"))}
-            {rows.map((r, i) => {
-              // A floor's heading goes in front of its first area, when the areas are in their default order.
-              const head = grouped && r.floorId && rows[i - 1]?.floorId !== r.floorId ? floors.find((f) => f.floorId === r.floorId) : undefined;
-              return [head && heading(head), line(r, "area")];
-            })}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        key={tab === "climate" ? climateGroup : tab}
+        id={`parameters-${tab}`}
+        label={PARAM_TAB_LABEL[tab]}
+        rows={relevant}
+        pinned={fixed}
+        rowKey={rowKey}
+        columns={columns}
+        sort={sort}
+        onSort={toggle}
+        groupOf={groupOf}
+        collapsible={false}
+      />
     </div>
   );
 }

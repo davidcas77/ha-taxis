@@ -8,9 +8,12 @@ export type Sort = { key: string; dir: Dir };
 
 export const isBlank = (v: SortValue): v is null | undefined | "" => v === null || v === undefined || v === "";
 
+// One collator for every comparison: making one per call is the slow part of sorting.
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 export function compareValues(a: SortValue, b: SortValue): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  return collator.compare(String(a), String(b));
 }
 
 // The rows in order of `get`. Blanks go last whichever way it sorts, so they

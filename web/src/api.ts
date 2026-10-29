@@ -1,5 +1,5 @@
 import type { AiTier, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
-import type { ButtonInventoryResponse, ButtonAssignment, ButtonAiPreview, ButtonAiResponse } from '../../shared/buttons.ts';
+import type { ButtonInventoryResponse, ButtonAssignment, ButtonAiPreview, ButtonAiResponse } from "../../shared/buttons.ts";
 import type { AssistantAdminResponse, AssistantPreviewResponse, AssistantResponse, AssistantRequest, AssistantScope } from "../../shared/assistant.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { GuideResponse, GuideSettings } from "../../shared/guide.ts";
@@ -10,7 +10,23 @@ import type { NamingSettings } from "../../shared/naming.ts";
 import type { NamingIgnores } from "../../shared/naming-ignores.ts";
 import type { ParameterSettings } from "../../shared/parameters.ts";
 import type { RecipesResponse } from "../../shared/recipes.ts";
-import type { BlueprintsResponse, ApplyRun, RepairItem, HistoryResponse, RepairsResponse, ApplyResponse, ChangeInput, ChangesResponse, GroupsResponse, HierarchyResponse, InventoryResponse, NamingIgnoresResponse, NamingResponse, ParametersResponse, ReferencesResponse } from "../../shared/types.ts";
+import type {
+  BlueprintsResponse,
+  ApplyRun,
+  RepairItem,
+  HistoryResponse,
+  RepairsResponse,
+  ApplyResponse,
+  ChangeInput,
+  ChangesResponse,
+  GroupsResponse,
+  HierarchyResponse,
+  InventoryResponse,
+  NamingIgnoresResponse,
+  NamingResponse,
+  ParametersResponse,
+  ReferencesResponse,
+} from "../../shared/types.ts";
 
 // Relative URLs on purpose: under Ingress the app lives at
 // /api/hassio_ingress/<token>/, so "/api/…" would miss it.
@@ -23,7 +39,12 @@ async function call<T extends { ok: boolean }>(path: string, init?: RequestInit)
     res = await fetch(path, {
       ...init,
       // The server refuses changes without this header (a cross-site guard).
-      headers: { "Content-Type": "application/json", "X-Taxis-Request": "1", ...(init?.method === "PUT" && revisions.has(path) ? { "If-Match": revisions.get(path)! } : {}), ...(init?.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Taxis-Request": "1",
+        ...(init?.method === "PUT" && revisions.has(path) ? { "If-Match": revisions.get(path)! } : {}),
+        ...(init?.headers ?? {}),
+      },
     });
   } catch {
     return { ok: false, error: "Couldn't reach the Taxis server." } as unknown as T;
@@ -41,10 +62,12 @@ export type { ApplyRun };
 export type Repair = RepairItem;
 
 export const api = {
-  buttons: (refresh=false) => call<ButtonInventoryResponse>(`api/buttons${refresh?'?refresh=1':''}`),
-  assignButton: (value:ButtonAssignment) => call<ChangesResponse>('api/buttons/assign',{method:'POST',body:JSON.stringify(value)}),
-  buttonAiPreview: (id:string) => call<{ok:true;preview:ButtonAiPreview}|{ok:false;error:string}>(`api/buttons/${encodeURIComponent(id)}/ai-preview`),
-  buttonAiReview: (id:string,fingerprint:string) => call<ButtonAiResponse>(`api/buttons/${encodeURIComponent(id)}/ai-review`,{method:'POST',body:JSON.stringify({fingerprint})}),
+  buttons: (refresh = false) => call<ButtonInventoryResponse>(`api/buttons${refresh ? "?refresh=1" : ""}`),
+  assignButton: (value: ButtonAssignment) => call<ChangesResponse>("api/buttons/assign", { method: "POST", body: JSON.stringify(value) }),
+  buttonAiPreview: (id: string) =>
+    call<{ ok: true; preview: ButtonAiPreview } | { ok: false; error: string }>(`api/buttons/${encodeURIComponent(id)}/ai-preview`),
+  buttonAiReview: (id: string, fingerprint: string) =>
+    call<ButtonAiResponse>(`api/buttons/${encodeURIComponent(id)}/ai-review`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
   assistantAdmin: () => call<AssistantAdminResponse>("api/assistant/admin"),
   assistantContext: (scope: AssistantScope) => call<AssistantPreviewResponse>("api/assistant/context", { method: "POST", body: JSON.stringify(scope) }),
   assistantAsk: (request: AssistantRequest) => call<AssistantResponse>("api/assistant/ask", { method: "POST", body: JSON.stringify(request) }),
@@ -92,6 +115,8 @@ export const api = {
   // Where each pending rename's old id is used: what Apply updates, what it can't.
   references: () => call<ReferencesResponse>("api/references"),
   addChange: (input: ChangeInput) => call<ChangesResponse>("api/changes", { method: "POST", body: JSON.stringify(input) }),
+  // Several edits at once, all or nothing: the server keeps every one or none (and says which was refused).
+  addChanges: (inputs: ChangeInput[]) => call<ChangesResponse>("api/changes/batch", { method: "POST", body: JSON.stringify({ changes: inputs }) }),
   removeChange: (id: number) => call<ChangesResponse>(`api/changes/${id}`, { method: "DELETE" }),
   clearChanges: () => call<ChangesResponse>("api/changes", { method: "DELETE" }),
   // The version of the list the user saw and confirmed: the server refuses if

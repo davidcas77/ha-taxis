@@ -31,7 +31,7 @@ export function buttonRoutes(deps: {
     if (!validButtonAssignment(request)) return c.json({ ok: false, error: "Choose a known gesture, an action and valid JSON action data." }, 400);
     if (deps.applying()) return c.json({ ok: false, error: "Changes are being applied. Try again afterward." }, 409);
     if (request.changesVersion !== deps.changes.version())
-      return c.json({ ok: false, error: "The queued changes changed. Reload the page and review this assignment again." }, 409);
+      return c.json({ ok: false, error: "The changes list changed. Reload the page and review this assignment again." }, 409);
     try {
       const r = await deps.read(false);
       // The allowlist comes first, so a refused action gets its reason and a 400, not a vague conflict.
@@ -48,13 +48,13 @@ export function buttonRoutes(deps: {
       if (request.action.entityId && r.inventory.managed.some((m) => m.entityId === request.action.entityId))
         throw new Error("A button-map automation cannot be used as a button action, which could create a loop.");
       if (deps.applying()) throw new Error("Changes are being applied. Try again afterward.");
-      if (request.changesVersion !== deps.changes.version()) throw new Error("The queued changes changed. Reload the page and review this assignment again.");
+      if (request.changesVersion !== deps.changes.version()) throw new Error("The changes list changed. Reload the page and review this assignment again.");
       const input = planButtonAssignment(r.inventory, request, deps.changes.list(), usable);
       const error = deps.changes.add(input, r.h);
       if (error) throw new Error(error);
       return c.json({ ok: true, changes: deps.changes.list(), version: deps.changes.version() });
     } catch (e) {
-      return c.json({ ok: false, error: deps.redact(e instanceof Error ? e.message : "Could not queue button mapping.") }, 409);
+      return c.json({ ok: false, error: deps.redact(e instanceof Error ? e.message : "Could not add the button mapping to changes.") }, 409);
     }
   });
   const review = async (id: string) => {

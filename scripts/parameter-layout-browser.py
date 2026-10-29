@@ -5,8 +5,8 @@ import os
 import unittest
 import urllib.request
 from playwright.sync_api import sync_playwright, expect
+from browser_common import BASE, launch, screenshot_dir
 
-BASE = os.environ.get("TAXIS_TEST_URL", "http://localhost:8099")
 
 
 class ParameterLayoutRegression(unittest.TestCase):
@@ -15,7 +15,7 @@ class ParameterLayoutRegression(unittest.TestCase):
         with urllib.request.urlopen(BASE + "/api/hierarchy", timeout=30) as response:
             cls.base = json.load(response)
         cls.pw = sync_playwright().start()
-        cls.browser = cls.pw.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"), args=["--no-sandbox"])
+        cls.browser = launch(cls.pw)
 
     @classmethod
     def tearDownClass(cls):
@@ -67,17 +67,21 @@ class ParameterLayoutRegression(unittest.TestCase):
         self.page.goto(BASE + "/#parameters/" + tab, wait_until="domcontentloaded")
         return self.page.get_by_role("table", name="Lighting" if tab == "lighting" else "Bathroom fan", exact=True)
 
+    def area_row(self, table, name):
+        """The row of a level (house default, interior, exterior, an area) by the name in its first column."""
+        return table.locator("tbody tr").filter(has=self.page.get_by_text(name, exact=True))
+
     def test_lighting_compact_rows_popover_and_column_memory(self):
         table = self.open("lighting")
-        row = table.locator("tbody tr").filter(has=self.page.get_by_role("rowheader", name="Laundry", exact=True))
+        row = self.area_row(table, "Laundry")
         row.wait_for()
         self.assertLessEqual(row.bounding_box()["height"], 60)
-        self.assertEqual(row.get_by_role("rowheader").evaluate("element => getComputedStyle(element).textAlign"), "left")
-        widths = table.locator("col").evaluate_all("columns => columns.map(column => column.getBoundingClientRect().width)")
-        self.assertAlmostEqual(widths[0], 200, delta=1)
-        self.assertTrue(all(76 <= width <= 96 for width in widths[1:-1]), widths)
-        self.assertAlmostEqual(widths[-1], 240, delta=1)
-        self.assertEqual(row.locator("td").first.evaluate("element => getComputedStyle(element).textAlign"), "center")
+        level = row.locator("td").filter(has=self.page.get_by_text("Laundry", exact=True))
+        self.assertEqual(level.evaluate("element => getComputedStyle(element).textAlign"), "left")
+        # Compact: no value column is stretched, and the table never makes the page scroll sideways.
+        widths = row.locator("td").evaluate_all("cells => cells.map(cell => cell.getBoundingClientRect().width)")
+        self.assertTrue(all(width <= 320 for width in widths), widths)
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
         trigger = row.get_by_role("button", name="Entry lights for Laundry: 20 lights, set here", exact=True)
         trigger.hover()
         tooltip = self.page.get_by_role("tooltip")
@@ -102,31 +106,34 @@ class ParameterLayoutRegression(unittest.TestCase):
         dialog.wait_for()
         dialog.get_by_role("checkbox").last.scroll_into_view_if_needed()
         expect(dialog.get_by_text(self.light_ids[-1], exact=True)).to_be_visible()
-        table.get_by_role("rowheader", name="House default", exact=True).click()
+        self.area_row(table, "House default").get_by_text("House default", exact=True).click()
         expect(dialog).to_have_count(0)
-        handle = self.page.get_by_role("separator", name="Resize Lighting Level column", exact=True)
-        handle.focus()
-        self.page.keyboard.press("ArrowLeft")
-        self.assertAlmostEqual(table.locator("col").first.evaluate("element => element.getBoundingClientRect().width"), 180, delta=1)
+        # Which columns show is the person's choice from the Columns menu: it survives a reload and a layout reset undoes it.
+        night = table.get_by_role("columnheader", name="Brightness (%)")
+        self.assertEqual(night.count(), 2)  # Day and Night
+        self.page.get_by_role("button", name="Columns of Lighting", exact=True).click()
+        self.page.get_by_role("group", name="Columns").get_by_label("Night brightness (%)", exact=True).uncheck()
+        expect(night).to_have_count(1)
+        self.page.keyboard.press("Escape")
         self.page.reload(wait_until="domcontentloaded")
         table.wait_for()
-        self.assertAlmostEqual(table.locator("col").first.evaluate("element => element.getBoundingClientRect().width"), 180, delta=1)
+        expect(night).to_have_count(1)
         self.page.evaluate("window.dispatchEvent(new Event('taxis:reset-layout'))")
-        expect(handle).to_have_attribute("aria-valuenow", "200")
-        self.page.screenshot(path="/workspace/.cache/ha-taxis/inspection/lighting-compact.png")
+        expect(night).to_have_count(2)
+        self.page.screenshot(path=str(screenshot_dir() / "lighting-compact.png"))
 
     def test_fan_default_filters_by_counted_capabilities_and_keeps_defaults(self):
         table = self.open("fan")
-        table.get_by_role("rowheader", name="Laundry", exact=True).wait_for()
+        self.area_row(table, "Laundry").wait_for()
         for name in ["House default", "Interior", "Exterior"]:
-            self.assertEqual(table.get_by_role("rowheader", name=name, exact=True).count(), 1)
-        self.assertEqual(table.get_by_role("rowheader", name="Living room", exact=True).count(), 0)
-        self.assertEqual(table.get_by_role("rowheader", name="Excluded humidity", exact=True).count(), 0)
+            self.assertEqual(table.get_by_text(name, exact=True).count(), 1)
+        self.assertEqual(table.get_by_text("Living room", exact=True).count(), 0)
+        self.assertEqual(table.get_by_text("Excluded humidity", exact=True).count(), 0)
         self.page.get_by_role("checkbox", name="Show all areas", exact=True).check()
-        table.get_by_role("rowheader", name="Living room", exact=True).wait_for()
+        self.area_row(table, "Living room").wait_for()
         self.page.reload(wait_until="domcontentloaded")
         expect(self.page.get_by_role("checkbox", name="Show all areas", exact=True)).to_be_checked()
-        table.get_by_role("rowheader", name="Excluded humidity", exact=True).wait_for()
+        self.area_row(table, "Excluded humidity").wait_for()
         self.assertEqual(self.parameters["areas"]["nofan"]["fan_abs_on"], 91)
         self.assertEqual(self.puts, [])
 
@@ -134,8 +141,11 @@ class ParameterLayoutRegression(unittest.TestCase):
         self.inventory["entities"]["fan.laundry_fan"] = {"counts": False}
         table = self.open("fan")
         self.page.get_by_role("status").filter(has_text="No areas have both a counted fan").wait_for()
-        self.assertEqual(table.get_by_role("rowheader").count(), 3)
-        self.assertEqual(table.locator("th[scope=rowgroup]").count(), 0)
+        # Only the house, interior and exterior defaults remain: no area and no floor heading.
+        self.assertEqual(table.locator("tbody tr").count(), 3)
+        for name in ["House default", "Interior", "Exterior"]:
+            self.assertEqual(table.get_by_text(name, exact=True).count(), 1)
+        self.assertEqual(table.get_by_text("Test floor", exact=True).count(), 0)
         self.page.get_by_role("link", name="Capabilities", exact=True).wait_for()
         self.assertEqual(self.puts, [])
 

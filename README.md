@@ -33,7 +33,11 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 
 ## What it does
 
-- **House guide:** choose each room's purpose and automation goals, then work
+- **Guide (the home page):** a nine-step path to a complete, well-organised Home
+  Assistant (floors and areas, every entity in an area, naming, capabilities,
+  helpers, parameters, recipes, buttons, a clean Health), each step checked
+  against your house with a button to the exact place and a **Next step** card.
+  Below it, the room-by-room guide: choose each room's purpose and automation goals, then work
   through detected equipment, missing helpers, comfort settings and native recipe
   prerequisites. Recommendations describe equipment types and placement, not
   products. Pending proposals and failed reads never count as installed work;
@@ -62,10 +66,9 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 - **Devices and Entities** (in Organize, as a table or as records): choose
   **Groups** for cards, **Devices** for collapsible device trees, or **Entities**
   for a flat entity table. They share search, filters, selection and page controls.
-  Records has resizable panes and columns. A device's Records detail lists all its entities; Organize
+  Records has a resizable list and details pane. Every table scrolls inside its own card, hides the columns that don't fit (their values stay one click away) and has a **Columns** menu. A device's Records detail lists all its entities; Organize
   also has separate searchable Automations and Helpers lists, with Table and
-  Records views. Entities excludes those two groups. Column resizing is shared
-  across the app. Organize's sidebar can collapse to a remembered icon rail.
+  Records views. Entities excludes those two groups. Organize's sidebar can collapse to a remembered icon rail.
 - **Blueprints** (in Organize): browse all installed automation and script
   blueprints, filter by type, and inspect descriptions, inputs and source links
   in a read-only Records view. Read errors and incomplete results are shown.
@@ -79,12 +82,12 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   area codes, and set inherited values with short parameter explanations and
   expandable guidance.
   Capability counts explain which named entities count and which are excluded.
-- **Recipes:** a main page after Organize, with Table and Records views to inspect
+- **Recipes:** a tab of **Automations**, listing the recipes that fit each area (or all of them on request), with Table and Records views to inspect
   status, requirements and proposed native automations for occupancy, lighting,
   media, climate, ventilation and notifications. The generated automations keep
   working when Taxis is stopped.
-- **Buttons:** inspect remotes, wall controls and HA button inputs across
-  integrations, grouped by button and advertised gesture. See existing automation
+- **Buttons:** a tab of **Automations**: inspect remotes, wall controls and HA button inputs across
+  integrations, as one table per control (buttons by press type). See existing automation
   matches and assign an action from a fixed, safe list: control lights, switches,
   fans, covers, media players, climate and similar entities, run scripts, scenes
   and automations, or send a persistent notification. Anything that reaches Home
@@ -123,13 +126,13 @@ The commands Taxis may send are fixed in `server/ha/socket.ts` and
 
 Every outside address Taxis can contact, and when:
 
-| Address | Only when | What it receives |
-| --- | --- | --- |
-| Your Home Assistant, through the Supervisor (`ws://supervisor/core/websocket`, `http://supervisor/core/api`) | Always | Reads of the registries, states, services and automation configs; writes only when you Apply |
-| The Supervisor (`http://supervisor`) | Before Apply | A request for a partial backup |
-| Anthropic (`https://api.anthropic.com`) | AI is on, provider Anthropic, and you press Send, Load models, a Test button or the button review | Your API key; the question, reviewed context and up to six earlier messages (Ask Taxis); the reviewed summary (button review); a fixed sentence (Test) |
-| The OpenAI-compatible service you set (its base URL) | AI is on, that provider, and the same actions | The same as above |
-| TypeSafe (`https://api.typesafe.ai/v1/systemone`) | Jev is on with a key, and you press **Review notes with Jev** or Test | Your Jev key and model; the notes you typed (up to 2,000 characters) and the descriptions of the selected checklist items; a fixed sentence (Test) |
+| Address                                                                                                      | Only when                                                                                         | What it receives                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Your Home Assistant, through the Supervisor (`ws://supervisor/core/websocket`, `http://supervisor/core/api`) | Always                                                                                            | Reads of the registries, states, services and automation configs; writes only when you Apply                                                           |
+| The Supervisor (`http://supervisor`)                                                                         | Before Apply                                                                                      | A request for a partial backup                                                                                                                         |
+| Anthropic (`https://api.anthropic.com`)                                                                      | AI is on, provider Anthropic, and you press Send, Load models, a Test button or the button review | Your API key; the question, reviewed context and up to six earlier messages (Ask Taxis); the reviewed summary (button review); a fixed sentence (Test) |
+| The OpenAI-compatible service you set (its base URL)                                                         | AI is on, that provider, and the same actions                                                     | The same as above                                                                                                                                      |
+| TypeSafe (`https://api.typesafe.ai/v1/systemone`)                                                            | Jev is on with a key, and you press **Review notes with Jev** or Test                             | Your Jev key and model; the notes you typed (up to 2,000 characters) and the descriptions of the selected checklist items; a fixed sentence (Test)     |
 
 AI and Jev receive no Home Assistant token, state values, attributes or
 automation YAML, redirects are not followed, and neither can change Home
@@ -162,14 +165,14 @@ omitted. Pending changes are explicitly identified as a preview, not live work.
 Health advice needs a selected area or a finding pasted into the question; it
 does not independently read the complete Health report or automation history.
 
-**AI** in the main navigation opens administration: connected functions, triggers,
+**Settings → AI** opens administration: connected functions, triggers,
 model routing, data access, usage and the last 30 assistant request results.
 At most 200 request metadata records are kept, with no questions, answers or room
 identities. Chats stay in memory and clear when closed, scope changes or the app
 reloads. No background AI analysis runs. Jev remains a separate manual room-note
 review, not a hidden second model in the assistant. See [Ask Taxis](docs/design/ask-taxis.md).
 
-The Buttons page also offers a manual **AI review of existing button
+The Buttons tab also offers a manual **AI review of existing button
 automations**, using Medium. Prepare and inspect its exact summary before
 sending. It includes only the selected control, advertised gestures, coverage
 notes and matching automation names/services/targets, not raw automation YAML
@@ -196,25 +199,25 @@ To work against your own Home Assistant instead, copy `.env.example` to `.env`,
 fill in `HA_URL` and a long-lived `HA_TOKEN`, then run `npm run dev`. The token
 is full admin over your home: keep it in `.env`, which is never committed.
 
-| Command | What it does |
-| --- | --- |
-| `npm run dev:mock` | Fake HA + server + UI, with hot reload |
-| `npm run dev` | Server + UI against the HA in `.env` |
-| `npm test` | Unit tests |
-| `npm run typecheck` | TypeScript |
-| `npm run build` | Builds `dist/` (UI and server) |
-| `docker build -f taxis/Dockerfile .` | Builds the app image |
+| Command                              | What it does                           |
+| ------------------------------------ | -------------------------------------- |
+| `npm run dev:mock`                   | Fake HA + server + UI, with hot reload |
+| `npm run dev`                        | Server + UI against the HA in `.env`   |
+| `npm test`                           | Unit tests                             |
+| `npm run typecheck`                  | TypeScript                             |
+| `npm run build`                      | Builds `dist/` (UI and server)         |
+| `docker build -f taxis/Dockerfile .` | Builds the app image                   |
 
 ### Layout
 
-| Path | Contents |
-| --- | --- |
-| `repository.yaml` | Makes this repository an app repository for Home Assistant |
-| `taxis/` | The app: `config.yaml` (manifest), `Dockerfile`, `DOCS.md`, `CHANGELOG.md` |
-| `server/` | Node server (Hono): Home Assistant WebSocket client, SQLite store, API |
-| `shared/` | Types and logic shared by the server and the UI |
-| `web/` | The UI (React, Vite, Tailwind) |
-| `scripts/mock-ha.ts` | The fake Home Assistant |
+| Path                 | Contents                                                                   |
+| -------------------- | -------------------------------------------------------------------------- |
+| `repository.yaml`    | Makes this repository an app repository for Home Assistant                 |
+| `taxis/`             | The app: `config.yaml` (manifest), `Dockerfile`, `DOCS.md`, `CHANGELOG.md` |
+| `server/`            | Node server (Hono): Home Assistant WebSocket client, SQLite store, API     |
+| `shared/`            | Types and logic shared by the server and the UI                            |
+| `web/`               | The UI (React, Vite, Tailwind)                                             |
+| `scripts/mock-ha.ts` | The fake Home Assistant                                                    |
 
 ### Releasing
 

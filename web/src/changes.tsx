@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, ShieldCheck, Trash2, TriangleAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert, Trash2, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { closureFor, renameGate } from "../../shared/apply-plan.ts";
@@ -10,7 +10,7 @@ import { ApplyHistory } from "./history.tsx";
 import { api } from "./api.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
 import { useTaxis } from "./state.tsx";
-import { Button, ConfirmAction } from "./ui.tsx";
+import { Badge, Button, Card, ConfirmAction, ConfirmPanel, EmptyState, Page, PageHeader } from "./ui.tsx";
 
 // The list of changes, in words, and Apply.
 
@@ -245,43 +245,39 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
   };
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="mx-auto flex max-w-3xl flex-col gap-5">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold">Changes</h1>
-          <p className="text-[13px] text-muted">
-            Queued for Home Assistant: edits made in Taxis wait here. Taxis shows the house as if they were done, but Home Assistant doesn't change until you
-            apply them.
-          </p>
+    <Page width="3xl">
+      <PageHeader
+        title="Changes"
+        description="Edits made in Taxis wait here. Taxis shows the house as if they were done, but Home Assistant doesn't change until you apply them."
+        actions={changes.length > 0 ? <Badge tone="warn">{changes.length} waiting</Badge> : undefined}
+      />
+
+      {result && <Outcome result={result} onClose={() => setResult(null)} />}
+      {error && (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
+          <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+          {error}
         </div>
+      )}
 
-        {result && <Outcome result={result} onClose={() => setResult(null)} />}
-        {error && (
-          <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/40 bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
-            <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-            {error}
-          </div>
-        )}
-
-        {changes.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-[13px] text-muted">
-            No changes waiting. Edit an area, device, entity, label or category to start.
-          </p>
-        ) : (
-          <>
-            <ul className="flex flex-col gap-2">
-              {changes.map((c) => {
-                const needed = closureFor(changes, [c.id]);
-                const extra = needed.filter((x) => x.id !== c.id);
-                const gate = gateFor(needed);
-                const blocked = busy || step !== "list" || gate.waiting.length > 0 || gate.unacknowledged.length > 0;
-                const mine = only !== null && only.length === needed.length && needed.every((x) => only.includes(x.id)) && only.includes(c.id);
-                const keys =
-                  c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" || c.kind === "script"
-                    ? []
-                    : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
-                return (
-                  <li key={c.id} className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2.5">
+      {changes.length === 0 ? (
+        <EmptyState title="No changes waiting">Edit an area, device, entity, label or category to start.</EmptyState>
+      ) : (
+        <>
+          <ul className="flex flex-col gap-2">
+            {changes.map((c) => {
+              const needed = closureFor(changes, [c.id]);
+              const extra = needed.filter((x) => x.id !== c.id);
+              const gate = gateFor(needed);
+              const blocked = busy || step !== "list" || gate.waiting.length > 0 || gate.unacknowledged.length > 0;
+              const mine = only !== null && only.length === needed.length && needed.every((x) => only.includes(x.id)) && only.includes(c.id);
+              const keys =
+                c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" || c.kind === "script"
+                  ? []
+                  : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
+              return (
+                <li key={c.id}>
+                  <Card padded={false} className="flex flex-col gap-1.5 px-3.5 py-2.5">
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 text-[13px] font-medium">{title(h, c)}</span>
                       <Button
@@ -305,11 +301,11 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                       <ConfirmAction
                         tone="ghost"
                         disabled={busy || step === "applying"}
-                        ariaLabel={`Remove: ${title(h, c)}`}
-                        question="Remove this change? Nothing was applied to Home Assistant."
+                        ariaLabel={`Discard: ${title(h, c)}`}
+                        question="Discard this change? Nothing was applied to Home Assistant."
                         onConfirm={() => void removeChange(c.id)}
                       >
-                        <Trash2 className="size-3.5" aria-hidden /> Remove
+                        <Trash2 className="size-3.5" aria-hidden /> Discard
                       </ConfirmAction>
                     </div>
                     {keys.length > 0 && (
@@ -337,90 +333,90 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                     )}
                     {extra.length > 0 && <p className="text-xs text-muted">Also applies: {extra.map((x) => title(h, x)).join("; ")}.</p>}
                     {mine && step === "confirm" && (
-                      <Confirm onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
+                      <ConfirmPanel onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
                         Taxis first makes a backup of Home Assistant, then applies{" "}
                         {extra.length > 0 ? `this change and the ${extra.length} it needs` : "this change"}, then reads Home Assistant back to check{" "}
                         {extra.length > 0 ? "them" : "it"}. The rest of the list stays as it is. If the backup fails, nothing is changed.
-                      </Confirm>
+                      </ConfirmPanel>
                     )}
                     {mine && step === "confirmNoBackup" && (
-                      <Confirm onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
+                      <ConfirmPanel onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
                         Taxis is running outside Home Assistant (development), so it can not make a backup. Apply anyway?
-                      </Confirm>
+                      </ConfirmPanel>
                     )}
-                  </li>
-                );
-              })}
-            </ul>
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
 
-            {step === "list" && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  tone="primary"
-                  disabled={busy || gateAll.waiting.length > 0 || gateAll.unacknowledged.length > 0}
-                  onClick={() => {
-                    setOnly(null);
-                    setStep("confirm");
-                  }}
-                >
-                  Apply {changes.length} change{changes.length === 1 ? "" : "s"} to Home Assistant
-                </Button>
-                {gateAll.unacknowledged.length > 0 && (
-                  <span role="status" className="text-xs text-warn">
-                    Tick I understand on {gateAll.unacknowledged.length === 1 ? "the renamed entity" : `the ${gateAll.unacknowledged.length} renamed entities`}{" "}
-                    that need{gateAll.unacknowledged.length === 1 ? "s" : ""} a hand first.
-                  </span>
-                )}
-                <ConfirmAction
-                  tone="ghost"
-                  disabled={busy}
-                  question={`Discard all ${changes.length} change${changes.length === 1 ? "" : "s"}? Nothing was applied to Home Assistant.`}
-                  onConfirm={() => void clearChanges()}
-                >
-                  Discard all
-                </ConfirmAction>
-              </div>
-            )}
-            {step === "confirm" && only === null && (
-              <Confirm onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
-                Taxis first makes a backup of Home Assistant, then applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home
-                Assistant back to check each one. If the backup fails, nothing is changed.
-                {hasHelper && (
-                  <span className="mt-2 block">
-                    Helpers: Taxis makes them the way Home Assistant's own helper dialogs do, then gives each its entity id and area. A helper is never deleted.
-                  </span>
-                )}
-                {hasRecipe && (
-                  <span className="mt-2 block">
-                    Recipes: Taxis saves its blueprint in Home Assistant (under taxis/), makes the helpers the recipe needs, then saves the automation (or the
-                    Announce script) and checks that Home Assistant loaded it. Nothing is deleted, and an area's recipes can be paused with its pause switch.
-                  </span>
-                )}
-                {hasButtons && (
-                  <span className="mt-2 block">
-                    Buttons: Taxis saves one native automation per output, rechecks supported gestures and existing handlers, then verifies the stored config
-                    and enabled state. Enabled assignments can control their targets when those buttons are pressed. Existing external handlers are preserved.
-                  </span>
-                )}
-                {hasRename && (
-                  <span className="mt-2 block">
-                    Renamed entities: Taxis also rewrites the old id in the automations, scripts, scenes and dashboards listed, each only if it hasn't changed
-                    since Taxis read it.
-                  </span>
-                )}
-              </Confirm>
-            )}
-            {step === "confirmNoBackup" && only === null && (
-              <Confirm onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
-                Taxis is running outside Home Assistant (development), so it can't make a backup. Apply anyway?
-              </Confirm>
-            )}
-            {step === "applying" && <p className="text-[13px] text-muted">Backing up and applying{only ? " this change" : ""}… this can take a minute.</p>}
-          </>
-        )}
-        <ApplyHistory refreshKey={historyVersion} applying={step === "applying"} />
-      </div>
-    </main>
+          {step === "list" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                tone="primary"
+                disabled={busy || gateAll.waiting.length > 0 || gateAll.unacknowledged.length > 0}
+                onClick={() => {
+                  setOnly(null);
+                  setStep("confirm");
+                }}
+              >
+                Apply {changes.length} change{changes.length === 1 ? "" : "s"} to Home Assistant
+              </Button>
+              {gateAll.unacknowledged.length > 0 && (
+                <span role="status" className="text-xs text-warn">
+                  Tick I understand on {gateAll.unacknowledged.length === 1 ? "the renamed entity" : `the ${gateAll.unacknowledged.length} renamed entities`}{" "}
+                  that need{gateAll.unacknowledged.length === 1 ? "s" : ""} a hand first.
+                </span>
+              )}
+              <ConfirmAction
+                tone="ghost"
+                disabled={busy}
+                question={`Discard all ${changes.length} change${changes.length === 1 ? "" : "s"}? Nothing was applied to Home Assistant.`}
+                onConfirm={() => void clearChanges()}
+              >
+                Discard all
+              </ConfirmAction>
+            </div>
+          )}
+          {step === "confirm" && only === null && (
+            <ConfirmPanel onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
+              Taxis first makes a backup of Home Assistant, then applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home Assistant
+              back to check each one. If the backup fails, nothing is changed.
+              {hasHelper && (
+                <span className="mt-2 block">
+                  Helpers: Taxis makes them the way Home Assistant's own helper dialogs do, then gives each its entity id and area. A helper is never deleted.
+                </span>
+              )}
+              {hasRecipe && (
+                <span className="mt-2 block">
+                  Recipes: Taxis saves its blueprint in Home Assistant (under taxis/), makes the helpers the recipe needs, then saves the automation (or the
+                  Announce script) and checks that Home Assistant loaded it. Nothing is deleted, and an area's recipes can be paused with its pause switch.
+                </span>
+              )}
+              {hasButtons && (
+                <span className="mt-2 block">
+                  Buttons: Taxis saves one native automation per output, rechecks supported gestures and existing handlers, then verifies the stored config and
+                  enabled state. Enabled assignments can control their targets when those buttons are pressed. Existing external handlers are preserved.
+                </span>
+              )}
+              {hasRename && (
+                <span className="mt-2 block">
+                  Renamed entities: Taxis also rewrites the old id in the automations, scripts, scenes and dashboards listed, each only if it hasn't changed
+                  since Taxis read it.
+                </span>
+              )}
+            </ConfirmPanel>
+          )}
+          {step === "confirmNoBackup" && only === null && (
+            <ConfirmPanel onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
+              Taxis is running outside Home Assistant (development), so it can't make a backup. Apply anyway?
+            </ConfirmPanel>
+          )}
+          {step === "applying" && <p className="text-[13px] text-muted">Backing up and applying{only ? " this change" : ""}… this can take a minute.</p>}
+        </>
+      )}
+      <ApplyHistory refreshKey={historyVersion} applying={step === "applying"} />
+    </Page>
   );
 }
 
@@ -661,25 +657,6 @@ function Understand({ checked, onChange }: { checked: boolean; onChange: () => v
     <label className="mt-1 flex w-fit cursor-pointer items-center gap-1.5 font-medium">
       <input type="checkbox" checked={checked} onChange={onChange} className="accent-[var(--accent)]" /> I understand
     </label>
-  );
-}
-
-function Confirm({ children, onYes, onNo, yes, danger }: { children: React.ReactNode; onYes: () => void; onNo: () => void; yes: string; danger?: boolean }) {
-  return (
-    <div role="alertdialog" aria-label="Confirm" className="flex flex-col gap-3 rounded-lg border border-accent/40 bg-surface p-3.5">
-      <p className="flex items-start gap-2 text-[13px]">
-        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
-        <span>{children}</span>
-      </p>
-      <div className="flex gap-2">
-        <Button tone={danger ? "danger" : "primary"} onClick={onYes}>
-          {yes}
-        </Button>
-        <Button tone="ghost" onClick={onNo}>
-          Cancel
-        </Button>
-      </div>
-    </div>
   );
 }
 

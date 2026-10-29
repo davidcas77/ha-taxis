@@ -23,13 +23,41 @@ describe("old links to the devices and entities", () => {
   });
 
   it("leave every other link as it is, the new ones included", () => {
-    for (const hash of ["", "#", "#health", "#area/living_room", "#area/living_room/naming", "#area/living_room/devices-entities", "#organize/devices", "#organize/devices/abc", "#organize/entities", "#parameters/climate", "#floor/entities", "#entities/a/b"]) {
+    for (const hash of [
+      "",
+      "#",
+      "#health",
+      "#area/living_room",
+      "#area/living_room/naming",
+      "#area/living_room/devices-entities",
+      "#organize/devices",
+      "#organize/devices/abc",
+      "#organize/entities",
+      "#parameters/climate",
+      "#floor/entities",
+      "#entities/a/b",
+    ]) {
       expect(normalizeLegacyHash(hash), hash).toBe(hash);
     }
   });
 });
 
+describe("Automations and Settings", () => {
+  it("opens Recipes and Buttons as tabs of Automations", () => {
+    expect(normalizeLegacyHash("#recipes")).toBe("#automations/recipes");
+    expect(normalizeLegacyHash("#parameters/recipes")).toBe("#automations/recipes");
+    expect(normalizeLegacyHash("#buttons")).toBe("#automations/buttons");
+    expect(normalizeLegacyHash("#buttons/device%3Aabc")).toBe("#automations/buttons/device%3Aabc");
+  });
 
-it("moves the former Parameters Recipes bookmark to its standalone page", () => {
-  expect(normalizeLegacyHash("#parameters/recipes")).toBe("#recipes");
+  it("opens the AI administration as a tab of Settings", () => {
+    expect(normalizeLegacyHash("#ai-admin")).toBe("#settings/ai");
+    expect(normalizeLegacyHash("#ai")).toBe("#settings/ai");
+  });
+
+  it("leaves the new links alone", () => {
+    for (const hash of ["#automations/recipes", "#automations/buttons", "#automations/buttons/x", "#settings", "#settings/ai", "#guide", "#guide/kitchen"]) {
+      expect(normalizeLegacyHash(hash), hash).toBe(hash);
+    }
+  });
 });
