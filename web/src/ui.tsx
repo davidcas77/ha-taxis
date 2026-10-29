@@ -148,7 +148,7 @@ export function AreaSelect({
 }) {
   const groups = [...h.floors.map((f) => ({ name: f.name, ids: f.areaIds })), ...(h.looseAreaIds.length ? [{ name: "No floor", ids: h.looseAreaIds }] : [])];
   return (
-    <select disabled={disabled} id={id} className={inputClass} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+    <select disabled={disabled} id={id} className={`${inputClass} area-select`} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
       <option value="">{noneLabel}</option>
       {groups.map((g) => (
         <optgroup key={g.name} label={g.name}>

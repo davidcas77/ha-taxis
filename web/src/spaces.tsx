@@ -515,7 +515,7 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
         const reason = !e.inRegistry
           ? "Not in the entity registry"
           : e.needsOwnName && !e.customName
-            ? "Name this entity first, or move its device in Organize."
+            ? "Uses its device name. Give this entity its own display name to assign a separate area, or move the device in Organize."
             : null;
         return (
           <div className="min-w-0">
@@ -1244,7 +1244,7 @@ export function BulkBar({ h, ids, onDone, requireArea = false }: { h: Hierarchy;
             label="Area assignment help"
             compact
             className="shrink-0 text-muted"
-            content="Only selected entities on this page are changed. Entities outside the registry cannot be selected. A device's main entity needs its own name to take an area; otherwise move its device in Organize."
+            content="Only selected entities on this page are changed. Entities outside the registry cannot be selected. An entity that uses its device name needs its own display name to assign a separate area; otherwise move its device in Organize."
           >
             <Info className="size-3.5" aria-hidden />
           </TooltipButton>
@@ -1266,7 +1266,7 @@ export function BulkBar({ h, ids, onDone, requireArea = false }: { h: Hierarchy;
               (e) => (e.ownAreaId === area ? null : { kind: "entity", op: "update", targetId: e.entityId, fields: { area_id: area } }),
               // A device's main entity can't take an area of its own without a name.
               (e) => Boolean(area) && e.needsOwnName && !e.customName,
-              "a device's main entity needs a name before it can have an area of its own. Move its device instead, or name it first.",
+              "an entity that uses its device name needs its own display name before it can have a separate area. Move its device instead, or set its display name first.",
             )
           }
         >

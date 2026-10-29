@@ -7,6 +7,8 @@
   easier to place entities through Changes. Exact name matches suggest an area
   with a one-click accept action; ambiguous names stay manual. Device identity
   and inherited area are shown explicitly, including devices with no area.
+  Area pickers keep a compact field while their open list fits longer names on
+  supported browsers; other browsers retain the native picker.
 - **Shared table engine.** Every table has a Columns chooser above it, including
   small tables, button matrices and Records lists. Required controls stay visible;
   optional choices persist per table and can be reset. The existing shared engine

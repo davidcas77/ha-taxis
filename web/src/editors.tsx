@@ -112,7 +112,7 @@ export function EntityEditor({ h, entity, onClose }: { h: Hierarchy; entity: Ent
         htmlFor="ent-area"
         hint={
           entity.needsOwnName && !name.trim()
-            ? "This is its device's main entity, with no name of its own. Home Assistant only allows it an area of its own once it has a name: give it one above, or move the device instead."
+            ? "Uses its device name. Give this entity its own display name above to assign a separate area, or move the device in Organize."
             : device
               ? "Setting an area here overrides the device's area for this entity only."
               : undefined

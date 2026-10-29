@@ -236,6 +236,31 @@ class UnassignedRegression(unittest.TestCase):
         self.assertEqual(self.posted, [])
 
 
+    def test_area_picker_expands_to_names_without_widening_closed_field(self):
+        self.body["hierarchy"]["areas"][self.area]["name"] = "A long invented reading room for quiet afternoon study"
+        self.page.reload(wait_until="domcontentloaded")
+        self.page.set_viewport_size({"width": 480, "height": 900})
+        table = self.table()
+        select = table.get_by_role("combobox", name="Area for Unplaced 000", exact=True)
+        closed = select.bounding_box()
+        self.assertLessEqual(closed["width"], 115)
+        if self.page.evaluate("CSS.supports('appearance', 'base-select') && CSS.supports('selector(select::picker(select))')"):
+            select.click()
+            option = select.locator("option").filter(has_text="A long invented reading room").first
+            box = option.bounding_box()
+            self.assertGreater(box["width"], closed["width"] + 60)
+            self.assertGreaterEqual(box["x"], 0)
+            self.assertLessEqual(box["x"] + box["width"], 480)
+            self.assertEqual(select.evaluate("e => getComputedStyle(e, '::picker(select)').appearance"), "base-select")
+            self.page.keyboard.press("Escape")
+        self.assertEqual(self.posted, [])
+        self.assertLessEqual(select.bounding_box()["width"], 115)
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+        select.select_option(self.area)
+        self.page.get_by_role("status").filter(has_text="Added").wait_for()
+        self.assertEqual(self.posted, [{"kind": "entity", "op": "update", "targetId": "sensor.unplaced_000", "fields": {"area_id": self.area}}])
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
