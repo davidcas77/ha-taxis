@@ -8,3 +8,6 @@ data/
 .DS_Store
 coverage/
 __pycache__/
+
+# The owner's private notes about their own Home Assistant. Never commit.
+private/
