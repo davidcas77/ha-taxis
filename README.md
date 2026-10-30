@@ -33,11 +33,14 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 
 ## What it does
 
-- **Guide (the home page):** a nine-step path to a complete, well-organised Home
+- **Guide (the home page):** a seven-step setup guide to a complete, well-organised Home
   Assistant (floors and areas, every entity in an area, naming, capabilities,
-  helpers, parameters, recipes, buttons, a clean Health), each step checked
-  against your house with a button to the exact place and a **Next step** card.
-  Below it, the room-by-room guide: choose each room's purpose and automation goals, then work
+  helpers, parameters, recipes, followed by review, Apply and Health), each step checked
+  against your house with a button to the exact place and instructions explaining what to do.
+  An overview explains blueprints, all recipes and their required equipment. Each step
+  links to the relevant editor; equipment, missing inputs and helper plans use your actual data.
+  Default parameters are valid and additional recipes are optional. Buttons are a later phase.
+  Expand the room-by-room guide to choose each room's purpose and automation goals, then work
   through detected equipment, missing helpers, comfort settings and native recipe
   prerequisites. Recommendations describe equipment types and placement, not
   products. Pending proposals and failed reads never count as installed work;

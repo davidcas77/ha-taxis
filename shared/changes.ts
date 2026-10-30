@@ -656,7 +656,8 @@ function planRecipePart(existing: Change[], input: ChangeInput, h: Hierarchy): M
   const key = String(kind === "blueprint" ? fields.path : kind === "script" ? fields.script_id : fields.automation_id);
   // A house recipe belongs to no area.
   if (kind === "automation" && !fields.button_map && !isHouseRecipe(fields.recipe)) {
-    if (!h.areas[String(fields.area_id)]) return none("That area isn't in Home Assistant any more.");
+    if (!h.areas[String(fields.area_id)] && !existing.some((c) => c.kind === "area" && c.op === "create" && c.targetId === fields.area_id))
+      return none("That area isn't in Home Assistant any more.");
   }
   const same = existing.find((c) => c.kind === kind && c.targetId === key);
   if (same) return { action: "replace", id: same.id, after: { ...fields }, before: {} };

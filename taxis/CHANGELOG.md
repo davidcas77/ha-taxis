@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.7.91
+
+- **Guided setup.** An overview explains native blueprints and all recipes, followed
+  by seven instructional steps with naming examples, actual equipment gaps,
+  helper plans and prerequisites. Defaults and optional recipes are supported;
+  room testing is expandable and buttons are deferred to a later phase.
+- **Apply safeguards.** Recipe updates compare the freshly read configuration
+  with the server-captured baseline. Pending new-area recipes resolve their real
+  area IDs, and missing reference readback is reported as unverified. Internal
+  configuration snapshots stay out of public change and history responses.
+- **Accurate status.** Unavailable recipes no longer count as installed, late
+  refresh responses cannot overwrite newer previews, and Guide entity counts
+  consistently exclude disabled entities.
 
 - **Organize layout.** Reset layout shares the list title row; the floors and
   areas search shares one row with New floor and New area.

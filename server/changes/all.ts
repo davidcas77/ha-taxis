@@ -43,6 +43,7 @@ export async function applyAll(
     configReads: io.configReads,
     readFresh: io.readFresh,
     renamed,
+    realIds: registry.realIds,
     sleep: io.sleep,
   });
   const scripts = await applyScriptChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, renamed, sleep: io.sleep });

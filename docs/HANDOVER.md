@@ -1,6 +1,6 @@
 # Taxis handover
 
-State at **0.7.9** (tag `v0.7.9`, 2026-10-29). `main` is clean and every branch
+State at **0.7.91** (tag `v0.7.91`, 2026-10-30). `main` is clean and every branch
 of this work is merged; nothing is unreleased. Written for whoever continues the
 work (a person, Claude or another assistant): what Taxis is, how it got here, what
 is in it, how to work on it, and what is left (§9). Details of the
@@ -113,23 +113,25 @@ The fit rules are pure and tested in `shared/table-fit.ts`. Never write a hand-r
 
 `web/src/guide.tsx`, `guide-path.tsx`, `guide-room-test.tsx`, `house-modes.tsx`;
 logic in `shared/guide.ts`, `guide-path.ts`, `guide-checks.ts`, `house-modes.ts`.
-The Guide is the home page. **Your path** is nine steps (areas, entities in an
-area, naming, capabilities, helpers, parameters, recipes, buttons, Health), each
+The Guide is the home page. **Your path** is seven setup steps (areas, entities in an
+area, naming, capabilities, helpers, parameters and recipes), each
 with a status computed from data the app already reads (`shared/guide-path.ts`,
-pure and tested), a link to the exact place and a **Next step** card; a step whose
-data failed to load is "Couldn't read", never "done". Below it, per area: choose a room
+pure and tested), a link to the exact place and expandable instructions; a step whose
+data failed to load is "Couldn't read", never "done". The overview explains blueprints,
+all recipes and their prerequisites. Default parameters are valid; unused ready recipes
+are optional. Buttons are deferred and Health belongs to post-build verification.
+The room-by-room goals and testing are expandable: choose a room
 type and goals, review equipment (types and placement, never brands), prepare
 helpers, review comfort parameters, set up native automations, then record a room
 test (the user's observations, not a verification; a relevant configuration change
 asks for a retest). Pending proposals and failed reads never count as installed.
-Under the nine steps, **Safety, the house and covers** (`goalFacts` / `buildGuideGoals`
+Under the seven setup steps, **More house and safety goals** (`goalFacts` / `buildGuideGoals`
 in `shared/guide-path.ts`, rendered by `GoalRow` in `web/src/guide-path.tsx`) lists goals
 for the 0.7.7 recipes: leak alert per area with a leak sensor, low batteries plus not
 reporting, house presence, goodbye, and covers and sun per area with a cover. A goal is
 listed only when it applies (`recipeFits`, the same rule as the Recipes page) and is
 done when its recipes are installed, out of date (attention) or in changes; it opens
-`#automations/recipes`. They are not path steps: the nine steps and the progress bar
-did not change.
+`#automations/recipes`. They supplement the setup path.
 Guest / away / sleep are manual toggles, planned as Taxis helpers. A button sends
 typed room notes to Jev on request. Saved in Taxis settings (`guide`).
 

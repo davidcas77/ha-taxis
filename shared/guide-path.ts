@@ -5,7 +5,7 @@ import { analyzeArea, areaCodes, type NamingSettings } from "./naming.ts";
 import { namingFit, type NamingIgnores } from "./naming-ignores.ts";
 import type { ParameterSettings } from "./parameters.ts";
 import { areaFacts as fitFacts, recipeFits } from "./recipe-fit.ts";
-import type { RecipeCell, RecipeStatus } from "./recipes.ts";
+import { unavailableRecipeMessage, type RecipeCell, type RecipeStatus } from "./recipes.ts";
 import type { Change, Hierarchy } from "./types.ts";
 
 // "Your path": the steps to a complete, well-organised Home Assistant, in the
@@ -20,8 +20,8 @@ import type { Change, Hierarchy } from "./types.ts";
 // only when it applies to this house, and is done when its recipes are installed
 // or waiting in Changes.
 
-export const PATH_STEPS = ["areas", "entities", "naming", "capabilities", "helpers", "parameters", "recipes", "buttons", "health"] as const;
-export type PathStepKey = (typeof PATH_STEPS)[number];
+export const PATH_STEPS = ["areas", "entities", "naming", "capabilities", "helpers", "parameters", "recipes"] as const;
+export type PathStepKey = (typeof PATH_STEPS)[number] | "buttons" | "health";
 
 // done: nothing left. attention: started, with something to fix. todo: not
 // started. unknown: not read yet, or the read failed (never shown as done).
@@ -52,7 +52,7 @@ export type NamingFacts = { fits: number; total: number; areasWithGaps: number; 
 export type CapabilityFacts = { areasWithCandidates: number; areasCounting: number };
 export type HelperFacts = { total: number; inPlace: number; toDo: number; inChanges: number; conflicts: number };
 export type ParameterFacts = { houseValues: number; typeValues: number; areaValues: number };
-export type RecipeFacts = { cells: number; ready: number; outOfDate: number; installed: number; inChanges: number; roomsReady: number };
+export type RecipeFacts = { cells: number; ready: number; outOfDate: number; installed: number; inChanges: number; roomsReady: number; failed?: number };
 export type ButtonFacts = { controls: number; gestures: number; unassigned: number };
 export type HealthFacts = { errors: number; warnings: number; infos: number };
 
@@ -102,7 +102,7 @@ export function areaFacts(h: Hierarchy): AreaFacts {
 }
 
 export function entityFacts(h: Hierarchy): EntityFacts {
-  return { entities: h.counts.entities, unassigned: h.unassignedEntityIds.length };
+  return { entities: h.counts.entities, unassigned: h.counts.unassigned };
 }
 
 // How many entity ids already say their area (or were left alone on purpose).
@@ -160,14 +160,16 @@ export function parameterFacts(p: ParameterSettings): ParameterFacts {
 export function recipeFacts(cells: readonly RecipeCell[]): RecipeFacts {
   const roomsReady = new Set<string>();
   const n = { ready: 0, outOfDate: 0, installed: 0, inChanges: 0 };
+  let failed = 0;
   for (const cell of cells) {
+    if (cell.missing.includes(unavailableRecipeMessage)) failed += 1;
     if (cell.status === "ready") n.ready += 1;
     else if (cell.status === "out-of-date") n.outOfDate += 1;
     else if (cell.status === "installed") n.installed += 1;
     else if (cell.status === "in-changes") n.inChanges += 1;
     if (cell.status === "ready" || cell.status === "out-of-date") roomsReady.add(cell.areaId);
   }
-  return { cells: cells.length, ...n, roomsReady: roomsReady.size };
+  return { cells: cells.length, ...n, roomsReady: roomsReady.size, ...(failed ? { failed } : {}) };
 }
 
 // A gesture is assigned when Taxis manages a binding for it, or an automation
@@ -287,7 +289,8 @@ const RULES: { [K in PathStepKey]: Rule<Extract<PathInput[K], { state: "ready" }
     target: { page: "parameters", tab: "house" },
     evaluate: (f) => {
       const set = f.houseValues + f.typeValues + f.areaValues;
-      if (set === 0) return { status: "todo", summary: "Every setting is still on Taxis's defaults. Check the house settings, then the rooms." };
+      if (set === 0)
+        return { status: "done", summary: "Using Taxis's default values. You can keep them, or review house settings and override individual rooms." };
       return {
         status: "done",
         summary: `${plural(f.houseValues, "house setting")}, ${plural(f.typeValues, "interior/exterior setting")} and ${plural(f.areaValues, "room setting")} chosen.`,
@@ -299,12 +302,15 @@ const RULES: { [K in PathStepKey]: Rule<Extract<PathInput[K], { state: "ready" }
     action: "Open recipes",
     target: { page: "automations", tab: "recipes", controlId: null },
     evaluate: (f) => {
+      if (f.failed)
+        return { status: "attention", summary: `${plural(f.failed, "recipe")} could not load in Home Assistant. Check the reported errors before continuing.` };
       const note = f.inChanges > 0 ? `, ${f.inChanges} in changes` : "";
       const head = `${plural(f.roomsReady, "room")} ready, ${f.installed} installed${note}`;
-      if (f.roomsReady > 0) return { status: f.installed === 0 ? "todo" : "attention", summary: `${head}.` };
+      if (f.outOfDate > 0) return { status: "attention", summary: `${head}; ${plural(f.outOfDate, "installed recipe")} need review.` };
       if (f.inChanges > 0)
         return { status: "attention", summary: `${head}. Review and Apply them.`, action: "Review the changes", target: { page: "changes" } };
-      if (f.installed > 0) return { status: "done", summary: `${head}.` };
+      if (f.installed > 0) return { status: "done", summary: `${head}. Additional ready recipes are optional; choose only the outcomes you want.` };
+      if (f.roomsReady > 0) return { status: "todo", summary: `${head}.` };
       return { status: "todo", summary: `${head}. Finish the steps above to make rooms ready.` };
     },
   },

@@ -30,6 +30,7 @@ import { DEFAULT_NAMING } from "./naming.ts";
 import { EMPTY_NAMING_IGNORES } from "./naming-ignores.ts";
 import { EMPTY_PARAMETERS } from "./parameters.ts";
 import { NOTHING_INSTALLED, planRecipes, type RecipeCell } from "./recipes.ts";
+import { unavailableRecipeMessage } from "./recipes.ts";
 import { planHouseRecipes } from "./recipes-house.ts";
 import type { Change } from "./types.ts";
 
@@ -49,22 +50,22 @@ const only = (patch: Partial<PathInput>) => buildGuidePath({ ...finished, ...pat
 const stepOf = (path: ReturnType<typeof buildGuidePath>, key: PathStepKey) => path.steps.find((s) => s.key === key)!;
 
 describe("buildGuidePath", () => {
-  it("lists the nine steps in the order of the path", () => {
+  it("lists the seven setup steps in the order of the path", () => {
     const path = buildGuidePath(finished);
     expect(path.steps.map((s) => s.key)).toEqual([...PATH_STEPS]);
-    expect(path.steps.map((s) => s.number)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    expect(PATH_STEPS).toEqual(["areas", "entities", "naming", "capabilities", "helpers", "parameters", "recipes", "buttons", "health"]);
+    expect(path.steps.map((s) => s.number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(PATH_STEPS).toEqual(["areas", "entities", "naming", "capabilities", "helpers", "parameters", "recipes"]);
   });
 
   it("is complete, with no next step, when everything is done", () => {
     const path = buildGuidePath(finished);
-    expect(path).toMatchObject({ done: 9, total: 9, complete: true, next: null });
+    expect(path).toMatchObject({ done: 7, total: 7, complete: true, next: null });
   });
 
   it("points at the first step with something to do, however many come after", () => {
     const path = only({ entities: ready({ entities: 40, unassigned: 5 }), health: ready({ errors: 3, warnings: 2, infos: 0 }) });
     expect(path.next?.key).toBe("entities");
-    expect(path.done).toBe(7);
+    expect(path.done).toBe(6);
     expect(path.complete).toBe(false);
   });
 
@@ -72,7 +73,7 @@ describe("buildGuidePath", () => {
     const path = only({ areas: failed("offline"), naming: loading() });
     expect(stepOf(path, "areas")).toMatchObject({ status: "unknown", loading: false, error: "offline" });
     expect(stepOf(path, "naming")).toMatchObject({ status: "unknown", loading: true, error: null });
-    expect(path.done).toBe(7);
+    expect(path.done).toBe(5);
     expect(path.complete).toBe(false);
     expect(path.next).toBeNull();
     const withWork = only({ areas: failed("offline"), helpers: ready({ total: 8, inPlace: 0, toDo: 8, inChanges: 0, conflicts: 0 }) });
@@ -132,41 +133,33 @@ describe("buildGuidePath", () => {
     expect(stepOf(only({ helpers: ready({ total: 3, inPlace: 1, toDo: 0, inChanges: 2, conflicts: 0 }) }), "helpers").status).toBe("attention");
   });
 
-  it("parameters: all defaults is not started, any chosen value is done", () => {
-    expect(stepOf(only({ parameters: ready({ houseValues: 0, typeValues: 0, areaValues: 0 }) }), "parameters").status).toBe("todo");
+  it("parameters: defaults are valid without forcing unnecessary overrides", () => {
+    expect(stepOf(only({ parameters: ready({ houseValues: 0, typeValues: 0, areaValues: 0 }) }), "parameters")).toMatchObject({
+      status: "done",
+      summary: expect.stringContaining("default values"),
+    });
     expect(stepOf(only({ parameters: ready({ houseValues: 0, typeValues: 0, areaValues: 2 }) }), "parameters").status).toBe("done");
   });
 
-  it("recipes: rooms ready and none installed is not started; a mix needs attention; installed and nothing left is done", () => {
+  it("recipes: unused ready recipes are optional, while queued or outdated work needs attention", () => {
     const base = { cells: 20, ready: 0, outOfDate: 0, installed: 0, inChanges: 0, roomsReady: 0 };
     expect(stepOf(only({ recipes: ready({ ...base, ready: 5, roomsReady: 3 }) }), "recipes")).toMatchObject({
       status: "todo",
       summary: "3 rooms ready, 0 installed.",
     });
-    expect(stepOf(only({ recipes: ready({ ...base, ready: 2, installed: 4, roomsReady: 2 }) }), "recipes").status).toBe("attention");
+    expect(stepOf(only({ recipes: ready({ ...base, ready: 2, installed: 4, roomsReady: 2 }) }), "recipes").status).toBe("done");
+    expect(stepOf(only({ recipes: ready({ ...base, installed: 4, outOfDate: 1, roomsReady: 1 }) }), "recipes").status).toBe("attention");
     expect(stepOf(only({ recipes: ready({ ...base, installed: 4 }) }), "recipes").status).toBe("done");
     expect(stepOf(only({ recipes: ready(base) }), "recipes").status).toBe("todo");
     const waiting = stepOf(only({ recipes: ready({ ...base, inChanges: 2 }) }), "recipes");
     expect(waiting).toMatchObject({ status: "attention", target: { page: "changes" } });
   });
 
-  it("buttons: no controls is done; none assigned is not started; some left is attention", () => {
-    expect(stepOf(only({ buttons: ready({ controls: 0, gestures: 0, unassigned: 0 }) }), "buttons").status).toBe("done");
-    expect(stepOf(only({ buttons: ready({ controls: 3, gestures: 8, unassigned: 8 }) }), "buttons").status).toBe("todo");
-    expect(stepOf(only({ buttons: ready({ controls: 6, gestures: 12, unassigned: 4 }) }), "buttons")).toMatchObject({
-      status: "attention",
-      summary: "6 controls, 4 gestures unassigned.",
-    });
-  });
-
-  it("health: errors and warnings need attention; notes alone are done", () => {
-    expect(stepOf(only({ health: ready({ errors: 3, warnings: 36, infos: 31 }) }), "health")).toMatchObject({
-      status: "attention",
-      summary: "3 errors, 36 warnings.",
-      target: { page: "health" },
-    });
-    expect(stepOf(only({ health: ready({ errors: 0, warnings: 1, infos: 0 }) }), "health").status).toBe("attention");
-    expect(stepOf(only({ health: ready({ errors: 0, warnings: 0, infos: 31 }) }), "health").status).toBe("done");
+  it("defers buttons and keeps Health in the post-build review instead of setup steps", () => {
+    const path = only({ buttons: failed("not read"), health: ready({ errors: 3, warnings: 36, infos: 0 }) });
+    expect(path.steps.map((s) => s.key)).not.toContain("buttons");
+    expect(path.steps.map((s) => s.key)).not.toContain("health");
+    expect(path.complete).toBe(true);
   });
 });
 
@@ -202,6 +195,14 @@ describe("the facts", () => {
 
   it("counts entities and those in no area", () => {
     expect(entityFacts(house())).toEqual({ entities: 5, unassigned: 1 });
+  });
+
+  it("excludes disabled unassigned entities from the active setup counts", () => {
+    const h = house();
+    h.entities["light.loose"].disabled = true;
+    h.counts.entities = 4;
+    h.counts.unassigned = 0;
+    expect(entityFacts(h)).toEqual({ entities: 4, unassigned: 0 });
   });
 
   it("counts entity ids that fit their area and finds the area with the most left", () => {
@@ -273,7 +274,7 @@ describe("the facts", () => {
   });
 
   it("counts rooms with a recipe ready, and what is installed or waiting", () => {
-    const cell = (areaId: string, status: RecipeCell["status"]) => ({ areaId, status }) as RecipeCell;
+    const cell = (areaId: string, status: RecipeCell["status"]) => ({ areaId, status, missing: [] }) as unknown as RecipeCell;
     expect(
       recipeFacts([cell("a", "ready"), cell("a", "ready"), cell("b", "out-of-date"), cell("c", "installed"), cell("d", "in-changes"), cell("e", "missing")]),
     ).toEqual({
@@ -284,6 +285,16 @@ describe("the facts", () => {
       inChanges: 1,
       roomsReady: 2,
     });
+  });
+
+  it("keeps recipe setup in attention when another installed recipe failed to load", () => {
+    const failedCell = { areaId: "a", status: "missing", missing: [unavailableRecipeMessage] } as unknown as RecipeCell;
+    const installedCell = { areaId: "b", status: "installed", missing: [] } as unknown as RecipeCell;
+    const facts = recipeFacts([failedCell, installedCell]);
+    expect(facts.failed).toBe(1);
+    const path = only({ recipes: ready(facts) });
+    expect(stepOf(path, "recipes").status).toBe("attention");
+    expect(path.complete).toBe(false);
   });
 
   it("counts a gesture as assigned when Taxis manages it or an existing automation answers it", () => {

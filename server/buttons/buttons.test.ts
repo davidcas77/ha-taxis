@@ -573,6 +573,19 @@ describe("button API and bounded AI review", () => {
     expect(s.rest.post).not.toHaveBeenCalled();
     expect(s.ha.write).not.toHaveBeenCalled();
   });
+  it("keeps internal recipe baselines out of assignment responses", async () => {
+    const s = await apiSetup();
+    s.t.store.db
+      .prepare("INSERT INTO changes (kind, op, target_id, scope, before, after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("automation", "update", "taxis_test", null, JSON.stringify({ configSnapshot: { secret: "INTERNAL_CONFIG_SENTINEL" } }), "{}", "now");
+    const version = s.changes.version();
+    const response = await s.req("/assign", { ...s.a, changesVersion: version });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(JSON.stringify(body)).not.toContain("INTERNAL_CONFIG_SENTINEL");
+    expect(body.version).toBe(s.changes.version());
+    expect(s.changes.list()[0].before.configSnapshot).toEqual({ secret: "INTERNAL_CONFIG_SENTINEL" });
+  });
   it("rejects missing guard, stale queued edits, oversized bodies and Apply overlap", async () => {
     const s = await apiSetup();
     expect((await s.req("/assign", s.a, false)).status).toBe(400);

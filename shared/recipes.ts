@@ -79,7 +79,12 @@ export const OVERRIDE_PLACEHOLDER_SECONDS = 3600;
 // it (server/index.ts) and the planner compares with it.
 // ---------------------------------------------------------------------------
 
-export type InstalledAutomation = { alias: string | null; path: string | null; input: Record<string, unknown> };
+export type InstalledAutomation = { alias: string | null; path: string | null; input: Record<string, unknown>; runtimeState?: string };
+
+// An unavailable runtime object has a stored configuration, but HA could not
+// load it. Reinstalling it blindly does not establish why it failed.
+export const unavailableRecipe = (installed: InstalledAutomation | null | undefined): boolean => installed?.runtimeState === "unavailable";
+export const unavailableRecipeMessage = "Home Assistant reports this recipe as unavailable. Check it in Home Assistant before continuing";
 
 export type RecipeInstalled = {
   // Blueprint path -> the version it states: null when the blueprint isn't
@@ -382,6 +387,7 @@ export function planRecipes(
     };
 
     const statusOf = (id: string, missing: string[], reasons: string[]): RecipeStatus => {
+      if (unavailableRecipe(installed.automations[id])) missing.push(unavailableRecipeMessage);
       const conflict = conflicts.get(area.id);
       if (conflict) {
         missing.push(conflict);
@@ -1286,6 +1292,7 @@ export function planAnnounce(
   if (areas.length === 0) missing.push("A speaker that counts in an area that has Occupancy (Capabilities, Recipes)");
   const held = h.entities[`script.${ANNOUNCE_SCRIPT_ID}`];
   const there = installed.scripts[ANNOUNCE_SCRIPT_ID] ?? null;
+  if (unavailableRecipe(there)) missing.push(unavailableRecipeMessage);
   if (held && !there && !pendingScript(changes, ANNOUNCE_SCRIPT_ID))
     missing.push(`script.${ANNOUNCE_SCRIPT_ID} is already used by “${held.name}”, which Taxis didn't make or can't edit`);
 

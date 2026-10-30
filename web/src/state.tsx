@@ -7,6 +7,7 @@ import { EMPTY_NAMING_IGNORES, type NamingIgnores } from "../../shared/naming-ig
 import { EMPTY_PARAMETERS, type ParameterSettings } from "../../shared/parameters.ts";
 import type { Change, ChangeInput, Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
+import { latestRequest } from "./latest-request.ts";
 import { useSavedSetting } from "./saved-setting.ts";
 
 // The app's state, in three contexts so that a change to one does not re-render
@@ -128,20 +129,24 @@ function DataProvider({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const proposing = useRef(false);
+  const runReload = useRef(latestRequest());
 
   const reload = useCallback(
     async (refresh = false) => {
-      setLoading(true);
-      const [h, c] = await Promise.all([api.hierarchy(refresh), api.changes()]);
-      if (h.ok) {
-        setHierarchy(h.hierarchy);
-        setError(null);
-      } else setError(h.error);
-      if (c.ok) {
-        setChanges(c.changes);
-        setVersion(c.version);
-      }
-      setLoading(false);
+      await runReload.current(
+        () => Promise.all([api.hierarchy(refresh), api.changes()]),
+        ([h, c]) => {
+          if (h.ok) {
+            setHierarchy(h.hierarchy);
+            setError(null);
+          } else setError(h.error);
+          if (c.ok) {
+            setChanges(c.changes);
+            setVersion(c.version);
+          }
+        },
+        setLoading,
+      );
     },
     [setError],
   );

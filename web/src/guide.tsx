@@ -20,6 +20,7 @@ import { useDraftGuard } from "./draft-guard.ts";
 import { GUIDE, RECIPES, useTaxis, type Route } from "./state.tsx";
 import { Button, EmptyState, Page, PageHeader, Section, inputClass } from "./ui.tsx";
 import { GuidePath } from "./guide-path.tsx";
+import { GuideOverview } from "./guide-instructions.tsx";
 import { HouseModes } from "./house-modes.tsx";
 import { GuideRoomTest } from "./guide-room-test.tsx";
 import type { GuideTestRecord } from "../../shared/guide-checks.ts";
@@ -335,84 +336,88 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
         </>
       ) : (
         <>
+          <GuideOverview go={go} />
           <GuidePath h={h} go={go} installed={installed} recipeError={recipeError} retryRecipes={retry} />
-          <Section
-            id="guide-rooms"
-            title="Room by room"
-            description="Choose what each room should do. Taxis checks its equipment, helpers and native automations, and you test the result in the room."
-          >
-            {guideAlert}
-            {notReady ? (
-              <p className="text-[13px] text-muted">{loadingText}</p>
-            ) : (
-              <>
-                <section aria-label="House readiness" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {[
-                    [areas.filter((area) => area.choice && area.choice.goals.length).length, "areas with chosen goals"],
-                    [areas.filter((area) => area.stage === "test").length, "areas ready for a room test"],
-                    [areas.filter((area) => area.stage === "tested").length, "areas tested by you"],
-                    [areas.filter((area) => area.stage === "changes").length, "areas awaiting review and Apply"],
-                  ].map(([count, label]) => (
-                    <div key={label} className="rounded-lg border border-line bg-surface p-4">
-                      <p className="text-2xl font-semibold tabular-nums">{count}</p>
-                      <p className="mt-1 text-xs text-muted">{label}</p>
-                    </div>
-                  ))}
-                </section>
-                <HouseModes h={h} go={go} />
-                <section aria-label="Area readiness" className="flex flex-col gap-3">
-                  <h2 className="font-semibold">Start with one room</h2>
-                  <p className="text-[13px] text-muted">
-                    Comfort and lighting first. Choose a room type and only the outcomes useful there; this is not a score for owning every sensor category.
-                  </p>
-                  {areas.length === 0 ? (
-                    <p>No areas are available. Assign areas in Home Assistant or Organize first.</p>
-                  ) : (
-                    <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {areas.map((area) => (
-                        <li key={area.areaId}>
-                          <button
-                            type="button"
-                            className="flex h-full w-full flex-col gap-2 rounded-lg border border-line bg-surface p-4 text-left hover:border-accent"
-                            onClick={() => go({ page: "guide", areaId: area.areaId })}
-                          >
-                            <span className="text-xs text-muted">{area.floor}</span>
-                            <span className="font-semibold text-accent">{area.name}</span>
-                            <span className={`text-[13px] ${stageTone(area)}`}>{GUIDE_STAGES[area.stage]}</span>
-                            <span className="text-xs text-muted">
-                              {area.choice
-                                ? `${ROOM_PROFILES.find((profile) => profile.key === area.choice!.profile)?.label} · ${area.choice.goals.length} chosen goals`
-                                : area.hasEntities
-                                  ? "Review the existing equipment, then choose goals"
-                                  : "No entities assigned yet"}
-                            </span>
-                          </button>
+          <details className="rounded-lg border border-line bg-surface p-4">
+            <summary className="cursor-pointer font-semibold">Room-by-room goals and testing</summary>
+            <Section
+              id="guide-rooms"
+              title="Room by room"
+              description="Choose what each room should do. Taxis checks its equipment, helpers and native automations, and you test the result in the room."
+            >
+              {guideAlert}
+              {notReady ? (
+                <p className="text-[13px] text-muted">{loadingText}</p>
+              ) : (
+                <>
+                  <section aria-label="House readiness" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {[
+                      [areas.filter((area) => area.choice && area.choice.goals.length).length, "areas with chosen goals"],
+                      [areas.filter((area) => area.stage === "test").length, "areas ready for a room test"],
+                      [areas.filter((area) => area.stage === "tested").length, "areas tested by you"],
+                      [areas.filter((area) => area.stage === "changes").length, "areas awaiting review and Apply"],
+                    ].map(([count, label]) => (
+                      <div key={label} className="rounded-lg border border-line bg-surface p-4">
+                        <p className="text-2xl font-semibold tabular-nums">{count}</p>
+                        <p className="mt-1 text-xs text-muted">{label}</p>
+                      </div>
+                    ))}
+                  </section>
+                  <HouseModes h={h} go={go} />
+                  <section aria-label="Area readiness" className="flex flex-col gap-3">
+                    <h2 className="font-semibold">Start with one room</h2>
+                    <p className="text-[13px] text-muted">
+                      Comfort and lighting first. Choose a room type and only the outcomes useful there; this is not a score for owning every sensor category.
+                    </p>
+                    {areas.length === 0 ? (
+                      <p>No areas are available. Assign areas in Home Assistant or Organize first.</p>
+                    ) : (
+                      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {areas.map((area) => (
+                          <li key={area.areaId}>
+                            <button
+                              type="button"
+                              className="flex h-full w-full flex-col gap-2 rounded-lg border border-line bg-surface p-4 text-left hover:border-accent"
+                              onClick={() => go({ page: "guide", areaId: area.areaId })}
+                            >
+                              <span className="text-xs text-muted">{area.floor}</span>
+                              <span className="font-semibold text-accent">{area.name}</span>
+                              <span className={`text-[13px] ${stageTone(area)}`}>{GUIDE_STAGES[area.stage]}</span>
+                              <span className="text-xs text-muted">
+                                {area.choice
+                                  ? `${ROOM_PROFILES.find((profile) => profile.key === area.choice!.profile)?.label} · ${area.choice.goals.length} chosen goals`
+                                  : area.hasEntities
+                                    ? "Review the existing equipment, then choose goals"
+                                    : "No entities assigned yet"}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                  <section aria-label="Automation ideas" className="flex flex-col gap-3">
+                    <h2 className="font-semibold">Ideas from real homes</h2>
+                    <p className="text-[13px] text-muted">
+                      Community examples inspire the guide. Your home's sources and the tested Taxis planners decide what can be installed.
+                    </p>
+                    <ul className="grid gap-3 sm:grid-cols-2">
+                      {GUIDE_IDEAS.map((idea) => (
+                        <li key={idea.title} className="rounded-lg border border-line p-4 text-[13px]">
+                          <h3 className="font-medium">{idea.title}</h3>
+                          <p className="mt-2 text-xs text-muted">{idea.text}</p>
+                          <p className="mt-2 text-xs">{idea.implementation}</p>
+                          <a className="mt-2 inline-block text-xs text-accent hover:underline" href={idea.source} target="_blank" rel="noreferrer">
+                            Read the community discussion
+                          </a>
                         </li>
                       ))}
                     </ul>
-                  )}
-                </section>
-                <section aria-label="Automation ideas" className="flex flex-col gap-3">
-                  <h2 className="font-semibold">Ideas from real homes</h2>
-                  <p className="text-[13px] text-muted">
-                    Community examples inspire the guide. Your home's sources and the tested Taxis planners decide what can be installed.
-                  </p>
-                  <ul className="grid gap-3 sm:grid-cols-2">
-                    {GUIDE_IDEAS.map((idea) => (
-                      <li key={idea.title} className="rounded-lg border border-line p-4 text-[13px]">
-                        <h3 className="font-medium">{idea.title}</h3>
-                        <p className="mt-2 text-xs text-muted">{idea.text}</p>
-                        <p className="mt-2 text-xs">{idea.implementation}</p>
-                        <a className="mt-2 inline-block text-xs text-accent hover:underline" href={idea.source} target="_blank" rel="noreferrer">
-                          Read the community discussion
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              </>
-            )}
-          </Section>
+                  </section>
+                </>
+              )}
+            </Section>
+          </details>
         </>
       )}
     </Page>
@@ -432,6 +437,7 @@ function AreaGoals({ choice, onSave }: { choice: AreaGuideChoice | null; onSave:
         Room type
         <select
           aria-label="Room type"
+          disabled={saving}
           className={inputClass}
           value={draft?.profile ?? ""}
           onChange={(event) => {
@@ -454,6 +460,7 @@ function AreaGoals({ choice, onSave }: { choice: AreaGuideChoice | null; onSave:
             <label key={goal.key} className="flex items-start gap-2 text-[13px]">
               <input
                 type="checkbox"
+                disabled={saving}
                 className="mt-0.5 accent-[var(--accent)]"
                 checked={draft.goals.includes(goal.key)}
                 onChange={(event) =>

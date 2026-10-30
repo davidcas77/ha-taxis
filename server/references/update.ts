@@ -85,6 +85,10 @@ export async function updateReferences(io: UpdateIO, snap: Snapshot, renames: Re
     let stale = 0;
     try {
       const back = await readCurrent(io, item);
+      if (back === null) {
+        say(affected, `Not updated: ${label} was saved, but its config is no longer readable. Check it in Home Assistant.`);
+        continue;
+      }
       stale = rewrite(back, olds).count;
     } catch (e) {
       say(affected, `Not updated: ${label} was saved, but Taxis couldn't read it back to check it (${why(e)}). Check it in Home Assistant.`);
