@@ -23,6 +23,8 @@ import {
   type RecipeCell,
   type RecipeInstalled,
   type RecipeStatus,
+  unavailableRecipe,
+  unavailableRecipeMessage,
 } from "./recipes.ts";
 import type { Change, ChangeInput, Hierarchy } from "./types.ts";
 
@@ -146,6 +148,7 @@ function automationCell(
   const bp = blueprintForRecipe(recipe);
   const there = e.installed.automations[id] ?? null;
   const missing = [...parts.missing, ...parts.pause.missing];
+  if (unavailableRecipe(there)) missing.push(unavailableRecipeMessage);
 
   const reasons: string[] = [];
   if (there) {
@@ -329,6 +332,7 @@ function planGoodbye(e: Env): RecipeCell {
   const there = installed.scripts[GOODBYE_SCRIPT_ID] ?? null;
   const alias = "Goodbye (Taxis)";
   const missing: string[] = [];
+  if (unavailableRecipe(there)) missing.push(unavailableRecipeMessage);
   const notes: string[] = [];
 
   // The lights of the whole house: the house light group.

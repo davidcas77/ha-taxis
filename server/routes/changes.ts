@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { validateInput } from "../../shared/changes.ts";
 import type { ChangeInput, ChangesResponse } from "../../shared/types.ts";
 import type { AppContext } from "../context.ts";
+import { publicChange } from "../changes/store.ts";
 
 const BUSY = "Changes are being applied. Try again in a moment.";
 // The most edits one batch may hold: a bulk edit of a big home, not a bulk import.
@@ -16,7 +17,15 @@ export function changeRoutes(ctx: AppContext): Hono {
   const { reader, changes, history } = ctx;
   const app = new Hono();
 
-  const listResponse = (): ChangesResponse => ({ ok: true, changes: changes.list(), version: changes.version() });
+  // Capture the actual stored config on the server, not a client-provided baseline.
+  const configBaseline = async (input: ChangeInput): Promise<unknown> => {
+    if ((input.kind !== "automation" && input.kind !== "script") || input.fields?.button_map) return undefined;
+    if (!ctx.rest) throw new Error(ctx.notConfigured);
+    const id = String(input.kind === "automation" ? input.fields?.automation_id : input.fields?.script_id);
+    return ctx.rest.get(input.kind, id);
+  };
+
+  const listResponse = (): ChangesResponse => ({ ok: true, changes: changes.list().map(publicChange), version: changes.version() });
 
   app.get("/changes", (c) => c.json<ChangesResponse>(listResponse()));
 
@@ -29,7 +38,9 @@ export function changeRoutes(ctx: AppContext): Hono {
       const { read } = await reader.read(false);
       // Apply may have started while Home Assistant was being read.
       if (reader.isApplying()) return c.json<ChangesResponse>({ ok: false, error: BUSY }, 409);
-      const refused = changes.add(input!, read.live);
+      const baseline = await configBaseline(input!);
+      if (reader.isApplying()) return c.json<ChangesResponse>({ ok: false, error: BUSY }, 409);
+      const refused = changes.add(input!, read.live, baseline);
       if (refused) return c.json<ChangesResponse>({ ok: false, error: refused }, 409);
       return c.json<ChangesResponse>(listResponse());
     } catch (e) {
@@ -57,7 +68,13 @@ export function changeRoutes(ctx: AppContext): Hono {
       const { read } = await reader.read(false);
       // Apply may have started while Home Assistant was being read.
       if (reader.isApplying()) return c.json<ChangesResponse>({ ok: false, error: BUSY }, 409);
-      const refused = changes.addMany(inputs as ChangeInput[], read.live);
+      const configs = new Map<number, unknown>();
+      for (const [index, input] of (inputs as ChangeInput[]).entries()) {
+        const baseline = await configBaseline(input);
+        if (baseline !== undefined) configs.set(index, baseline);
+      }
+      if (reader.isApplying()) return c.json<ChangesResponse>({ ok: false, error: BUSY }, 409);
+      const refused = changes.addMany(inputs as ChangeInput[], read.live, configs);
       if (refused) return c.json<ChangesResponse>({ ok: false, error: `${where(refused.index)}${refused.error} Nothing was added.` }, 409);
       return c.json<ChangesResponse>(listResponse());
     } catch (e) {
@@ -79,7 +96,7 @@ export function changeRoutes(ctx: AppContext): Hono {
   });
 
   // What past Applies did, and what is left for the user to look at.
-  app.get("/history", (c) => c.json({ ok: true, runs: history.runs() }));
+  app.get("/history", (c) => c.json({ ok: true, runs: history.runs().map((run) => ({ ...run, changes: run.changes?.map(publicChange) })) }));
   app.get("/repairs", (c) => c.json({ ok: true, repairs: history.repairs() }));
   app.post("/repairs/:id/acknowledge", (c) => {
     const id = Number(c.req.param("id"));

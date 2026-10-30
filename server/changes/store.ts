@@ -1,5 +1,6 @@
 import { mapInputEntities } from "../../shared/blueprints.ts";
 import type { Outcome, Retarget } from "./apply.ts";
+import { rewrite } from "../references/rewrite.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -32,6 +33,12 @@ const toChange = (r: Row): Change => ({
 });
 
 export type ChangeStore = ReturnType<typeof changeStore>;
+
+// Internal config baselines are needed for conflict checks, but are not UI data.
+export function publicChange(change: Change): Change {
+  const { configSnapshot: _configSnapshot, ...before } = change.before;
+  return { ...change, before };
+}
 
 // Puts `real` wherever an id field of `after` holds `temp`.
 function swapRef(after: Record<string, unknown>, temp: string, real: string): Record<string, unknown> {
@@ -103,6 +110,7 @@ export function changeStore(db: DatabaseSync) {
           if (c.kind === "entity" || (c.kind === "helper" && c.op === "update")) target = current(target);
           const remap = (fields: Record<string, unknown>) => {
             const next = { ...fields };
+            if ("configSnapshot" in next && outcome.renamed.size) next.configSnapshot = rewrite(next.configSnapshot, outcome.renamed).value;
             for (const key of ["temperature_entity_id", "humidity_entity_id"]) if (typeof next[key] === "string") next[key] = current(next[key]);
             if (c.kind === "helper" && Array.isArray(next.entities)) next.entities = next.entities.map((e) => (typeof e === "string" ? current(e) : e));
             if ((c.kind === "automation" || c.kind === "script") && next.use_blueprint && typeof next.use_blueprint === "object") {
@@ -125,8 +133,12 @@ export function changeStore(db: DatabaseSync) {
     },
 
     /** Folds an edit into the list. Returns an error message, or null when stored. */
-    add(input: ChangeInput, h: Hierarchy): string | null {
+    add(input: ChangeInput, h: Hierarchy, configBefore?: unknown): string | null {
       const plan = planMerge(list(), input, h);
+      if (configBefore !== undefined && (input.kind === "automation" || input.kind === "script") && !input.fields?.button_map) {
+        if (plan.action === "insert") plan.change.before = { configSnapshot: configBefore };
+        else if (plan.action === "replace") plan.before = { configSnapshot: configBefore };
+      }
       const now = new Date().toISOString();
       const insertChange = (c: Omit<Change, "id" | "createdAt">) => {
         const r = insert.run(c.kind, c.op, c.targetId, c.scope, JSON.stringify(c.before), JSON.stringify(c.after), now);
@@ -161,11 +173,11 @@ export function changeStore(db: DatabaseSync) {
      * if they had been added one by one. Returns null when all are stored, or
      * the position (0-based) and message of the one that was refused.
      */
-    addMany(inputs: ChangeInput[], h: Hierarchy): { index: number; error: string } | null {
+    addMany(inputs: ChangeInput[], h: Hierarchy, configs?: Map<number, unknown>): { index: number; error: string } | null {
       db.exec("BEGIN IMMEDIATE");
       try {
         for (const [index, input] of inputs.entries()) {
-          const refused = this.add(input, h);
+          const refused = this.add(input, h, configs?.get(index));
           if (refused !== null) {
             db.exec("ROLLBACK");
             return { index, error: refused };

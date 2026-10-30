@@ -9,6 +9,7 @@ import {
   mapInputEntities,
   type RecipeKey,
 } from "../../shared/blueprints.ts";
+import { isDeepStrictEqual } from "node:util";
 import { sameValue } from "../../shared/changes.ts";
 import { parseDuration, type InstalledAutomation, type RecipeInstalled } from "../../shared/recipes.ts";
 import type { Change } from "../../shared/types.ts";
@@ -16,6 +17,7 @@ import { READS, type FreshRead } from "../ha/registry.ts";
 import type { ConfigKind, HaConfig, RestApi } from "../ha/rest.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
 import { searchRelated } from "../references/find.ts";
+import { rewrite } from "../references/rewrite.ts";
 import { mapLimit } from "../references/snapshot.ts";
 import { applyButtonChanges } from "../buttons/apply.ts";
 import type { Outcome } from "./apply.ts";
@@ -54,6 +56,7 @@ export type RecipeIO = {
   // From the registry step of the same Apply: entity ids renamed (old to new),
   // which an automation's inputs may still carry.
   renamed?: ReadonlyMap<string, string>;
+  realIds?: ReadonlyMap<string, string>;
   // Waiting for Home Assistant to catch up; tests make it instant.
   sleep?: (ms: number) => Promise<void>;
 };
@@ -240,7 +243,11 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
       outcome.set(c.id, fail(c, "Taxis has no blueprint at that path any more."));
       continue;
     }
-    if (kind === "automation" && !isHouseRecipe(c.after.recipe) && !fresh.areas.some((a) => a.area_id === c.after.area_id)) {
+    if (
+      kind === "automation" &&
+      !isHouseRecipe(c.after.recipe) &&
+      !fresh.areas.some((a) => a.area_id === (io.realIds?.get(String(c.after.area_id)) ?? c.after.area_id))
+    ) {
       outcome.set(c.id, fail(c, "The area it is for is no longer in Home Assistant."));
       continue;
     }
@@ -259,9 +266,24 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
 
     const config = configOf(c, input);
     try {
+      // This fresh read catches prior edits; HA offers no atomic compare-and-swap
+      // here, so another edit between this read and the POST can still race it.
       const existing = await io.rest.get(restKind, id);
       if (sameConfig(existing, config)) {
         sent.set(c.id, config); // Matching storage still needs runtime verification, including retries.
+        continue;
+      }
+      if (!("configSnapshot" in c.before)) {
+        outcome.set(c.id, fail(c, "This change has no saved configuration baseline. Remove it and plan again."));
+        continue;
+      }
+      const baseline = io.renamed?.size ? rewrite(c.before.configSnapshot, io.renamed).value : c.before.configSnapshot;
+      if (existing === null && fresh.states.some((s) => stateOf(s, id))) {
+        outcome.set(c.id, fail(c, "Home Assistant already lists this automation or script, but its config is not editable. Check it before installing."));
+        continue;
+      }
+      if (!isDeepStrictEqual(existing, baseline)) {
+        outcome.set(c.id, fail(c, "The configuration changed in Home Assistant after this was planned. Remove this change and plan again."));
         continue;
       }
       await io.rest.post(restKind, id, config);
@@ -346,14 +368,15 @@ export async function readInstalled(
     if (!/^[A-Za-z0-9_-]{1,255}$/.test(id)) return;
     const config = await io.rest.get("automation", id);
     if (!config) return;
-    out.automations[id] = installedOf(config);
+    out.automations[id] = { ...installedOf(config), runtimeState: s.state };
   });
 
   // The scripts Taxis makes (announce, goodbye), when Home Assistant lists one under its id.
   for (const scriptId of SCRIPT_IDS) {
-    if (!raw.states.some((s) => s.entity_id === `script.${scriptId}`)) continue;
+    const state = raw.states.find((s) => s.entity_id === `script.${scriptId}`);
+    if (!state) continue;
     const config = await io.rest.get("script", scriptId);
-    if (config) out.scripts[scriptId] = installedOf(config);
+    if (config) out.scripts[scriptId] = { ...installedOf(config), runtimeState: state.state };
   }
 
   // Other automations that already use an area's light group or a thermostat:

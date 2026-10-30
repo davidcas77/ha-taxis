@@ -31,13 +31,22 @@ function setup(home: MockHome = house(), inventory: InventorySettings = EMPTY_IN
   const store = changeStore(db);
   const fake = fakeHa(home);
   const live = () => buildHierarchy(structuredClone(fake.home), "now");
-  const installed = () => readInstalled({ ha: fake.ha, rest: fake.api }, fake.home as RawRegistry, canonicalLightGroups(live(), DEFAULT_NAMING), areaThermostats(live()));
+  const installed = () =>
+    readInstalled({ ha: fake.ha, rest: fake.api }, fake.home as RawRegistry, canonicalLightGroups(live(), DEFAULT_NAMING), areaThermostats(live()));
   const plan = async (params: ParameterSettings = EMPTY_PARAMETERS) => planRecipes(live(), inventory, DEFAULT_NAMING, params, await installed(), store.list());
-  const announce = async (params: ParameterSettings = EMPTY_PARAMETERS) => planAnnounce(live(), inventory, DEFAULT_NAMING, params, await installed(), store.list());
+  const announce = async (params: ParameterSettings = EMPTY_PARAMETERS) =>
+    planAnnounce(live(), inventory, DEFAULT_NAMING, params, await installed(), store.list());
   const add = (inputs: ChangeInput[]) => {
     for (const input of inputs) {
       expect(validateInput(input), JSON.stringify(input).slice(0, 100)).toBeNull();
-      expect(store.add(input, live()), JSON.stringify(input).slice(0, 100)).toBeNull();
+      const id = String(input.fields?.automation_id ?? input.fields?.script_id ?? "");
+      const baseline =
+        input.kind === "automation"
+          ? structuredClone(fake.home.automations[id] ?? null)
+          : input.kind === "script"
+            ? structuredClone(fake.home.scripts[id] ?? null)
+            : undefined;
+      expect(store.add(input, live(), baseline), JSON.stringify(input).slice(0, 100)).toBeNull();
     }
   };
   const apply = (changes: Change[] = store.list(), extra: Partial<Parameters<typeof applyAll>[1]> = {}) =>
@@ -50,7 +59,10 @@ function setup(home: MockHome = house(), inventory: InventorySettings = EMPTY_IN
 }
 
 const ok = (results: { ok: boolean; message: string }[]) => {
-  expect(results.map((r) => r.ok), results.map((r) => r.message).join(" | ")).toEqual(results.map(() => true));
+  expect(
+    results.map((r) => r.ok),
+    results.map((r) => r.message).join(" | "),
+  ).toEqual(results.map(() => true));
 };
 
 describe("installing the bathroom fan", () => {
@@ -81,7 +93,10 @@ describe("installing the bathroom fan", () => {
       { name: "Bathroom humidity rate", source: "sensor.bathroom_humidity", round: 3, unit_time: "s", time_window: { hours: 0, minutes: 2, seconds: 0 } },
     ]);
     expect(t.entity("sensor.bathroom_humidity_rate")).toMatchObject({ platform: "derivative", area_id: "bathroom" });
-    expect(t.fake.home.configEntries.find((e) => e.entry_id === t.entity("sensor.bathroom_humidity_rate")!.config_entry_id)).toMatchObject({ domain: "derivative", entities: ["sensor.bathroom_humidity"] });
+    expect(t.fake.home.configEntries.find((e) => e.entry_id === t.entity("sensor.bathroom_humidity_rate")!.config_entry_id)).toMatchObject({
+      domain: "derivative",
+      entities: ["sensor.bathroom_humidity"],
+    });
     expect(t.state("sensor.bathroom_humidity_rate")!.attributes).toMatchObject({ unit_of_measurement: "%/s" });
     // The blueprint is the text Taxis holds, written as an automation blueprint.
     expect(t.fake.home.blueprints[blueprintForRecipe("bathroom_fan").path]).toBe(blueprintForRecipe("bathroom_fan").yaml);
@@ -166,7 +181,12 @@ describe("installing exterior lights", () => {
     const inv = setAreaType(EMPTY_INVENTORY, "garden", "exterior");
     const t = setup(house(), inv);
     t.add(helperChangeInputs(planHelpers(t.live(), inv, DEFAULT_NAMING).find((r) => r.canonicalId === "light.garden_all")!));
-    const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "type", id: "exterior" }, "exterior_sunset_offset", -30), { level: "house" }, "exterior_clock", 90);
+    const p = setParameter(
+      setParameter(EMPTY_PARAMETERS, { level: "type", id: "exterior" }, "exterior_sunset_offset", -30),
+      { level: "house" },
+      "exterior_clock",
+      90,
+    );
     const c = t.cell(await t.plan(p), "exterior_lights", "garden");
     expect(c.status).toBe("ready");
     expect(c.notes).toEqual([]);
@@ -193,14 +213,22 @@ describe("installing exterior lights", () => {
     t.done();
     expect(t.cell(await t.plan(p), "exterior_lights", "garden").status).toBe("installed");
     // An area that isn't exterior is not offered it.
-    expect(t.cell(await t.plan(p), "exterior_lights", "kitchen")).toMatchObject({ status: "missing", missing: expect.arrayContaining(["An exterior area (Capabilities, Type)"]) });
+    expect(t.cell(await t.plan(p), "exterior_lights", "kitchen")).toMatchObject({
+      status: "missing",
+      missing: expect.arrayContaining(["An exterior area (Capabilities, Type)"]),
+    });
   });
 });
 
 describe("installing the recipes that notify", () => {
   it("Left open: a notify service is a name, not an entity, so nothing looks for it in Home Assistant", async () => {
     const t = setup();
-    const p = setParameter(setParameter(EMPTY_PARAMETERS, { level: "house" }, "notify_targets", ["notify.mobile_app_phone", "notify.family"]), { level: "house" }, "left_open_repeat", 15);
+    const p = setParameter(
+      setParameter(EMPTY_PARAMETERS, { level: "house" }, "notify_targets", ["notify.mobile_app_phone", "notify.family"]),
+      { level: "house" },
+      "left_open_repeat",
+      15,
+    );
     const c = t.cell(await t.plan(p), "left_open", "laundry");
     expect(c.status).toBe("ready");
     t.add(recipeChangeInputs([c]));
@@ -228,21 +256,35 @@ describe("installing the recipes that notify", () => {
     expect(again.reasons).toEqual(["Notify services: notify.mobile_app_phone, notify.family → notify.family"]);
     t.add(recipeChangeInputs([again]));
     ok((await t.apply()).results);
-    expect((t.fake.home.automations.taxis_left_open_laundry.use_blueprint as { input: { notify_targets: string[] } }).input.notify_targets).toEqual(["notify.family"]);
+    expect((t.fake.home.automations.taxis_left_open_laundry.use_blueprint as { input: { notify_targets: string[] } }).input.notify_targets).toEqual([
+      "notify.family",
+    ]);
   });
 
   it("Appliance done: one automation for the appliances marked on the Capabilities tab", async () => {
     const inv = setAppliance(setAppliance(EMPTY_INVENTORY, "sensor.washer_power", true), "sensor.dryer_power", true);
     const t = setup(house(), inv);
     expect(t.cell(await t.plan(), "appliance_done", "laundry").status).toBe("ready");
-    const c = t.cell(await t.plan(setParameter(EMPTY_PARAMETERS, { level: "house" }, "notify_targets", ["notify.mobile_app_phone"])), "appliance_done", "laundry");
+    const c = t.cell(
+      await t.plan(setParameter(EMPTY_PARAMETERS, { level: "house" }, "notify_targets", ["notify.mobile_app_phone"])),
+      "appliance_done",
+      "laundry",
+    );
     t.add(recipeChangeInputs([c]));
     ok((await t.apply()).results);
     expect(t.fake.home.automations.taxis_appliance_done_laundry).toMatchObject({
       alias: "Laundry – Appliance done (Taxis)",
       use_blueprint: {
         path: "taxis/appliance_done.yaml",
-        input: { power_entities: ["sensor.dryer_power", "sensor.washer_power"], run_watts: 10, run_minutes: 2, idle_watts: 5, idle_minutes: 3, notify_targets: ["notify.mobile_app_phone"], area_name: "Laundry" },
+        input: {
+          power_entities: ["sensor.dryer_power", "sensor.washer_power"],
+          run_watts: 10,
+          run_minutes: 2,
+          idle_watts: 5,
+          idle_minutes: 3,
+          notify_targets: ["notify.mobile_app_phone"],
+          area_name: "Laundry",
+        },
       },
     });
     // The pause switch the automation names was made first.
@@ -311,7 +353,10 @@ describe("installing announce", () => {
     expect(c).toMatchObject({ status: "out-of-date", reasons: ["Kitchen: speakers or bed sensors changed"] });
     t.add(recipeChangeInputs([c]));
     ok((await t.apply()).results);
-    expect((t.fake.home.scripts.taxis_announce.use_blueprint as { input: { areas: { speakers: string[] }[] } }).input.areas[0].speakers).toEqual(["media_player.kitchen_hub", "media_player.kitchen_speaker"]);
+    expect((t.fake.home.scripts.taxis_announce.use_blueprint as { input: { areas: { speakers: string[] }[] } }).input.areas[0].speakers).toEqual([
+      "media_player.kitchen_hub",
+      "media_player.kitchen_speaker",
+    ]);
   });
 
   it("follows a speaker renamed in the same Apply, inside the list of areas", async () => {
@@ -322,7 +367,9 @@ describe("installing announce", () => {
     const { results } = await t.apply();
     ok(results);
     expect(t.entity("media_player.kitchen_homepod")).toBeDefined();
-    expect((t.fake.home.scripts.taxis_announce.use_blueprint as { input: { areas: { speakers: string[] }[] } }).input.areas[0].speakers).toEqual(["media_player.kitchen_homepod"]);
+    expect((t.fake.home.scripts.taxis_announce.use_blueprint as { input: { areas: { speakers: string[] }[] } }).input.areas[0].speakers).toEqual([
+      "media_player.kitchen_homepod",
+    ]);
   });
 
   it("doesn't write a script whose speaker is gone, or whose blueprint couldn't be written", async () => {
@@ -332,14 +379,17 @@ describe("installing announce", () => {
     t.fake.home.entities = t.fake.home.entities.filter((e) => e.entity_id !== "media_player.kitchen_speaker");
     t.fake.home.states = t.fake.home.states.filter((s) => s.entity_id !== "media_player.kitchen_speaker");
     const { results } = await t.apply();
-    expect(results[1]).toMatchObject({ ok: false, message: "“media_player.kitchen_speaker” isn't in Home Assistant, so the script would not work. Apply again once it is there." });
+    expect(results[1]).toMatchObject({
+      ok: false,
+      message: "“media_player.kitchen_speaker” isn't in Home Assistant, so the script would not work. Apply again once it is there.",
+    });
     expect(t.fake.rest.filter((x) => x.method === "POST")).toEqual([]);
 
     const u = setup();
     u.add(recipeChangeInputs([await u.announce(tts)]));
     const ha = {
       command: u.fake.ha.command,
-      write: async <T,>(type: string, payload: Record<string, unknown>): Promise<T> => {
+      write: async <T>(type: string, payload: Record<string, unknown>): Promise<T> => {
         if (type === "blueprint/save") throw new Error("disk full");
         return u.fake.ha.write<T>(type, payload);
       },
@@ -358,6 +408,11 @@ describe("installing announce", () => {
     const installed = await t.installed();
     expect(installed.blueprints[ANNOUNCE_PATH]).toBe(blueprintForRecipe("announce").version);
     // Reading asked for each domain's list, and wrote nothing.
-    expect(t.fake.ws.filter((x) => x.type === "blueprint/list").slice(-2).map((x) => x.payload)).toEqual([{ domain: "automation" }, { domain: "script" }]);
+    expect(
+      t.fake.ws
+        .filter((x) => x.type === "blueprint/list")
+        .slice(-2)
+        .map((x) => x.payload),
+    ).toEqual([{ domain: "automation" }, { domain: "script" }]);
   });
 });

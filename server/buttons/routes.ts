@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { checkButtonAction } from "../../shared/button-actions.ts";
 import { buttonRecord, validButtonAssignment } from "../../shared/buttons.ts";
 import type { Hierarchy } from "../../shared/types.ts";
-import type { ChangeStore } from "../changes/store.ts";
+import { publicChange, type ChangeStore } from "../changes/store.ts";
 import type { AiService } from "../ai/service.ts";
 import { AiError } from "../ai/types.ts";
 import { buttonHash, type ButtonRead } from "./discovery.ts";
@@ -52,7 +52,7 @@ export function buttonRoutes(deps: {
       const input = planButtonAssignment(r.inventory, request, deps.changes.list(), usable);
       const error = deps.changes.add(input, r.h);
       if (error) throw new Error(error);
-      return c.json({ ok: true, changes: deps.changes.list(), version: deps.changes.version() });
+      return c.json({ ok: true, changes: deps.changes.list().map(publicChange), version: deps.changes.version() });
     } catch (e) {
       return c.json({ ok: false, error: deps.redact(e instanceof Error ? e.message : "Could not add the button mapping to changes.") }, 409);
     }

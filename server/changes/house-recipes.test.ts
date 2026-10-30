@@ -41,7 +41,14 @@ function setup(home: MockHome = house()) {
   const add = (inputs: ChangeInput[]) => {
     for (const input of inputs) {
       expect(validateInput(input), JSON.stringify(input).slice(0, 100)).toBeNull();
-      expect(store.add(input, live()), JSON.stringify(input).slice(0, 100)).toBeNull();
+      const id = String(input.fields?.automation_id ?? input.fields?.script_id ?? "");
+      const baseline =
+        input.kind === "automation"
+          ? structuredClone(fake.home.automations[id] ?? null)
+          : input.kind === "script"
+            ? structuredClone(fake.home.scripts[id] ?? null)
+            : undefined;
+      expect(store.add(input, live(), baseline), JSON.stringify(input).slice(0, 100)).toBeNull();
     }
   };
   const apply = (changes: Change[] = store.list()) => applyAll(changes, { ha: fake.ha, rest: fake.api, readFresh: fake.readFresh, sleep: async () => {} });
@@ -65,6 +72,19 @@ const noServiceCalls = (t: ReturnType<typeof setup>) => {
 };
 
 describe("installing low batteries", () => {
+  it("reports an unavailable house automation instead of treating it as installed", async () => {
+    const t = setup();
+    t.add(recipeChangeInputs([of(await t.houseCells(), "battery_low")]));
+    ok((await t.apply()).results);
+    t.done();
+    expect(of(await t.houseCells(), "battery_low").status).toBe("installed");
+    const state = t.fake.home.states.find((s) => s.attributes?.id === "taxis_battery_low_house")!;
+    state.state = "unavailable";
+    const cell = of(await t.houseCells(), "battery_low");
+    expect(cell.status).toBe("missing");
+    expect(cell.missing).toContainEqual(expect.stringContaining("unavailable"));
+    expect(cell.inputs).toEqual([]);
+  });
   it("writes the blueprint, the house pause switch with no area, and an automation with no area", async () => {
     const t = setup();
     const c = of(await t.houseCells(), "battery_low");
@@ -175,6 +195,11 @@ describe("installing goodbye", () => {
     t.done();
     expect(of(await t.houseCells(), "goodbye")).toMatchObject({ status: "installed", inputs: [] });
     expect((await t.installed()).scripts.taxis_goodbye).toMatchObject({ alias: "Goodbye (Taxis)", path: GOODBYE_PATH });
+    t.state("script.taxis_goodbye")!.state = "unavailable";
+    const unavailable = of(await t.houseCells(), "goodbye");
+    expect(unavailable.status).toBe("missing");
+    expect(unavailable.missing).toContainEqual(expect.stringContaining("unavailable"));
+    expect(unavailable.inputs).toEqual([]);
   });
 });
 

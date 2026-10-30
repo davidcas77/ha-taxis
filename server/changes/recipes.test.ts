@@ -41,7 +41,14 @@ function setup(home = buildMockRegistry()) {
   const add = (inputs: ChangeInput[]) => {
     for (const input of inputs) {
       expect(validateInput(input), JSON.stringify(input).slice(0, 100)).toBeNull();
-      expect(store.add(input, live()), JSON.stringify(input).slice(0, 100)).toBeNull();
+      const id = String(input.fields?.automation_id ?? input.fields?.script_id ?? "");
+      const baseline =
+        input.kind === "automation"
+          ? structuredClone(fake.home.automations[id] ?? null)
+          : input.kind === "script"
+            ? structuredClone(fake.home.scripts[id] ?? null)
+            : undefined;
+      expect(store.add(input, live(), baseline), JSON.stringify(input).slice(0, 100)).toBeNull();
     }
   };
   const apply = (changes: Change[] = store.list(), extra: Partial<Parameters<typeof applyAll>[1]> = {}) =>
@@ -57,6 +64,19 @@ function setup(home = buildMockRegistry()) {
 const AUTOMATION_PATH = (id: string) => `POST /config/automation/config/${id}`;
 
 describe("installing occupancy", () => {
+  it("reports an installed automation that becomes unavailable as needing attention", async () => {
+    const t = setup();
+    t.add(recipeChangeInputs([t.cell(await t.plan(), "occupancy", "study")]));
+    expect((await t.apply()).results.every((r) => r.ok)).toBe(true);
+    t.store.clear();
+    expect(t.cell(await t.plan(), "occupancy", "study").status).toBe("installed");
+    const state = t.fake.home.states.find((s) => s.attributes?.id === "taxis_occupancy_study")!;
+    state.state = "unavailable";
+    const cell = t.cell(await t.plan(), "occupancy", "study");
+    expect(cell.status).toBe("missing");
+    expect(cell.missing).toContainEqual(expect.stringContaining("unavailable"));
+    expect(cell.inputs).toEqual([]);
+  });
   it("writes the blueprint, then the helpers, then the automation, and Home Assistant ends up as planned", async () => {
     const t = setup();
     const c = t.cell(await t.plan(), "occupancy", "study");

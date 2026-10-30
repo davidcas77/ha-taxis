@@ -31,6 +31,7 @@ import { api } from "./api.ts";
 import { useHealth } from "./health.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { Badge, Button, Card, Section, type Tone } from "./ui.tsx";
+import { StepInstruction } from "./guide-instructions.tsx";
 
 // "Your path": the checklist at the top of the Guide. The page gathers what is
 // already loaded (the house, the saved settings, the recipe status, the button
@@ -139,7 +140,7 @@ export function GuidePath({
     <Section
       id="guide-path"
       title="Your path"
-      description="The steps, in the order that works, to a complete and well-organised home. Each one is checked against what Taxis has read from Home Assistant."
+      description="Work through these checks in order. They reflect what Taxis has read, and help you choose what to review; they do not prove every room or automation has been tested."
     >
       <Card>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -162,10 +163,10 @@ export function GuidePath({
       {path.complete ? (
         <Card tone="accent">
           <p className="flex items-center gap-2 text-sm font-semibold">
-            <CheckCircle2 className="size-5 text-on" aria-hidden /> Every step is done.
+            <CheckCircle2 className="size-5 text-on" aria-hidden /> The current checks are complete.
           </p>
           <p className="mt-1 text-[13px] text-muted">
-            The home is organised. Come back after changes in Home Assistant: new devices show up here as steps to do again.
+            These checks are complete. Choose the recipes that suit your home, test the result, and revisit the checks after changes in Home Assistant.
           </p>
         </Card>
       ) : !path.next ? (
@@ -205,31 +206,49 @@ export function GuidePath({
                   {step.action}
                 </Button>
               </div>
+              <StepInstruction step={step.key} h={h} plan={plan} go={go} />
             </li>
           );
         })}
       </ol>
 
-      <h3 className="mt-2 text-sm font-semibold">Safety, the house and covers</h3>
-      <p className="-mt-1 text-xs text-muted">
-        Recipes that look after the house. Each is listed only when it applies, and done once its recipes are installed or waiting in Changes.
-      </p>
-      {goals.state === "loading" ? (
-        <p className="text-[13px] text-muted">Reading…</p>
-      ) : goals.state === "error" ? (
-        <div className="flex flex-wrap items-center gap-2 text-[13px] text-danger">
-          <span>Couldn&apos;t read the recipes: {goals.error}</span>
-          <Button onClick={retryRecipes}>
-            <RefreshCw className="size-3.5" aria-hidden /> Retry
-          </Button>
+      <details className="rounded-lg border border-line bg-surface p-4">
+        <summary className="cursor-pointer text-sm font-semibold">More house and safety goals</summary>
+        <p className="-mt-1 text-xs text-muted">
+          Recipes that look after the house. Each is listed only when it applies, and done once its recipes are installed or waiting in Changes.
+        </p>
+        {goals.state === "loading" ? (
+          <p className="text-[13px] text-muted">Reading…</p>
+        ) : goals.state === "error" ? (
+          <div className="flex flex-wrap items-center gap-2 text-[13px] text-danger">
+            <span>Couldn&apos;t read the recipes: {goals.error}</span>
+            <Button onClick={retryRecipes}>
+              <RefreshCw className="size-3.5" aria-hidden /> Retry
+            </Button>
+          </div>
+        ) : (
+          <ul aria-label="Goals" className="flex flex-col gap-2">
+            {goals.goals.map((goal) => (
+              <GoalRow key={goal.key} goal={goal} open={() => go(goal.target)} />
+            ))}
+          </ul>
+        )}
+      </details>
+      <Card>
+        <h3 className="text-sm font-semibold">Review, build and verify</h3>
+        <p className="mt-1 text-[13px] text-muted">
+          Open Changes to inspect the proposed objects and dependencies. Apply through the existing review and backup flow, then check Health and test the
+          result in Home Assistant. New automations can be active when installed.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button onClick={() => go({ page: "changes" })}>Review Changes</Button>
+          <Button onClick={() => go({ page: "health" })}>Open Health</Button>
         </div>
-      ) : (
-        <ul aria-label="Goals" className="flex flex-col gap-2">
-          {goals.goals.map((goal) => (
-            <GoalRow key={goal.key} goal={goal} open={() => go(goal.target)} />
-          ))}
-        </ul>
-      )}
+        <p className="mt-3 text-[13px] text-muted">Buttons and remotes are a later phase, after the rooms and recipes work.</p>
+        <Button className="mt-2" onClick={() => go({ page: "automations", tab: "buttons", controlId: null })}>
+          Open Buttons
+        </Button>
+      </Card>
     </Section>
   );
 }

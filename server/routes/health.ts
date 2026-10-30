@@ -4,6 +4,7 @@ import { runHealth, type HealthReportResponse } from "../../shared/health.ts";
 import type { HealthResponse } from "../../shared/types.ts";
 import type { AppContext } from "../context.ts";
 import { healthSnapshot } from "../health/assemble.ts";
+import { publicChange } from "../changes/store.ts";
 
 export function healthRoutes(ctx: AppContext): Hono {
   const { reader, settings, changes, ha, rest, target, mode, version } = ctx;
@@ -38,7 +39,7 @@ export function healthRoutes(ctx: AppContext): Hono {
         inventory: settings.inventory(),
         naming: settings.naming(),
         parameters: settings.parameters(),
-        changes: changes.list(),
+        changes: changes.list().map(publicChange),
         now: ctx.clock(),
         options: { unavailableHours: num("unavailableHours"), staleDays: num("staleDays") },
       });

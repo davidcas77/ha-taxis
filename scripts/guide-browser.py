@@ -100,6 +100,8 @@ class GuideRegression(unittest.TestCase):
 
     def open(self, area=False):
         self.page.goto(BASE + ("/#guide/living_room" if area else "/#guide"), wait_until="networkidle")
+        if not area:
+            self.page.get_by_text("Room-by-room goals and testing", exact=True).click()
         # The Guide opens with the path to a complete home; the room-by-room guide is below it.
         self.page.get_by_role("heading", name="Choose this area's purpose" if area else "Room by room", exact=True).wait_for()
         if area:
@@ -115,6 +117,24 @@ class GuideRegression(unittest.TestCase):
         self.assertEqual(self.puts, [])
         self.assertEqual(self.posts, [])
         self.assertGreater(self.page.get_by_role("region", name="Automation ideas", exact=True).get_by_role("link").count(), 1)
+
+    def test_seven_setup_instructions_and_live_plans_are_connected(self):
+        self.open()
+        self.page.get_by_role("heading", name="How Taxis builds your home", exact=True).wait_for()
+        steps = self.page.get_by_role("list", name="Steps", exact=True)
+        self.assertEqual(steps.get_by_role("listitem").count(), 7)
+        instructions = steps.get_by_text("What to do and why", exact=True)
+        self.assertEqual(instructions.count(), 7)
+        for item in instructions.all():
+            item.click()
+        self.page.get_by_text("Equipment by area", exact=True).click()
+        self.assertIn("No counted motion or presence sensor", steps.inner_text())
+        self.page.get_by_text("Current helper plan by area, floor and house", exact=True).click()
+        self.assertIn("light.living_all", steps.inner_text())
+        self.assertIn("Review, build and verify", self.page.locator("body").inner_text())
+        self.assertIn("Buttons and remotes are a later phase", self.page.locator("body").inner_text())
+        self.assertEqual(self.puts, [])
+        self.assertEqual(self.posts, [])
 
     def test_room_purpose_and_chosen_goals_save_reload_and_preserve_other_areas(self):
         self.prefs["areas"]["kitchen"] = {"profile": "kitchen", "goals": ["appliances"]}
