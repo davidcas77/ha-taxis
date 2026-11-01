@@ -580,7 +580,7 @@ function HelpersOverview({
                 </code>
                 <span className={`mt-1 block ${tone}`}>{label}</span>
                 {!exists && (
-                  <span className="mt-1 block text-muted">{key === "media" ? "Needs at least two counted media players." : "No counted sources."}</span>
+                  <span className="mt-1 block text-muted">{key === "media" ? "Needs at least two included media players." : "No included sources."}</span>
                 )}
               </>
             )}

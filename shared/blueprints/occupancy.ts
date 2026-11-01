@@ -22,7 +22,7 @@ const YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Keeps an area occupied with a hold timer. A sensor that starts occupancy turning on starts the timer. While the timer runs, every change of a sensor starts it again, and a sensor that only holds occupancy turning on keeps it running but never starts it. When the timer runs out and a sensor is still on, it starts again. The timer is as long as the sleep hold timeout while a bed sensor is on, as the extended hold timeout once the area has been occupied for the extended time (read from when the occupied sensor last changed), and as the hold timeout otherwise. A humidity rate sensor can hold the area too: while the timer runs, a rate at or above the humidity rise that holds (for instance a shower) starts the timer again, but never starts it. Sensors going unavailable or unknown are ignored. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 4."
+  description: "Keeps an area occupied with a hold timer. A sensor that starts occupancy turning on starts the timer. While the timer runs, every change of a sensor starts it again, and a sensor that only holds occupancy turning on keeps it running but never starts it. When the timer runs out and a sensor is still on, it starts again. The timer is as long as the sleep hold timeout while a bed sensor is on, as the extended hold timeout once the area has been occupied for the extended time (read from when the occupied sensor last changed), and as the hold timeout otherwise. A humidity rate sensor can hold the area too: while the timer runs, a rate at or above the humidity rise that holds (for instance a shower) starts the timer again, but never starts it. Sensors going unavailable or unknown are ignored. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. TV interaction can start or hold occupancy using the hold timeout; changes may also be made by automations. Taxis blueprint version 5."
   input:
     starts_entities:
       name: Sensors that start occupancy
@@ -40,6 +40,24 @@ const YAML = `blueprint:
         entity:
           filter:
             - domain: binary_sensor
+          multiple: true
+    tv_starts_entities:
+      name: TVs that start occupancy
+      description: Volume, mute or source changes while the TV is active start the hold timer. Automated changes can also count.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: media_player
+          multiple: true
+    tv_holds_entities:
+      name: TVs that only hold occupancy
+      description: The same TV changes restart an already running timer, but never start it.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: media_player
           multiple: true
     bed_entities:
       name: Bed presence sensors
@@ -169,6 +187,12 @@ triggers:
     entity_id: !input holds_entities
     from: "on"
     to: "off"
+  - trigger: state
+    id: tv_start
+    entity_id: !input tv_starts_entities
+  - trigger: state
+    id: tv_hold
+    entity_id: !input tv_holds_entities
   # Any change of the humidity rate: the conditions below let it through only
   # while the timer runs and the rate is high enough.
   - trigger: state
@@ -199,6 +223,21 @@ actions:
           - condition: and
             conditions:
               - condition: trigger
+                id: tv_start
+              - condition: template
+                value_template: "{% set old = trigger.from_state %}{% set new = trigger.to_state %}{% if old is not none and new is not none and old.state in ['on', 'playing', 'paused', 'idle'] and new.state in ['on', 'playing', 'paused', 'idle'] %}{% set a = old.attributes %}{% set b = new.attributes %}{{ (a.get('volume_level') is number and a.get('volume_level') is not boolean and b.get('volume_level') is number and b.get('volume_level') is not boolean and a.get('volume_level') != b.get('volume_level')) or (a.get('is_volume_muted') is boolean and b.get('is_volume_muted') is boolean and a.get('is_volume_muted') != b.get('is_volume_muted')) or (a.get('source') is string and b.get('source') is string and a.get('source') | length > 0 and b.get('source') | length > 0 and a.get('source') != b.get('source')) }}{% else %}false{% endif %}"
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: tv_hold
+              - condition: state
+                entity_id: !input hold_timer
+                state: active
+              - condition: template
+                value_template: "{% set old = trigger.from_state %}{% set new = trigger.to_state %}{% if old is not none and new is not none and old.state in ['on', 'playing', 'paused', 'idle'] and new.state in ['on', 'playing', 'paused', 'idle'] %}{% set a = old.attributes %}{% set b = new.attributes %}{{ (a.get('volume_level') is number and a.get('volume_level') is not boolean and b.get('volume_level') is number and b.get('volume_level') is not boolean and a.get('volume_level') != b.get('volume_level')) or (a.get('is_volume_muted') is boolean and b.get('is_volume_muted') is boolean and a.get('is_volume_muted') != b.get('is_volume_muted')) or (a.get('source') is string and b.get('source') is string and a.get('source') | length > 0 and b.get('source') | length > 0 and a.get('source') != b.get('source')) }}{% else %}false{% endif %}"
+          - condition: and
+            conditions:
+              - condition: trigger
                 id: rate_changed
               - condition: state
                 entity_id: !input hold_timer
@@ -216,18 +255,20 @@ actions:
         target:
           entity_id: !input hold_timer
         data:
-          duration: "{{ '%02d:%02d:00' | format(minutes // 60, minutes % 60) }}"
+          duration: "{% set duration_minutes = (hold_minutes | int) if trigger.id in ['tv_start', 'tv_hold'] else minutes %}{{ '%02d:%02d:00' | format(duration_minutes // 60, duration_minutes % 60) }}"
 `;
 
 export const occupancyBlueprint: BlueprintInfo = {
   path: "taxis/occupancy.yaml",
   recipe: "occupancy",
   domain: "automation",
-  version: 4,
+  version: 5,
   yaml: YAML,
   inputs: {
     starts_entities: { kind: "entities", required: true, domain: "binary_sensor" },
     holds_entities: { kind: "entities", required: false, domain: "binary_sensor" },
+    tv_starts_entities: { kind: "entities", required: false, domain: "media_player" },
+    tv_holds_entities: { kind: "entities", required: false, domain: "media_player" },
     bed_entities: { kind: "entities", required: false, domain: "binary_sensor" },
     rate_entities: { kind: "entities", required: false, domain: "sensor" },
     rate_hold: { kind: "number", required: false },

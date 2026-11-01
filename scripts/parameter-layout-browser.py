@@ -140,7 +140,7 @@ class ParameterLayoutRegression(unittest.TestCase):
     def test_fan_empty_relevance_keeps_defaults_and_explains_recovery(self):
         self.inventory["entities"]["fan.laundry_fan"] = {"counts": False}
         table = self.open("fan")
-        self.page.get_by_role("status").filter(has_text="No areas have both a counted fan").wait_for()
+        self.page.get_by_role("status").filter(has_text="No areas have both an included fan").wait_for()
         # Only the house, interior and exterior defaults remain: no area and no floor heading.
         self.assertEqual(table.locator("tbody tr").count(), 3)
         for name in ["House default", "Interior", "Exterior"]:

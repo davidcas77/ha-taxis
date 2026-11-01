@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { assessHouse, EMPTY_GUIDE, guideChoice, validateGuide, type GuideGoal } from "./guide.ts";
-import { EMPTY_INVENTORY, setCounts, setLightRole, setBedroom } from "./inventory.ts";
+import { EMPTY_INVENTORY, setCounts, setLightRole, setBedroom, setTvOccupancyRole, setRecipeWanted } from "./inventory.ts";
 import { DEFAULT_NAMING } from "./naming.ts";
 import { EMPTY_PARAMETERS } from "./parameters.ts";
 import { NOTHING_INSTALLED, planRecipes } from "./recipes.ts";
@@ -53,9 +53,7 @@ describe("guide preferences", () => {
   it("bounds settings size", () => {
     expect(
       validateGuide({
-        areas: Object.fromEntries(
-          Array.from({ length: 501 }, (_, index) => [`area_${index}`, { profile: "other", goals: [] }]),
-        ),
+        areas: Object.fromEntries(Array.from({ length: 501 }, (_, index) => [`area_${index}`, { profile: "other", goals: [] }])),
       }),
     ).toMatchObject({ ok: false });
   });
@@ -64,23 +62,11 @@ describe("guide preferences", () => {
 describe("house readiness", () => {
   it("requires goals before claiming readiness and does not penalize an intentionally unplanned room", () => {
     const h = house().get();
-    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, EMPTY_GUIDE, NOTHING_INSTALLED, [])[0].stage).toBe(
-      "choose",
-    );
-    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide([]), NOTHING_INSTALLED, [])[0].stage).toBe(
-      "unplanned",
-    );
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, EMPTY_GUIDE, NOTHING_INSTALLED, [])[0].stage).toBe("choose");
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide([]), NOTHING_INSTALLED, [])[0].stage).toBe("unplanned");
   });
   it("checks only the chosen outcomes, not every sensor category", () => {
-    const row = assessHouse(
-      house().get(),
-      EMPTY_INVENTORY,
-      naming,
-      EMPTY_PARAMETERS,
-      guide(),
-      NOTHING_INSTALLED,
-      [],
-    )[0];
+    const row = assessHouse(house().get(), EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(), NOTHING_INSTALLED, [])[0];
     expect(row.equipment.filter((item) => item.required).map((item) => item.key)).toEqual(["lights", "activity"]);
     expect(row.equipment.find((item) => item.key === "lux")).toMatchObject({ required: false, status: "missing" });
     expect(row.equipment.some((item) => item.key === "climate" || item.key === "media")).toBe(false);
@@ -90,15 +76,7 @@ describe("house readiness", () => {
     fixture.raw.entities = [];
     fixture.raw.states = [];
     fixture.add("switch.living_relay", "demo");
-    const row = assessHouse(
-      fixture.get(),
-      EMPTY_INVENTORY,
-      naming,
-      EMPTY_PARAMETERS,
-      guide(),
-      NOTHING_INSTALLED,
-      [],
-    )[0];
+    const row = assessHouse(fixture.get(), EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(), NOTHING_INSTALLED, [])[0];
     expect(row.equipment.find((item) => item.key === "lights")?.status).toBe("missing");
     expect(row.switches).toEqual(["switch.living_relay"]);
   });
@@ -107,8 +85,7 @@ describe("house readiness", () => {
       const h = house().get();
       if (mode === "unavailable") h.entities["binary_sensor.living_pir"].state = "unavailable";
       if (mode === "disabled") h.entities["binary_sensor.living_pir"].disabled = true;
-      const inventory =
-        mode === "excluded" ? setCounts(h, EMPTY_INVENTORY, "binary_sensor.living_pir", false) : EMPTY_INVENTORY;
+      const inventory = mode === "excluded" ? setCounts(h, EMPTY_INVENTORY, "binary_sensor.living_pir", false) : EMPTY_INVENTORY;
       const row = assessHouse(h, inventory, naming, EMPTY_PARAMETERS, guide(), NOTHING_INSTALLED, [])[0];
       expect(row.stage).toBe("equipment");
       expect(row.equipment.find((item) => item.key === "activity")).toMatchObject({
@@ -119,14 +96,11 @@ describe("house readiness", () => {
   });
   it("requires an explicitly chosen night target and follows the saved inventory role", () => {
     const h = house().get();
-    expect(
-      assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["night"]), NOTHING_INSTALLED, [])[0].stage,
-    ).toBe("equipment");
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["night"]), NOTHING_INSTALLED, [])[0].stage).toBe("equipment");
     const inventory = setLightRole(EMPTY_INVENTORY, "light.living_ceiling", "night");
     expect(
-      assessHouse(h, inventory, naming, EMPTY_PARAMETERS, guide(["night"]), NOTHING_INSTALLED, [])[0].equipment.find(
-        (item) => item.key === "night-target",
-      )?.status,
+      assessHouse(h, inventory, naming, EMPTY_PARAMETERS, guide(["night"]), NOTHING_INSTALLED, [])[0].equipment.find((item) => item.key === "night-target")
+        ?.status,
     ).toBe("ready");
   });
   it("does not treat a helper in the preview queue as installed", () => {
@@ -177,9 +151,7 @@ describe("house readiness", () => {
     fixture.add("binary_sensor.living_occupied", "template", "occupancy");
     fixture.add("automation.taxis_occupancy_living", "automation");
     const h = fixture.get();
-    const initial = planRecipes(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, NOTHING_INSTALLED, []).find(
-      (cell) => cell.recipe === "occupancy",
-    )!;
+    const initial = planRecipes(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, NOTHING_INSTALLED, []).find((cell) => cell.recipe === "occupancy")!;
     const fields = initial.inputs.find((input) => input.kind === "automation")!.fields!;
     const bp = fields.use_blueprint as { path: string; input: Record<string, unknown> };
     const installed = {
@@ -191,9 +163,7 @@ describe("house readiness", () => {
     expect(off.recipes[0].cell?.status).toBe("installed");
     expect(off.stage).toBe("check");
     h.entities["automation.taxis_occupancy_living"].state = "on";
-    expect(
-      assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["occupancy"]), installed, [])[0].stage,
-    ).toBe("test");
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["occupancy"]), installed, [])[0].stage).toBe("test");
     const ready = assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["occupancy"]), installed, [])[0];
     const testedGuide = {
       ...guide(["occupancy"]),
@@ -213,9 +183,7 @@ describe("house readiness", () => {
     // Routine sensor states and refresh timestamps must not erase a room test.
     h.fetchedAt = "later";
     h.entities["binary_sensor.living_pir"].state = "on";
-    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, testedGuide, installed, [])[0].stage).toBe(
-      "tested",
-    );
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, testedGuide, installed, [])[0].stage).toBe("tested");
     h.entities["automation.taxis_occupancy_living"].state = "off";
     expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, testedGuide, installed, [])[0]).toMatchObject({
       stage: "check",
@@ -237,10 +205,7 @@ describe("house readiness", () => {
       after: { area_id: "living_room" },
       createdAt: "now",
     };
-    expect(
-      assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["occupancy"]), installed, [proposedMove])[0]
-        .stage,
-    ).toBe("changes");
+    expect(assessHouse(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, guide(["occupancy"]), installed, [proposedMove])[0].stage).toBe("changes");
   });
 });
 
@@ -253,15 +218,40 @@ it("requires explicit bedroom classification before sleep-sensitive room setup w
     required: true,
     entityIds: [],
   });
-  const classified = assessHouse(
-    h,
-    setBedroom(EMPTY_INVENTORY, "living_room", true),
-    naming,
-    EMPTY_PARAMETERS,
-    settings,
-    NOTHING_INSTALLED,
-    [],
-  )[0];
+  const classified = assessHouse(h, setBedroom(EMPTY_INVENTORY, "living_room", true), naming, EMPTY_PARAMETERS, settings, NOTHING_INSTALLED, [])[0];
   expect(classified.equipment.some((check) => check.key === "bedroom_behavior")).toBe(false);
   expect(EMPTY_INVENTORY.areas).toEqual({});
+});
+
+describe("TV occupancy equipment", () => {
+  it("accepts only a healthy counted starts TV while retaining other goal equipment", () => {
+    const fixture = house();
+    fixture.raw.entities = [];
+    fixture.raw.states = [];
+    fixture.add("media_player.tv", "demo", "tv", undefined, "playing");
+    const h = fixture.get();
+    const activity = (inv: typeof EMPTY_INVENTORY) => assessHouse(h, inv, naming, EMPTY_PARAMETERS, guide(["occupancy"]), NOTHING_INSTALLED, [])[0];
+    expect(activity(EMPTY_INVENTORY).equipment.find((e) => e.key === "activity")?.status).not.toBe("ready");
+    const starts = setTvOccupancyRole(h, EMPTY_INVENTORY, "media_player.tv", "starts");
+    const row = activity(starts);
+    expect(row.equipment.find((e) => e.key === "activity")).toMatchObject({ status: "ready", entityIds: ["media_player.tv"] });
+    expect(row.stage).not.toBe("equipment");
+    expect(activity(setTvOccupancyRole(h, starts, "media_player.tv", "holds")).equipment.find((e) => e.key === "activity")?.status).not.toBe("ready");
+    expect(activity(setCounts(h, starts, "media_player.tv", false)).equipment.find((e) => e.key === "activity")?.status).not.toBe("ready");
+    expect(
+      assessHouse(h, starts, naming, EMPTY_PARAMETERS, guide(["lighting"]), NOTHING_INSTALLED, [])[0].equipment.find((e) => e.key === "lights")?.status,
+    ).toBe("missing");
+    h.entities["media_player.tv"].state = "unavailable";
+    expect(activity(starts).equipment.find((e) => e.key === "activity")?.status).toBe("review");
+  });
+});
+
+it("treats opted-out goal recipes as unplanned without changing saved goals", () => {
+  const choice = guide(["lighting"]);
+  const inventory = setRecipeWanted(EMPTY_INVENTORY, "living_room", "motion_lights", false);
+  const row = assessHouse(house().get(), inventory, naming, EMPTY_PARAMETERS, choice, NOTHING_INSTALLED, [])[0];
+  expect(row.stage).toBe("unplanned");
+  expect(row.recipes).toEqual([]);
+  expect(row.equipment).toEqual([]);
+  expect(choice.areas.living_room.goals).toEqual(["lighting"]);
 });

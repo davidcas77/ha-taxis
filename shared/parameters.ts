@@ -52,6 +52,8 @@ export type ParamDef = {
   // Set for one area only: it is not inherited from a floor, the interior or
   // exterior areas or the house, and the other levels can't set it.
   areaOnly?: boolean;
+  // An empty list is a deliberate selection, not an unset value.
+  allowEmpty?: boolean;
   // Set for the house only: the recipes that read it are not per area (the
   // notification targets, the announce script), so it has one value everywhere.
   houseOnly?: boolean;
@@ -86,6 +88,8 @@ export const PARAM_KEYS = [
   "dim_level",
   "override_duration",
   "entry_lights",
+  "ambient_lights",
+  "night_lights",
   "media_off_after",
   "tv_off_after",
   "announce_volume",
@@ -208,6 +212,18 @@ export const PARAMS: readonly ParamDef[] = [
   // The lights that come on by day when the area becomes occupied. Unset: the only
   // light of the area, else its main lights (entryLights below). Area level only.
   { key: "entry_lights", tab: "lighting", label: "Entry lights", unit: null, kind: "entities", domain: "light", areaOnly: true, default: [] },
+  {
+    key: "ambient_lights",
+    tab: "lighting",
+    label: "Ambient lights",
+    unit: null,
+    kind: "entities",
+    domain: "light",
+    areaOnly: true,
+    allowEmpty: true,
+    default: [],
+  },
+  { key: "night_lights", tab: "lighting", label: "Night lights", unit: null, kind: "entities", domain: "light", areaOnly: true, allowEmpty: true, default: [] },
   { key: "media_off_after", tab: "media", label: "Speakers off when clear for", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 15 },
   { key: "tv_off_after", tab: "media", label: "TVs off when clear for", unit: "min", kind: "number", min: 1, max: 720, step: 1, default: 30 },
   // The volume the announce script speaks at when it is not given one. 0: leave it.
@@ -340,12 +356,12 @@ export function checkValue(def: ParamDef, value: unknown): string | null {
     }
     case "entities":
       return Array.isArray(value) &&
-        value.length >= 1 &&
+        value.length >= (def.allowEmpty ? 0 : 1) &&
         value.length <= MAX_ENTITY_LIST &&
         new Set(value).size === value.length &&
         value.every((v) => typeof v === "string" && v.length <= 255 && INVENTORY_ENTITY_ID.test(v) && v.startsWith(`${def.domain}.`))
         ? null
-        : `${def.label} must be a list of 1 to ${MAX_ENTITY_LIST} ${def.domain} entity ids.`;
+        : `${def.label} must be a list of ${def.allowEmpty ? 0 : 1} to ${MAX_ENTITY_LIST} ${def.domain} entity ids.`;
     case "services":
       return Array.isArray(value) &&
         value.length >= 1 &&
@@ -480,7 +496,7 @@ export function setParameter(p: ParameterSettings, scope: ParamScope, key: Param
   if (PARAM_DEF[key].areaOnly && scope.level !== "area") return p;
   if (PARAM_DEF[key].houseOnly && scope.level !== "house") return p;
   // An empty list is no value.
-  if (Array.isArray(value) && value.length === 0) value = null;
+  if (Array.isArray(value) && value.length === 0 && !PARAM_DEF[key].allowEmpty) value = null;
   const cur = valuesOf(p, scope);
   if (sameParam(cur?.[key] ?? null, value)) return p;
   const next: ParamValues = { ...cur };
@@ -592,4 +608,28 @@ export function entryLights(p: ParameterSettings, areaId: string, rows: readonly
   const valid = set ? set.filter((id) => counted.some((r) => r.entityId === id)).sort() : [];
   if (valid.length > 0) return { lights: valid, source: "set", set, suggested };
   return { lights: suggested, source: suggested.length === 0 ? "none" : only ? "only" : "main", set, suggested };
+}
+
+// Motion-light selections default to the inventory role until explicitly set.
+// An explicit empty or stale selection stays empty rather than changing the
+// automation back to the suggested role lights.
+export function roleLights(
+  p: ParameterSettings,
+  areaId: string,
+  rows: readonly Pick<InventoryRow, "entityId" | "counts" | "light">[],
+  key: "ambient_lights" | "night_lights",
+): { lights: string[]; set: string[] | null; suggested: string[]; source: "set" | "suggested" | "none" } {
+  const counted = rows.filter((r) => r.counts);
+  const role = key === "ambient_lights" ? "accent" : "night";
+  const suggested = counted
+    .filter((r) => r.light === role)
+    .map((r) => r.entityId)
+    .sort();
+  const stored = ownValue(p, { level: "area", id: areaId }, key);
+  const set = Array.isArray(stored) ? stored : null;
+  if (set !== null) {
+    const lights = set.filter((id) => counted.some((r) => r.entityId === id)).sort();
+    return { lights, set, suggested, source: "set" };
+  }
+  return { lights: suggested, set, suggested, source: suggested.length ? "suggested" : "none" };
 }

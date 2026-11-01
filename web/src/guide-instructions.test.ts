@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 import { PATH_STEPS } from "../../shared/guide-path.ts";
 import { HOUSE_RECIPE_LABEL, RECIPES, type RecipeCell } from "../../shared/recipes.ts";
-import { GuideOverview, INSTRUCTIONS, RECIPE_EXAMPLES, runtimeHelperInputs } from "./guide-instructions.tsx";
+import { GuideOverview, INSTRUCTIONS, RECIPE_EXAMPLES, RecipeExample, runtimeHelperInputs } from "./guide-instructions.tsx";
 
 describe("Guide instructions", () => {
   it("covers every current area and house recipe and every path step", () => {
@@ -13,12 +13,19 @@ describe("Guide instructions", () => {
     for (const step of PATH_STEPS) expect(INSTRUCTIONS[step]?.paragraphs.length).toBeGreaterThan(0);
   });
 
-  it("renders the overview, complete catalogue and review guidance", () => {
+  it("renders the compact overview with all recipes available and one explanation", () => {
     const html = renderToStaticMarkup(createElement(GuideOverview, { go: () => {} }));
     expect(html).toContain("How Taxis builds your home");
-    expect(html).toContain("blueprint");
+    expect(html).toContain("Rooms");
+    expect(html).toContain("Learn how it works");
     expect(html).toContain("Changes");
     for (const label of [...RECIPES.map((r) => r.label), ...Object.values(HOUSE_RECIPE_LABEL)]) expect(html).toContain(label);
+    for (const [key, description] of Object.entries(RECIPE_EXAMPLES)) {
+      const selected = key as keyof typeof RECIPE_EXAMPLES;
+      const example = renderToStaticMarkup(createElement(RecipeExample, { selected, onSelect: () => {} }));
+      expect(example).toContain(description);
+      for (const [other, text] of Object.entries(RECIPE_EXAMPLES)) if (other !== key) expect(example).not.toContain(text);
+    }
   });
 
   it("shows only real helper inputs from actionable recipes, including dependencies", () => {

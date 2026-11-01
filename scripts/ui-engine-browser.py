@@ -13,13 +13,13 @@ import json
 import re
 import unittest
 import urllib.request
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from browser_common import BASE, launch
 
 VIEWPORTS = [(1280, 800), (375, 800)]
 
 # The pages of the navigation, in order, and what each tab strip offers.
-NAV = ["Guide", "Areas", "Organize", "Automations", "Parameters", "Health", "Changes", "Settings"]
+NAV = ["Guide", "Areas", "Organize", "Recipes", "Buttons", "Parameters", "Health", "Changes", "Settings"]
 ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers",
                   "zones", "automations", "blueprints", "devices", "entities", "helpers"]
 PARAMETER_TABS = ["capabilities", "helpers", "area-codes", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "covers", "safety"]
@@ -167,13 +167,9 @@ class UiEngine(unittest.TestCase):
         for width, height in VIEWPORTS:
             self.check_routes(routes, width, height)
 
-    def test_recipes_and_buttons_table_views_fit(self):
-        def table_view(page, route):
-            view = page.get_by_role("button", name="Table", exact=True)
-            if view.count():
-                view.first.click()
+    def test_recipe_type_browser_fits(self):
         for width, height in VIEWPORTS:
-            self.check_routes(["#automations/recipes"], width, height, table_view)
+            self.check_routes(["#automations/recipes"], width, height)
 
     # ---- the tables themselves --------------------------------------------
 
@@ -211,13 +207,32 @@ class UiEngine(unittest.TestCase):
         self.open(page, "#guide")
         nav = page.get_by_role("navigation", name="Pages")
         self.assertEqual([re.sub(r"\s+\d+$", "", re.sub(r"\s+", " ", text).strip()) for text in nav.get_by_role("button").all_inner_texts()], NAV)
-        nav.get_by_role("button", name="Automations", exact=True).click()
+        nav.get_by_role("button", name="Recipes", exact=True).click()
         page.wait_for_function("location.hash === '#automations/recipes'")
-        tabs = page.get_by_role("tablist", name="Automations")
-        tabs.get_by_role("tab", name="Buttons", exact=True).wait_for()
-        self.assertEqual([text.strip() for text in tabs.get_by_role("tab").all_inner_texts()], ["Recipes", "Buttons"])
-        tabs.get_by_role("tab", name="Buttons", exact=True).click()
+        page.get_by_role("table", name="Recipe types", exact=True).wait_for()
+        self.assertEqual(page.get_by_role("heading", name="Recipes", exact=True).count(), 0)
+        details = page.get_by_role("article", name="Recipe details").first
+        details.get_by_role("heading", name="Occupancy", exact=True).wait_for()
+        self.assertEqual(details.get_by_role("tab", name="Description", exact=True).count(), 1)
+        self.assertEqual(details.get_by_role("tab", name="Availability", exact=True).count(), 1)
+        self.assertEqual(page.get_by_role("tablist", name="Automations").count(), 0)
+        expect(nav.get_by_role("button", name="Recipes", exact=True)).to_have_attribute("aria-current", "page")
+        nav.get_by_role("button", name="Buttons", exact=True).click()
         page.wait_for_function("location.hash === '#automations/buttons'")
+        page.get_by_role("heading", name="Buttons", exact=True).wait_for()
+        expect(nav.get_by_role("button", name="Buttons", exact=True)).to_have_attribute("aria-current", "page")
+        self.assertEqual(nav.get_by_role("button", name="Recipes", exact=True).get_attribute("aria-current"), None)
+        self.assertEqual(page.get_by_role("tablist", name="Automations").count(), 0)
+        self.assertEqual(page.get_by_role("button", name="Refresh", exact=True).count(), 1)
+        self.assertEqual(page.locator("header").get_by_text(re.compile(r"\d+ floors? · .*Read ")).count(), 0)
+        nav.get_by_role("button", name="Recipes", exact=True).click()
+        page.wait_for_function("location.hash === '#automations/recipes'")
+        expect(nav.get_by_role("button", name="Recipes", exact=True)).to_have_attribute("aria-current", "page")
+        page.goto(BASE + "/#automations/buttons/device%3Ademo_wall_buttons", wait_until="networkidle")
+        page.reload(wait_until="networkidle")
+        page.wait_for_function("location.hash === '#automations/buttons/device%3Ademo_wall_buttons'")
+        expect(nav.get_by_role("button", name="Buttons", exact=True)).to_have_attribute("aria-current", "page")
+        page.get_by_role("heading", name="Buttons", exact=True).wait_for()
         nav.get_by_role("button", name="Settings", exact=True).click()
         page.wait_for_function("location.hash === '#settings'")
         tabs = page.get_by_role("tablist", name="Settings")
@@ -241,7 +256,7 @@ class UiEngine(unittest.TestCase):
                 page.goto("about:blank")
                 page.goto(BASE + "/" + old, wait_until="networkidle")
                 page.wait_for_function("(hash) => location.hash === hash", arg=new)
-                page.get_by_text(re.compile(r"\d+ floors?")).first.wait_for()
+                page.get_by_role("navigation", name="Pages").wait_for()
         page.goto("about:blank")
         page.goto(BASE + f"/#area/{self.area}/devices", wait_until="networkidle")
         page.wait_for_function("(hash) => location.hash === hash", arg=f"#area/{self.area}/devices-entities")

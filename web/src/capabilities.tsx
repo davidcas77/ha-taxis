@@ -169,7 +169,7 @@ function CapabilityCount({ area, capability, entities, onOpen }: { area: string;
   const content = (rows: InventoryRow[], included: boolean) => (
     <>
       <p className="mb-2 font-semibold">
-        {area} · {capability}: {rows.length} {included ? "counted" : "not counted"}
+        {area} · {capability}: {rows.length} {included ? "included" : "not included"}
       </p>
       {rows.length === 0 ? (
         <p className="text-muted">No entities count for this capability.</p>
@@ -188,7 +188,7 @@ function CapabilityCount({ area, capability, entities, onOpen }: { area: string;
   return (
     <span className="inline-flex items-center justify-center gap-1">
       <TooltipButton
-        label={`${area}, ${capability}: ${counted.length} counted`}
+        label={`${area}, ${capability}: ${counted.length} included`}
         onClick={onOpen}
         content={content(counted, true)}
         className="rounded px-1 py-1.5 hover:bg-sunken focus-visible:outline-accent"
@@ -197,7 +197,7 @@ function CapabilityCount({ area, capability, entities, onOpen }: { area: string;
       </TooltipButton>
       {excluded.length > 0 && (
         <TooltipButton
-          label={`${area}, ${capability}: ${excluded.length} not counted`}
+          label={`${area}, ${capability}: ${excluded.length} not included`}
           onClick={onOpen}
           content={content(excluded, false)}
           className="rounded px-1 py-1.5 text-xs text-muted hover:bg-sunken focus-visible:outline-accent"
@@ -273,7 +273,7 @@ export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => 
       header: c.short,
       label: c.label,
       icon: <CapabilityIcon capability={c.key} />,
-      help: `Entities counted toward ${c.label.toLowerCase()} in this area.`,
+      help: `Entities included in ${c.label.toLowerCase()} in this area.`,
       priority: 1,
       minWidth: 84,
       align: "center",

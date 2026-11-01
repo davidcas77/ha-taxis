@@ -339,7 +339,7 @@ describe("not reporting", () => {
     };
     expect(houseCell(planHouse([pir, pause], { installed }), "unavailable_watch").status).toBe("installed");
     const more = houseCell(planHouse([pir, window, pause], { installed }), "unavailable_watch");
-    expect(more).toMatchObject({ status: "out-of-date", reasons: ["Watched entities: 1 added, 0 no longer counted"] });
+    expect(more).toMatchObject({ status: "out-of-date", reasons: ["Watched entities: 1 added, 0 no longer included"] });
     const fewer = houseCell(planHouse([pause], { installed }), "unavailable_watch");
     expect(fewer.status).toBe("missing");
   });

@@ -115,7 +115,7 @@ describe("buildGuidePath", () => {
     expect(stepOf(only({ capabilities: ready({ areasWithCandidates: 0, areasCounting: 0 }) }), "capabilities").status).toBe("todo");
     expect(stepOf(only({ capabilities: ready({ areasWithCandidates: 5, areasCounting: 3 }) }), "capabilities")).toMatchObject({
       status: "attention",
-      summary: "3 of 5 areas count equipment; 2 have equipment but nothing counted.",
+      summary: "3 of 5 areas count equipment; 2 have equipment but nothing included.",
     });
   });
 
@@ -431,6 +431,14 @@ describe("the goals", () => {
         ["goodbye", "todo"],
         ["covers", "todo"],
       ]);
+    });
+
+    it("omits only explicitly unwanted area recipes from goal counts", () => {
+      const inventory = { entities: {}, areas: { kitchen: { recipePreferences: { leak_alert: false } } } };
+      const area = planRecipes(h, inventory, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []);
+      const f = goalFacts(h, inventory, DEFAULT_NAMING, area, plan().house);
+      expect(f.leak.areas).toBe(1);
+      expect(f.covers.areas).toBe(1);
     });
 
     it("lists no leak or covers goal in a house without a leak sensor or a cover", () => {

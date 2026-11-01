@@ -7,12 +7,14 @@ import { helperExclusions } from "../../shared/helpers.ts";
 import { areaInventory } from "../../shared/inventory.ts";
 import {
   PARAM_TAB_LABEL,
+  PARAM_DEF,
   checkValue,
   entryLights,
   ownValue,
   paramRows,
   paramsOf,
   resolveIn,
+  roleLights,
   setParameter,
   sourceName,
   type ParamDef,
@@ -325,7 +327,7 @@ function Cell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; d
   );
 }
 
-// The entry lights of an area: the ones chosen, or the suggested ones in grey. Other
+// The selected lights of an area, or the suggested ones in grey. Other
 // levels show a dash, since the parameter is not inherited.
 function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: ParamRow; def: ParamDef; editing: boolean; onEdit: (on: boolean) => void }) {
   const { parameters, parametersSaving, saveParameters, notify, inventory, naming } = useTaxis();
@@ -334,8 +336,10 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
   const entry = useMemo(() => {
     if (!areaId) return null;
     const rows = areaInventory(h, inventory, areaId, helperExclusions(h, naming)(areaId)).lights;
-    return { rows: rows.filter((r) => r.counts), resolved: entryLights(parameters, areaId, rows) };
-  }, [h, inventory, naming, parameters, areaId]);
+    const resolved =
+      def.key === "ambient_lights" || def.key === "night_lights" ? roleLights(parameters, areaId, rows, def.key) : entryLights(parameters, areaId, rows);
+    return { rows: rows.filter((r) => r.counts), resolved };
+  }, [h, inventory, naming, parameters, areaId, def.key]);
   if (!areaId || !entry)
     return (
       <span className="px-1.5 text-muted" title="Set for one area only: it is not inherited from a floor or the house">
@@ -350,7 +354,7 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
     if (error) notify({ tone: "error", text: error });
   };
 
-  if (rows.length === 0) return <span className="px-1.5 text-muted">–</span>;
+  if (rows.length === 0 && def.key === "entry_lights" && resolved.set === null) return <span className="px-1.5 text-muted">–</span>;
 
   const own = resolved.source === "set";
   const text = `${resolved.lights.length} ${resolved.lights.length === 1 ? "light" : "lights"}`;
@@ -376,7 +380,7 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
                 </div>
               ))
             ) : (
-              <p>No entry lights are selected or suggested. Click to choose.</p>
+              <p>No lights are selected or suggested. Click to choose.</p>
             )}
           </div>
         }
@@ -400,14 +404,16 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
       {editing && (
         <ParameterPopover anchor={anchor} title={`${def.label} for ${row.label}`} onClose={() => onEdit(false)}>
           <p className="mb-3 text-xs text-muted">
-            Choose this area's entry lights. Saved in Taxis immediately. Clear the choice to use the area's suggested lights again.
+            Choose this area's {def.label.toLowerCase()}. Saved in Taxis immediately. Clear the choice to use the area's suggested lights again.
           </p>
           <div className="flex flex-col gap-2">
             {rows.map((r) => (
               <label key={r.entityId} className="flex cursor-pointer items-start gap-2 rounded border border-line p-2 text-[13px]">
                 <input
                   type="checkbox"
-                  aria-label={`${r.name} is an entry light of ${row.label}`}
+                  aria-label={
+                    def.key === "entry_lights" ? `${r.name} is an entry light of ${row.label}` : `${r.name} is ${def.label.toLowerCase()} for ${row.label}`
+                  }
                   checked={resolved.lights.includes(r.entityId)}
                   disabled={parametersSaving}
                   onChange={(event) =>
@@ -422,6 +428,11 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
               </label>
             ))}
           </div>
+          {def.key !== "entry_lights" && (
+            <button type="button" disabled={parametersSaving} onClick={() => void save([])} className="mt-3 text-xs text-accent disabled:opacity-60">
+              Select no lights
+            </button>
+          )}
         </ParameterPopover>
       )}
     </span>
@@ -463,6 +474,8 @@ const COLUMN_ORDER: Partial<Record<ParamTab, ParamKey[]>> = {
     "dim_level",
     "override_duration",
     "entry_lights",
+    "ambient_lights",
+    "night_lights",
     "guest_pause_lighting",
   ],
 };
@@ -479,6 +492,8 @@ const GROUP: Partial<Record<ParamTab, Partial<Record<ParamKey, string>>>> = {
     dim_level: "Fading",
     override_duration: "Manual and entry",
     entry_lights: "Manual and entry",
+    ambient_lights: "Manual and entry",
+    night_lights: "Manual and entry",
     guest_pause_lighting: "Manual and entry",
   },
   fan: {
@@ -569,6 +584,109 @@ const FIRST_TO_GO: Partial<Record<ParamKey, true>> = {
 };
 
 const wide = (d: ParamDef) => d.kind === "entity" || d.kind === "entities" || d.kind === "services" || d.kind === "periods" || d.kind === "text";
+
+// The same area row and cells used by the Parameters table, presented vertically
+// for a recipe. Keying the inner component discards an unfinished edit on area change.
+export function AreaRecipeParameters({ h, areaId, keys }: { h: Hierarchy; areaId: string; keys: readonly ParamKey[] }) {
+  return <AreaRecipeParameterRows key={areaId} h={h} areaId={areaId} keys={keys} />;
+}
+
+function AreaRecipeParameterRows({ h, areaId, keys }: { h: Hierarchy; areaId: string; keys: readonly ParamKey[] }) {
+  const { inventory, inventoryLoaded, parameters, parametersLoaded } = useTaxis();
+  const [editing, setEditing] = useState<ParamKey | null>(null);
+  const row = useMemo(() => paramRows(h, inventory).rest.find((item) => item.scope.level === "area" && item.scope.id === areaId), [h, inventory, areaId]);
+  if (!inventoryLoaded || !parametersLoaded) return <p className="text-[13px] text-muted">Loading the settings…</p>;
+  if (!row) return <p className="text-[13px] text-muted">This area is no longer available.</p>;
+  return (
+    <table aria-label="Area parameters" className="w-full table-fixed border-collapse text-left text-[13px]">
+      <colgroup>
+        <col style={{ width: "min(40%, 16rem)" }} />
+        <col style={{ width: "min(28%, 9rem)" }} />
+        <col />
+      </colgroup>
+      <thead>
+        <tr className="border-b border-line text-xs text-muted">
+          <th scope="col" className="py-2 pr-2 font-medium">
+            Parameter
+          </th>
+          <th scope="col" className="py-2 pr-2 font-medium">
+            Value
+          </th>
+          <th scope="col" className="py-2 font-medium">
+            Source
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {keys.map((key) => {
+          const def = PARAM_DEF[key];
+          if (def.houseOnly || def.kind === "entities") return null;
+          const own = ownValue(parameters, row.scope, key);
+          const shown = resolveIn(parameters, row.chain, key);
+          return (
+            <tr key={key} className="border-b border-line align-top last:border-0">
+              <th scope="row" className="break-words py-2 pr-2 font-normal">
+                {header(def)}
+              </th>
+              <td className="min-w-0 break-words py-2 pr-2">
+                <Cell h={h} row={row} def={def} editing={editing === key} onEdit={(on) => setEditing(on ? key : null)} />
+              </td>
+              <td className="break-words py-2 text-xs text-muted">{own === undefined ? `From ${sourceName(h, shown.source)}` : "Set for this area"}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+export function HouseRecipeParameters({ h, keys }: { h: Hierarchy; keys: readonly ParamKey[] }) {
+  const { inventory, inventoryLoaded, parameters, parametersLoaded } = useTaxis();
+  const [editing, setEditing] = useState<ParamKey | null>(null);
+  const row = useMemo(() => paramRows(h, inventory).fixed[0], [h, inventory]);
+  if (!inventoryLoaded || !parametersLoaded) return <p className="text-[13px] text-muted">Loading the settings…</p>;
+  return (
+    <table aria-label="House parameters" className="w-full table-fixed border-collapse text-left text-[13px]">
+      <colgroup>
+        <col style={{ width: "min(40%, 16rem)" }} />
+        <col style={{ width: "min(28%, 9rem)" }} />
+        <col />
+      </colgroup>
+      <thead>
+        <tr className="border-b border-line text-xs text-muted">
+          <th scope="col" className="py-2 pr-2 font-medium">
+            Parameter
+          </th>
+          <th scope="col" className="py-2 pr-2 font-medium">
+            Value
+          </th>
+          <th scope="col" className="py-2 font-medium">
+            Source
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {keys.map((key) => {
+          const def = PARAM_DEF[key];
+          if (def.areaOnly || def.kind === "entities") return null;
+          const own = ownValue(parameters, row.scope, key);
+          const shown = resolveIn(parameters, row.chain, key);
+          return (
+            <tr key={key} className="border-b border-line align-top last:border-0">
+              <th scope="row" className="break-words py-2 pr-2 font-normal">
+                {header(def)}
+              </th>
+              <td className="min-w-0 break-words py-2 pr-2">
+                <Cell h={h} row={row} def={def} editing={editing === key} onEdit={(on) => setEditing(on ? key : null)} />
+              </td>
+              <td className="break-words py-2 text-xs text-muted">{own === undefined ? `From ${sourceName(h, shown.source)}` : "Set for the house"}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
 
 export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   const { inventory, inventoryLoaded, parameters, parametersLoaded, naming } = useTaxis();
@@ -710,7 +828,9 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       )}
       {tab === "fan" && (
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-          <p className="flex-1">Used only where Bathroom fan recipe is installed. By default, areas need a counted fan and humidity sensor in Capabilities.</p>
+          <p className="flex-1">
+            Used only where Bathroom fan recipe is installed. By default, areas need an included fan and humidity sensor in Capabilities.
+          </p>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={showAllFanAreas} onChange={(event) => setShowAllFanAreas(event.target.checked)} />
             Show all areas
@@ -719,7 +839,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       )}
       {tab === "fan" && !relevant.length && (
         <EmptyState>
-          No areas have both a counted fan and humidity sensor. Check{" "}
+          No areas have both an included fan and humidity sensor. Check{" "}
           <a className="text-accent underline" href="#parameters/capabilities">
             Capabilities
           </a>{" "}

@@ -28,6 +28,9 @@ export const PARAM_HELP: Record<ParamKey, string> = {
   dim_level: "The brightness used during the dim-before-off warning.",
   override_duration: "How long manual light changes pause automation; zero waits for the next occupancy transition.",
   entry_lights: "The lights to turn on first by day; unset uses the area's main lights.",
+  ambient_lights: "Lights used for ambient lighting; unset uses the area’s accent lights. An empty selection uses none.",
+  night_lights:
+    "Lights used at night; unset uses the area’s night lights. Empty clears the night-specific selection; main lights remain the nighttime fallback.",
   media_off_after: "How long the area must remain clear before its speakers turn off.",
   tv_off_after: "How long the area must remain clear before its TVs turn off.",
   announce_volume: "The default announcement volume; zero leaves each speaker's volume unchanged.",

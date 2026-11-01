@@ -1,4 +1,4 @@
-import { CAPABILITIES, type InventorySettings, inventoryMatrix } from "./inventory.ts";
+import { CAPABILITIES, type InventorySettings, inventoryMatrix, recipeWanted } from "./inventory.ts";
 import { hasPendingChange, type HelperRow } from "./helpers.ts";
 import type { ButtonInventory } from "./buttons.ts";
 import { analyzeArea, areaCodes, type NamingSettings } from "./naming.ts";
@@ -260,7 +260,7 @@ const RULES: { [K in PathStepKey]: Rule<Extract<PathInput[K], { state: "ready" }
       if (idle > 0)
         return {
           status: "attention",
-          summary: `${f.areasCounting} of ${plural(f.areasWithCandidates, "area")} count equipment; ${idle} ${idle === 1 ? "has" : "have"} equipment but nothing counted.`,
+          summary: `${f.areasCounting} of ${plural(f.areasWithCandidates, "area")} count equipment; ${idle} ${idle === 1 ? "has" : "have"} equipment but nothing included.`,
         };
       return { status: "done", summary: `All ${plural(f.areasWithCandidates, "area")} with equipment count it.` };
     },
@@ -414,7 +414,7 @@ function areaGoalFacts(h: Hierarchy, inventory: InventorySettings, naming: Namin
   const n: AreaGoalFacts = { areas: 0, installed: 0, outOfDate: 0, inChanges: 0 };
   const facts = new Map<string, ReturnType<typeof fitFacts>>();
   for (const cell of cells) {
-    if (cell.recipe !== recipe) continue;
+    if (cell.recipe !== recipe || !recipeWanted(inventory, cell.areaId, recipe)) continue;
     let f = facts.get(cell.areaId);
     if (!f) {
       f = fitFacts(h, inventory, naming, cell.areaId);

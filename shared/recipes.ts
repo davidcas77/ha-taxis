@@ -2,9 +2,9 @@ import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeK
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
 import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID, kindRunsIn, type Season } from "./climate.ts";
 import { RECIPE_HELPER_SUFFIX, areaCodeConflicts, canonicalId, helperSuffixes, helperExclusions } from "./helpers.ts";
-import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, type InventorySettings, type LightRole } from "./inventory.ts";
+import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, recipeWanted, type InventorySettings, type LightRole } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
-import { entryLights, resolve, resolveAll, resolveIn, withSeconds, type ParameterSettings } from "./parameters.ts";
+import { entryLights, roleLights, resolve, resolveAll, resolveIn, withSeconds, type ParameterSettings } from "./parameters.ts";
 import { canonicalPeriods, DEFAULT_COMFORT_PERIODS } from "./periods.ts";
 import { planHouseModes, recipeHouseModes } from "./house-modes.ts";
 import type { Change, ChangeInput, Hierarchy } from "./types.ts";
@@ -51,9 +51,39 @@ export const automationAlias = (areaName: string, recipe: RecipeKey) => `${areaN
 // occupied sensor and the pause switch (Occupancy makes them, the others use
 // them), the manual override timer (Motion lights, Exterior lights), the comfort
 // schedule (Area climate) and the humidity rate sensor (Bathroom fan).
-export function runtimeIds(code: string) {
+export function resolveHoldTimer(
+  code: string,
+  h?: Hierarchy,
+  areaId?: string,
+  changes: readonly Change[] = [],
+): { id: string; adopted: boolean; issue: string | null } {
+  const canonical = `timer.${code}_${RECIPE_HELPER_SUFFIX.hold}`;
+  if (!h || !areaId || h.entities[canonical] || pendingHelper(changes, canonical) || pendingRename(changes, canonical))
+    return { id: canonical, adopted: false, issue: null };
+  const candidates = Object.values(h.entities).filter(
+    (e) =>
+      e.entityId.startsWith("timer.") &&
+      e.entityId.endsWith("_motion_hold") &&
+      e.areaId === areaId &&
+      e.domain === "timer" &&
+      e.platform === "timer" &&
+      e.inRegistry,
+  );
+  if (candidates.length > 1)
+    return { id: canonical, adopted: false, issue: "Multiple motion hold timers are assigned to this area; resolve the ambiguity before installing Occupancy" };
+  if (!candidates.length) return { id: canonical, adopted: false, issue: null };
+  const timer = candidates[0];
+  const unavailable = timer.disabled || timer.state === "unavailable" || timer.state === "unknown";
   return {
-    timer: `timer.${code}_${RECIPE_HELPER_SUFFIX.hold}`,
+    id: timer.entityId,
+    adopted: true,
+    issue: unavailable ? `${timer.entityId} is unavailable or disabled; make it available before installing Occupancy` : null,
+  };
+}
+
+export function runtimeIds(code: string, h?: Hierarchy, areaId?: string, changes: readonly Change[] = []) {
+  return {
+    timer: resolveHoldTimer(code, h, areaId, changes).id,
     occupied: `binary_sensor.${code}_${RECIPE_HELPER_SUFFIX.occupied}`,
     switch: `input_boolean.${code}_${RECIPE_HELPER_SUFFIX.switch}`,
     override: `timer.${code}_${RECIPE_HELPER_SUFFIX.override}`,
@@ -131,11 +161,16 @@ export type RecipeCell = {
   inputs: ChangeInput[];
   // True when the cell can be added to the change list.
   actionable: boolean;
+  wanted?: boolean;
+  installed?: boolean;
+  pending?: boolean;
 };
 
 const INPUT_LABEL: Record<string, string> = {
   starts_entities: "Sensors that start",
   holds_entities: "Sensors that hold",
+  tv_starts_entities: "TVs that start occupancy",
+  tv_holds_entities: "TVs that hold occupancy",
   bed_entities: "Bed presence sensors",
   hold_timer: "Hold timer",
   hold_minutes: "Hold timeout (min)",
@@ -327,7 +362,8 @@ export function planRecipes(
 
   for (const area of Object.values(h.areas)) {
     const code = codes[area.id].code;
-    const ids = runtimeIds(code);
+    const hold = resolveHoldTimer(code, h, area.id, changes);
+    const ids = runtimeIds(code, h, area.id, changes);
     const values = resolveAll(params, h, inventory, area.id);
     const houseModes = planHouseModes(h, params, inventory, changes, area.id);
     const modes = recipeHouseModes(houseModes);
@@ -429,11 +465,21 @@ export function planRecipes(
       .filter((r) => r.role === "holds")
       .map((r) => r.entityId)
       .sort();
+    const tvStarts = inv.tv
+      .filter((r) => r.counts && r.tvOccupancyRole === "starts")
+      .map((r) => r.entityId)
+      .sort();
+    const tvHolds = inv.tv
+      .filter((r) => r.counts && r.tvOccupancyRole === "holds")
+      .map((r) => r.entityId)
+      .sort();
     const holdMinutes = values.hold_timeout as number;
     const holdSeconds = holdMinutes * 60;
     const occupancyInput = {
       starts_entities: starts,
       holds_entities: holds,
+      tv_starts_entities: tvStarts,
+      tv_holds_entities: tvHolds,
       bed_entities: bedSensors,
       rate_entities: groupThere(ids.rate, "derivative") ? [ids.rate] : [],
       rate_hold: values.humidity_hold_rate,
@@ -447,8 +493,15 @@ export function planRecipes(
     };
 
     const occMissing: string[] = [];
-    if (starts.length === 0)
-      occMissing.push(sources.length === 0 ? "A motion or presence sensor" : "A sensor that starts occupancy (the counted ones are all set to hold)");
+    if (hold.issue) occMissing.push(hold.issue);
+    if (hold.adopted) {
+      const expectedTemplate = `{{ is_state('${ids.timer}','active') }}`;
+      const pendingOccupied = changes.find((c) => c.kind === "helper" && c.op === "create" && c.after.entity_id === ids.occupied);
+      if (h.entities[ids.occupied] || (pendingOccupied && pendingOccupied.after.state_template !== expectedTemplate) || pendingRename(changes, ids.occupied))
+        occMissing.push(`Verify that ${ids.occupied} uses ${ids.timer} before installing or updating Occupancy`);
+    }
+    if (starts.length === 0 && tvStarts.length === 0)
+      occMissing.push("One or more motion or presence sensors, or TVs, selected to start occupancy (hold-only sources cannot start it)");
     if (!usable) occMissing.push("An area code that makes valid entity ids (Settings)");
     else for (const m of [taken(ids.timer, timer), taken(ids.occupied, occupied), taken(ids.switch, toggle)]) if (m) occMissing.push(m);
 
@@ -519,7 +572,10 @@ export function planRecipes(
     // What the recipes that follow Occupancy need of it: the automation, installed
     // or in the list, and the occupied sensor and pause switch it makes.
     const needsOccupancy = (): string[] => {
-      if (!(occInstalled || pendingAutomation(changes, occupancyId))) return ["Occupancy (install it first)"];
+      if (!(occInstalled || (recipeWanted(inventory, area.id, "occupancy") && pendingAutomation(changes, occupancyId))))
+        return [
+          recipeWanted(inventory, area.id, "occupancy") ? "Occupancy (install it first)" : "Occupancy is not wanted here (enable it and install it first)",
+        ];
       if (!usable) return ["An area code that makes valid entity ids (Settings)"];
       return (
         [
@@ -548,8 +604,8 @@ export function planRecipes(
     // The lights that come on by day: the chosen entry lights, else the only light
     // of the area, else its main lights.
     const entry = entryLights(params, area.id, inv.lights);
-    const accentLights = lightsOf("accent");
-    const nightLights = lightsOf("night");
+    const accentLights = roleLights(params, area.id, inv.lights, "ambient_lights").lights;
+    const nightLights = roleLights(params, area.id, inv.lights, "night_lights").lights;
     const overrideMinutes = values.override_duration as number;
     // The automation sets the length itself each time it starts the timer; this
     // is the one the helper shows. Without a fixed override time it is a placeholder.
@@ -742,7 +798,9 @@ export function planRecipes(
       (x): x is string => x !== null,
     );
     const tempThere = groupThere(tempId, "min_max");
-    const occupiedThere = (occInstalled || pendingAutomation(changes, occupancyId)) && (occupied.state === "ok" || pendingHelper(changes, ids.occupied));
+    const occupiedThere =
+      (occInstalled || (recipeWanted(inventory, area.id, "occupancy") && pendingAutomation(changes, occupancyId))) &&
+      (occupied.state === "ok" || pendingHelper(changes, ids.occupied));
     // A bedroom that hasn't been given a choice doesn't need anyone in it for comfort.
     const needsResolved = resolve(params, h, inventory, area.id, "comfort_needs_occupancy");
     const comfortNeedsOccupancy = needsResolved.source.level === "default" && bedroom ? false : needsResolved.value === true;
@@ -1219,7 +1277,18 @@ export function planRecipes(
       automationInput("covers_sun", coversId, coversInput),
     ]);
   }
-  return out;
+  return out.map((cell) =>
+    recipeWanted(inventory, cell.areaId, cell.recipe as AreaRecipeKey)
+      ? cell
+      : {
+          ...cell,
+          wanted: false,
+          installed: Boolean(installed.automations[automationIdFor(cell.recipe as AreaRecipeKey, codes[cell.areaId].code)]),
+          pending: pendingAutomation(changes, automationIdFor(cell.recipe as AreaRecipeKey, codes[cell.areaId].code)),
+          actionable: false,
+          inputs: [],
+        },
+  );
 }
 
 // ---------------------------------------------------------------------------

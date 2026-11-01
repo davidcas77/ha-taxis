@@ -1,8 +1,8 @@
 # Taxis handover
 
-State at **0.7.91** (tag `v0.7.91`, 2026-10-30). `main` is clean and every branch
-of this work is merged; nothing is unreleased. Written for whoever continues the
-work (a person, Claude or another assistant): what Taxis is, how it got here, what
+State prepared for **0.7.92**. Version 0.7.91 was tagged `v0.7.91` on
+2026-10-30; verify the current merge, tag and publication state independently.
+Written for whoever continues the work (a person, Claude or another assistant): what Taxis is, how it got here, what
 is in it, how to work on it, and what is left (§9). Details of the
 smart-areas design are in [design/smart-areas.md](design/smart-areas.md); the
 newer features have their own notes in `docs/design/` (`house-guide.md`,
@@ -78,6 +78,16 @@ Hard rules that hold everywhere:
 | 0.7.6   | One table engine (`DataTable`, `shared/table-fit.ts`), page primitives in `web/src/ui.tsx`, Guide as the start page, leaner navigation, recipes filtered to the areas they fit, browser scenarios rewritten                                                            |
 | 0.7.7   | Health checks for automations (start-up actions, conflicts, lost first press, duplicate ids, unknown persons, impossible conditions); six new recipes (leak alert, covers and sun, low batteries, not reporting, house presence, goodbye); leak capability; Covers tab |
 | 0.7.8   | Guide goals for the house recipes; covers_sun v2 knows which side the window faces (azimuth range); Chip / Card used for role toggles, label pills and house modes                                                                                                     |
+
+The 0.7.92 implementation makes all 15 recipes description- and availability-first,
+adds floor and area records and source, role, helper and parameter tables, and allows
+shared parameter editing across overlapping motion, ambient and night settings.
+Per-area Wanted opts out without deleting HA objects; source roles are chosen before
+inclusion. Occupancy blueprint v5 optionally uses TV interactions to start or hold
+occupancy with the existing timeout. Same-area legacy `*_motion_hold` timer reuse
+prefers the canonical helper and blocks ambiguity or unverified templates. Sticky,
+independently scrolling panes, Buttons navigation and a compact Guide refine the UI.
+Label discovery and per-device virtual helpers remain planned, not implemented.
 
 Full notes per version: `taxis/CHANGELOG.md`.
 

@@ -298,7 +298,7 @@ class DesktopRegression(unittest.TestCase):
         self.hierarchy_fixture(fixture)
         self.page.route("**/api/settings/inventory", lambda route: route.fulfill(json={"ok": True, "revision": "fixture", "inventory": {"entities": {"light.tooltip_excluded": {"counts": False}}, "areas": {}}}))
         self.page.goto(BASE + "/#parameters/capabilities", wait_until="networkidle")
-        counted = self.page.get_by_role("button", name="Tooltip room, Lights: 2 counted", exact=True)
+        counted = self.page.get_by_role("button", name="Tooltip room, Lights: 2 included", exact=True)
         counted.hover()
         tooltip = self.page.get_by_role("tooltip")
         tooltip.get_by_text("Fixture counted first", exact=True).wait_for()
@@ -310,14 +310,14 @@ class DesktopRegression(unittest.TestCase):
         counted.focus()
         self.page.get_by_role("tooltip").get_by_text("Fixture counted second", exact=True).wait_for()
         self.page.keyboard.press("Escape")
-        excluded = self.page.get_by_role("button", name="Tooltip room, Lights: 1 not counted", exact=True)
+        excluded = self.page.get_by_role("button", name="Tooltip room, Lights: 1 not included", exact=True)
         excluded.focus()
         tooltip = self.page.get_by_role("tooltip")
         tooltip.get_by_text("Fixture excluded light", exact=True).wait_for()
         self.assertEqual(tooltip.locator("li").count(), 1)
         self.assertEqual(tooltip.get_by_text("light.tooltip_excluded", exact=True).count(), 1)
         self.page.keyboard.press("Escape")
-        self.page.get_by_role("button", name="Total, Lights: 2 counted", exact=True).focus()
+        self.page.get_by_role("button", name="Total, Lights: 2 included", exact=True).focus()
         tooltip = self.page.get_by_role("tooltip")
         tooltip.get_by_text("Fixture counted first", exact=True).wait_for()
         self.assertEqual(tooltip.locator("li").count(), 2)
@@ -340,29 +340,560 @@ class DesktopRegression(unittest.TestCase):
         self.page.route("**/api/changes", changes)
         self.page.route("**/api/changes/batch", changes)
         self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
-        self.assertEqual(self.page.get_by_role("tab", name="Recipes", exact=True).get_attribute("aria-selected"), "true")
-        self.page.get_by_role("group", name="Recipe view").get_by_role("button", name="Records", exact=True).click()
-        self.page.get_by_role("textbox", name="Find recipes").fill("Occupancy")
-        self.page.get_by_label("Recipe status", exact=True).select_option("ready")
-        records = self.page.locator("section[aria-label='Records']")
-        records.locator("tbody tr").filter(has_text="Bathroom").click()
-        details = self.page.get_by_role("article", name="Recipe details")
-        details.get_by_role("heading", name="Occupancy · Bathroom", exact=True).wait_for()
-        self.assertTrue(details.get_by_role("heading", name="How it behaves", exact=True).is_visible())
-        self.assertTrue(details.get_by_role("heading", name="Current installation", exact=True).is_visible())
-        heading = details.get_by_role("heading", name=re.compile(r"^\d+ proposed changes?$")).inner_text()
+        self.assertEqual(self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Recipes", exact=True).get_attribute("aria-current"), "page")
+        table = self.page.get_by_role("table", name="Recipe types", exact=True)
+        table.wait_for()
+        self.assertEqual(table.locator("tbody tr").count(), 15)
+        self.assertEqual(self.page.get_by_role("heading", name="Recipes", exact=True).count(), 0)
+        details = self.page.get_by_role("article", name="Recipe details").first
+        names = table.locator("tbody tr button").all_inner_texts()
+        self.assertEqual(len(names), 15)
+        house = {"Announce", "Goodbye", "House presence", "Low batteries", "Not reporting"}
+        for name in names:
+            table.get_by_role("button", name=name, exact=True).click()
+            details.get_by_role("heading", name=name, exact=True).wait_for()
+            tabs = details.get_by_role("tablist", name="Recipe details sections")
+            self.assertNotRegex(details.get_by_role("tabpanel").inner_text(), r"(?i)\bcounted\b")
+            self.assertEqual(tabs.get_by_role("tab", name="Description").get_attribute("aria-selected"), "true")
+            for title in ["Needed devices", "Helpers", "How it works", "Example"]:
+                self.assertTrue(details.get_by_role("heading", name=title, exact=True).is_visible())
+            flow = details.get_by_role("region", name=f"{name} flow")
+            flow.wait_for()
+            self.assertLess(details.get_by_role("heading", name="How it works").bounding_box()["y"], flow.bounding_box()["y"])
+            self.assertLess(flow.bounding_box()["y"], details.get_by_role("heading", name="Example").bounding_box()["y"])
+            for row in flow.locator("[aria-label$='flow steps'], [aria-label='Occupancy hierarchy'], [aria-label='Occupancy timer flow']").all():
+                self.assertLessEqual(row.evaluate("el => el.scrollWidth - el.clientWidth"), 1)
+                cards = row.locator("[data-flow-card]")
+                boxes = [card.bounding_box() for card in cards.all()]
+                self.assertGreaterEqual(len(boxes), 3)
+                self.assertEqual(len({round(box["y"]) for box in boxes}), 1)
+                self.assertEqual(len({round(box["height"]) for box in boxes}), 1)
+                self.assertEqual(len({round(box["width"]) for box in boxes}), 1)
+                for card in cards.all():
+                    lines = card.evaluate("el => el.firstElementChild.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight)")
+                    self.assertLessEqual(lines, 2.1, card.inner_text())
+            tabs.get_by_role("tab", name="Availability").click()
+            details.get_by_role("heading", name="House availability" if name in house else "Availability by area").wait_for()
+            self.assertNotRegex(details.get_by_role("tabpanel").inner_text(), r"(?i)\bcounted\b")
+            self.assertEqual(details.get_by_role("heading", name="How it works").count(), 0)
+            helper_tables = details.get_by_role("table", name="Recipe helpers")
+            if helper_tables.count():
+                self.assertEqual([header.inner_text() for header in helper_tables.first.get_by_role("columnheader").all()], ["Helper", "Status", "Purpose"])
+            if name == "House presence":
+                details.get_by_role("heading", name="People", exact=True).wait_for()
+                details.get_by_text(re.compile(r"Alex.*person.alex.*home")).first.wait_for()
+                self.assertTrue(details.get_by_text(re.compile(r"(?:Candidate area occupancy sensors|Current area group members|Planned area group members)")).count())
+            if name == "Announce":
+                details.get_by_text(re.compile(r"Occupancy prerequisite")).first.wait_for()
+        table.get_by_role("button", name="Occupancy", exact=True).click()
+        details.get_by_role("tab", name="Availability").click()
+        details.get_by_role("navigation", name="Recipe areas").get_by_role("button", name="Bathroom", exact=True).click()
+        bathroom = details
+        bathroom.get_by_role("heading", name="Occupancy · Bathroom", exact=True).wait_for()
+        self.assertTrue(bathroom.get_by_role("heading", name="Current installation", exact=True).is_visible())
+        heading = bathroom.get_by_role("heading", name=re.compile(r"^\d+ proposed changes?$")).inner_text()
         expected = int(heading.split()[0])
         self.assertGreater(expected, 0)
-        details.get_by_role("button", name="Add to changes", exact=True).click()
+        bathroom.get_by_role("button", name="Add to changes", exact=True).click()
         self.page.get_by_role("status").filter(has_text="changes added to the list").wait_for()
         self.assertEqual(len(posted), expected)
         self.assertTrue(any(item["kind"] == "automation" for item in posted))
-        self.page.get_by_role("group", name="Recipe view").get_by_role("button", name="Table", exact=True).click()
-        self.assertTrue(self.page.get_by_role("checkbox", name="Select all that can be added", exact=True).is_visible())
-        self.page.get_by_role("group", name="Recipe view").get_by_role("button", name="Records", exact=True).click()
-        self.page.reload(wait_until="networkidle")
-        self.page.get_by_role("textbox", name="Find recipes").wait_for()
         self.assertTrue(self.page.get_by_role("separator", name="Resize records and properties", exact=True).is_visible())
+
+    def test_occupancy_tv_role_persists_and_reports_save_failure(self):
+        def fixture(h):
+            area = next(a for a in h["areas"].values() if a["name"] == "Bathroom")
+            base = next(iter(h["entities"].values()))
+            entity = {**copy.deepcopy(base), "entityId": "media_player.fixture_tv", "name": "Fixture TV", "domain": "media_player", "deviceClass": "tv", "platform": "demo", "members": [], "categoryScope": None, "deviceId": None, "areaId": area["id"], "ownAreaId": area["id"], "disabled": False, "hidden": False, "maintenance": False}
+            h["entities"][entity["entityId"]] = entity
+            area["entityIds"].append(entity["entityId"])
+        self.hierarchy_fixture(fixture)
+        saved = {"entities": {"light.fixture_keep": {"counts": False}, "media_player.fixture_tv": {"counts": False}}, "areas": {}}
+        reject = [False]
+        def inventory(route):
+            if route.request.method == "PUT":
+                if reject[0]:
+                    route.fulfill(status=500, json={"ok": False, "error": "Fixture save failed"})
+                    return
+                saved.clear()
+                saved.update(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "inventory": saved})
+        self.page.route("**/api/settings/inventory", inventory)
+        def open_room():
+            self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+            self.page.reload(wait_until="networkidle")
+            details = self.page.get_by_role("article", name="Recipe details").first
+            self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Occupancy", exact=True).click()
+            flow = details.get_by_role("region", name="Occupancy flow")
+            flow.wait_for()
+            self.assertIn("Occupancy is triggered", flow.inner_text())
+            self.assertNotRegex(flow.inner_text(), r"(?i)\b(tv|bed|humidity)\b")
+            hierarchy = flow.get_by_label("Occupancy hierarchy").inner_text()
+            self.assertLess(hierarchy.index("Physical or virtual occupancy sensors"), hierarchy.index("Area occupancy"))
+            self.assertLess(hierarchy.index("Area occupancy"), hierarchy.index("Whole-house occupancy"))
+            self.assertIn("Planned: label-based discovery", flow.inner_text())
+            self.assertIn("occupancy label + assigned area", hierarchy)
+            self.assertIn("Discovers sources in this area", hierarchy)
+            self.assertIn("area and house outputs are excluded", flow.inner_text())
+            self.assertIn("area_occupancy", hierarchy)
+            self.assertIn("Labels determine membership, not proof of presence", flow.inner_text())
+            self.assertLess(details.get_by_role("heading", name="How it works").bounding_box()["y"], flow.bounding_box()["y"])
+            self.assertLess(flow.bounding_box()["y"], details.get_by_role("heading", name="Example").bounding_box()["y"])
+            self.page.set_viewport_size({"width": 375, "height": 800})
+            self.assertLessEqual(flow.evaluate("el => el.scrollWidth - el.clientWidth"), 1)
+            self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"))
+            self.assertGreater(flow.get_by_label("Occupancy hierarchy").evaluate("el => el.scrollWidth - el.clientWidth"), 0)
+            self.page.set_viewport_size({"width": 1600, "height": 1000})
+            details.get_by_role("tab", name="Availability").click()
+            details.get_by_role("navigation", name="Recipe areas").get_by_role("button", name="Bathroom", exact=True).click()
+            return details.get_by_role("combobox", name=re.compile("TV interaction: Fixture TV"))
+        select = open_room()
+        self.assertEqual(select.input_value(), "ignore")
+        select.select_option("holds")
+        expect(select).to_have_value("holds")
+        self.assertEqual(saved["entities"]["light.fixture_keep"], {"counts": False})
+        self.assertEqual(saved["entities"]["media_player.fixture_tv"]["tvOccupancyRole"], "holds")
+        self.assertFalse(saved["entities"]["media_player.fixture_tv"]["counts"])
+        select = open_room()
+        self.assertEqual(select.input_value(), "holds")
+        reject[0] = True
+        select.select_option("starts")
+        self.page.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
+        expect(select).to_have_value("holds")
+        self.assertEqual(saved["entities"]["media_player.fixture_tv"]["tvOccupancyRole"], "holds")
+
+    def test_recipe_wanted_persists_and_rolls_back(self):
+        def fixture(h):
+            template = copy.deepcopy(next(iter(h["areas"].values())))
+            h["areas"] = {}
+            for area_id, name in [("garden_fixture", "Garden fixture"), ("room_fixture", "Room fixture")]:
+                h["areas"][area_id] = {**template, "id": area_id, "name": name, "floorId": None, "entityIds": [], "deviceIds": []}
+            h["floors"] = []
+            h["looseAreaIds"] = list(h["areas"])
+        self.hierarchy_fixture(fixture)
+        saved = {"entities": {"light.fixture_keep": {"counts": False}}, "areas": {}}
+        reject = [False]
+        def inventory(route):
+            if route.request.method == "PUT":
+                if reject[0]:
+                    route.fulfill(status=500, json={"ok": False, "error": "Fixture save failed"})
+                    return
+                saved.clear()
+                saved.update(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "inventory": saved})
+        self.page.route("**/api/settings/inventory", inventory)
+        self.page.route("**/api/recipes/state", lambda route: route.fulfill(json={"ok": True, "installed": {"blueprints": {}, "automations": {}, "scripts": {}, "timers": {}, "controllers": {}}}))
+        def open_recipe(name, area):
+            self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+            self.page.reload(wait_until="networkidle")
+            self.page.get_by_role("table", name="Recipe types").get_by_role("button", name=name, exact=True).click()
+            details = self.page.get_by_role("article", name="Recipe details").first
+            details.get_by_role("tab", name="Availability").click()
+            details.get_by_role("button", name=area, exact=True).click()
+            return details
+        details = open_recipe("Motion lights", "Garden fixture")
+        toggle = details.get_by_role("checkbox", name="Wanted in this area")
+        expect(toggle).to_be_checked()
+        toggle.uncheck()
+        expect(toggle).not_to_be_checked()
+        expect(details.get_by_text("Not wanted here.", exact=False)).to_be_visible()
+        expect(details.get_by_role("heading", name="Missing requirements")).to_have_count(0)
+        expect(details.get_by_role("button", name="Add to changes")).to_be_disabled()
+        toggle.check()
+        details.get_by_role("heading", name="Missing requirements").wait_for()
+        toggle.uncheck()
+        expect(details.get_by_role("heading", name="Missing requirements")).to_have_count(0)
+        self.assertEqual(saved["areas"]["garden_fixture"]["recipePreferences"], {"motion_lights": False})
+        self.assertEqual(saved["entities"]["light.fixture_keep"], {"counts": False})
+        details = open_recipe("Motion lights", "Room fixture")
+        expect(details.get_by_role("checkbox", name="Wanted in this area")).to_be_checked()
+        details = open_recipe("Motion lights", "Garden fixture")
+        toggle = details.get_by_role("checkbox", name="Wanted in this area")
+        expect(toggle).not_to_be_checked()
+        reject[0] = True
+        toggle.check()
+        details.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
+        expect(toggle).not_to_be_checked()
+        reject[0] = False
+        details = open_recipe("Occupancy", "Garden fixture")
+        expect(details.get_by_role("checkbox", name="Wanted in this area")).to_be_checked()
+        details.get_by_role("checkbox", name="Wanted in this area").uncheck()
+        self.assertEqual(saved["areas"]["garden_fixture"]["recipePreferences"], {"motion_lights": False, "occupancy": False})
+
+    def test_unwanted_installed_and_pending_recipe_warns_and_keeps_queue(self):
+        def fixture(h):
+            template = copy.deepcopy(next(iter(h["areas"].values())))
+            h["areas"] = {"garden_fixture": {**template, "id": "garden_fixture", "name": "Garden fixture", "floorId": None, "entityIds": [], "deviceIds": []}}
+            h["floors"] = []
+            h["looseAreaIds"] = ["garden_fixture"]
+        self.hierarchy_fixture(fixture)
+        saved = {"entities": {}, "areas": {}}
+        pending = {"id": 9001, "kind": "automation", "op": "create", "targetId": "taxis_occupancy_garden_fixture", "scope": None, "before": {}, "after": {}, "createdAt": ""}
+        self.page.route("**/api/changes", lambda route: route.fulfill(json={"ok": True, "changes": [pending], "version": "fixture"}))
+        self.page.route("**/api/recipes/state", lambda route: route.fulfill(json={"ok": True, "installed": {"blueprints": {}, "automations": {"taxis_occupancy_garden_fixture": {"alias": "Existing", "path": "taxis/occupancy.yaml", "input": {}}}, "scripts": {}, "timers": {}, "controllers": {}}}))
+        def inventory(route):
+            if route.request.method == "PUT":
+                saved.clear()
+                saved.update(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "inventory": saved})
+        self.page.route("**/api/settings/inventory", inventory)
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Occupancy", exact=True).click()
+        details = self.page.get_by_role("article", name="Recipe details").first
+        details.get_by_role("tab", name="Availability").click()
+        details.get_by_role("button", name="Garden fixture", exact=True).click()
+        details.get_by_role("checkbox", name="Wanted in this area").uncheck()
+        details.get_by_text("The automation remains installed until changed in Home Assistant", exact=False).wait_for()
+        details.get_by_text("Previously queued changes remain in Changes until removed", exact=False).wait_for()
+        expect(details.get_by_role("button", name="Already in changes")).to_be_disabled()
+        self.assertEqual(saved["areas"]["garden_fixture"]["recipePreferences"], {"occupancy": False})
+
+    def test_motion_lights_areas_remain_available_when_install_read_fails(self):
+        def fixture(h):
+            area = copy.deepcopy(next(iter(h["areas"].values())))
+            area.update({"id": "unfloored_room", "name": "Unfloored room", "floorId": None, "entityIds": [], "deviceIds": []})
+            h["areas"][area["id"]] = area
+            h["looseAreaIds"].append(area["id"])
+        self.hierarchy_fixture(fixture)
+        self.page.route("**/api/recipes/state", lambda route: route.fulfill(status=502, json={"ok": False, "error": "Fixture unavailable"}))
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Motion lights", exact=True).click()
+        details = self.page.get_by_role("article", name="Recipe details").first
+        details.get_by_role("tab", name="Availability").click()
+        tree = details.get_by_role("navigation", name="Motion lights areas")
+        tree.get_by_text("No floor", exact=True).wait_for()
+        tree.get_by_role("button", name="Unfloored room", exact=True).click()
+        self.assertEqual(tree.get_by_role("button", name="Unfloored room", exact=True).get_attribute("aria-current"), "true")
+        details.get_by_role("heading", name="Unfloored room", exact=True).wait_for()
+        details.get_by_text("No lights found in this area.").wait_for()
+        details.get_by_text("Area occupancy virtual sensor", exact=False).first.wait_for()
+        details.get_by_role("alert").filter(has_text="Fixture unavailable").wait_for()
+        self.assertEqual(details.get_by_role("button", name="Add to changes").count(), 0)
+        self.page.set_viewport_size({"width": 375, "height": 800})
+        details.get_by_role("button", name="Back to areas").click()
+        tree.get_by_role("button", name="Unfloored room", exact=True).click()
+        details.get_by_role("heading", name="Unfloored room", exact=True).wait_for()
+        self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"))
+
+    def test_motion_lights_selections_save_overlap_reset_and_failure(self):
+        def fixture(h):
+            area = copy.deepcopy(next(iter(h["areas"].values())))
+            area.update({"id": "lighting_fixture", "name": "Lighting fixture", "floorId": None, "entityIds": [], "deviceIds": []})
+            h["areas"][area["id"]] = area
+            h["looseAreaIds"].append(area["id"])
+            base = next(iter(h["entities"].values()))
+            for suffix in ["one", "two", "excluded"]:
+                entity = {**copy.deepcopy(base), "entityId": "light.fixture_" + suffix, "name": "Fixture " + suffix, "domain": "light", "deviceClass": None, "platform": "demo", "members": [], "categoryScope": None, "deviceId": None, "areaId": area["id"], "ownAreaId": area["id"], "disabled": False, "hidden": False, "maintenance": False}
+                h["entities"][entity["entityId"]] = entity
+                area["entityIds"].append(entity["entityId"])
+            h["entities"]["binary_sensor.lighting_fixture_occupied"] = {**copy.deepcopy(base), "entityId": "binary_sensor.lighting_fixture_occupied", "name": "Existing unrelated sensor", "domain": "binary_sensor", "platform": "demo", "areaId": None, "ownAreaId": None}
+            h["entities"]["input_boolean.fixture_guest"] = {**copy.deepcopy(base), "entityId": "input_boolean.fixture_guest", "name": "Fixture guest", "domain": "input_boolean", "platform": "input_boolean", "state": "off", "disabled": False, "areaId": None, "ownAreaId": None}
+            h["entities"]["input_boolean.fixture_bad"] = {**copy.deepcopy(base), "entityId": "input_boolean.fixture_bad", "name": "Incompatible fixture guest", "domain": "input_boolean", "platform": "demo", "state": "off", "disabled": False, "areaId": None, "ownAreaId": None}
+        self.hierarchy_fixture(fixture)
+        pending = {"id": 8001, "kind": "helper", "op": "create", "targetId": "timer.lighting_fixture_override", "scope": None, "before": {}, "after": {"entity_id": "timer.lighting_fixture_override"}, "createdAt": "2026-10-27T00:00:00Z"}
+        self.page.route("**/api/changes", lambda route: route.fulfill(json={"ok": True, "changes": [pending], "version": "fixture"}))
+        inventory = {"entities": {"light.fixture_two": {"light": "accent"}, "light.fixture_excluded": {"counts": False}}, "areas": {}}
+        self.page.route("**/api/settings/inventory", lambda route: route.fulfill(json={"ok": True, "inventory": inventory}))
+        saved = {"house": {"day_brightness": 80}, "types": {}, "areas": {"other_room": {"day_brightness": 42}}}
+        reject = [False]
+        def parameters(route):
+            if route.request.method == "PUT":
+                if reject[0]:
+                    route.fulfill(status=500, json={"ok": False, "error": "Fixture save failed"})
+                    return
+                saved.clear()
+                saved.update(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "parameters": saved})
+        self.page.route("**/api/settings/parameters", parameters)
+        def open_room():
+            self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+            self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Motion lights", exact=True).click()
+            details = self.page.get_by_role("article", name="Recipe details").first
+            details.get_by_role("tab", name="Availability").click()
+            details.get_by_role("navigation", name="Motion lights areas").get_by_role("button", name="Lighting fixture", exact=True).click()
+            return details
+        details = open_room()
+        helpers = details.get_by_role("table", name="Recipe helpers")
+        helpers.get_by_role("row").filter(has_text="binary_sensor.lighting_fixture_occupied").get_by_text("Conflict", exact=True).wait_for()
+        helpers.get_by_role("row").filter(has_text="timer.lighting_fixture_override").get_by_text("In changes", exact=True).wait_for()
+        helpers.get_by_role("row").filter(has_text="Light group").get_by_text("Missing", exact=True).wait_for()
+        self.assertIn("text-danger", helpers.get_by_role("row").filter(has_text="binary_sensor.lighting_fixture_occupied").get_by_text("Conflict", exact=True).get_attribute("class"))
+        self.assertIn("text-warn", helpers.get_by_role("row").filter(has_text="Light group").get_by_text("Missing", exact=True).get_attribute("class"))
+        self.assertIn("text-muted", helpers.get_by_role("row").filter(has_text="Light level").get_by_text("Missing", exact=True).get_attribute("class"))
+        self.assertEqual([header.inner_text() for header in helpers.get_by_role("columnheader").all()], ["Helper", "Status", "Purpose"])
+        source_table = details.get_by_role("table", name="Area light sources")
+        self.assertEqual([header.inner_text() for header in source_table.get_by_role("columnheader").all()], ["Entity", "Role"])
+        params_table = details.get_by_role("table", name="Area parameters")
+        self.assertEqual([header.inner_text() for header in params_table.get_by_role("columnheader").all()], ["Parameter", "Value", "Source"])
+        for mode in ["Away mode switch", "Sleep mode switch", "Guest mode switch"]:
+            params_table.get_by_role("button", name=re.compile(r"^" + mode + r" for Lighting fixture:")).wait_for()
+        params_table.get_by_role("button", name=re.compile(r"^Guest mode switch for Lighting fixture:")).click()
+        guest_edit = params_table.get_by_label("Guest mode switch for Lighting fixture", exact=True)
+        guest_edit.fill("input_boolean.fixture_guest")
+        guest_edit.press("Enter")
+        params_table.get_by_role("button", name=re.compile(r"^Guest mode switch for Lighting fixture: input_boolean.fixture_guest, set here")).wait_for()
+        self.assertEqual(saved["areas"]["lighting_fixture"]["guest_mode_entity"], "input_boolean.fixture_guest")
+        helpers.get_by_role("row").filter(has_text="input_boolean.fixture_guest").get_by_text("External selection").wait_for()
+        helpers.get_by_role("row").filter(has_text="input_boolean.fixture_guest").get_by_text("Existing", exact=True).wait_for()
+        params_table.get_by_role("button", name=re.compile(r"^Guest mode switch for Lighting fixture:")).click()
+        guest_edit = params_table.get_by_label("Guest mode switch for Lighting fixture", exact=True)
+        guest_edit.fill("input_boolean.fixture_bad")
+        guest_edit.press("Enter")
+        helpers.get_by_role("row").filter(has_text="input_boolean.fixture_bad").get_by_text("Conflict", exact=True).wait_for()
+        params_table.get_by_role("button", name=re.compile(r"^Guest mode switch for Lighting fixture:")).click()
+        guest_edit = params_table.get_by_label("Guest mode switch for Lighting fixture", exact=True)
+        guest_edit.fill("input_boolean.fixture_guest")
+        guest_edit.press("Enter")
+        helpers.get_by_role("row").filter(has_text="input_boolean.fixture_guest").get_by_text("Existing", exact=True).wait_for()
+        self.page.goto(BASE + "/#parameters/house", wait_until="networkidle")
+        self.page.get_by_role("button", name="Columns of House").click()
+        self.page.get_by_role("group", name="Columns").get_by_label(re.compile(r"^Guest mode switch")).check()
+        self.page.get_by_role("button", name="Columns of House").click()
+        self.page.get_by_role("button", name=re.compile(r"^Guest mode switch for Lighting fixture: input_boolean.fixture_guest, set here")).wait_for()
+        details = open_room()
+        motion = details.get_by_role("group", name="Motion lights", exact=True)
+        ambient = details.get_by_role("group", name="Ambient lights", exact=True)
+        night = details.get_by_role("group", name="Night lights", exact=True)
+        expect(details.get_by_role("checkbox", name="Motion lights: Fixture one", exact=True)).to_be_checked()
+        expect(details.get_by_role("checkbox", name="Ambient lights: Fixture two", exact=True)).to_be_checked()
+        for checkbox in details.get_by_role("checkbox", name=re.compile("Fixture excluded")).all():
+            self.assertTrue(checkbox.is_disabled())
+        details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True).check()
+        expect(details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True)).to_be_checked()
+        details.get_by_role("checkbox", name="Night lights: Fixture one", exact=True).check()
+        expect(details.get_by_role("checkbox", name="Night lights: Fixture one", exact=True)).to_be_checked()
+        self.assertEqual(sorted(saved["areas"]["lighting_fixture"]["ambient_lights"]), ["light.fixture_one", "light.fixture_two"])
+        self.assertEqual(saved["areas"]["lighting_fixture"]["night_lights"], ["light.fixture_one"])
+        self.assertEqual(saved["areas"]["other_room"]["day_brightness"], 42)
+        brightness = details.get_by_role("button", name=re.compile(r"^Day brightness for Lighting fixture: 80 %.*, from the house default"))
+        brightness.click()
+        edit = details.get_by_label("Day brightness for Lighting fixture", exact=True)
+        edit.fill("65")
+        edit.press("Enter")
+        details.get_by_role("button", name=re.compile(r"^Day brightness for Lighting fixture: 65 %.*, set here")).wait_for()
+        self.assertEqual(saved["areas"]["lighting_fixture"]["day_brightness"], 65)
+        self.page.goto(BASE + "/#parameters/lighting", wait_until="networkidle")
+        self.page.get_by_role("button", name=re.compile(r"^Day brightness for Lighting fixture: 65 %.*, set here")).wait_for()
+        self.page.get_by_role("button", name="Columns of Lighting").click()
+        columns = self.page.get_by_role("group", name="Columns")
+        columns.get_by_label("Ambient lights", exact=True).check()
+        self.page.get_by_role("button", name="Columns of Lighting").click()
+        self.page.get_by_role("button", name="Ambient lights for Lighting fixture: 2 lights, set here", exact=True).click()
+        dialog = self.page.get_by_role("dialog", name="Ambient lights for Lighting fixture")
+        dialog.get_by_role("checkbox", name="Fixture one is ambient lights for Lighting fixture", exact=True).uncheck()
+        self.assertEqual(saved["areas"]["lighting_fixture"]["ambient_lights"], ["light.fixture_two"])
+        self.page.keyboard.press("Escape")
+        details = open_room()
+        ambient = details.get_by_role("group", name="Ambient lights", exact=True)
+        expect(details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True)).not_to_be_checked()
+        details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True).check()
+        details = open_room()
+        details.get_by_role("button", name="Clear Day brightness for Lighting fixture").click()
+        details.get_by_role("button", name=re.compile(r"^Day brightness for Lighting fixture: 80 %.*, from the house default")).wait_for()
+        self.page.reload(wait_until="networkidle")
+        details = open_room()
+        ambient = details.get_by_role("group", name="Ambient lights", exact=True)
+        expect(details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True)).to_be_checked()
+        details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True).uncheck()
+        details.get_by_role("checkbox", name="Ambient lights: Fixture two", exact=True).uncheck()
+        self.assertEqual(saved["areas"]["lighting_fixture"]["ambient_lights"], [])
+        ambient.get_by_role("button", name="Use defaults").click()
+        expect(details.get_by_role("checkbox", name="Ambient lights: Fixture two", exact=True)).to_be_checked()
+        self.assertNotIn("ambient_lights", saved["areas"]["lighting_fixture"])
+        reject[0] = True
+        details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True).check()
+        details.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
+        expect(details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True)).not_to_be_checked()
+        self.assertNotIn("ambient_lights", saved["areas"]["lighting_fixture"])
+
+    def test_recipe_area_sources_share_inventory_and_report_failure(self):
+        def fixture(h):
+            area = copy.deepcopy(next(iter(h["areas"].values())))
+            area.update({"id": "source_fixture", "name": "Source fixture", "floorId": None, "entityIds": [], "deviceIds": []})
+            h["areas"][area["id"]] = area
+            h["looseAreaIds"].append(area["id"])
+            base = next(iter(h["entities"].values()))
+            entity = {**copy.deepcopy(base), "entityId": "binary_sensor.fixture_motion", "name": "Fixture motion", "domain": "binary_sensor", "deviceClass": "motion", "platform": "demo", "members": [], "categoryScope": None, "deviceId": None, "areaId": area["id"], "ownAreaId": area["id"], "disabled": False, "hidden": False, "maintenance": False}
+            h["entities"][entity["entityId"]] = entity
+            area["entityIds"].append(entity["entityId"])
+        self.hierarchy_fixture(fixture)
+        saved = {"entities": {"binary_sensor.fixture_motion": {"counts": False}, "light.keep": {"counts": False}}, "areas": {}}
+        reject = [False]
+        def inventory(route):
+            if route.request.method == "PUT":
+                if reject[0]:
+                    route.fulfill(status=500, json={"ok": False, "error": "Fixture inventory failure"})
+                    return
+                saved.clear()
+                saved.update(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "inventory": saved})
+        self.page.route("**/api/settings/inventory", inventory)
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Occupancy", exact=True).click()
+        details = self.page.get_by_role("article", name="Recipe details").first
+        details.get_by_role("tab", name="Availability").click()
+        details.get_by_role("navigation", name="Recipe areas").get_by_role("button", name="Source fixture", exact=True).click()
+        include = details.get_by_role("checkbox", name=re.compile("Fixture motion"))
+        role = details.get_by_role("combobox", name="Occupancy role: Fixture motion")
+        self.assertTrue(role.is_enabled())
+        role.select_option("holds")
+        expect(role).to_have_value("holds")
+        self.assertFalse(include.is_checked())
+        self.assertFalse(saved["entities"]["binary_sensor.fixture_motion"]["counts"])
+        reject[0] = True
+        role.select_option("starts")
+        details.get_by_role("alert").filter(has_text="Fixture inventory failure").wait_for()
+        expect(role).to_have_value("holds")
+        self.assertFalse(include.is_checked())
+        self.assertFalse(saved["entities"]["binary_sensor.fixture_motion"]["counts"])
+        reject[0] = False
+        include.check()
+        expect(include).to_be_checked()
+        expect(role).to_have_value("holds")
+        self.assertEqual(saved["entities"]["binary_sensor.fixture_motion"]["role"], "holds")
+        self.assertEqual(saved["entities"]["light.keep"], {"counts": False})
+        self.page.reload(wait_until="networkidle")
+        self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Occupancy", exact=True).click()
+        details.get_by_role("tab", name="Availability").click()
+        details.get_by_role("navigation", name="Recipe areas").get_by_role("button", name="Source fixture", exact=True).click()
+        include = details.get_by_role("checkbox", name=re.compile("Fixture motion"))
+        role = details.get_by_role("combobox", name="Occupancy role: Fixture motion")
+        expect(role).to_have_value("holds")
+        reject[0] = True
+        include.uncheck()
+        details.get_by_role("alert").filter(has_text="Fixture inventory failure").wait_for()
+        expect(include).to_be_checked()
+        self.assertEqual(saved["entities"]["binary_sensor.fixture_motion"]["role"], "holds")
+
+    def test_house_presence_candidates_and_group_members_are_backed_by_helpers(self):
+        def fixture(h):
+            template = copy.deepcopy(next(iter(h["areas"].values())))
+            base = copy.deepcopy(next(iter(h["entities"].values())))
+            h["entities"].pop("binary_sensor.taxis_areas_occupied", None)
+            for name in ["candidate_real", "candidate_pending", "candidate_absent"]:
+                h["areas"][name] = {**copy.deepcopy(template), "id": name, "name": name, "floorId": None, "entityIds": [], "deviceIds": []}
+                h["looseAreaIds"].append(name)
+            entity_id = "binary_sensor.candidate_real_occupied"
+            h["entities"][entity_id] = {**base, "entityId": entity_id, "name": "Real occupancy helper", "domain": "binary_sensor", "platform": "template", "inRegistry": True, "configEntryId": "fixture", "areaId": None, "ownAreaId": None}
+        self.hierarchy_fixture(fixture)
+        pending = {"id": 9111, "kind": "helper", "op": "create", "targetId": "binary_sensor.candidate_pending_occupied", "scope": None, "before": {}, "after": {"entity_id": "binary_sensor.candidate_pending_occupied", "name": "Pending occupancy helper"}, "createdAt": "2026-10-27T00:00:00Z"}
+        changes = [pending]
+        self.page.route("**/api/changes", lambda route: route.fulfill(json={"ok": True, "changes": changes, "version": str(len(changes))}))
+        def show():
+            self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+            self.page.reload(wait_until="networkidle")
+            self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="House presence", exact=True).click()
+            details = self.page.get_by_role("article", name="Recipe details").first
+            details.get_by_role("tab", name="Availability").click()
+            return details
+        details = show()
+        details.get_by_text("Candidate area occupancy sensors", exact=False).first.wait_for()
+        details.get_by_text(re.compile(r"Real occupancy helper.*binary_sensor.candidate_real_occupied")).wait_for()
+        details.get_by_text(re.compile(r"Pending occupancy helper.*binary_sensor.candidate_pending_occupied.*In changes")).wait_for()
+        self.assertEqual(details.get_by_text("binary_sensor.candidate_absent_occupied", exact=True).count(), 0)
+        changes.append({"id": 9112, "kind": "helper", "op": "create", "targetId": "binary_sensor.taxis_areas_occupied", "scope": None, "before": {}, "after": {"entity_id": "binary_sensor.taxis_areas_occupied", "entities": ["binary_sensor.candidate_absent_occupied", "binary_sensor.candidate_pending_occupied"]}, "createdAt": "2026-10-27T00:00:00Z"})
+        details = show()
+        details.get_by_text("Planned area group members", exact=False).first.wait_for()
+        missing = details.get_by_text(re.compile(r"Missing from current snapshot.*binary_sensor.candidate_absent_occupied"))
+        missing.wait_for()
+        self.assertEqual(missing.inner_text().count("binary_sensor.candidate_absent_occupied"), 1)
+        details.get_by_text(re.compile(r"Pending occupancy helper.*binary_sensor.candidate_pending_occupied.*In changes")).wait_for()
+
+    def test_house_recipe_parameter_shared_with_parameters(self):
+        saved = {"house": {}, "types": {}, "areas": {"other_room": {"day_brightness": 42}}}
+        def parameters(route):
+            if route.request.method == "PUT":
+                saved.clear()
+                saved.update(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "parameters": saved})
+        self.page.route("**/api/settings/parameters", parameters)
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Low batteries", exact=True).click()
+        details = self.page.get_by_role("article", name="Recipe details").first
+        details.get_by_role("tab", name="Availability").click()
+        params_table = details.get_by_role("table", name="House parameters")
+        self.assertEqual([header.inner_text() for header in params_table.get_by_role("columnheader").all()], ["Parameter", "Value", "Source"])
+        details.get_by_role("button", name=re.compile(r"^Battery low below for House default:")).click()
+        edit = details.get_by_label("Battery low below for House default", exact=True)
+        edit.fill("30")
+        edit.press("Enter")
+        details.get_by_role("button", name=re.compile(r"^Battery low below for House default: 30 %.*, set here")).wait_for()
+        self.assertEqual(saved["house"]["battery_threshold"], 30)
+        self.assertEqual(saved["areas"]["other_room"]["day_brightness"], 42)
+        self.page.goto(BASE + "/#parameters/safety", wait_until="networkidle")
+        self.page.get_by_role("button", name="Columns of Safety").click()
+        self.page.get_by_role("group", name="Columns").get_by_label(re.compile(r"^Battery low below")).check()
+        self.page.get_by_role("button", name="Columns of Safety").click()
+        self.page.get_by_role("button", name=re.compile(r"^Battery low below for House default: 30 %.*, set here")).wait_for()
+
+    def test_recipe_pane_has_independent_width_and_no_column_chooser(self):
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        self.page.evaluate("""() => {
+            localStorage.setItem('taxis:records:pane', JSON.stringify({list: 416}));
+            localStorage.removeItem('taxis:recipes:pane');
+            localStorage.setItem('taxis:table:v3:recipe-types', JSON.stringify({show: [], hide: ['recipe'], widths: {recipe: 900}}));
+        }""")
+        self.page.reload(wait_until="networkidle")
+        pane = self.page.locator("section[aria-label='Records']")
+        table = self.page.get_by_role("table", name="Recipe types", exact=True)
+        self.assertAlmostEqual(pane.bounding_box()["width"], 240, delta=2)
+        self.assertEqual(self.page.get_by_role("button", name="Columns of Recipe types").count(), 0)
+        self.assertTrue(table.get_by_role("button", name="Occupancy", exact=True).is_visible())
+        divider = self.page.get_by_role("separator", name="Resize records and properties")
+        divider.focus()
+        for _ in range(8):
+            self.page.keyboard.press("ArrowLeft")
+        self.assertAlmostEqual(pane.bounding_box()["width"], 140, delta=2)
+        self.page.reload(wait_until="networkidle")
+        self.assertAlmostEqual(pane.bounding_box()["width"], 140, delta=2)
+        self.assertLessEqual(table.evaluate("el => el.scrollWidth - el.parentElement.clientWidth"), 1)
+        for button in table.locator("tbody button").all():
+            self.assertTrue(button.is_visible())
+            self.assertLessEqual(button.evaluate("el => el.scrollWidth - el.clientWidth"), 1)
+            self.assertEqual(button.evaluate("el => getComputedStyle(el).whiteSpace"), "normal")
+        divider.focus()
+        for _ in range(12):
+            self.page.keyboard.press("ArrowRight")
+        self.assertAlmostEqual(pane.bounding_box()["width"], 320, delta=2)
+        self.page.reload(wait_until="networkidle")
+        self.assertAlmostEqual(pane.bounding_box()["width"], 320, delta=2)
+        self.assertEqual(self.page.get_by_role("button", name="Reset layout", exact=True).count(), 0)
+        self.assertEqual(self.page.evaluate("JSON.parse(localStorage.getItem('taxis:records:pane')).list"), 416)
+        self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")
+        self.page.get_by_role("button", name="Records", exact=True).click()
+        self.assertTrue(self.page.get_by_role("button", name="Columns of Devices list").is_visible())
+        self.assertAlmostEqual(self.page.locator("section[aria-label='Records']").bounding_box()["width"], 416, delta=2)
+
+    def test_recipes_explain_when_installed_state_is_unavailable(self):
+        self.page.route("**/api/recipes/state", lambda route: route.fulfill(status=502, json={"ok": False, "error": "Fixture unavailable"}))
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        table = self.page.get_by_role("table", name="Recipe types", exact=True)
+        self.assertEqual(table.locator("tbody tr").count(), 15)
+        details = self.page.get_by_role("article", name="Recipe details").first
+        table.get_by_role("button", name="Goodbye", exact=True).click()
+        details.get_by_role("heading", name="Goodbye", exact=True).wait_for()
+        self.assertTrue(details.get_by_role("heading", name="How it works").is_visible())
+        details.get_by_role("tab", name="Availability").click()
+        self.assertTrue(details.get_by_role("alert").filter(has_text="Fixture unavailable").is_visible())
+        self.assertEqual(details.get_by_role("button", name="Add to changes").count(), 0)
+
+    def test_recipe_type_navigation_on_phone(self):
+        self.page.set_viewport_size({"width": 375, "height": 800})
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        table = self.page.get_by_role("table", name="Recipe types", exact=True)
+        table.get_by_role("button", name="Motion lights", exact=True).click()
+        details = self.page.get_by_role("article", name="Recipe details").first
+        details.get_by_role("heading", name="Motion lights", exact=True).wait_for()
+        self.assertFalse(table.is_visible())
+        description = details.get_by_role("tab", name="Description")
+        description.focus()
+        self.page.keyboard.press("ArrowRight")
+        self.assertEqual(details.get_by_role("tab", name="Availability").get_attribute("aria-selected"), "true")
+        details.get_by_role("heading", name="Availability by area").wait_for()
+        self.page.keyboard.press("Home")
+        self.assertEqual(description.get_attribute("aria-selected"), "true")
+        details.get_by_role("button", name="Back to recipes").click()
+        self.assertTrue(table.is_visible())
 
     def test_device_details_include_entities(self):
         self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")

@@ -1,3 +1,4 @@
+import type { AreaRecipeKey } from "./blueprints.ts";
 import type { EntityItem, Hierarchy } from "./types.ts";
 
 // The capability inventory: what each area has (lights, motion, doors,
@@ -30,6 +31,9 @@ export const CAPABILITY_LABEL = Object.fromEntries(CAPABILITIES.map((c) => [c.ke
 
 export const MOTION_ROLES = ["starts", "holds"] as const;
 export type MotionRole = (typeof MOTION_ROLES)[number];
+
+export const TV_OCCUPANCY_ROLES = ["ignore", "starts", "holds"] as const;
+export type TvOccupancyRole = (typeof TV_OCCUPANCY_ROLES)[number];
 
 export const LIGHT_ROLES = ["main", "accent", "task", "night"] as const;
 export type LightRole = (typeof LIGHT_ROLES)[number];
@@ -70,11 +74,12 @@ export type EntityChoice = {
   kind?: Capability;
   climate?: ClimateKind;
   role?: MotionRole;
+  tvOccupancyRole?: TvOccupancyRole;
   light?: LightRole;
   bed?: boolean;
   appliance?: boolean;
 };
-export type AreaChoice = { type?: AreaType; bedroom?: boolean };
+export type AreaChoice = { type?: AreaType; bedroom?: boolean; recipePreferences?: Partial<Record<AreaRecipeKey, boolean>> };
 export type InventorySettings = { entities: Record<string, EntityChoice>; areas: Record<string, AreaChoice> };
 
 export const EMPTY_INVENTORY: InventorySettings = { entities: {}, areas: {} };
@@ -205,6 +210,8 @@ export type InventoryRow = {
   // Motion and presence only.
   role?: MotionRole;
   roleDefault?: MotionRole;
+  // TV interaction is opt-in.
+  tvOccupancyRole?: TvOccupancyRole;
   // Lights only.
   light?: LightRole;
   // Climate only: what it is, and what was detected.
@@ -267,6 +274,10 @@ export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string
       row.roleDefault = capability === "presence" && hasMotion ? "holds" : "starts";
       row.role = choice.role ?? row.roleDefault;
       overridden ||= row.role !== row.roleDefault;
+    }
+    if (capability === "tv") {
+      row.tvOccupancyRole = choice.tvOccupancyRole ?? "ignore";
+      overridden ||= row.tvOccupancyRole !== "ignore";
     }
     if (capability === "lights") {
       row.light = choice.light ?? "main";
@@ -423,6 +434,11 @@ export function setRole(h: Hierarchy, s: InventorySettings, entityId: string, ro
   return row?.roleDefault ? patchEntity(s, entityId, "role", role, row.roleDefault) : s;
 }
 
+export function setTvOccupancyRole(h: Hierarchy, s: InventorySettings, entityId: string, role: TvOccupancyRole): InventorySettings {
+  const row = rowOf(h, s, entityId);
+  return row?.capability === "tv" && TV_OCCUPANCY_ROLES.includes(role) ? patchEntity(s, entityId, "tvOccupancyRole", role, "ignore") : s;
+}
+
 export const setLightRole = (s: InventorySettings, entityId: string, light: LightRole): InventorySettings => patchEntity(s, entityId, "light", light, "main");
 
 export const setBed = (s: InventorySettings, entityId: string, bed: boolean): InventorySettings => patchEntity(s, entityId, "bed", bed, false);
@@ -441,3 +457,21 @@ export function resetEntity(s: InventorySettings, entityId: string): InventorySe
 export const setAreaType = (s: InventorySettings, areaId: string, type: AreaType): InventorySettings => patchArea(s, areaId, "type", type, "interior");
 
 export const setBedroom = (s: InventorySettings, areaId: string, bedroom: boolean): InventorySettings => patchArea(s, areaId, "bedroom", bedroom, false);
+
+// A missing preference preserves the original planning behavior.
+export const recipeWanted = (s: InventorySettings, areaId: string, recipe: AreaRecipeKey): boolean => ownArea(s, areaId)?.recipePreferences?.[recipe] !== false;
+
+export function setRecipeWanted(s: InventorySettings, areaId: string, recipe: AreaRecipeKey, wanted: boolean): InventorySettings {
+  const current = ownArea(s, areaId);
+  if (recipeWanted(s, areaId, recipe) === wanted) return s;
+  const preferences = { ...current?.recipePreferences };
+  if (wanted) delete preferences[recipe];
+  else preferences[recipe] = false;
+  const choice = { ...current };
+  if (Object.keys(preferences).length) choice.recipePreferences = preferences;
+  else delete choice.recipePreferences;
+  const areas = { ...s.areas };
+  if (Object.keys(choice).length) areas[areaId] = choice;
+  else delete areas[areaId];
+  return { ...s, areas };
+}

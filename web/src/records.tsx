@@ -8,27 +8,27 @@ const PANE_KEY = "taxis:records:pane";
 const PANE_DEFAULT = 416;
 const PANE_MIN = 240;
 
-function usePaneWidth() {
+function usePaneWidth(key: string, defaultWidth: number, min: number, max: number) {
   const [width, setWidth] = useState(() => {
     try {
-      const saved = JSON.parse(window.localStorage.getItem(PANE_KEY) ?? "{}")?.list;
-      return typeof saved === "number" && Number.isFinite(saved) && saved >= PANE_MIN ? saved : PANE_DEFAULT;
+      const saved = JSON.parse(window.localStorage.getItem(key) ?? "{}")?.list;
+      return typeof saved === "number" && Number.isFinite(saved) && saved >= min ? Math.min(saved, max) : defaultWidth;
     } catch {
-      return PANE_DEFAULT;
+      return defaultWidth;
     }
   });
   const change = (next: number) => {
     setWidth(next);
     try {
-      window.localStorage.setItem(PANE_KEY, JSON.stringify({ list: next }));
+      window.localStorage.setItem(key, JSON.stringify({ list: next }));
     } catch {
       // Not remembered; the page still works.
     }
   };
   const reset = () => {
-    setWidth(PANE_DEFAULT);
+    setWidth(defaultWidth);
     try {
-      window.localStorage.removeItem(PANE_KEY);
+      window.localStorage.removeItem(key);
     } catch {
       // Not remembered; the page still works.
     }
@@ -37,9 +37,21 @@ function usePaneWidth() {
 }
 
 // The draggable divider between the list and the details (desktop only).
-function PaneDivider({ label, value, onChange, max }: { label: string; value: number; onChange: (width: number) => void; max: () => number }) {
+function PaneDivider({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  label: string;
+  value: number;
+  onChange: (width: number) => void;
+  min: number;
+  max: () => number;
+}) {
   const drag = useRef<{ x: number; width: number } | null>(null);
-  const change = (width: number) => onChange(Math.round(Math.max(PANE_MIN, Math.min(max(), width))));
+  const change = (width: number) => onChange(Math.round(Math.max(min, Math.min(max(), width))));
   const finish = () => {
     drag.current = null;
   };
@@ -49,7 +61,7 @@ function PaneDivider({ label, value, onChange, max }: { label: string; value: nu
       aria-label={label}
       aria-orientation="vertical"
       aria-valuenow={Math.round(value)}
-      aria-valuemin={PANE_MIN}
+      aria-valuemin={min}
       tabIndex={0}
       className="records-divider hidden shrink-0 md:block"
       onPointerDown={(event: PointerEvent<HTMLDivElement>) => {
@@ -85,20 +97,33 @@ export function RecordsSplit({
   details,
   listVisible = true,
   detailsVisible = true,
+  paneKey = PANE_KEY,
+  paneDefault = PANE_DEFAULT,
+  paneMin = PANE_MIN,
+  paneMax = Infinity,
+  resetTablePreferences = true,
+  detailsOverflow = true,
 }: {
   list: ReactNode | ((resetControl: ReactNode) => ReactNode);
   details: ReactNode;
   listVisible?: boolean;
   detailsVisible?: boolean;
+  paneKey?: string;
+  paneDefault?: number;
+  paneMin?: number;
+  paneMax?: number;
+  resetTablePreferences?: boolean;
+  detailsOverflow?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  const pane = usePaneWidth();
+  const pane = usePaneWidth(paneKey, paneDefault, paneMin, paneMax);
   const resetControl = (
     <button
       type="button"
       className="text-xs text-accent"
       onClick={() => {
         pane.reset();
+        if (!resetTablePreferences) return;
         try {
           for (const key of Object.keys(window.localStorage)) if (key.startsWith("taxis:table:v3:")) window.localStorage.removeItem(key);
         } catch {
@@ -115,7 +140,7 @@ export function RecordsSplit({
     <div ref={container} className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
       <section
         aria-label="Records"
-        style={{ "--records-width": `${pane.width}px` } as CSSProperties}
+        style={{ "--records-width": `${pane.width}px`, "--records-min": `${paneMin}px` } as CSSProperties}
         className={`${listVisible ? "flex" : "hidden"} records-pane min-h-0 min-w-0 flex-1 flex-col border-b border-line md:flex md:flex-none md:border-b-0`}
       >
         {typeof list === "function" ? (
@@ -130,10 +155,14 @@ export function RecordsSplit({
       <PaneDivider
         label="Resize records and properties"
         value={pane.width}
-        max={() => Math.max(PANE_MIN, (container.current?.clientWidth ?? 1000) - 327)}
+        min={paneMin}
+        max={() => Math.max(paneMin, Math.min(paneMax, (container.current?.clientWidth ?? 1000) - 327))}
         onChange={pane.change}
       />
-      <section aria-label="Properties" className={`${detailsVisible ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col overflow-y-auto md:flex`}>
+      <section
+        aria-label="Properties"
+        className={`${detailsVisible ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col ${detailsOverflow ? "overflow-y-auto" : "overflow-hidden"} md:flex`}
+      >
         {details}
       </section>
     </div>

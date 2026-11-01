@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.92
+
+- **Recipes and parameters.** All 15 recipes lead with Description and
+  Availability. Floor and area records and source, role, helper and parameter
+  tables make configuration easier to inspect; shared parameters can be edited
+  across overlapping motion, ambient and night settings. Per-area Wanted can
+  opt out without deleting anything in Home Assistant, and source roles are
+  chosen before inclusion.
+- **Occupancy.** TV interactions are opt-in for occupancy start and hold, using
+  the existing hold timeout (occupancy blueprint v5). Legacy
+  `*_motion_hold` timers can be reused safely in the same area; canonical
+  helpers take priority, while ambiguity and unverified templates block reuse.
+- **Navigation and layout.** Sticky, independently scrolling panes, Buttons
+  navigation and a more compact Guide improve navigation and inspection.
+
 ## 0.7.91
 
 - **Guided setup.** An overview explains native blueprints and all recipes, followed

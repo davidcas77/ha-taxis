@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
-import { CAPABILITIES, EMPTY_INVENTORY, setAreaType, setBedroom, type Capability } from "./inventory.ts";
+import { CAPABILITIES, EMPTY_INVENTORY, setAreaType, setBedroom, setCounts, setTvOccupancyRole, type Capability } from "./inventory.ts";
 import { DEFAULT_NAMING } from "./naming.ts";
 import { areaFacts, isBathroomLike, recipeFits, recipeSuitsArea, splitByFit, type AreaFacts } from "./recipe-fit.ts";
 import { NOTHING_INSTALLED, planRecipes } from "./recipes.ts";
@@ -12,6 +12,7 @@ const facts = (has: Partial<Record<Capability, number>> = {}, rest: Partial<Area
   name: "Room",
   type: "interior",
   bedroom: false,
+  tvStarts: 0,
   ...rest,
   has: { ...Object.fromEntries(CAPABILITIES.map((c) => [c.key, 0])), ...has } as Record<Capability, number>,
 });
@@ -189,6 +190,14 @@ describe("splitByFit", () => {
     ...planHouseRecipes(h, EMPTY_INVENTORY, DEFAULT_NAMING, EMPTY_PARAMETERS, NOTHING_INSTALLED, []),
   ];
 
+  it("hides an explicitly unwanted area recipe even if installed", () => {
+    const inventory = { entities: {}, areas: { bathroom: { recipePreferences: { leak_alert: false } } } };
+    const installed = cells.map((cell) => (cell.recipe === "leak_alert" && cell.areaId === "bathroom" ? { ...cell, status: "installed" as const } : cell));
+    const { fits, hidden } = splitByFit(h, inventory, DEFAULT_NAMING, installed);
+    expect(fits.some((cell) => cell.recipe === "leak_alert" && cell.areaId === "bathroom")).toBe(false);
+    expect(hidden.some((cell) => cell.recipe === "leak_alert" && cell.areaId === "bathroom")).toBe(true);
+  });
+
   it("keeps only the recipes the room can use, and every house recipe", () => {
     const { fits, hidden } = splitByFit(h, EMPTY_INVENTORY, DEFAULT_NAMING, cells);
     expect(fits.map((c) => c.recipe).sort()).toEqual(["announce", "battery_low", "goodbye", "house_presence", "leak_alert", "occupancy", "unavailable_watch"]);
@@ -197,5 +206,35 @@ describe("splitByFit", () => {
     expect(fits.find((c) => c.recipe === "occupancy")!.areaId).toBe("bathroom");
     expect(hidden).toHaveLength(cells.length - fits.length);
     expect(hidden.some((c) => c.areaId === "garden" && c.recipe === "exterior_lights")).toBe(true);
+  });
+});
+
+describe("TV occupancy recipe fit", () => {
+  it("uses only an opted-in counted TV and retains the lights and interior requirements", () => {
+    const raw: RawRegistry = {
+      config: { location_name: "TV room" },
+      floors: [],
+      areas: [{ area_id: "room", name: "Room", floor_id: null }],
+      devices: [],
+      labels: [],
+      entities: [
+        { entity_id: "media_player.tv", platform: "demo", area_id: "room", unique_id: "tv" },
+        { entity_id: "light.room", platform: "demo", area_id: "room", unique_id: "light" },
+      ],
+      states: [
+        { entity_id: "media_player.tv", state: "playing", attributes: { device_class: "tv" } },
+        { entity_id: "light.room", state: "off", attributes: {} },
+      ],
+    };
+    const h = buildHierarchy(raw, "now");
+    const f = (inventory: typeof EMPTY_INVENTORY) => areaFacts(h, inventory, DEFAULT_NAMING, "room");
+    expect(recipeSuitsArea(f(EMPTY_INVENTORY), "occupancy")).toBe(false);
+    const starts = setTvOccupancyRole(h, EMPTY_INVENTORY, "media_player.tv", "starts");
+    expect(recipeSuitsArea(f(starts), "occupancy")).toBe(true);
+    expect(recipeSuitsArea(f(starts), "motion_lights")).toBe(true);
+    expect(recipeSuitsArea({ ...f(starts), has: { ...f(starts).has, lights: 0 } }, "motion_lights")).toBe(false);
+    expect(recipeSuitsArea({ ...f(starts), type: "exterior" }, "motion_lights")).toBe(false);
+    expect(recipeSuitsArea(f(setTvOccupancyRole(h, starts, "media_player.tv", "holds")), "occupancy")).toBe(false);
+    expect(recipeSuitsArea(f(setCounts(h, starts, "media_player.tv", false)), "occupancy")).toBe(false);
   });
 });

@@ -241,8 +241,17 @@ describe("occupancy", () => {
   });
 
   it("has well-formed triggers: sensors changing between on and off, the humidity rate, and the timer finishing", () => {
-    expect(triggers.map((t) => t.id)).toEqual(["start_on", "source_changed", "source_changed", "source_changed", "rate_changed", "timer_finished"]);
-    const states = triggers.filter((t) => t.trigger === "state" && t.id !== "rate_changed");
+    expect(triggers.map((t) => t.id)).toEqual([
+      "start_on",
+      "source_changed",
+      "source_changed",
+      "source_changed",
+      "tv_start",
+      "tv_hold",
+      "rate_changed",
+      "timer_finished",
+    ]);
+    const states = triggers.filter((t) => t.trigger === "state" && !["rate_changed", "tv_start", "tv_hold"].includes(String(t.id)));
     expect(states).toHaveLength(4);
     for (const t of states) {
       // Only on <-> off: unavailable and unknown never start or restart anything.
@@ -258,8 +267,8 @@ describe("occupancy", () => {
       ["holds_entities", "on", "off"],
     ]);
     // The rate: any change of it, the conditions pick the ones that are high enough. An empty list of rate sensors triggers nothing.
-    expect(triggers[4]).toEqual({ trigger: "state", id: "rate_changed", entity_id: { input: "rate_entities" } });
-    const finished = triggers[5];
+    expect(triggers[6]).toEqual({ trigger: "state", id: "rate_changed", entity_id: { input: "rate_entities" } });
+    const finished = triggers[7];
     expect(finished).toMatchObject({ trigger: "event", event_type: "timer.finished", event_data: { entity_id: { input: "hold_timer" } } });
   });
 
@@ -274,7 +283,7 @@ describe("occupancy", () => {
     expect(then).toHaveLength(1);
     expect(then[0].action).toBe("timer.start");
     expect(obj(then[0].target).entity_id).toEqual({ input: "hold_timer" });
-    expect(String(obj(then[0].data).duration)).toMatch(/format\(minutes \/\/ 60, minutes % 60\)/);
+    expect(String(obj(then[0].data).duration)).toMatch(/format\(duration_minutes \/\/ 60, duration_minutes % 60\)/);
     expect(servicesOf(tree)).toEqual(["timer.start"]);
   });
 
@@ -303,12 +312,23 @@ describe("occupancy", () => {
   it("starts on a start sensor, restarts only while the timer runs, and starts again on finish only if a sensor is still on", () => {
     const cond = obj(list(obj(list(tree.actions)[0]).if)[0]);
     expect(cond.condition).toBe("or");
-    const [start, changed, rate, finished] = list(cond.conditions).map(obj);
+    const [start, changed, tvStart, tvHold, rate, finished] = list(cond.conditions).map(obj);
     expect(start).toEqual({ condition: "trigger", id: "start_on" });
     expect(list(changed.conditions).map(obj)).toEqual([
       { condition: "trigger", id: "source_changed" },
       { condition: "state", entity_id: { input: "hold_timer" }, state: "active" },
     ]);
+    const startTV = list(tvStart.conditions).map(obj);
+    const holdTV = list(tvHold.conditions).map(obj);
+    expect(startTV[0]).toEqual({ condition: "trigger", id: "tv_start" });
+    expect(holdTV.slice(0, 2)).toEqual([
+      { condition: "trigger", id: "tv_hold" },
+      { condition: "state", entity_id: { input: "hold_timer" }, state: "active" },
+    ]);
+    expect(startTV[1]).toEqual(holdTV[2]);
+    expect(String(obj(list(obj(list(tree.actions)[0]).then)[0]).data && obj(obj(list(obj(list(tree.actions)[0]).then)[0]).data).duration)).toContain(
+      "if trigger.id in ['tv_start', 'tv_hold'] else minutes",
+    );
     // A humidity rise holds the area but never starts it: only while the timer runs, and only when high enough.
     expect(list(rate.conditions).map(obj)).toEqual([
       { condition: "trigger", id: "rate_changed" },
@@ -323,8 +343,8 @@ describe("occupancy", () => {
     expect(String(still.value_template)).toMatch(/^\{\{ rate_high or /);
   });
 
-  it("is version 4: the humidity rate is an optional list of sensors with a rise that holds, and 0 turns it off", () => {
-    expect(BLUEPRINTS.find((b) => b.path === "taxis/occupancy.yaml")!.version).toBe(4);
+  it("is version 5: the humidity rate is an optional list of sensors with a rise that holds, and 0 turns it off", () => {
+    expect(BLUEPRINTS.find((b) => b.path === "taxis/occupancy.yaml")!.version).toBe(5);
     const inputs = obj(obj(tree.blueprint).input);
     expect(obj(inputs.rate_entities).default).toEqual([]);
     expect(obj(obj(obj(inputs.rate_entities).selector).entity).multiple).toBe(true);
@@ -1872,5 +1892,27 @@ describe("blueprint paths", () => {
     ]) {
       expect(bad, bad).not.toMatch(BLUEPRINT_PATH_RE);
     }
+  });
+});
+
+describe("occupancy TV inputs", () => {
+  it("allows optional media player lists and maps them on rename", () => {
+    const path = "taxis/occupancy.yaml";
+    const base = { starts_entities: [], occupied_entity: "binary_sensor.occupied", hold_timer: "timer.hold", pause_switch: "input_boolean.pause" };
+    const input = { ...base, tv_starts_entities: ["media_player.a"], tv_holds_entities: ["media_player.b"] };
+    expect(checkBlueprintInput(path, base, (id) => typeof id === "string" && ENTITY_ID_RE.test(id))).toBeNull();
+    expect(checkBlueprintInput(path, input, (id) => typeof id === "string" && ENTITY_ID_RE.test(id))).toBeNull();
+    expect(checkBlueprintInput(path, { ...input, tv_holds_entities: ["light.bad"] }, (id) => typeof id === "string" && ENTITY_ID_RE.test(id))).toMatch(
+      /tv_holds_entities/,
+    );
+    expect(inputEntityIds(path, input)).toEqual(expect.arrayContaining(["media_player.a", "media_player.b"]));
+    expect(mapInputEntities(path, input, (id) => (id === "media_player.a" ? "media_player.renamed" : id))).toMatchObject({
+      tv_starts_entities: ["media_player.renamed"],
+      tv_holds_entities: ["media_player.b"],
+    });
+    const tree = parsed(path);
+    const inputs = obj(obj(tree.blueprint).input);
+    expect(obj(inputs.tv_starts_entities).default).toEqual([]);
+    expect(obj(inputs.tv_holds_entities).default).toEqual([]);
   });
 });

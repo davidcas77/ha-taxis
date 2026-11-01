@@ -1,3 +1,4 @@
+import { recipeWanted } from "./inventory.ts";
 import { helperExclusions, hasPendingChange, planHelpers, type HelperKey, type HelperRow } from "./helpers.ts";
 import { areaInventory, areaChoice, defaultCapability, INVENTORY_AREA_ID, type Capability, type InventorySettings } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
@@ -177,7 +178,7 @@ export type GuideHelper = { row: HelperRow; pending: boolean; available: boolean
 export type GuideRecipe = { key: AreaRecipeKey; cell: RecipeCell | null; enabled: boolean };
 export const GUIDE_STAGES = {
   choose: "Choose room type and goals",
-  unplanned: "No automation goals selected",
+  unplanned: "No active automation goals",
   equipment: "Review equipment",
   helpers: "Prepare helpers",
   changes: "Review changes, then Apply",
@@ -227,7 +228,18 @@ export function assessHouse(
   return Object.values(h.areas)
     .map((area) => {
       const choice = guideChoice(guide, area.id);
-      const selected = new Set(choice?.goals ?? []);
+      const primary: Record<GuideGoal, AreaRecipeKey> = {
+        lighting: "motion_lights",
+        night: "motion_lights",
+        occupancy: "occupancy",
+        climate: "area_climate",
+        media: "media_off",
+        ventilation: "bathroom_fan",
+        exterior: "exterior_lights",
+        openings: "left_open",
+        appliances: "appliance_done",
+      };
+      const selected = new Set((choice?.goals ?? []).filter((goal) => recipeWanted(inventory, area.id, primary[goal])));
       const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
       const actual = area.entityIds.map((id) => h.entities[id]).filter((entity) => Boolean(entity) && !exclusions(area.id).has(entity.entityId));
       const areaEntities = new Set(area.entityIds);
@@ -285,10 +297,11 @@ export function assessHouse(
       if (occupiedGoal) {
         equipmentFor(
           "activity",
-          "Motion or presence detection",
-          ["motion", "presence"],
+          "Motion, presence or an opted-in TV",
+          ["motion", "presence", "tv"],
           true,
-          "Motion is useful at entrances. Stationary presence sensing is useful at seats, desks and beds. Test coverage and false detections before relying on automatic off.",
+          "Use motion or presence sensors, or a TV selected to start occupancy. TV volume, mute or source changes may also be automated and do not detect someone sitting still. Test coverage before relying on automatic off.",
+          (id) => !inv.tv.some((row) => row.entityId === id) || inv.tv.some((row) => row.entityId === id && row.tvOccupancyRole === "starts"),
         );
         equipmentFor(
           "lux",
@@ -381,16 +394,18 @@ export function assessHouse(
           available: known(h.entities[row.canonicalId]?.state) && !h.entities[row.canonicalId]?.disabled,
         }));
       const recipeKeys = new Set<AreaRecipeKey>(definitions.flatMap((goal) => [...goal.recipes]));
-      const neededRecipes = [...recipeKeys].map((key) => ({
-        key,
-        cell: recipes.find((cell) => cell.areaId === area.id && cell.recipe === key) ?? null,
-        enabled:
-          h.entities[`automation.${automationIdFor(key, codes[area.id].code)}`]?.state === "on" &&
-          !h.entities[`automation.${automationIdFor(key, codes[area.id].code)}`]?.disabled,
-      }));
+      const neededRecipes = [...recipeKeys]
+        .filter((key) => recipeWanted(inventory, area.id, key))
+        .map((key) => ({
+          key,
+          cell: recipes.find((cell) => cell.areaId === area.id && cell.recipe === key) ?? null,
+          enabled:
+            h.entities[`automation.${automationIdFor(key, codes[area.id].code)}`]?.state === "on" &&
+            !h.entities[`automation.${automationIdFor(key, codes[area.id].code)}`]?.disabled,
+        }));
       let stage: GuideStage = "test";
       if (!choice) stage = "choose";
-      else if (!choice.goals.length) stage = "unplanned";
+      else if (!selected.size) stage = "unplanned";
       else if (equipment.some((check) => check.required && check.status !== "ready")) stage = "equipment";
       else if (neededHelpers.some((helper) => !helper.pending && (helper.row.status !== "in-place" || helper.row.actionable || !helper.available)))
         stage = "helpers";

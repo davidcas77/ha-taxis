@@ -1,16 +1,26 @@
-import { useMemo, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
-import { isHouseRecipe } from "../../shared/blueprints.ts";
-import { RECIPE_LABEL, automationIdFor, recipeChangeInputs, type RecipeCell, type RecipeInstalled, type RecipeStatus } from "../../shared/recipes.ts";
+import { isHouseRecipe, type HouseRecipeKey } from "../../shared/blueprints.ts";
+import {
+  HOUSE_RECIPE_LABEL,
+  RECIPES,
+  RECIPE_LABEL,
+  automationIdFor,
+  recipeChangeInputs,
+  type RecipeCell,
+  type RecipeInstalled,
+  type RecipeStatus,
+} from "../../shared/recipes.ts";
 import { HOUSE_AUTOMATION_CODE } from "../../shared/recipes-house.ts";
 import { areaCodes } from "../../shared/naming.ts";
-import { sortRows } from "../../shared/sort.ts";
 import type { Hierarchy } from "../../shared/types.ts";
-import { DataTable, useSortState, type Column } from "./data-table.tsx";
-import { AreaMultiSelect, FilterChips, Pagination, RecordsSplit, usePagination } from "./records.tsx";
-import { useStoredSet, useStoredValue } from "./storage.ts";
+import { DataTable, type Column } from "./data-table.tsx";
+import { RecordsSplit } from "./records.tsx";
+import { RECIPE_GUIDE } from "./recipe-guide.ts";
+import { MotionLightsAvailability } from "./motion-lights-availability.tsx";
+import { RecipeAvailability } from "./recipe-availability.tsx";
 import { useTaxis } from "./state.tsx";
-import { Button, EmptyState, inputClass } from "./ui.tsx";
+import { Button, EmptyState } from "./ui.tsx";
 
 const STATUS: Record<RecipeStatus, string> = {
   ready: "Ready",
@@ -19,99 +29,7 @@ const STATUS: Record<RecipeStatus, string> = {
   missing: "Missing requirements",
   installed: "Installed",
 };
-const keyOf = (cell: RecipeCell) => `${cell.areaId}|${cell.recipe}`;
-const SORT: Record<string, (cell: RecipeCell) => string> = {
-  area: (cell) => cell.areaName,
-  recipe: (cell) => RECIPE_LABEL[cell.recipe],
-  status: (cell) => STATUS[cell.status],
-};
 const areaLabel = (cell: RecipeCell) => (isHouseRecipe(cell.recipe) ? "House" : cell.areaName);
-const BEHAVIOR: Record<RecipeCell["recipe"], string[]> = {
-  occupancy: [
-    "Activity starts a hold timer; further activity keeps the room occupied.",
-    "Extended activity and bed presence can use longer hold times. The room's pause switch suspends the recipe.",
-  ],
-  motion_lights: [
-    "Occupancy turns on the room's light group using the configured brightness and light roles.",
-    "Lights dim and turn off after the room clears. Night settings, darkness checks and manual override are respected when configured.",
-  ],
-  media_off: [
-    "Speakers and TVs turn off after the room has been clear for their configured delays.",
-    "Only players that are on receive a turn-off command; Occupancy is required.",
-  ],
-  area_climate: [
-    "Thermostats follow the selected season, comfort schedule, occupancy and house away/sleep modes.",
-    "Open windows take priority. Matching thermostat presets are used when available; otherwise the recipe sets a temperature.",
-  ],
-  bathroom_fan: [
-    "The fan starts when humidity level, rise or difference from a reference indicates steam.",
-    "It stops as humidity clears, its rate flattens, or the maximum runtime is reached.",
-  ],
-  exterior_lights: [
-    "Outdoor lights follow sunset and sunrise, with a configurable offset and runtime.",
-    "Motion or an arriving person can restart the timer. Manual changes temporarily override automatic control.",
-  ],
-  left_open: [
-    "A door or window left open longer than its configured delay produces a notification.",
-    "Notifications can repeat until it closes; without configured notify services, Home Assistant's own notifications are used.",
-  ],
-  appliance_done: [
-    "Sustained power consumption marks an appliance as running; a sustained drop marks it as finished.",
-    "The completion message uses your notification targets. Only power sensors marked as appliances are included.",
-  ],
-  announce: [
-    "Creates one house-wide script that speaks a supplied message in eligible rooms.",
-    "Only occupied rooms that are not asleep or paused receive the message. Configure a text-to-speech entity and counted speakers first.",
-  ],
-  leak_alert: [
-    "A leak sensor going wet sends a message to your notify services and a notification in Home Assistant, repeating until it is dry.",
-    "When a water valve is chosen on the Safety tab it is closed. It never turns a light on.",
-  ],
-  covers_sun: [
-    "Covers close while the sun is high and it is warm outside, inside the time window, and open again in the morning or at sunrise.",
-    "They do not move while the area is paused or, if you keep that option, a window of the area is open.",
-  ],
-  goodbye: [
-    "A script for the whole house: lights off, media off and away mode on, to call from a button, an NFC tag or a voice command.",
-    "Area climate answers away mode with its away setting.",
-  ],
-  house_presence: [
-    "Makes the house occupied sensor (any area occupied or any person home) and switches away mode on after everyone has been away for a while.",
-    "Away mode is not switched on while guest mode is on; it can end when someone returns if you allow it.",
-  ],
-  battery_low: [
-    "Once a day, one message lists the batteries below the chosen level. Nothing is sent when none is low.",
-    "Every battery sensor in Home Assistant is looked at when it runs.",
-  ],
-  unavailable_watch: [
-    "A message when a sensor the area recipes rely on stays unavailable or unknown for the chosen time, once per entity until it comes back.",
-    "The notification is cleared when the entity reports again.",
-  ],
-};
-
-const REQUIREMENTS: Record<RecipeCell["recipe"], string[]> = {
-  occupancy: ["At least one counted motion or presence sensor.", "Available IDs for the hold timer, occupied sensor and pause switch."],
-  motion_lights: ["Occupancy installed or in changes for this room.", "The room's canonical light group, plus the lighting parameters."],
-  media_off: ["Occupancy installed or in changes for this room.", "At least one counted speaker or TV, with configured off delays."],
-  area_climate: [
-    "A counted thermostat eligible for the selected heating/cooling season.",
-    "Valid comfort periods, temperatures and available schedule/helper IDs.",
-  ],
-  bathroom_fan: [
-    "A counted humidity sensor and a counted fan (or switch marked as a fan).",
-    "The room's humidity helper; the recipe creates its rate sensor when needed.",
-  ],
-  exterior_lights: ["An area marked Exterior and its canonical light group.", "The sunset offset, runtime and override parameters."],
-  left_open: ["At least one counted door or window sensor.", "Opening delays and optional notification targets."],
-  appliance_done: ["A counted power sensor marked as an appliance.", "Running/idle thresholds, delays and optional notification targets."],
-  announce: ["A configured text-to-speech entity.", "Eligible rooms with counted speakers and occupancy helpers."],
-  leak_alert: ["A counted leak (moisture) sensor in the room.", "Optional notify services and water valve on the House and Safety tabs."],
-  covers_sun: ["A counted cover in the room.", "Optional outdoor temperature sensor (House tab) and the Covers parameters."],
-  goodbye: ["The house light group and the away mode switch.", "Counted speakers and TVs are switched off too."],
-  house_presence: ["At least one room with Occupancy.", "The away mode switch; a guest mode switch keeps away mode off while guests are home."],
-  battery_low: ["Nothing but the house pause switch.", "Optional notify services and the level and time on the Safety tab."],
-  unavailable_watch: ["At least one counted sensor in a room.", "Optional notify services and the time on the Safety tab."],
-};
 const PARAMETER_TAB: Record<RecipeCell["recipe"], string> = {
   occupancy: "occupancy",
   motion_lights: "lighting",
@@ -133,137 +51,195 @@ const PARAMETER_TAB: Record<RecipeCell["recipe"], string> = {
 export function RecipeRecords({
   h,
   installed,
-  descriptions,
   cells,
+  error,
+  loading,
 }: {
   h: Hierarchy;
-  installed: RecipeInstalled;
-  descriptions: Record<string, string>;
+  installed: RecipeInstalled | null;
   cells: readonly RecipeCell[];
+  error: string | null;
+  loading: boolean;
 }) {
   const { naming, propose, busy } = useTaxis();
-  const [query, setQuery] = useStoredValue("taxis:recipes:query", "", (value): value is string => typeof value === "string");
-  const [areas, changeAreas] = useStoredSet("taxis:recipes:areas");
-  const setAreas = (next: ReadonlySet<string>) =>
-    changeAreas((value) => {
-      value.clear();
-      next.forEach((id) => value.add(id));
-    });
-  const [status, setStatus] = useState("all");
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const filtered = useMemo(
-    () =>
-      cells.filter(
-        (cell) =>
-          (!areas.size || areas.has(isHouseRecipe(cell.recipe) ? "house" : cell.areaId)) &&
-          (status === "all" || (status === "todo" ? cell.actionable : cell.status === status)) &&
-          `${cell.areaName} ${RECIPE_LABEL[cell.recipe]} ${STATUS[cell.status]}`.toLowerCase().includes(query.trim().toLowerCase()),
-      ),
-    [cells, areas, status, query],
-  );
-  const { sort, toggle } = useSortState({ key: "area", dir: "asc" });
-  // The page owns the order: the pages below are cut from the sorted rows.
-  const rows = useMemo(() => sortRows(filtered, SORT[sort.key] ?? SORT.area, sort.dir), [filtered, sort]);
-  const paging = usePagination(rows.length, JSON.stringify([query, [...areas], status, sort]));
-  const pageRows = rows.slice(paging.start, paging.end);
-  const selected = pageRows.find((cell) => keyOf(cell) === selectedKey) ?? pageRows[0];
-  const columns: Column<RecipeCell>[] = [
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<RecipeCell["recipe"]>("occupancy");
+  const [showingDetails, setShowingDetails] = useState(false);
+  const [detailTab, setDetailTab] = useState<"description" | "availability">("description");
+  const tabRefs = useRef<Record<"description" | "availability", HTMLButtonElement | null>>({ description: null, availability: null });
+  const selectRecipe = (key: RecipeCell["recipe"]) => {
+    setSelected(key);
+    setShowingDetails(true);
+    setDetailTab("description");
+  };
+  const types = [...RECIPES.map((r) => r.key), ...(Object.keys(HOUSE_RECIPE_LABEL) as HouseRecipeKey[])];
+  const filtered = types.filter((key) => RECIPE_LABEL[key].toLowerCase().includes(query.trim().toLowerCase()));
+  const recipe = RECIPE_GUIDE[selected];
+  const columns: Column<RecipeCell["recipe"]>[] = [
     {
-      id: "area",
-      header: "Area",
+      id: "recipe",
+      header: "Recipe",
       priority: 1,
+      locked: true,
       sticky: true,
-      minWidth: 120,
-      sort: (cell) => cell.areaName,
-      text: (cell) => areaLabel(cell),
-      cell: (cell) => (
-        <button type="button" className="w-full text-left" onClick={() => setSelectedKey(keyOf(cell))}>
-          {areaLabel(cell)}
+      minWidth: 100,
+      text: (key) => RECIPE_LABEL[key],
+      cell: (key) => (
+        <button type="button" className="w-full break-words text-left" onClick={() => selectRecipe(key)}>
+          {RECIPE_LABEL[key]}
         </button>
       ),
     },
-    { id: "recipe", header: "Recipe", priority: 1, minWidth: 110, sort: (cell) => RECIPE_LABEL[cell.recipe], cell: (cell) => RECIPE_LABEL[cell.recipe] },
-    { id: "status", header: "Status", priority: 2, minWidth: 110, nowrap: true, sort: (cell) => STATUS[cell.status], cell: (cell) => STATUS[cell.status] },
   ];
-  const reset = () => {
-    setQuery("");
-    setAreas(new Set());
-    setStatus("all");
-  };
-  const areaOptions = [...Object.values(h.areas), { id: "house", name: "House" }];
   return (
     <RecordsSplit
-      list={
-        <>
-          <div className="flex shrink-0 flex-col gap-2 border-b border-line p-2.5">
-            <div className="flex flex-wrap gap-2">
-              <AreaMultiSelect areas={areaOptions} selected={areas} onChange={setAreas} />
-            </div>
-            <label className="flex items-center gap-2 text-xs text-muted">
-              Status
-              <select aria-label="Recipe status" className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="all">All statuses</option>
-                <option value="todo">To do</option>
-                {Object.entries(STATUS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <FilterChips
-              items={[...areas]
-                .map((id) => ({
-                  label: areaOptions.find((area) => area.id === id)?.name ?? "No area",
-                  remove: () => setAreas(new Set([...areas].filter((area) => area !== id))),
-                }))
-                .concat(query ? [{ label: query, remove: () => setQuery("") }] : [])
-                .concat(status !== "all" ? [{ label: status === "todo" ? "To do" : STATUS[status as RecipeStatus], remove: () => setStatus("all") }] : [])}
-              clear={reset}
-            />
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto p-2">
-            <DataTable
-              id="recipe-records"
-              search={{ label: "Find recipes", placeholder: "Find a room or recipe", value: query, onChange: setQuery }}
-              label="Recipes"
-              rows={pageRows}
-              rowKey={keyOf}
-              columns={columns}
-              sort={sort}
-              onSort={toggle}
-              maxHeight="none"
-              rowTone={(cell) => (selected && keyOf(selected) === keyOf(cell) ? "selected" : "default")}
-              rowAttrs={(cell) => ({ "aria-selected": Boolean(selected && keyOf(selected) === keyOf(cell)) })}
-              onRowClick={(cell) => setSelectedKey(keyOf(cell))}
-              empty={
-                <EmptyState>
-                  No recipes match these filters.{" "}
-                  <button type="button" className="text-accent underline" onClick={reset}>
-                    Reset filters
-                  </button>
-                </EmptyState>
-              }
-            />
-            <Pagination {...paging} />
-          </div>
-        </>
-      }
-      details={
-        selected ? (
-          <RecipeDetail
-            key={keyOf(selected)}
-            cell={selected}
-            h={h}
-            installed={installed}
-            descriptions={descriptions}
-            adding={busy}
-            add={() => propose(recipeChangeInputs([selected]))}
-            naming={naming}
+      paneKey="taxis:recipes:pane"
+      paneDefault={240}
+      paneMin={140}
+      paneMax={320}
+      resetTablePreferences={false}
+      detailsOverflow={false}
+      listVisible={!showingDetails}
+      detailsVisible={showingDetails}
+      list={() => (
+        <div className="min-h-0 flex-1 overflow-auto p-2">
+          <DataTable
+            id="recipe-types"
+            label="Recipe types"
+            rows={filtered}
+            rowKey={(key) => key}
+            columns={columns}
+            showColumnChooser={false}
+            resizable={false}
+            search={{ label: "Find recipes", placeholder: "Find a recipe", value: query, onChange: setQuery }}
+            rowTone={(key) => (key === selected ? "selected" : "default")}
+            rowAttrs={(key) => ({ "aria-selected": key === selected })}
+            onRowClick={selectRecipe}
+            maxHeight="none"
+            empty={<EmptyState>No recipes match.</EmptyState>}
           />
-        ) : (
-          <p className="p-4 text-sm text-muted">Choose a recipe to see what it does and what it needs.</p>
-        )
+        </div>
+      )}
+      details={
+        <article aria-label="Recipe details" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="z-10 shrink-0 space-y-4 bg-bg px-4 pt-4">
+            <button type="button" className="self-start text-sm text-accent md:hidden" onClick={() => setShowingDetails(false)}>
+              ← Back to recipes
+            </button>
+            <header>
+              <h2 className="text-lg font-semibold">{RECIPE_LABEL[selected]}</h2>
+            </header>
+            <div role="tablist" aria-label="Recipe details sections" className="flex gap-1 border-b border-line">
+              {(["description", "availability"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  ref={(element) => {
+                    tabRefs.current[tab] = element;
+                  }}
+                  type="button"
+                  role="tab"
+                  id={`recipe-tab-${tab}`}
+                  aria-controls={`recipe-panel-${tab}`}
+                  aria-selected={detailTab === tab}
+                  tabIndex={detailTab === tab ? 0 : -1}
+                  onClick={() => setDetailTab(tab)}
+                  onKeyDown={(event) => {
+                    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                    event.preventDefault();
+                    const next =
+                      event.key === "Home" ? "description" : event.key === "End" ? "availability" : tab === "description" ? "availability" : "description";
+                    setDetailTab(next);
+                    tabRefs.current[next]?.focus();
+                  }}
+                  className={`border-b-2 px-3 py-2 text-[13px] ${detailTab === tab ? "border-accent font-medium text-accent" : "border-transparent text-muted hover:text-fg"}`}
+                >
+                  {tab === "description" ? "Description" : "Availability"}
+                </button>
+              ))}
+            </div>
+          </div>
+          {detailTab !== "description" && <div role="tabpanel" id="recipe-panel-description" aria-labelledby="recipe-tab-description" hidden />}
+          {detailTab !== "availability" && <div role="tabpanel" id="recipe-panel-availability" aria-labelledby="recipe-tab-availability" hidden />}
+          {detailTab === "description" ? (
+            <div
+              role="tabpanel"
+              id="recipe-panel-description"
+              aria-labelledby="recipe-tab-description"
+              tabIndex={0}
+              className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4"
+            >
+              <p className="text-sm text-muted">{recipe.summary}</p>
+              {(
+                [
+                  ["Needed devices", recipe.devices],
+                  ["Helpers", recipe.helpers],
+                  ["How it works", recipe.behavior],
+                ] as const
+              ).map(([title, lines]) => (
+                <section key={title}>
+                  <h3 className="text-sm font-semibold">{title}</h3>
+                  {title === "How it works" ? (
+                    <ol className="mt-1 list-decimal space-y-1 pl-4 text-[13px] text-muted">
+                      {lines.map((line: string) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <ul className="mt-1 list-disc space-y-1 pl-4 text-[13px] text-muted">
+                      {lines.map((line: string) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              ))}
+              {selected === "occupancy" ? <OccupancyFlow /> : <RecipeFlow label={RECIPE_LABEL[selected]} steps={recipe.flow} />}
+              <section className="rounded-lg border border-line bg-sunken p-3">
+                <h3 className="text-sm font-semibold">Example</h3>
+                <p className="mt-1 text-[13px] text-muted">{recipe.example}</p>
+              </section>
+            </div>
+          ) : (
+            <section
+              role="tabpanel"
+              id="recipe-panel-availability"
+              aria-labelledby="recipe-tab-availability"
+              tabIndex={0}
+              className="flex min-h-0 min-w-0 flex-1 flex-col px-4 pb-4 pt-4"
+            >
+              <h3 className="text-sm font-semibold">{isHouseRecipe(selected) ? "House availability" : "Availability by area"}</h3>
+              {selected === "motion_lights" ? (
+                <div className="mt-2 flex min-h-0 min-w-0 flex-1 flex-col">
+                  <MotionLightsAvailability
+                    h={h}
+                    cells={cells}
+                    error={error}
+                    loading={loading}
+                    renderDetail={(cell) =>
+                      installed ? (
+                        <RecipeDetail cell={cell} h={h} installed={installed} adding={busy} add={() => propose(recipeChangeInputs([cell]))} naming={naming} />
+                      ) : null
+                    }
+                  />
+                </div>
+              ) : (
+                <RecipeAvailability
+                  key={selected}
+                  recipe={selected}
+                  h={h}
+                  cells={cells}
+                  error={error}
+                  loading={loading}
+                  renderDetail={(cell) =>
+                    installed ? (
+                      <RecipeDetail cell={cell} h={h} installed={installed} adding={busy} add={() => propose(recipeChangeInputs([cell]))} naming={naming} />
+                    ) : null
+                  }
+                />
+              )}
+            </section>
+          )}
+        </article>
       }
     />
   );
@@ -273,7 +249,6 @@ function RecipeDetail({
   cell,
   h,
   installed,
-  descriptions,
   adding,
   add,
   naming,
@@ -281,7 +256,6 @@ function RecipeDetail({
   cell: RecipeCell;
   h: Hierarchy;
   installed: RecipeInstalled;
-  descriptions: Record<string, string>;
   adding: boolean;
   add: () => Promise<boolean>;
   naming: Parameters<typeof areaCodes>[1];
@@ -291,38 +265,25 @@ function RecipeDetail({
   const isScript = cell.recipe === "announce" || cell.recipe === "goodbye";
   const id = isScript ? `taxis_${cell.recipe}` : automationIdFor(cell.recipe, code);
   const actual = isScript ? installed.scripts[id] : installed.automations[id];
-  const purpose = descriptions[cell.recipe] ?? "Speaks a message in occupied rooms using text-to-speech.";
   return (
     <article aria-label="Recipe details" className="flex flex-col gap-5 p-4">
       <header>
         <h2 className="text-lg font-semibold">
           {RECIPE_LABEL[cell.recipe]} · {areaLabel(cell)}
         </h2>
-        <p className="mt-1 text-sm text-muted">{purpose}</p>
-        <p className="mt-2 text-xs font-medium">{STATUS[cell.status]}</p>
+        <p className="mt-2 text-xs font-medium">{cell.wanted === false ? "Not wanted" : STATUS[cell.status]}</p>
       </header>
       <section>
-        <h3 className="mb-1 text-sm font-semibold">How it behaves</h3>
-        <ul className="list-disc space-y-1 pl-4 text-[13px] text-muted">
-          {BEHAVIOR[cell.recipe].map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      </section>
-      <section>
-        <h3 className="mb-1 text-sm font-semibold">Requirements</h3>
-        <p className="mb-2 text-xs text-muted">
-          {cell.missing.length
-            ? "Resolve these before installation:"
-            : cell.status === "in-changes"
-              ? "The installation is already in Changes. It relies on:"
-              : "The planner checked these requirements against your counted entities and settings:"}
-        </p>
-        <ul className={`list-disc space-y-1 pl-4 text-[13px] ${cell.missing.length ? "text-warn" : "text-muted"}`}>
-          {(cell.missing.length ? cell.missing : REQUIREMENTS[cell.recipe]).map((requirement) => (
-            <li key={requirement}>{requirement}</li>
-          ))}
-        </ul>
+        {cell.wanted !== false && cell.missing.length > 0 && (
+          <>
+            <h3 className="mb-1 text-sm font-semibold">Missing requirements</h3>
+            <ul className="list-disc space-y-1 pl-4 text-[13px] text-warn">
+              {cell.missing.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </>
+        )}
         <p className="mt-2 flex flex-wrap gap-3 text-xs">
           <a
             className="text-accent hover:underline"
@@ -388,9 +349,12 @@ function RecipeDetail({
                   {input.op} {input.kind}:{" "}
                   <code className="break-all">
                     {String(
-                      input.fields?.name ??
+                      input.fields?.entity_id ??
+                        input.fields?.automation_id ??
+                        input.fields?.script_id ??
+                        input.targetId ??
+                        input.fields?.name ??
                         input.fields?.alias ??
-                        input.fields?.entity_id ??
                         input.fields?.path ??
                         input.fields?.automation_id ??
                         input.fields?.script_id ??
@@ -416,5 +380,94 @@ function RecipeDetail({
         )}
       </details>
     </article>
+  );
+}
+
+function FlowRow({ label, steps, minWidth = 220 }: { label: string; steps: readonly ReactNode[]; minWidth?: number }) {
+  return (
+    <div aria-label={label} className="mt-2 min-w-0 max-w-full overflow-x-auto">
+      <div className="flex w-full items-stretch gap-2 text-xs">
+        {steps.map((step, index) => (
+          <span key={index} className="contents">
+            {index > 0 && (
+              <span aria-hidden="true" className="self-center">
+                →
+              </span>
+            )}
+            <span
+              data-flow-card
+              style={{ minWidth }}
+              className="flex min-h-20 flex-1 items-center justify-center rounded border border-line bg-sunken p-2 text-center"
+            >
+              <span>{step}</span>
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RecipeFlow({ label, steps }: { label: string; steps: readonly string[] }) {
+  return (
+    <section aria-label={`${label} flow`} className="min-w-0 rounded-lg border border-line p-3">
+      <h3 className="text-sm font-semibold">{label} flow</h3>
+      <FlowRow label={`${label} flow steps`} steps={steps} />
+    </section>
+  );
+}
+
+function OccupancyFlow() {
+  return (
+    <section aria-label="Occupancy flow" className="min-w-0 rounded-lg border border-line p-3">
+      <h3 className="text-sm font-semibold">Occupancy flow</h3>
+      <p className="mt-1 text-xs font-semibold text-warn">Planned: label-based discovery. Current recipes use explicitly selected inputs.</p>
+      <FlowRow
+        label="Occupancy hierarchy"
+        minWidth={250}
+        steps={[
+          <>
+            <strong>Physical or virtual occupancy sensors</strong>
+            <br />
+            <code>occupancy</code> label + assigned area
+          </>,
+          <>
+            <strong>Area occupancy</strong>
+            <br />
+            Discovers sources in this area
+          </>,
+          <>
+            <strong>Whole-house occupancy</strong>
+            <br />
+            Reads <code>area_occupancy</code> outputs
+          </>,
+        ]}
+      />
+      <p className="mt-2 text-xs text-muted">
+        A newly eligible source with the label and area is included by that area’s planned template; area and house outputs are excluded. The separate{" "}
+        <code>area_occupancy</code> label is proposed for area outputs. Labels determine membership, not proof of presence.
+      </p>
+      <p className="mt-2 text-xs text-muted">The pause switch must be off for these actions. The applicable downtime determines the hold timer duration.</p>
+      <FlowRow
+        label="Occupancy timer flow"
+        minWidth={250}
+        steps={[
+          "Occupancy is triggered",
+          <>
+            Start or restart hold timer
+            <br />
+            (occupied)
+          </>,
+          <>
+            Downtime expires: holding evidence?
+            <br />
+            Yes: restart · No: clear
+          </>,
+        ]}
+      />
+      <p className="mt-2 text-xs text-muted">
+        While the timer is active, qualifying activity evidence can restart it. Evidence configured to extend only cannot start occupancy.
+      </p>
+    </section>
   );
 }

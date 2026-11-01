@@ -8,6 +8,7 @@ import {
   Layers,
   Loader2,
   MapPin,
+  MousePointerClick,
   RefreshCw,
   Search,
   Settings,
@@ -23,12 +24,11 @@ import { GuidePage } from "./guide.tsx";
 import { HealthPage, HealthProvider, useHealthCounts } from "./health.tsx";
 import { OrganizePage } from "./organize.tsx";
 import { ParametersPage } from "./parameters.tsx";
-import { AREAS_HOME, GUIDE, RECIPES, SETTINGS } from "./route.ts";
+import { AREAS_HOME, BUTTONS, GUIDE, RECIPES, SETTINGS } from "./route.ts";
 import { SettingsPage } from "./settings-page.tsx";
 import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx";
 import { useStoredFlag } from "./storage.ts";
 import { TaxisProvider, useNotices, useRoute, useTaxis, type Route, type Selection } from "./state.tsx";
-import { timeAgo } from "./time.ts";
 import { pageMainClass } from "./ui.tsx";
 
 export function App() {
@@ -69,9 +69,6 @@ function Shell() {
 
   const page: Route["page"] = route.page;
   const open = (r: Route) => () => go(r);
-  const homeSummary = hierarchy
-    ? `${hierarchy.home.name} · ${hierarchy.counts.floors} floors · ${hierarchy.counts.areas} areas · ${hierarchy.counts.devices} devices · ${hierarchy.counts.entities.toLocaleString()} entities${hierarchy.counts.disabledEntities > 0 ? ` (${hierarchy.counts.disabledEntities.toLocaleString()} disabled)` : ""} · Read ${timeAgo(hierarchy.fetchedAt)}`
-    : null;
 
   return (
     <div className="flex h-full min-w-0 flex-col">
@@ -95,12 +92,15 @@ function Shell() {
             >
               Organize
             </Tab>
+            <Tab active={route.page === "automations" && route.tab === "recipes"} onClick={open(RECIPES)} icon={<Workflow className={iconClass} aria-hidden />}>
+              Recipes
+            </Tab>
             <Tab
-              active={page === "automations"}
-              onClick={open(route.page === "automations" ? route : RECIPES)}
-              icon={<Workflow className={iconClass} aria-hidden />}
+              active={route.page === "automations" && route.tab === "buttons"}
+              onClick={open(route.page === "automations" && route.tab === "buttons" ? route : BUTTONS)}
+              icon={<MousePointerClick className={iconClass} aria-hidden />}
             >
-              Automations
+              Buttons
             </Tab>
             <Tab
               active={page === "parameters"}
@@ -118,16 +118,7 @@ function Shell() {
               Changes
               {changes.length > 0 && <Count tone="warn">{changes.length}</Count>}
             </Tab>
-            {homeSummary ? (
-              <div className="flex min-w-32 flex-1 items-center gap-2 px-1 text-[12px] tabular-nums text-muted">
-                <span aria-hidden="true">|</span>
-                <p className="min-w-0 truncate" title={homeSummary}>
-                  {homeSummary}
-                </p>
-              </div>
-            ) : (
-              <span className="ml-auto" aria-hidden />
-            )}
+            <span className="ml-auto" aria-hidden />
             <Tab
               active={page === "settings"}
               onClick={open(route.page === "settings" ? route : SETTINGS)}
