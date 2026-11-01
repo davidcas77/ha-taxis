@@ -224,7 +224,7 @@ function planUnavailableWatch(e: Env): RecipeCell {
   const was = Array.isArray(there) ? (there as unknown[]).filter((x): x is string => typeof x === "string") : [];
   const added = watched.filter((x) => !was.includes(x)).length;
   const removed = was.filter((x) => !watched.includes(x)).length;
-  const extraReasons = e.installed.automations[id] && (added > 0 || removed > 0) ? [`Watched entities: ${added} added, ${removed} no longer counted`] : [];
+  const extraReasons = e.installed.automations[id] && (added > 0 || removed > 0) ? [`Watched entities: ${added} added, ${removed} no longer included`] : [];
   const notes = [
     "Taxis passes the sensors the area recipes rely on, so a sensor you start counting is added the next time this is updated",
     "One message per entity until it comes back; a flip between unavailable and unknown starts the count again",

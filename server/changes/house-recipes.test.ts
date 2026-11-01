@@ -222,7 +222,10 @@ describe("installing not reporting", () => {
 
     t.fake.home.entities.push({ entity_id: "binary_sensor.kitchen_door_new", platform: "demo", area_id: "kitchen" });
     t.fake.home.states.push({ entity_id: "binary_sensor.kitchen_door_new", state: "off", attributes: { device_class: "door" } });
-    expect(of(await t.houseCells(), "unavailable_watch")).toMatchObject({ status: "out-of-date", reasons: ["Watched entities: 1 added, 0 no longer counted"] });
+    expect(of(await t.houseCells(), "unavailable_watch")).toMatchObject({
+      status: "out-of-date",
+      reasons: ["Watched entities: 1 added, 0 no longer included"],
+    });
   });
 });
 

@@ -23,6 +23,7 @@ import {
   setKind,
   setLightRole,
   setRole,
+  setTvOccupancyRole,
   type Capability,
   type InventorySettings,
 } from "./inventory.ts";
@@ -671,5 +672,20 @@ describe("climate kinds", () => {
   it("is dropped together with the other choices by a reset", () => {
     const s = setCounts(h, setClimateKind(h, EMPTY_INVENTORY, "climate.heater", "valve"), "climate.heater", false);
     expect(resetEntity(s, "climate.heater")).toEqual(EMPTY_INVENTORY);
+  });
+});
+
+describe("TV occupancy choice", () => {
+  it("defaults to ignore and stores a TV role without changing inclusion", () => {
+    const h = house(inLiving([{ id: "media_player.tv", dc: "tv" }, { id: "media_player.speaker" }, { id: "media_player.disabled", dc: "tv", disabled: true }]));
+    expect(areaInventory(h, EMPTY_INVENTORY, "living_room").tv[0].tvOccupancyRole).toBe("ignore");
+    const selected = setTvOccupancyRole(h, EMPTY_INVENTORY, "media_player.tv", "starts");
+    expect(areaInventory(h, selected, "living_room").tv[0]).toMatchObject({ tvOccupancyRole: "starts", overridden: true });
+    expect(setTvOccupancyRole(h, selected, "media_player.tv", "ignore")).toEqual(EMPTY_INVENTORY);
+    expect(setTvOccupancyRole(h, EMPTY_INVENTORY, "media_player.speaker", "starts")).toBe(EMPTY_INVENTORY);
+    expect(setTvOccupancyRole(h, EMPTY_INVENTORY, "media_player.disabled", "starts")).toBe(EMPTY_INVENTORY);
+    const uncounted = setCounts(h, selected, "media_player.tv", false);
+    const excludedRole = setTvOccupancyRole(h, uncounted, "media_player.tv", "holds");
+    expect(areaInventory(h, excludedRole, "living_room").tv[0]).toMatchObject({ counts: false, tvOccupancyRole: "holds" });
   });
 });

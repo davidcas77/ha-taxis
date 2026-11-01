@@ -73,7 +73,17 @@ class TableLayoutRegression(unittest.TestCase):
         for table in self.page.get_by_role("table").all():
             label = table.get_attribute("aria-label")
             self.assertTrue(label, context)
+            native_labels = {"Area light sources", "Recipe helpers", "Area parameters", "House parameters",
+                             "House source entities", "Area occupancy source entities", "House area source entities", "People entities"}
+            capability_sources = {name + " sources" for name in ["Lights", "Motion", "Presence", "Doors", "Windows", "Temperature", "Humidity", "Light level", "Climate", "Speakers", "TVs", "Covers", "Fans", "Power", "Leak sensors"]}
+            if label in native_labels or label in capability_sources:
+                self.assertEqual(table.locator("xpath=ancestor::*[@data-table-id][1]").count(), 0, label)
+                continue
             wrapper = table.locator("xpath=ancestor::*[@data-table-id][1]")
+            if label == "Recipe types":
+                expect(wrapper.get_by_role("button", name="Columns of Recipe types", exact=True)).to_have_count(0)
+                expect(wrapper.get_by_role("textbox", name="Find recipes", exact=True)).to_have_count(1)
+                continue
             chooser = wrapper.get_by_role("button", name="Columns of " + label, exact=True)
             expect(chooser).to_have_count(1)
             self.assertEqual(table.get_by_role("separator").count(), table.locator("th[data-column-id]").count(), context)
@@ -311,9 +321,10 @@ class TableLayoutRegression(unittest.TestCase):
             self.open(route, entities=route == "#unassigned" and unassigned_seen)
             if route == "#unassigned":
                 unassigned_seen = True
-            self.assert_every_table_has_a_chooser_above_it(route)
             if route == "#automations/recipes":
-                self.page.get_by_role("button", name="Table", exact=True).click()
+                self.page.get_by_role("tab", name="Availability", exact=True).click()
+                self.page.get_by_role("table", name="Recipe helpers", exact=True).wait_for()
+            self.assert_every_table_has_a_chooser_above_it(route)
             tested_tables += self.page.locator("table").evaluate_all("""(tables, token) => {
                 let tested = 0;
                 for (const table of tables) {
@@ -340,7 +351,7 @@ class TableLayoutRegression(unittest.TestCase):
             self.page.set_viewport_size({"width": width, "height": 1100})
             for route in routes:
                 self.open(route)
-                if route in ["#organize/devices", "#automations/recipes"]:
+                if route == "#organize/devices":
                     self.page.get_by_role("button", name="Table", exact=True).click()
                 errors = self.page.locator("table").evaluate_all("""tables => {
                   const bad = [];

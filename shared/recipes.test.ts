@@ -14,9 +14,12 @@ import {
   setBedroom,
   setClimateKind,
   setCounts,
+  setRecipeWanted,
+  recipeWanted,
   setKind,
   setLightRole,
   setRole,
+  setTvOccupancyRole,
   type InventorySettings,
 } from "./inventory.ts";
 import { closureFor } from "./apply-plan.ts";
@@ -47,6 +50,7 @@ type Spec = {
   name?: string;
   members?: string[];
   attrs?: Record<string, unknown>;
+  disabled?: boolean;
 };
 
 // A small invented house: a living room and a kitchen, with the codes their
@@ -70,6 +74,7 @@ function house(specs: Spec[]) {
       platform: s.platform ?? "demo",
       area_id: s.area ?? "living_room",
       config_entry_id: s.entry,
+      disabled_by: s.disabled ? "user" : null,
       original_name: s.name,
       unique_id: s.id.split(".")[1],
     });
@@ -144,6 +149,8 @@ const BLUEPRINTS_THERE = {
 const occupancyInput = {
   starts_entities: ["binary_sensor.living_pir"],
   holds_entities: [],
+  tv_starts_entities: [],
+  tv_holds_entities: [],
   bed_entities: [],
   rate_entities: [],
   rate_hold: 0,
@@ -178,7 +185,12 @@ describe("names", () => {
 describe("occupancy: what is missing", () => {
   it("needs a counted motion or presence sensor", () => {
     const c = cell(plan([spots]), "occupancy");
-    expect(c).toMatchObject({ status: "missing", missing: ["A motion or presence sensor"], actionable: false, inputs: [] });
+    expect(c).toMatchObject({
+      status: "missing",
+      missing: ["One or more motion or presence sensors, or TVs, selected to start occupancy (hold-only sources cannot start it)"],
+      actionable: false,
+      inputs: [],
+    });
   });
 
   it("needs one that starts occupancy: sensors set to hold don't", () => {
@@ -186,13 +198,15 @@ describe("occupancy: what is missing", () => {
     const inv = setRole(h, EMPTY_INVENTORY, "binary_sensor.living_pir", "holds");
     const c = cell(plan([motion], { inv }), "occupancy");
     expect(c.status).toBe("missing");
-    expect(c.missing[0]).toMatch(/starts occupancy.*set to hold/);
+    expect(c.missing[0]).toMatch(/selected to start occupancy.*hold-only/);
   });
 
   it("doesn't count a sensor that is switched off", () => {
     const h = house([motion]);
     const inv = setCounts(h, EMPTY_INVENTORY, "binary_sensor.living_pir", false);
-    expect(cell(plan([motion], { inv }), "occupancy").missing).toEqual(["A motion or presence sensor"]);
+    expect(cell(plan([motion], { inv }), "occupancy").missing).toEqual([
+      "One or more motion or presence sensors, or TVs, selected to start occupancy (hold-only sources cannot start it)",
+    ]);
   });
 
   it("names a helper id that something else holds", () => {
@@ -239,6 +253,72 @@ describe("occupancy: what is missing", () => {
 
 describe("occupancy: ready", () => {
   const c = cell(plan([motion, presence, spots]), "occupancy");
+
+  it("reuses a unique same-area legacy timer in both the template and automation", () => {
+    const legacy = { id: "timer.old_room_motion_hold", platform: "timer", state: "idle" };
+    const c = cell(plan([motion, legacy]), "occupancy");
+    expect(c.status).toBe("ready");
+    expect(c.inputs.some((i) => i.fields?.helper === "timer")).toBe(false);
+    expect(c.inputs.find((i) => i.fields?.helper === "template")?.fields?.state_template).toBe("{{ is_state('timer.old_room_motion_hold','active') }}");
+    expect(autoInput(c).hold_timer).toBe("timer.old_room_motion_hold");
+    const update = cell(plan([motion, legacy], { installed: { timers: { [legacy.id]: 900 } } }), "occupancy");
+    expect(update.inputs.find((i) => i.kind === "helper" && i.op === "update")).toMatchObject({ targetId: legacy.id, fields: { duration: 300 } });
+  });
+
+  it("preserves canonical and pending canonical priority, including conflicts", () => {
+    const legacy = { id: "timer.living_motion_hold", platform: "timer", state: "idle" };
+    expect(autoInput(cell(plan([motion, legacy, timer]), "occupancy")).hold_timer).toBe(timer.id);
+    const conflict = cell(plan([motion, legacy, { ...timer, platform: "demo" }]), "occupancy");
+    expect(conflict.status).toBe("missing");
+    expect(conflict.missing.join(" ")).toContain("timer.living_hold is already used");
+    const pending = change({ kind: "helper", targetId: "new:timer", after: { helper: "timer", entity_id: timer.id } });
+    expect(autoInput(cell(plan([motion, legacy], { changes: [pending] }), "occupancy")).hold_timer).toBe(timer.id);
+    const rename = change({ kind: "entity", targetId: "timer.other", after: { new_entity_id: timer.id } });
+    expect(autoInput(cell(plan([motion, legacy], { changes: [rename] }), "occupancy")).hold_timer).toBe(timer.id);
+  });
+
+  it("does not adopt foreign, invalid, or ambiguous legacy timers", () => {
+    const foreign = { id: "timer.old_motion_hold", platform: "timer", area: "kitchen" };
+    const invalid = { id: "timer.bad_motion_hold", platform: "demo" };
+    expect(autoInput(cell(plan([motion, foreign, invalid]), "occupancy")).hold_timer).toBe(timer.id);
+    const ambiguous = cell(plan([motion, { ...foreign, area: "living_room" }, { id: "timer.another_motion_hold", platform: "timer" }]), "occupancy");
+    expect(ambiguous.status).toBe("missing");
+    expect(ambiguous.missing.join(" ")).toMatch(/Multiple motion hold timers/);
+    expect(ambiguous.inputs).toEqual([]);
+  });
+
+  it("keeps unavailable or disabled legacy timers visible but blocks installation", () => {
+    for (const spec of [
+      { id: "timer.living_motion_hold", platform: "timer", disabled: true, state: "idle" },
+      { id: "timer.living_motion_hold", platform: "timer", state: "unavailable" },
+      { id: "timer.living_motion_hold", platform: "timer", state: "unknown" },
+    ]) {
+      const h = house([motion, spec]);
+      expect(runtimeIds("living", h, "living_room").timer).toBe(spec.id);
+      const c = cell(plan([motion, spec]), "occupancy");
+      expect(c.status).toBe("missing");
+      expect(c.missing.join(" ")).toContain(`${spec.id} is unavailable or disabled`);
+      expect(c.inputs).toEqual([]);
+    }
+    for (const state of ["idle", "active", "paused"]) {
+      const c = cell(plan([motion, { id: "timer.living_motion_hold", platform: "timer", state }]), "occupancy");
+      expect(c.status).toBe("ready");
+      expect(autoInput(c).hold_timer).toBe("timer.living_motion_hold");
+    }
+  });
+
+  it("blocks an unverifiable existing or pending occupied template when reusing a legacy timer", () => {
+    const legacy = { id: "timer.living_motion_hold", platform: "timer" };
+    const existing = cell(plan([motion, legacy, occupied]), "occupancy");
+    expect(existing.status).toBe("missing");
+    expect(existing.missing.join(" ")).toContain("Verify that binary_sensor.living_occupied uses timer.living_motion_hold");
+    const pending = change({ kind: "helper", targetId: "new:occupied", after: { helper: "template", entity_id: occupied.id, state_template: "unknown" } });
+    expect(cell(plan([motion, legacy], { changes: [pending] }), "occupancy").status).toBe("missing");
+    pending.after.state_template = "{{ is_state('timer.living_motion_hold','active') }}";
+    const safe = cell(plan([motion, legacy], { changes: [pending] }), "occupancy");
+    expect(safe.status).toBe("ready");
+    expect(autoInput(safe).hold_timer).toBe(legacy.id);
+  });
 
   it("is ready with sources that start and hold, and says what it will write, in order", () => {
     expect(c.status).toBe("ready");
@@ -620,6 +700,26 @@ describe("motion lights: roles, sleep and the manual override", () => {
     expect(every).not.toContain("light.living_reader");
     expect(every).not.toContain("light.living_off");
     expect(motionCell(specs, { inv }).notes).toEqual(["No light level helper yet, so the lights go on at any light level"]);
+  });
+
+  it("passes independent overlapping selections and filters excluded or moved lights", () => {
+    const specs = [...base, spots, lamp, nightlight];
+    const h = house(specs);
+    let inv = setLightRole(EMPTY_INVENTORY, lamp.id, "accent");
+    inv = setLightRole(inv, nightlight.id, "night");
+    inv = setCounts(h, inv, nightlight.id, false);
+    const area = { level: "area", id: "living_room" } as const;
+    let params = setParameter(EMPTY_PARAMETERS, area, "entry_lights", [spots.id]);
+    params = setParameter(params, area, "ambient_lights", [spots.id, nightlight.id, "light.moved"]);
+    params = setParameter(params, area, "night_lights", [spots.id]);
+    expect(autoInput(motionCell(specs, { inv, params }))).toMatchObject({
+      entry_lights: [spots.id],
+      accent_lights: [spots.id],
+      night_lights: [spots.id],
+    });
+    params = setParameter(params, area, "ambient_lights", []);
+    params = setParameter(params, area, "night_lights", ["light.moved"]);
+    expect(autoInput(motionCell(specs, { inv, params }))).toMatchObject({ accent_lights: [], night_lights: [] });
   });
 
   it("passes the bed sensors of a bedroom, and says what a bedroom without night lights or main lights will do", () => {
@@ -2717,6 +2817,12 @@ describe("optional house modes in native recipes", () => {
     });
     expect(autoInput(cell(cells, "media_off"))).toMatchObject({ guest_entity: "input_boolean.taxis_guest", guest_pause_media: true });
   });
+  it("uses the selected area guest switch in the motion lights configuration", () => {
+    const params = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "guest_mode_entity", "input_boolean.fixture_guest");
+    const guest: Spec = { id: "input_boolean.fixture_guest", platform: "input_boolean", state: "off" };
+    const c = cell(plan([...base, guest], { installed: occInstalled, params }), "motion_lights");
+    expect(autoInput(c)).toMatchObject({ guest_entity: "input_boolean.fixture_guest" });
+  });
   it("blocks recipes when a selected or existing guest switch cannot be used", () => {
     const params = setParameter(EMPTY_PARAMETERS, { level: "house" }, "guest_mode_entity", "input_boolean.visitors");
     expect(cell(plan(base, { installed: occInstalled, params }), "motion_lights").status).toBe("missing");
@@ -2726,5 +2832,59 @@ describe("optional house modes in native recipes", () => {
     const cells = plan([{ id: "climate.living", platform: "demo" }, mode("guest")]);
     expect(autoInput(cell(cells, "area_climate"))).toHaveProperty("guest_entities", ["input_boolean.taxis_guest"]);
     expect(cell(cells, "area_climate").inputs.filter((i) => i.fields?.entity_id === "input_boolean.taxis_guest")).toEqual([]);
+  });
+});
+
+describe("TV occupancy", () => {
+  it("requires explicit selection and only uses counted TVs in their current area", () => {
+    const h = house([tv, speaker]);
+    expect(cell(plan([tv]), "occupancy").status).toBe("missing");
+    const starts = setTvOccupancyRole(h, EMPTY_INVENTORY, tv.id, "starts");
+    const c = cell(plan([tv], { inv: starts }), "occupancy");
+    expect(c.status).toBe("ready");
+    expect(autoInput(c)).toMatchObject({ starts_entities: [], tv_starts_entities: [tv.id], tv_holds_entities: [] });
+    const holds = setTvOccupancyRole(h, starts, tv.id, "holds");
+    expect(cell(plan([tv], { inv: holds }), "occupancy").status).toBe("missing");
+    expect(autoInput(cell(plan([motion, tv], { inv: holds }), "occupancy"))).toMatchObject({ tv_starts_entities: [], tv_holds_entities: [tv.id] });
+    const excluded = setCounts(h, starts, tv.id, false);
+    expect(cell(plan([tv], { inv: excluded }), "occupancy").status).toBe("missing");
+    const excludedWithRole = setTvOccupancyRole(h, excluded, tv.id, "holds");
+    expect(cell(plan([motion, tv], { inv: excludedWithRole }), "occupancy").status).not.toBe("missing");
+    expect(autoInput(cell(plan([motion, tv], { inv: excludedWithRole }), "occupancy"))).toMatchObject({ tv_starts_entities: [], tv_holds_entities: [] });
+    expect(cell(plan([{ ...tv, area: "kitchen" }], { inv: starts }), "occupancy").status).toBe("missing");
+    expect(cell(plan([], { inv: starts }), "occupancy").status).toBe("missing");
+    expect(setTvOccupancyRole(h, EMPTY_INVENTORY, speaker.id, "starts")).toBe(EMPTY_INVENTORY);
+  });
+});
+
+describe("area recipe preferences", () => {
+  it("preserves choices and other areas while suppressing real planner inputs", () => {
+    const initial = { entities: { "light.living_spots": { counts: false } }, areas: { living_room: { bedroom: true } } };
+    const off = setRecipeWanted(initial, "living_room", "occupancy", false);
+    expect(recipeWanted(off, "living_room", "occupancy")).toBe(false);
+    expect(recipeWanted(off, "kitchen", "occupancy")).toBe(true);
+    expect(off.entities).toEqual(initial.entities);
+    const before = cell(plan([motion], { inv: initial }), "occupancy");
+    const after = cell(plan([motion], { inv: off }), "occupancy");
+    expect(before.inputs.length).toBeGreaterThan(0);
+    expect(after).toMatchObject({ wanted: false, actionable: false, inputs: [] });
+    expect(recipeChangeInputs([after])).toEqual([]);
+    expect(cell(plan([motion], { inv: off }), "motion_lights").missing).toContain("Occupancy is not wanted here (enable it and install it first)");
+    expect(setRecipeWanted(off, "living_room", "occupancy", true)).toEqual(initial);
+  });
+  it("keeps installed and queued automations visible and does not schedule removal", () => {
+    const inv = setRecipeWanted(EMPTY_INVENTORY, "living_room", "occupancy", false);
+    const pending = change({ kind: "automation", targetId: "taxis_occupancy_living", after: {} });
+    const result = cell(
+      plan([motion, ...runtime], { inv, installed: { automations: { taxis_occupancy_living: installedOccupancy } }, changes: [pending] }),
+      "occupancy",
+    );
+    expect(result).toMatchObject({ wanted: false, installed: true, pending: true, actionable: false, inputs: [] });
+    expect(cell(plan([motion, ...runtime], { inv, changes: [pending] }), "motion_lights").missing).toContain(
+      "Occupancy is not wanted here (enable it and install it first)",
+    );
+    expect(
+      cell(plan([motion, ...runtime], { inv, installed: { automations: { taxis_occupancy_living: installedOccupancy } } }), "motion_lights").missing,
+    ).not.toContain("Occupancy is not wanted here (enable it and install it first)");
   });
 });

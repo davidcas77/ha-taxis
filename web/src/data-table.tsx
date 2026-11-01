@@ -8,7 +8,7 @@ import { tableSearchText, tableTextMatches } from "./table-search.ts";
 
 // The one table of the app. It never makes the page scroll: it sits in a scroll
 // area of its own, hides its least important columns when they do not fit
-// (shared/table-fit.ts), always offers a Columns chooser above the table,
+// (shared/table-fit.ts), offers a Columns chooser above the table by default,
 // lets the person show or hide optional columns, keeps the
 // first column and the header in view while scrolling, and never wraps an id in
 // the middle of a token. The values of a hidden column stay one click away, in
@@ -112,6 +112,7 @@ export type DataTableProps<T> = {
   filters?: ReactNode;
   // All tables resize by default. Set false only for an explicit exception.
   resizable?: boolean;
+  showColumnChooser?: boolean;
   // Shown instead of the table when there are no rows.
   empty?: ReactNode;
   className?: string;
@@ -207,6 +208,7 @@ export function DataTable<T>({
   actions,
   filters,
   resizable = true,
+  showColumnChooser = true,
   empty,
   className = "",
 }: DataTableProps<T>) {
@@ -638,7 +640,7 @@ export function DataTable<T>({
     <div data-table-id={id} className={`flex w-full min-w-0 max-w-full flex-col gap-2 ${className}`}>
       <div role="toolbar" aria-label={`Table controls for ${label}`} className="flex min-h-9 min-w-0 items-center gap-2 text-xs text-muted">
         <div data-table-toolbar-content className="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto py-1">
-          <label className="flex w-64 shrink-0 items-center gap-2 rounded-md border border-line bg-bg px-2 py-1.5 focus-within:border-accent">
+          <label className="flex w-64 max-w-full shrink-0 items-center gap-2 rounded-md border border-line bg-bg px-2 py-1.5 focus-within:border-accent">
             <Search className="size-4 shrink-0" aria-hidden />
             <input
               data-table-search
@@ -659,7 +661,7 @@ export function DataTable<T>({
             </span>
           )}
         </div>
-        <ColumnsMenu label={label} columns={columns} fit={fit} prefs={prefs} onChange={setPrefs} />
+        {showColumnChooser && <ColumnsMenu label={label} columns={columns} fit={fit} prefs={prefs} onChange={setPrefs} />}
       </div>
       <div className="min-w-0 max-w-full rounded-lg border border-line bg-surface">
         <div

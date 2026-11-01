@@ -137,11 +137,7 @@ export function GuidePath({
   const percent = Math.round((path.done / path.total) * 100);
 
   return (
-    <Section
-      id="guide-path"
-      title="Your path"
-      description="Work through these checks in order. They reflect what Taxis has read, and help you choose what to review; they do not prove every room or automation has been tested."
-    >
+    <Section id="guide-path" title="Your path" description="Start with the highlighted step. Open instructions when you need help.">
       <Card>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <p className="text-sm font-semibold tabular-nums">

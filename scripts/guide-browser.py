@@ -128,7 +128,7 @@ class GuideRegression(unittest.TestCase):
         for item in instructions.all():
             item.click()
         self.page.get_by_text("Equipment by area", exact=True).click()
-        self.assertIn("No counted motion or presence sensor", steps.inner_text())
+        self.assertIn("No included motion or presence sensor", steps.inner_text())
         self.page.get_by_text("Current helper plan by area, floor and house", exact=True).click()
         self.assertIn("light.living_all", steps.inner_text())
         self.assertIn("Review, build and verify", self.page.locator("body").inner_text())

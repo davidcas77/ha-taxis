@@ -7,25 +7,39 @@ import { DEFAULT_NAMING } from "./naming.ts";
 
 function house(sources: { id: string; state: string | null; dc?: string; unit?: string; platform?: string; area?: string; device?: string }[]) {
   const raw: RawRegistry = {
-    config: { location_name: "Test house" }, floors: [], areas: [{ area_id: "room", name: "Room" }],
-    devices: [{ id: "device", name: "Device", area_id: "room" }], labels: [], entities: [], states: [],
+    config: { location_name: "Test house" },
+    floors: [],
+    areas: [{ area_id: "room", name: "Room" }],
+    devices: [{ id: "device", name: "Device", area_id: "room" }],
+    labels: [],
+    entities: [],
+    states: [],
   };
   for (const source of sources) {
-    raw.entities.push({ entity_id: source.id, original_name: source.id, original_device_class: source.dc, platform: source.platform ?? "demo", area_id: source.area, device_id: source.device });
-    if (source.state !== null) raw.states.push({ entity_id: source.id, state: source.state, attributes: { device_class: source.dc, unit_of_measurement: source.unit } });
+    raw.entities.push({
+      entity_id: source.id,
+      original_name: source.id,
+      original_device_class: source.dc,
+      platform: source.platform ?? "demo",
+      area_id: source.area,
+      device_id: source.device,
+    });
+    if (source.state !== null)
+      raw.states.push({ entity_id: source.id, state: source.state, attributes: { device_class: source.dc, unit_of_measurement: source.unit } });
   }
   const h = buildHierarchy(raw, "now");
-  const summarize = (settings = EMPTY_INVENTORY) => summarizeAreaCapabilities(h, areaInventory(h, settings, "room", helperExclusions(h, DEFAULT_NAMING)("room")), "room");
+  const summarize = (settings = EMPTY_INVENTORY) =>
+    summarizeAreaCapabilities(h, areaInventory(h, settings, "room", helperExclusions(h, DEFAULT_NAMING)("room")), "room");
   return { h, summarize };
 }
-const row = (rows: ReturnType<typeof summarizeAreaCapabilities>, key: string) => rows.find(row => row.capability === key)!;
+const row = (rows: ReturnType<typeof summarizeAreaCapabilities>, key: string) => rows.find((row) => row.capability === key)!;
 
 describe("area overview capabilities", () => {
   it("always lists every capability, keeping doors and windows separate", () => {
     const { summarize } = house([]);
     const rows = summarize();
-    expect(rows.map(row => row.capability)).toEqual(CAPABILITIES.map(capability => capability.key));
-    expect(rows.every(row => row.count === 0 && row.value === "N/A")).toBe(true);
+    expect(rows.map((row) => row.capability)).toEqual(CAPABILITIES.map((capability) => capability.key));
+    expect(rows.every((row) => row.count === 0 && row.value === "N/A")).toBe(true);
   });
 
   it("counts contacts in their effective device area and distinguishes open, closed and unavailable", () => {
@@ -39,7 +53,11 @@ describe("area overview capabilities", () => {
   });
 
   it("never calls an unreadable contact absent or closed", () => {
-    for (const [state, expected] of [["unavailable", "Unavailable"], ["unknown", "Unknown"], [null, "Unknown"]] as const) {
+    for (const [state, expected] of [
+      ["unavailable", "Unavailable"],
+      ["unknown", "Unknown"],
+      [null, "Unknown"],
+    ] as const) {
       const { summarize } = house([{ id: "binary_sensor.door", area: "room", dc: "door", state }]);
       expect(row(summarize(), "door")).toMatchObject({ count: 1, value: expected });
     }
@@ -64,7 +82,7 @@ describe("area overview capabilities", () => {
   it("shows excluded and registered disabled contacts without claiming they are absent", () => {
     const { h, summarize } = house([{ id: "binary_sensor.door", area: "room", dc: "door", state: "off" }]);
     const excluded = setCounts(h, EMPTY_INVENTORY, "binary_sensor.door", false);
-    expect(row(summarize(excluded), "door")).toMatchObject({ count: 0, value: "Not counted" });
+    expect(row(summarize(excluded), "door")).toMatchObject({ count: 0, value: "Not included" });
     h.entities["binary_sensor.door"].disabled = true;
     expect(row(summarize(), "door")).toMatchObject({ count: 0, value: "Disabled" });
     h.entities["binary_sensor.door"].areaId = "elsewhere";
@@ -94,7 +112,8 @@ describe("area overview capabilities", () => {
 
   it("shows counted light, motion, presence, climate and media activity", () => {
     const { summarize } = house([
-      { id: "light.a", area: "room", state: "on" }, { id: "light.b", area: "room", state: "off" },
+      { id: "light.a", area: "room", state: "on" },
+      { id: "light.b", area: "room", state: "off" },
       { id: "binary_sensor.pir", area: "room", dc: "motion", state: "off" },
       { id: "binary_sensor.presence", area: "room", dc: "occupancy", state: "on" },
       { id: "climate.ac", area: "room", state: "cool" },

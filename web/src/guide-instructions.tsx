@@ -1,58 +1,72 @@
 import type { PathStepKey } from "../../shared/guide-path.ts";
+import { useState } from "react";
+import { House, Layers, Zap } from "lucide-react";
 import { hasPendingChange, helperExclusions, planHelpers, type HelperRow } from "../../shared/helpers.ts";
 import { CAPABILITIES, inventoryMatrix } from "../../shared/inventory.ts";
 import { PARAM_DEF } from "../../shared/parameters.ts";
 import { RECIPE_LABEL, type RecipeCell } from "../../shared/recipes.ts";
 import type { Change, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
-import { Button, Card, Section } from "./ui.tsx";
+import { Button, Section, inputClass } from "./ui.tsx";
 
 // The descriptions are deliberately examples, not another recipe planner. The
 // actual plan and its missing inputs are rendered from the shared planner below.
 export const RECIPE_EXAMPLES: Record<keyof typeof RECIPE_LABEL, string> = {
-  occupancy: "A counted motion or presence sensor that starts occupancy; the recipe plans a hold timer, occupied sensor and pause switch.",
+  occupancy: "A motion or presence sensor or an opted-in TV that starts occupancy; the recipe plans a hold timer, occupied sensor and pause switch.",
   motion_lights: "Occupancy and the room light group; day/night brightness and an override timer shape the behaviour.",
-  media_off: "Occupancy and at least one counted speaker or TV; turns media off after the room becomes empty.",
-  area_climate: "A counted thermostat and comfort settings; a schedule is planned, while occupancy and window inputs can add behaviour.",
-  bathroom_fan: "A counted humidity sensor, its humidity helper and a counted fan or switch marked as a fan.",
-  exterior_lights: "An exterior area and its light group; counted motion sensors and people can add motion and arrival behaviour.",
-  left_open: "At least one counted door or window; notification targets are optional and otherwise Home Assistant notifications are used.",
-  appliance_done: "A counted power sensor marked as an appliance and valid running and idle thresholds.",
-  leak_alert: "A counted leak sensor; notification targets and a water valve are optional.",
-  covers_sun: "A counted cover and valid closing times; window and outdoor temperature inputs are optional.",
+  media_off: "Occupancy and at least one included speaker or TV; turns media off after the room becomes empty.",
+  area_climate: "A thermostat and comfort settings; a schedule is planned, while occupancy and window inputs can add behaviour.",
+  bathroom_fan: "A humidity sensor, its humidity helper and a fan or switch marked as a fan.",
+  exterior_lights: "An exterior area and its light group; included motion sensors and people can add motion and arrival behaviour.",
+  left_open: "At least one included door or window; notification targets are optional and otherwise Home Assistant notifications are used.",
+  appliance_done: "A power sensor marked as an appliance and valid running and idle thresholds.",
+  leak_alert: "A leak sensor; notification targets and a water valve are optional.",
+  covers_sun: "A cover and valid closing times; window and outdoor temperature inputs are optional.",
   house_presence: "At least one room with Occupancy and its occupied sensor; a usable away switch and group IDs are needed. People and guest mode add context.",
   battery_low: "A house pause switch is planned as needed. All HA battery sensors are checked; notification targets are optional.",
-  unavailable_watch: "At least one counted sensor used by the supported room recipes; notification targets are optional.",
-  announce: "A text-to-speech entity and a counted speaker in a room with Occupancy.",
-  goodbye: "The house light group and a usable away switch; counted speakers and TVs are included when available.",
+  unavailable_watch: "At least one included sensor used by the supported room recipes; notification targets are optional.",
+  announce: "A text-to-speech entity and a speaker in a room with Occupancy.",
+  goodbye: "The house light group and a usable away switch; speakers and TVs are included when available.",
 };
 
 export function GuideOverview({ go }: { go: (route: Route) => void }) {
+  const [selected, setSelected] = useState<keyof typeof RECIPE_LABEL>("motion_lights");
   return (
-    <Section title="How Taxis builds your home" description="Start with your rooms and equipment, then choose only the automations useful to you.">
-      <Card>
-        <p className="text-sm">
-          Taxis organises native Home Assistant objects. A reusable blueprint describes an automation; a recipe selects its inputs and creates an automation for
-          a particular room. For example, Occupancy uses that room's sensors and timer, and Motion lights can then use its occupancy and light group.
-        </p>
-        <p className="mt-2 text-sm">
-          Canonical helpers give shared equipment a predictable room-level identity: a light group can represent a room's lights, or a group sensor can combine
-          its motion sensors. Existing suitable helpers can be adopted. Not every device needs a helper, and what is needed depends on the recipe.
-        </p>
-        <p className="mt-2 text-sm">
-          Recipes and their dependencies are proposed to Changes. Review the list, apply it and verify the result in Home Assistant. Applying can enable a new
-          automation; try one at a time and turn it off in Home Assistant if needed.
-        </p>
-      </Card>
+    <Section title="How Taxis builds your home" description="Organise your rooms and choose what you want them to do.">
+      <div className="grid gap-2 sm:grid-cols-3">
+        {[
+          { Icon: House, title: "Rooms", text: "Place your devices and sensors." },
+          { Icon: Layers, title: "Helpers", text: "Bring related equipment together." },
+          { Icon: Zap, title: "Automations", text: "Choose what happens and when." },
+        ].map(({ Icon, title, text }) => (
+          <div key={title} className="flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-[13px]">
+            <Icon className="size-4 shrink-0 text-accent" aria-hidden />
+            <span>
+              <strong>{title}</strong> · {text}
+            </span>
+          </div>
+        ))}
+      </div>
+      <details className="rounded-lg border border-line bg-surface px-3 py-2">
+        <summary className="cursor-pointer text-sm font-semibold">Learn how it works</summary>
+        <div className="mt-2 space-y-2 text-[13px]">
+          <p>
+            A blueprint is a reusable Home Assistant automation. A recipe selects its inputs for a room: Occupancy uses sensors and a timer; Motion lights can
+            use that occupancy and the room's light group.
+          </p>
+          <p>
+            A helper provides a stable room-level identity, such as one light group for several bulbs. Suitable existing helpers can be adopted; not every
+            device needs one.
+          </p>
+          <p>
+            Recipes and dependencies go to Changes for review. Apply and verify in Home Assistant; new automations can be active when installed, so try one at a
+            time.
+          </p>
+        </div>
+      </details>
       <details className="rounded-lg border border-line bg-surface p-4">
         <summary className="cursor-pointer text-sm font-semibold">Explore recipe examples and their equipment</summary>
-        <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-          {Object.entries(RECIPE_EXAMPLES).map(([key, description]) => (
-            <li key={key} className="text-[13px]">
-              <strong>{RECIPE_LABEL[key as keyof typeof RECIPE_LABEL]}.</strong> {description}
-            </li>
-          ))}
-        </ul>
+        <RecipeExample selected={selected} onSelect={setSelected} />
         <p className="mt-3 text-xs text-muted">
           These are examples, not a complete list of requirements. The Recipes planner checks your actual room, settings, dependencies and conflicts.
         </p>
@@ -61,6 +75,31 @@ export function GuideOverview({ go }: { go: (route: Route) => void }) {
         </Button>
       </details>
     </Section>
+  );
+}
+
+export function RecipeExample({ selected, onSelect }: { selected: keyof typeof RECIPE_LABEL; onSelect: (key: keyof typeof RECIPE_LABEL) => void }) {
+  return (
+    <div className="mt-3 max-w-xl">
+      <label className="block text-xs font-medium" htmlFor="guide-recipe-example">
+        Choose a recipe
+      </label>
+      <select
+        id="guide-recipe-example"
+        className={`${inputClass} mt-1 w-full`}
+        value={selected}
+        onChange={(event) => onSelect(event.target.value as keyof typeof RECIPE_LABEL)}
+      >
+        {Object.keys(RECIPE_EXAMPLES).map((key) => (
+          <option key={key} value={key}>
+            {RECIPE_LABEL[key as keyof typeof RECIPE_LABEL]}
+          </option>
+        ))}
+      </select>
+      <p className="mt-2 text-[13px]">
+        <strong>{RECIPE_LABEL[selected]}:</strong> {RECIPE_EXAMPLES[selected]}
+      </p>
+    </div>
   );
 }
 
@@ -101,7 +140,7 @@ export const INSTRUCTIONS: Partial<Record<PathStepKey, { paragraphs: string[]; l
     paragraphs: [
       "Review the proposed room, floor and house groups. Adopt a suitable existing helper or queue a missing one; resolve naming conflicts and review group members. These groups provide stable room-level inputs when equipment changes.",
       "For example, a kitchen light group can keep its ID light.kit_all while you replace one old bulb in its member list with a new bulb. Automations can keep targeting that group; review and apply the updated membership. The actual suffix follows your naming settings.",
-      "Temperature, humidity and illuminance helpers can average counted sensors so recipes use one room-level value; media groups can bring counted speakers and TVs together. Review the actual sources and helper configuration before creating or adopting them.",
+      "Temperature, humidity and illuminance helpers can average included sensors so recipes use one room-level value; media groups can bring included speakers and TVs together. Review the actual sources and helper configuration before creating or adopting them.",
       "Recipes can also plan runtime helpers: occupancy uses a hold timer and occupied sensor, lighting can use an override timer, and recipes use pause switches. House modes include away, sleep and guest where needed. Day/night times and brightness are parameters, not a promised day/night helper. Check each recipe's dependencies before adding it.",
     ],
   },
@@ -114,7 +153,7 @@ export const INSTRUCTIONS: Partial<Record<PathStepKey, { paragraphs: string[]; l
   recipes: {
     paragraphs: [
       "Select only recipes that fit each room. The planner shows ready, installed, out-of-date and missing inputs, including conflicts and dependencies. Add a ready recipe to Changes and review its proposed blueprint, helpers and automation.",
-      "Goodbye is a house script that can turn off the house light group and counted media and set away mode. Welcome is not a Taxis recipe: if you want arrival behaviour, configure an existing or new Home Assistant automation yourself, for example using a zone and a person tracked by the mobile app. Check presence accuracy and test it before relying on it.",
+      "Goodbye is a house script that can turn off the house light group and included media and set away mode. Welcome is not a Taxis recipe: if you want arrival behaviour, configure an existing or new Home Assistant automation yourself, for example using a zone and a person tracked by the mobile app. Check presence accuracy and test it before relying on it.",
       "For phone presence, enable location and background tracking in the Home Assistant Companion app, connect its device_tracker to a Person, and review the Home zone. A Home Assistant zone trigger can react when that person enters or leaves. A tracker that is unknown or unavailable is not reliable evidence that someone has left. Phone permissions, battery restrictions and delayed updates affect accuracy.",
       "A visitor may be home without a tracked phone. Use a suitable guest mode guard and review the House presence notes before enabling away behaviour; the planner warns when no guest switch is in place. For a welcome example, create your own Home Assistant automation triggered by a person entering Home, with conditions and actions you choose. Taxis does not create this welcome automation.",
     ],
@@ -156,11 +195,11 @@ export function StepInstruction({
                   </button>
                   :{" "}
                   {CAPABILITIES.filter((c) => area.perCapability[c.key].total > 0)
-                    .map((c) => `${c.label} ${area.perCapability[c.key].counted}/${area.perCapability[c.key].total} counted`)
+                    .map((c) => `${c.label} ${area.perCapability[c.key].counted}/${area.perCapability[c.key].total} included`)
                     .join(", ") || "No detected equipment"}
                   .{" "}
                   {area.perCapability.motion.counted + area.perCapability.presence.counted === 0 &&
-                    "No counted motion or presence sensor: Occupancy cannot start, so motion-controlled lights need a suitable sensor first. "}
+                    "No included motion or presence sensor. An opted-in included TV can also start Occupancy through qualifying interactions. "}
                   {plan &&
                     plan.area
                       .filter((cell) => cell.areaId === area.areaId && cell.status === "missing" && cell.missing.length > 0)
@@ -236,7 +275,7 @@ function HelperPlan({ rows, changes, plan }: { rows: HelperRow[]; changes: Chang
         These are planner results, not changes already queued. A pending marker indicates an existing item in Changes. Open Helpers to review and add a
         proposal.
       </p>
-      {groups.length === 0 && <p className="mt-2">No helpers can be planned from the currently counted equipment.</p>}
+      {groups.length === 0 && <p className="mt-2">No helpers can be planned from the currently included equipment.</p>}
       {groups.map((group) => {
         const items = rows.filter((row) => `${row.level}:${row.areaId ?? row.floorId ?? "house"}` === group);
         return (

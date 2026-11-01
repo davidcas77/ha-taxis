@@ -17,8 +17,14 @@ describe("validateNaming", () => {
   });
 
   it("keeps only real roles, and only areas Home Assistant has", () => {
-    const r = validateNaming({ ...base, areaCodes: { kitchen: "Kit", gone: "x" }, typeWords: { light: "lamp", constructor: "x", toString: "y" } }, new Set(["kitchen"]));
-    expect(r).toEqual({ ok: true, value: { ...base, areaCodes: { kitchen: "kit" }, floorCodes: {}, houseGroup: "all", typeWords: { light: "lamp" }, helperNames: {} } });
+    const r = validateNaming(
+      { ...base, areaCodes: { kitchen: "Kit", gone: "x" }, typeWords: { light: "lamp", constructor: "x", toString: "y" } },
+      new Set(["kitchen"]),
+    );
+    expect(r).toEqual({
+      ok: true,
+      value: { ...base, areaCodes: { kitchen: "kit" }, floorCodes: {}, houseGroup: "all", typeWords: { light: "lamp" }, helperNames: {} },
+    });
   });
 
   it("says when a pattern is too long rather than empty", () => {
@@ -28,7 +34,14 @@ describe("validateNaming", () => {
 });
 
 describe("validateGroups", () => {
-  const ok = { labels: { groups: [{ id: "g1", name: " Rooms ", items: ["a", "b"] }, { id: "g2", name: "Other", items: ["c"] }] } };
+  const ok = {
+    labels: {
+      groups: [
+        { id: "g1", name: " Rooms ", items: ["a", "b"] },
+        { id: "g2", name: "Other", items: ["c"] },
+      ],
+    },
+  };
 
   it("accepts good groups and trims names", () => {
     const r = validateGroups(ok);
@@ -38,7 +51,17 @@ describe("validateGroups", () => {
   });
 
   it("refuses shapes that aren't plain objects and arrays", () => {
-    for (const bad of [null, [], "x", 3, { labels: [] }, { labels: "x" }, { labels: { groups: {} } }, { labels: { groups: ["x"] } }, { labels: { groups: [{ id: "g", name: "n", items: "a" }] } }]) {
+    for (const bad of [
+      null,
+      [],
+      "x",
+      3,
+      { labels: [] },
+      { labels: "x" },
+      { labels: { groups: {} } },
+      { labels: { groups: ["x"] } },
+      { labels: { groups: [{ id: "g", name: "n", items: "a" }] } },
+    ]) {
       expect(validateGroups(bad)).toMatchObject({ ok: false });
     }
   });
@@ -60,11 +83,27 @@ describe("validateGroups", () => {
     expect(one({ id: "g", name: "x".repeat(61), items: [] })).toMatchObject({ ok: false });
     expect(one({ id: "g", name: "x".repeat(60), items: [] })).toMatchObject({ ok: true });
     expect(one({ id: "g", name: "n", items: [1] })).toMatchObject({ ok: false });
-    expect(validateGroups({ labels: { groups: [{ id: "g", name: "a", items: [] }, { id: "g", name: "b", items: [] }] } })).toMatchObject({ ok: false });
+    expect(
+      validateGroups({
+        labels: {
+          groups: [
+            { id: "g", name: "a", items: [] },
+            { id: "g", name: "b", items: [] },
+          ],
+        },
+      }),
+    ).toMatchObject({ ok: false });
   });
 
   it("refuses an item in two groups, and says so", () => {
-    const r = validateGroups({ labels: { groups: [{ id: "g1", name: "A", items: ["x"] }, { id: "g2", name: "B", items: ["x"] }] } });
+    const r = validateGroups({
+      labels: {
+        groups: [
+          { id: "g1", name: "A", items: ["x"] },
+          { id: "g2", name: "B", items: ["x"] },
+        ],
+      },
+    });
     expect(r).toMatchObject({ ok: false, error: expect.stringContaining("only one group") });
     expect(validateGroups({ labels: { groups: [{ id: "g1", name: "A", items: ["x", "x"] }] } })).toMatchObject({ ok: false });
   });
@@ -80,13 +119,27 @@ describe("validateGroups", () => {
     expect(validateGroups({ labels: { groups: many.slice(0, 100) } })).toMatchObject({ ok: true });
     const items = (n: number) => Array.from({ length: n }, (_, i) => `i${i}`);
     expect(validateGroups({ labels: { groups: [{ id: "g", name: "n", items: items(2000) }] } })).toMatchObject({ ok: true });
-    expect(validateGroups({ labels: { groups: [{ id: "g", name: "n", items: items(1000) }, { id: "h", name: "n", items: items(1001).map((x) => `z${x}`) }] } })).toMatchObject({ ok: false });
+    expect(
+      validateGroups({
+        labels: {
+          groups: [
+            { id: "g", name: "n", items: items(1000) },
+            { id: "h", name: "n", items: items(1001).map((x) => `z${x}`) },
+          ],
+        },
+      }),
+    ).toMatchObject({ ok: false });
   });
 });
 
 describe("validateInventory", () => {
   const good = {
-    entities: { "light.lamp": { counts: false, light: "night" }, "binary_sensor.desk_presence": { role: "holds", bed: true }, "binary_sensor.window_opening": { kind: "door" }, "media_player.tv": { kind: "speaker" } },
+    entities: {
+      "light.lamp": { counts: false, light: "night" },
+      "binary_sensor.desk_presence": { role: "holds", bed: true },
+      "binary_sensor.window_opening": { kind: "door" },
+      "media_player.tv": { kind: "speaker" },
+    },
     areas: { living_room: { type: "exterior", bedroom: true } },
   };
 
@@ -101,7 +154,19 @@ describe("validateInventory", () => {
   });
 
   it("refuses shapes that aren't plain objects", () => {
-    for (const bad of [null, [], "x", 3, { entities: [] }, { entities: "x" }, { areas: [] }, { areas: 1 }, { entities: { "light.a": [] } }, { entities: { "light.a": "x" } }, { areas: { garden: null } }]) {
+    for (const bad of [
+      null,
+      [],
+      "x",
+      3,
+      { entities: [] },
+      { entities: "x" },
+      { areas: [] },
+      { areas: 1 },
+      { entities: { "light.a": [] } },
+      { entities: { "light.a": "x" } },
+      { areas: { garden: null } },
+    ]) {
       expect(validateInventory(bad)).toMatchObject({ ok: false });
     }
   });
@@ -227,7 +292,9 @@ describe("validateNamingIgnores", () => {
     expect(validateNamingIgnores({ names: [] })).toMatchObject({ ok: false, error: expect.stringContaining("names") });
     expect(validateNamingIgnores({ entities: { "light.a": { size: true } } })).toMatchObject({ ok: false, error: expect.stringContaining("size") });
     expect(validateNamingIgnores({ entities: Array.from({ length: 5001 }, (_, i) => `light.l${i}`) })).toMatchObject({ ok: false });
-    expect(validateNamingIgnores({ entities: Object.fromEntries(Array.from({ length: 5001 }, (_, i) => [`light.l${i}`, { name: true }])) })).toMatchObject({ ok: false });
+    expect(validateNamingIgnores({ entities: Object.fromEntries(Array.from({ length: 5001 }, (_, i) => [`light.l${i}`, { name: true }])) })).toMatchObject({
+      ok: false,
+    });
   });
 });
 
@@ -288,7 +355,9 @@ describe("checkAreaCodes", () => {
 
   it("holds floors to the same rule: two floors can't end up with one code, whatever its source", () => {
     // The mock house has the floors ground, first, floor_2 and level_1.
-    expect(checkAreaCodes({ ...DEFAULT_NAMING, floorCodes: { first: "Ground" } }, hierarchy())).toContain("The code “ground” is used by Ground floor and First floor.");
+    expect(checkAreaCodes({ ...DEFAULT_NAMING, floorCodes: { first: "Ground" } }, hierarchy())).toContain(
+      "The code “ground” is used by Ground floor and First floor.",
+    );
     expect(checkAreaCodes({ ...DEFAULT_NAMING, floorCodes: { floor_2: "upstairs", level_1: "basement" } }, hierarchy())).toBeNull();
     expect(checkAreaCodes({ ...DEFAULT_NAMING, floorCodes: { first: "ground" } }, hierarchy())).toContain("Give each floor its own code.");
   });
@@ -305,7 +374,10 @@ describe("validateNaming: floor codes and the house group", () => {
   it("refuses floor codes that are unreadable, empty or too long", () => {
     expect(validateNaming({ ...base, floorCodes: "x" })).toMatchObject({ ok: false });
     expect(validateNaming({ ...base, floorCodes: ["x"] })).toMatchObject({ ok: false });
-    expect(validateNaming({ ...base, floorCodes: { ground: "!!!" } })).toMatchObject({ ok: false, error: expect.stringContaining("floor ground has no letters or digits") });
+    expect(validateNaming({ ...base, floorCodes: { ground: "!!!" } })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("floor ground has no letters or digits"),
+    });
     expect(validateNaming({ ...base, floorCodes: { ground: "x".repeat(41) } })).toMatchObject({ ok: false, error: expect.stringContaining("longer than 40") });
   });
 
@@ -323,7 +395,9 @@ describe("validateNaming: floor codes and the house group", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const store = settingsStore(db);
-    db.prepare("INSERT INTO settings (key, value) VALUES ('naming', ?)").run(JSON.stringify({ idPattern: "{area}_{name}", namePattern: "{Name}", areaCodes: {}, typeWords: {}, helperNames: {} }));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('naming', ?)").run(
+      JSON.stringify({ idPattern: "{area}_{name}", namePattern: "{Name}", areaCodes: {}, typeWords: {}, helperNames: {} }),
+    );
     expect(store.naming()).toMatchObject({ floorCodes: {}, houseGroup: "all" });
     store.saveNaming({ ...DEFAULT_NAMING, floorCodes: { ground: "down" }, houseGroup: "house" });
     expect(store.naming()).toMatchObject({ floorCodes: { ground: "down" }, houseGroup: "house" });
@@ -360,7 +434,10 @@ describe("validateNaming: helper names", () => {
 
   it("refuses a name that isn't a lower-case slug, naming the helper", () => {
     for (const bad of ["Lamps", "two words", "x".repeat(31), "_a", "a__b", "café"]) {
-      expect(validateNaming({ ...base, helperNames: { lights: bad } }), bad).toMatchObject({ ok: false, error: expect.stringContaining("helper name for lights") });
+      expect(validateNaming({ ...base, helperNames: { lights: bad } }), bad).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("helper name for lights"),
+      });
     }
     expect(validateNaming({ ...base, helperNames: { lights: 5 } })).toMatchObject({ ok: false });
     expect(validateNaming({ ...base, helperNames: "x" })).toMatchObject({ ok: false });
@@ -379,7 +456,9 @@ describe("validateNaming: helper names", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const store = settingsStore(db);
-    db.prepare("INSERT INTO settings (key, value) VALUES ('naming', ?)").run(JSON.stringify({ idPattern: "{area}_{name}", namePattern: "{Name}", areaCodes: {}, typeWords: {} }));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('naming', ?)").run(
+      JSON.stringify({ idPattern: "{area}_{name}", namePattern: "{Name}", areaCodes: {}, typeWords: {} }),
+    );
     expect(store.naming().helperNames).toEqual({});
     store.saveNaming({ ...DEFAULT_NAMING, helperNames: { lights: "lamps" } });
     expect(store.naming().helperNames).toEqual({ lights: "lamps" });
@@ -387,7 +466,21 @@ describe("validateNaming: helper names", () => {
 });
 
 describe("validateParameters", () => {
-  const ok = { house: { night_start: "22:00", hold_timeout: 8 }, types: { exterior: { hold_timeout: 2 } }, areas: { kitchen: { day_kelvin: 3500, transition: 0 } } };
+  const ok = {
+    house: { night_start: "22:00", hold_timeout: 8 },
+    types: { exterior: { hold_timeout: 2 } },
+    areas: { kitchen: { day_kelvin: 3500, transition: 0 } },
+  };
+
+  it("validates independent motion light lists including an explicit empty selection", () => {
+    const value = { areas: { kitchen: { ambient_lights: [], night_lights: ["light.main"] } } };
+    expect(validateParameters(value)).toEqual({ ok: true, value: { house: {}, types: {}, ...value } });
+    for (const key of ["ambient_lights", "night_lights"]) {
+      expect(validateParameters({ house: { [key]: [] } }).ok).toBe(false);
+      expect(validateParameters({ areas: { kitchen: { [key]: ["switch.unsafe"] } } }).ok).toBe(false);
+      expect(validateParameters({ areas: { kitchen: { [key]: Array.from({ length: 21 }, (_, i) => `light.l${i}`) } } }).ok).toBe(false);
+    }
+  });
 
   it("takes entry lights for an area only", () => {
     const entry = { entry_lights: ["light.kitchen_main", "light.kitchen_spots"] };
@@ -395,7 +488,10 @@ describe("validateParameters", () => {
     expect(validateParameters({ house: entry })).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for one area (the house)") });
     expect(validateParameters({ types: { interior: entry } })).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for one area") });
     for (const bad of [[], "light.a", ["switch.a"], ["light.a", "light.a"], [1]]) {
-      expect(validateParameters({ areas: { kitchen: { entry_lights: bad } } }), JSON.stringify(bad)).toMatchObject({ ok: false, error: expect.stringContaining("Entry lights must be a list") });
+      expect(validateParameters({ areas: { kitchen: { entry_lights: bad } } }), JSON.stringify(bad)).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("Entry lights must be a list"),
+      });
     }
   });
 
@@ -412,7 +508,10 @@ describe("validateParameters", () => {
   });
 
   it("holds values to their range, step and type, naming where", () => {
-    expect(validateParameters({ areas: { kitchen: { hold_timeout: 241 } } })).toMatchObject({ ok: false, error: expect.stringMatching(/between 1 and 240.*area kitchen/) });
+    expect(validateParameters({ areas: { kitchen: { hold_timeout: 241 } } })).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/between 1 and 240.*area kitchen/),
+    });
     expect(validateParameters({ house: { hold_timeout: 0 } })).toMatchObject({ ok: false });
     expect(validateParameters({ house: { hold_timeout: "5" } })).toMatchObject({ ok: false });
     expect(validateParameters({ house: { hold_timeout: null } })).toMatchObject({ ok: false });
@@ -473,7 +572,10 @@ describe("validateParameters", () => {
     ]) {
       expect(validateParameters(bad), JSON.stringify(bad)).toMatchObject({ ok: false });
     }
-    expect(validateParameters({ areas: { kitchen: { comfort_periods: "Mon 8:00-9:00" } } })).toMatchObject({ ok: false, error: expect.stringMatching(/Comfort periods.*area kitchen/) });
+    expect(validateParameters({ areas: { kitchen: { comfort_periods: "Mon 8:00-9:00" } } })).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/Comfort periods.*area kitchen/),
+    });
   });
 
   it("allows only interior and exterior as types, and ids as the editor writes them", () => {
@@ -490,7 +592,9 @@ describe("validateParameters", () => {
   });
 
   it("drops empty levels and keeps an id like __proto__ as a key", () => {
-    const r = validateParameters(JSON.parse('{"areas": {"kitchen": {}, "__proto__": {"hold_timeout": 3}}, "floors": {"ground": {}}, "types": {"interior": {}}}'));
+    const r = validateParameters(
+      JSON.parse('{"areas": {"kitchen": {}, "__proto__": {"hold_timeout": 3}}, "floors": {"ground": {}}, "types": {"interior": {}}}'),
+    );
     expect(r).toMatchObject({ ok: true });
     if (r.ok) {
       expect(Object.keys(r.value.areas)).toEqual(["__proto__"]);
@@ -541,7 +645,10 @@ describe("settingsStore parameters", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const s = settingsStore(db);
-    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("parameters", '{"house": {"hold_timeout": 8}, "floors": {"ground": {"hold_timeout": 7}}, "areas": {}}');
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "parameters",
+      '{"house": {"hold_timeout": 8}, "floors": {"ground": {"hold_timeout": 7}}, "areas": {}}',
+    );
     const read = s.parameters();
     expect(read).toEqual({ house: { hold_timeout: 8 }, types: {}, areas: {} });
     s.saveParameters(read);
@@ -553,7 +660,10 @@ describe("validateInventory: appliances", () => {
   it("takes the appliance mark as a yes or a no", () => {
     const good = { entities: { "sensor.washer_power": { appliance: true } }, areas: {} };
     expect(validateInventory(good)).toEqual({ ok: true, value: good });
-    expect(validateInventory({ entities: { "sensor.washer_power": { appliance: "yes" } } })).toMatchObject({ ok: false, error: expect.stringContaining("appliance for sensor.washer_power must be true or false") });
+    expect(validateInventory({ entities: { "sensor.washer_power": { appliance: "yes" } } })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("appliance for sensor.washer_power must be true or false"),
+    });
   });
 });
 
@@ -563,22 +673,71 @@ describe("validateParameters: the house-only values and the later recipes", () =
     expect(validateParameters({ house })).toEqual({ ok: true, value: { house, types: {}, areas: {} } });
     for (const key of Object.keys(house)) {
       const value = house[key as keyof typeof house];
-      expect(validateParameters({ types: { exterior: { [key]: value } } }), key).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for the house (exterior areas)") });
-      expect(validateParameters({ areas: { kitchen: { [key]: value } } }), key).toMatchObject({ ok: false, error: expect.stringContaining("can only be set for the house (area kitchen)") });
+      expect(validateParameters({ types: { exterior: { [key]: value } } }), key).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("can only be set for the house (exterior areas)"),
+      });
+      expect(validateParameters({ areas: { kitchen: { [key]: value } } }), key).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("can only be set for the house (area kitchen)"),
+      });
     }
   });
 
   it("refuses services that are not notify services, naming where", () => {
     for (const bad of [[], ["light.a"], ["notify.a", "notify.a"], "notify.a", ["notify.A"]]) {
-      expect(validateParameters({ house: { notify_targets: bad } }), JSON.stringify(bad)).toMatchObject({ ok: false, error: expect.stringMatching(/Notify services must be a list of 1 to 20 notify services.*the house/) });
+      expect(validateParameters({ house: { notify_targets: bad } }), JSON.stringify(bad)).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/Notify services must be a list of 1 to 20 notify services.*the house/),
+      });
     }
   });
 
   it("takes the fan, exterior and safety values for every level", () => {
-    const values = { fan_rate_on: 0.05, fan_reference: "sensor.house_humidity", fan_suppress_in_sleep: true, exterior_sunset_offset: -30, exterior_clock: 90, door_open_after: 5, left_open_repeat: 10, appliance_run_watts: 20, humidity_hold_rate: 0.02 };
+    const values = {
+      fan_rate_on: 0.05,
+      fan_reference: "sensor.house_humidity",
+      fan_suppress_in_sleep: true,
+      exterior_sunset_offset: -30,
+      exterior_clock: 90,
+      door_open_after: 5,
+      left_open_repeat: 10,
+      appliance_run_watts: 20,
+      humidity_hold_rate: 0.02,
+    };
     const ok = { house: {}, types: { exterior: { exterior_sunset_offset: -30 } }, areas: { bathroom: values } };
     expect(validateParameters(ok)).toEqual({ ok: true, value: ok });
-    expect(validateParameters({ areas: { bathroom: { fan_rate_on: 0.0005 } } })).toMatchObject({ ok: false, error: expect.stringMatching(/between 0.001 and 1.*area bathroom/) });
+    expect(validateParameters({ areas: { bathroom: { fan_rate_on: 0.0005 } } })).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/between 0.001 and 1.*area bathroom/),
+    });
     expect(validateParameters({ house: { exterior_sunset_offset: 3 } })).toMatchObject({ ok: false });
+  });
+});
+
+describe("validateInventory: TV occupancy", () => {
+  it("accepts the three roles and rejects invalid values and unknown choices", () => {
+    for (const role of ["ignore", "starts", "holds"]) {
+      const value = { entities: { "media_player.tv": { tvOccupancyRole: role } }, areas: {} };
+      expect(validateInventory(value)).toEqual({ ok: true, value });
+    }
+    for (const role of ["always", null, true, 1])
+      expect(validateInventory({ entities: { "media_player.tv": { tvOccupancyRole: role } } })).toMatchObject({ ok: false });
+    expect(validateInventory({ entities: { "media_player.tv": { unknownTvSetting: true } } })).toMatchObject({ ok: false });
+  });
+});
+
+describe("area recipe preferences", () => {
+  it("validates and persists only bounded area recipe choices", () => {
+    const value = { entities: { "light.lamp": { counts: false } }, areas: { garden: { recipePreferences: { motion_lights: false } } } };
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const store = settingsStore(db);
+    expect(validateInventory(value)).toEqual({ ok: true, value });
+    store.saveInventory(value);
+    expect(store.inventory()).toEqual(value);
+    for (const preferences of [{ goodbye: false }, { unknown: false }, { occupancy: "no" }, []])
+      expect(validateInventory({ areas: { garden: { recipePreferences: preferences } } })).toMatchObject({ ok: false });
+    expect(validateInventory({ areas: { garden: { recipePreferences: { occupancy: true } } } })).toEqual({ ok: true, value: { entities: {}, areas: {} } });
   });
 });

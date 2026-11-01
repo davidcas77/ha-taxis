@@ -149,7 +149,7 @@ button:not(:disabled),
 }
 @media (min-width: 768px) {
   .records-pane {
-    width: clamp(240px, var(--records-width), calc(100% - 327px));
+    width: clamp(var(--records-min, 240px), var(--records-width), calc(100% - 327px));
   }
 }
 

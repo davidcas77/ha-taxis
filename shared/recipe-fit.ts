@@ -1,4 +1,4 @@
-import { areaChoice, areaInventory, CAPABILITIES, type AreaType, type Capability, type InventorySettings } from "./inventory.ts";
+import { areaChoice, areaInventory, recipeWanted, CAPABILITIES, type AreaType, type Capability, type InventorySettings } from "./inventory.ts";
 import { helperExclusions } from "./helpers.ts";
 import type { NamingSettings } from "./naming.ts";
 import { isHouseRecipe, type AreaRecipeKey } from "./blueprints.ts";
@@ -16,8 +16,8 @@ import type { Hierarchy } from "./types.ts";
 // counted in Capabilities; fitting is about what the room is, not about whether
 // the person has finished setting it up. The rules:
 //
-//   occupancy        a motion or presence sensor, or the area is marked a bedroom
-//   motion_lights    interior, and lights with a motion or presence sensor (or a bedroom)
+//   occupancy        a motion/presence sensor, a counted starts TV, or a bedroom
+//   motion_lights    interior, and lights with a motion/presence sensor, starts TV or bedroom
 //   media_off        a speaker or a TV
 //   area_climate     interior, and a thermostat (or a bedroom)
 //   bathroom_fan     interior, and a fan; or a humidity sensor in a bathroom-like
@@ -35,6 +35,8 @@ export type AreaFacts = {
   name: string;
   type: AreaType;
   bedroom: boolean;
+  // Counted TVs explicitly selected to start occupancy.
+  tvStarts: number;
   // How many candidate entities the area has of each capability.
   has: Record<Capability, number>;
 };
@@ -46,7 +48,13 @@ export function areaFacts(h: Hierarchy, inventory: InventorySettings, naming: Na
   const inv = areaInventory(h, inventory, areaId, helperExclusions(h, naming)(areaId));
   const choice = areaChoice(inventory, areaId);
   const has = Object.fromEntries(CAPABILITIES.map((c) => [c.key, inv[c.key].length])) as Record<Capability, number>;
-  return { name: h.areas[areaId]?.name ?? areaId, type: choice.type, bedroom: choice.bedroom, has };
+  return {
+    name: h.areas[areaId]?.name ?? areaId,
+    type: choice.type,
+    bedroom: choice.bedroom,
+    tvStarts: inv.tv.filter((row) => row.counts && row.tvOccupancyRole === "starts").length,
+    has,
+  };
 }
 
 // The rule alone, before the status exception.
@@ -54,9 +62,9 @@ export function recipeSuitsArea(f: AreaFacts, recipe: AreaRecipeKey): boolean {
   const interior = f.type === "interior";
   switch (recipe) {
     case "occupancy":
-      return f.has.motion + f.has.presence > 0 || f.bedroom;
+      return f.has.motion + f.has.presence > 0 || f.tvStarts > 0 || f.bedroom;
     case "motion_lights":
-      return interior && f.has.lights > 0 && (f.has.motion + f.has.presence > 0 || f.bedroom);
+      return interior && f.has.lights > 0 && (f.has.motion + f.has.presence > 0 || f.tvStarts > 0 || f.bedroom);
     case "media_off":
       return f.has.speaker + f.has.tv > 0;
     case "area_climate":
@@ -103,7 +111,7 @@ export function splitByFit(
       f = areaFacts(h, inventory, naming, cell.areaId);
       byArea.set(cell.areaId, f);
     }
-    (recipeFits(f, cell.recipe, cell.status) ? fits : hidden).push(cell);
+    (recipeWanted(inventory, cell.areaId, cell.recipe) && recipeFits(f, cell.recipe, cell.status) ? fits : hidden).push(cell);
   }
   return { fits, hidden };
 }

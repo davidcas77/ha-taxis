@@ -142,6 +142,7 @@ export function context(input: HealthInput): Ctx {
     const code = codes[area.id].code;
     for (const spec of HELPERS) taxisIds.add(canonicalId(spec.domain, code, suffix[spec.key]));
     for (const id of Object.values(runtimeIds(code))) taxisIds.add(id);
+    for (const id of Object.values(runtimeIds(code, h, area.id, input.changes))) taxisIds.add(id);
   }
   for (const id of HOUSE_HELPER_IDS) taxisIds.add(id);
   taxisIds.add(HOUSE_AREAS_OCCUPIED_ID);

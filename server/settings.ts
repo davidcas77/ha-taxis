@@ -1,3 +1,4 @@
+import { RECIPE_KEYS, isHouseRecipe, type AreaRecipeKey } from "../shared/blueprints.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { EMPTY_GUIDE, validateGuide, type GuideSettings } from "../shared/guide.ts";
 import { DEFAULT_JEV, isJevKey, validateJev, type JevSettings, type JevView } from "../shared/jev.ts";
@@ -34,6 +35,7 @@ import {
   MAX_INVENTORY_AREAS,
   MAX_INVENTORY_ENTITIES,
   MOTION_ROLES,
+  TV_OCCUPANCY_ROLES,
   type AreaChoice,
   type EntityChoice,
   type InventorySettings,
@@ -50,7 +52,18 @@ import {
   type ParameterSettings,
 } from "../shared/parameters.ts";
 import { EMPTY_NAMING_IGNORES, readNamingIgnores, type NamingIgnores } from "../shared/naming-ignores.ts";
-import { DEFAULT_HOUSE_GROUP, DEFAULT_NAMING, DEFAULT_TYPE_WORDS, areaCodes, duplicateCodes, duplicateCodesMessage, duplicateIds, floorCodes, slug, type NamingSettings } from "../shared/naming.ts";
+import {
+  DEFAULT_HOUSE_GROUP,
+  DEFAULT_NAMING,
+  DEFAULT_TYPE_WORDS,
+  areaCodes,
+  duplicateCodes,
+  duplicateCodesMessage,
+  duplicateIds,
+  floorCodes,
+  slug,
+  type NamingSettings,
+} from "../shared/naming.ts";
 import type { Hierarchy } from "../shared/types.ts";
 
 // App settings, one JSON value per key in SQLite: naming, the naming
@@ -135,20 +148,34 @@ export function settingsStore(db: DatabaseSync) {
       try {
         const checked = validateGuide(JSON.parse(row.value));
         return checked.ok ? checked.value : structuredClone(EMPTY_GUIDE);
-      } catch { return structuredClone(EMPTY_GUIDE); }
+      } catch {
+        return structuredClone(EMPTY_GUIDE);
+      }
     },
-    saveGuide(s: GuideSettings): void { put.run("guide", JSON.stringify(s)); },
+    saveGuide(s: GuideSettings): void {
+      put.run("guide", JSON.stringify(s));
+    },
     jev(): JevSettings {
       const row = get.get("jev") as { value: string } | undefined;
-      try { const checked = row ? validateJev(JSON.parse(row.value)) : null; return checked?.ok ? checked.value : structuredClone(DEFAULT_JEV); }
-      catch { return structuredClone(DEFAULT_JEV); }
+      try {
+        const checked = row ? validateJev(JSON.parse(row.value)) : null;
+        return checked?.ok ? checked.value : structuredClone(DEFAULT_JEV);
+      } catch {
+        return structuredClone(DEFAULT_JEV);
+      }
     },
     jevKey(): string | null {
       const row = get.get("jev_key") as { value: string } | undefined;
-      try { const value: unknown = row ? JSON.parse(row.value) : null; return isJevKey(value) ? value : null; }
-      catch { return null; }
+      try {
+        const value: unknown = row ? JSON.parse(row.value) : null;
+        return isJevKey(value) ? value : null;
+      } catch {
+        return null;
+      }
     },
-    jevView(): JevView { return { ...this.jev(), keySet: this.jevKey() !== null }; },
+    jevView(): JevView {
+      return { ...this.jev(), keySet: this.jevKey() !== null };
+    },
     saveJev(value: JevSettings, key?: string | null): void {
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -156,7 +183,10 @@ export function settingsStore(db: DatabaseSync) {
         if (key === null) del.run("jev_key");
         else if (key !== undefined) put.run("jev_key", JSON.stringify(key));
         db.exec("COMMIT");
-      } catch (e) { db.exec("ROLLBACK"); throw e; }
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
     },
     ai(): AiSettings {
       const row = get.get("ai") as { value: string } | undefined;
@@ -206,7 +236,11 @@ export function settingsStore(db: DatabaseSync) {
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
 // areaIds: the areas Home Assistant has; codes for any other id are dropped.
-export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>, floorIds?: ReadonlySet<string>): { ok: true; value: NamingSettings } | { ok: false; error: string } {
+export function validateNaming(
+  input: unknown,
+  areaIds?: ReadonlySet<string>,
+  floorIds?: ReadonlySet<string>,
+): { ok: true; value: NamingSettings } | { ok: false; error: string } {
   if (!isRecord(input)) return { ok: false, error: "The settings weren't readable." };
   const s = input as Partial<NamingSettings>;
   if (s.areaCodes !== undefined && !isRecord(s.areaCodes)) return { ok: false, error: "The area codes weren't readable." };
@@ -245,7 +279,8 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>, fl
   if (Object.keys(floors).length > 1000) return { ok: false, error: "Too many floor codes." };
   // The end of the house group's id: a helper name, kept only when it isn't "all".
   const house = (s.houseGroup ?? "").trim() || DEFAULT_HOUSE_GROUP;
-  if (!HELPER_SUFFIX_RE.test(house)) return { ok: false, error: "The name of the house light group uses a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled." };
+  if (!HELPER_SUFFIX_RE.test(house))
+    return { ok: false, error: "The name of the house light group uses a–z, 0–9 and _, up to 30 characters, with no _ at either end or doubled." };
   const words: NamingSettings["typeWords"] = {};
   for (const [role, word] of Object.entries(s.typeWords ?? {})) {
     if (!Object.hasOwn(DEFAULT_TYPE_WORDS, role) || typeof word !== "string") continue;
@@ -276,7 +311,19 @@ export function validateNaming(input: unknown, areaIds?: ReadonlySet<string>, fl
   if (bad) return { ok: false, error: `The helper name for ${HELPERS.find((x) => x.key === bad[0])!.label.toLowerCase()}: ${bad[1]}` };
   const defaults = effectiveSuffixes({});
   for (const key of Object.keys(helperNames) as (keyof HelperNames)[]) if (helperNames[key] === defaults[key]) delete helperNames[key];
-  return { ok: true, value: { idPattern: s.idPattern!.trim(), namePattern: s.namePattern!.trim(), areaCodes: codes, floorCodes: floors, houseGroup: house, typeWords: words, helperNames, ...(aggregationMarkers !== undefined ? { aggregationMarkers } : {}) } };
+  return {
+    ok: true,
+    value: {
+      idPattern: s.idPattern!.trim(),
+      namePattern: s.namePattern!.trim(),
+      areaCodes: codes,
+      floorCodes: floors,
+      houseGroup: house,
+      typeWords: words,
+      helperNames,
+      ...(aggregationMarkers !== undefined ? { aggregationMarkers } : {}),
+    },
+  };
 }
 
 // Null when no two areas end up with the same code. Runs against the live
@@ -370,6 +417,9 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
       } else if (key === "role") {
         if (!has(MOTION_ROLES, v)) return { ok: false, error: `role for ${id} must be starts or holds.` };
         choice.role = v as EntityChoice["role"];
+      } else if (key === "tvOccupancyRole") {
+        if (!has(TV_OCCUPANCY_ROLES, v)) return { ok: false, error: `tvOccupancyRole for ${id} must be ignore, starts or holds.` };
+        choice.tvOccupancyRole = v as EntityChoice["tvOccupancyRole"];
       } else if (key === "light") {
         if (!has(LIGHT_ROLES, v)) return { ok: false, error: `light for ${id} must be main, accent, task or night.` };
         choice.light = v as EntityChoice["light"];
@@ -392,6 +442,15 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
       } else if (key === "bedroom") {
         if (typeof v !== "boolean") return { ok: false, error: `bedroom for area ${id} must be true or false.` };
         choice.bedroom = v;
+      } else if (key === "recipePreferences") {
+        if (!isRecord(v)) return { ok: false, error: `Recipe preferences for area ${id} weren't readable.` };
+        const preferences: Partial<Record<AreaRecipeKey, boolean>> = {};
+        for (const [recipe, wanted] of Object.entries(v)) {
+          if (!(RECIPE_KEYS as readonly string[]).includes(recipe) || isHouseRecipe(recipe) || typeof wanted !== "boolean")
+            return { ok: false, error: `Invalid recipe preference for area ${id}.` };
+          if (!wanted) preferences[recipe as AreaRecipeKey] = false;
+        }
+        if (Object.keys(preferences).length) choice.recipePreferences = preferences;
       } else {
         return { ok: false, error: `${key.slice(0, 40)} isn't a choice for an area (${id}).` };
       }
@@ -495,7 +554,7 @@ export function validateAi(input: unknown): { ok: true; value: AiSettings; key?:
   if (!isRecord(input.models)) return { ok: false, error: "The models weren't readable." };
   // Read pre-tier settings without losing their models or other settings.
   // An explicit tier map always wins; Strong needs the user's own choice.
-  const legacy = !AI_TIERS.some(tier => Object.hasOwn(input.models as object, tier));
+  const legacy = !AI_TIERS.some((tier) => Object.hasOwn(input.models as object, tier));
   const rawModels = legacy ? { low: input.models.quick, medium: input.models.ask, strong: "" } : input.models;
   const models = { low: "", medium: "", strong: "" };
   for (const job of AI_TIERS) {
@@ -534,7 +593,8 @@ export function validateAi(input: unknown): { ok: true; value: AiSettings; key?:
 
   let key: string | null | undefined;
   if (input.key !== undefined) {
-    if (input.key !== null && !isAiKey(input.key)) return { ok: false, error: "The API key can't be empty, can't contain spaces and can't be longer than 400 characters." };
+    if (input.key !== null && !isAiKey(input.key))
+      return { ok: false, error: "The API key can't be empty, can't contain spaces and can't be longer than 400 characters." };
     key = input.key;
   }
 

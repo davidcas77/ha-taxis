@@ -9,6 +9,7 @@ import {
   PARAM_KEYS,
   checkValue,
   entryLights,
+  roleLights,
   paramRows,
   resolve,
   resolveAll,
@@ -87,6 +88,8 @@ describe("the definitions", () => {
       "dim_level",
       "override_duration",
       "entry_lights",
+      "ambient_lights",
+      "night_lights",
     ]);
     expect(PARAMS.filter((p) => p.tab === "media").map((p) => p.key)).toEqual(["guest_pause_media", "media_off_after", "tv_off_after", "announce_volume"]);
     expect(PARAMS.filter((p) => p.tab === "climate").map((p) => p.key)).toEqual([
@@ -668,5 +671,37 @@ describe("checkValue: the later recipes", () => {
     expect(checkValue(PARAM_DEF.tts_entity, "media_player.x")).not.toBeNull();
     expect(checkValue(PARAM_DEF.announce_volume, 0)).toBeNull();
     expect(checkValue(PARAM_DEF.announce_volume, 101)).not.toBeNull();
+  });
+});
+
+describe("motion role selections", () => {
+  const area = { level: "area", id: "kitchen" } as const;
+  const rows = [
+    { entityId: "light.main", counts: true, light: "main" as const },
+    { entityId: "light.accent", counts: true, light: "accent" as const },
+    { entityId: "light.night", counts: true, light: "night" as const },
+    { entityId: "light.excluded", counts: false, light: "accent" as const },
+  ];
+  it("validates bounded light lists only at the area level", () => {
+    for (const key of ["ambient_lights", "night_lights"] as const) {
+      expect(checkValue(PARAM_DEF[key], [])).toBeNull();
+      expect(checkValue(PARAM_DEF[key], ["light.main"])).toBeNull();
+      for (const bad of [["switch.a"], ["light.a", "light.a"], Array.from({ length: 21 }, (_, i) => `light.l${i}`)])
+        expect(checkValue(PARAM_DEF[key], bad)).not.toBeNull();
+      expect(setParameter(EMPTY_PARAMETERS, { level: "house" }, key, ["light.main"])).toBe(EMPTY_PARAMETERS);
+    }
+  });
+  it("uses roles when unset, keeps empty, filters moved and excluded lights, and resets with null", () => {
+    expect(roleLights(EMPTY_PARAMETERS, "kitchen", rows, "ambient_lights").lights).toEqual(["light.accent"]);
+    expect(roleLights(EMPTY_PARAMETERS, "kitchen", rows, "night_lights").lights).toEqual(["light.night"]);
+    let p = setParameter(EMPTY_PARAMETERS, area, "ambient_lights", []);
+    expect(resolve(p, h, inv, "kitchen", "ambient_lights")).toEqual({ value: [], source: { level: "area", id: "kitchen" } });
+    expect(roleLights(p, "kitchen", rows, "ambient_lights")).toMatchObject({ lights: [], set: [], suggested: ["light.accent"], source: "set" });
+    p = setParameter(p, area, "ambient_lights", ["light.main", "light.excluded", "light.moved"]);
+    expect(roleLights(p, "kitchen", rows, "ambient_lights").lights).toEqual(["light.main"]);
+    p = setParameter(p, area, "ambient_lights", ["light.moved"]);
+    expect(roleLights(p, "kitchen", rows, "ambient_lights").lights).toEqual([]);
+    p = setParameter(p, area, "ambient_lights", null);
+    expect(roleLights(p, "kitchen", rows, "ambient_lights").lights).toEqual(["light.accent"]);
   });
 });

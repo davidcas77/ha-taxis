@@ -38,7 +38,7 @@ export function setupChecks(c: Ctx, installed: RecipeInstalled | null): HealthFi
         });
       }
       // Lights that nothing is in charge of.
-      if (cell.recipe === "occupancy" && (cell.status === "ready" || cell.status === "missing")) {
+      if (cell.wanted !== false && cell.recipe === "occupancy" && (cell.status === "ready" || cell.status === "missing")) {
         const lights = inventoryOf(c, cell.areaId).lights.filter((r) => r.counts);
         if (lights.length > 0) {
           out.push({

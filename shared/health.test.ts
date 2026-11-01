@@ -15,7 +15,7 @@ import {
   type HealthItem,
   type HealthReport,
 } from "./health.ts";
-import { EMPTY_INVENTORY, setCounts, type InventorySettings } from "./inventory.ts";
+import { EMPTY_INVENTORY, setCounts, setRecipeWanted, type InventorySettings } from "./inventory.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "./naming.ts";
 import { EMPTY_PARAMETERS, setParameter, type ParameterSettings } from "./parameters.ts";
 import { NOTHING_INSTALLED, type RecipeInstalled } from "./recipes.ts";
@@ -148,7 +148,9 @@ const light = (id: string, o: Partial<E> = {}): E => ({ id: `light.${id}`, ...o 
 
 describe("report", () => {
   it("is empty for a house with nothing wrong, and counts what it looked at", () => {
-    const r = check([light("living_spots"), { id: "sensor.living_t1", dc: "temperature", state: "21" }], { items: [item("dashboard", "lovelace", { views: [] })] });
+    const r = check([light("living_spots"), { id: "sensor.living_t1", dc: "temperature", state: "21" }], {
+      items: [item("dashboard", "lovelace", { views: [] })],
+    });
     expect(r.findings.filter((f) => f.check !== "setup")).toEqual([]);
     expect(r.counts).toEqual({ error: 0, warning: 0, info: r.findings.length });
     expect(r.checked).toMatchObject({ entities: 2, dashboards: 1, automations: 0, unreadable: 0 });
@@ -159,20 +161,22 @@ describe("report", () => {
   });
 
   it("gives the same finding the same id on the next run, most serious first", () => {
-    const entities = [
-      autoEntity("a", { triggered: 40 * D }),
-      { id: "sensor.dead", state: "unavailable", changed: 3 * D, area: "kitchen" },
-    ];
+    const entities = [autoEntity("a", { triggered: 40 * D }), { id: "sensor.dead", state: "unavailable", changed: 3 * D, area: "kitchen" }];
     const items = [automation("a", { triggers: [{ trigger: "state", entity_id: "light.gone" }], actions: [] })];
     const first = check(entities, { items });
     const second = check(entities, { items });
     expect(ids(first)).toEqual(ids(second));
-    expect(first.findings.map((f) => f.severity)).toEqual([...first.findings.map((f) => f.severity)].sort((a, b) => ["error", "warning", "info"].indexOf(a) - ["error", "warning", "info"].indexOf(b)));
+    expect(first.findings.map((f) => f.severity)).toEqual(
+      [...first.findings.map((f) => f.severity)].sort((a, b) => ["error", "warning", "info"].indexOf(a) - ["error", "warning", "info"].indexOf(b)),
+    );
     expect(new Set(ids(first)).size).toBe(ids(first).length);
   });
 
   it("can be cut down to one area", () => {
-    const r = check([{ id: "sensor.dead", state: "unavailable", changed: 3 * D, area: "kitchen" }, { id: "sensor.dead2", state: "unavailable", changed: 3 * D }]);
+    const r = check([
+      { id: "sensor.dead", state: "unavailable", changed: 3 * D, area: "kitchen" },
+      { id: "sensor.dead2", state: "unavailable", changed: 3 * D },
+    ]);
     expect(findingsForArea(r, "kitchen").map((f) => f.entity)).toEqual(["sensor.dead"]);
     expect(findingsForArea(r, "living_room").map((f) => f.entity)).toEqual(["sensor.dead2"]);
     expect(findingsForArea(r, "garage")).toEqual([]);
@@ -189,12 +193,22 @@ describe("report", () => {
 });
 
 describe("1: references to entities that do not exist", () => {
-  const cfg = { triggers: [{ trigger: "state", entity_id: "binary_sensor.gone" }], conditions: [], actions: [{ action: "light.turn_on", target: { entity_id: ["light.living_spots", "light.gone_too"] } }] };
+  const cfg = {
+    triggers: [{ trigger: "state", entity_id: "binary_sensor.gone" }],
+    conditions: [],
+    actions: [{ action: "light.turn_on", target: { entity_id: ["light.living_spots", "light.gone_too"] } }],
+  };
 
   it("finds them in an automation, and names what is missing", () => {
     const r = check([light("living_spots"), autoEntity("a")], { items: [automation("a", cfg, "Porch")] });
     const f = one(r, "references:automation:a");
-    expect(f).toMatchObject({ check: "references", severity: "error", entity: "binary_sensor.gone", entities: ["binary_sensor.gone", "light.gone_too"], item: { kind: "automation", id: "a", name: "Porch" } });
+    expect(f).toMatchObject({
+      check: "references",
+      severity: "error",
+      entity: "binary_sensor.gone",
+      entities: ["binary_sensor.gone", "light.gone_too"],
+      item: { kind: "automation", id: "a", name: "Porch" },
+    });
     expect(f.title).toBe("Automation “Porch” uses 2 entities that do not exist");
     expect(f.detail).toContain("light.gone_too");
     expect(f.fix).toBeUndefined();
@@ -261,7 +275,12 @@ describe("2: entities that have not reported for a long time", () => {
       { id: "sensor.noclock", state: "unavailable" },
     ]);
     expect(ids(r, "unavailable")).toEqual(["unavailable:entity:sensor.long"]);
-    expect(one(r, "unavailable:entity:sensor.long")).toMatchObject({ severity: "warning", area: "kitchen", entity: "sensor.long", title: "long has not reported for 1 day" });
+    expect(one(r, "unavailable:entity:sensor.long")).toMatchObject({
+      severity: "warning",
+      area: "kitchen",
+      entity: "sensor.long",
+      title: "long has not reported for 1 day",
+    });
   });
 
   it("takes the threshold from the options", () => {
@@ -289,10 +308,19 @@ describe("2: entities that have not reported for a long time", () => {
   });
 
   it("goes up a level when an automation, script or scene uses the entity, but not for a dashboard", () => {
-    const entities = [{ id: "sensor.dead", state: "unavailable", changed: 3 * D }, { id: "sensor.unknown", state: "unknown", changed: 3 * D }, { id: "sensor.shown", state: "unavailable", changed: 3 * D }, autoEntity("a")];
+    const entities = [
+      { id: "sensor.dead", state: "unavailable", changed: 3 * D },
+      { id: "sensor.unknown", state: "unknown", changed: 3 * D },
+      { id: "sensor.shown", state: "unavailable", changed: 3 * D },
+      autoEntity("a"),
+    ];
     const r = check(entities, {
       items: [
-        automation("a", { triggers: [{ trigger: "state", entity_id: "sensor.dead" }], actions: [{ action: "x.y", data: { v: "{{ states('sensor.unknown') }}" } }] }, "Watcher"),
+        automation(
+          "a",
+          { triggers: [{ trigger: "state", entity_id: "sensor.dead" }], actions: [{ action: "x.y", data: { v: "{{ states('sensor.unknown') }}" } }] },
+          "Watcher",
+        ),
         item("dashboard", "lovelace", { views: [{ cards: [{ type: "sensor", entity: "sensor.shown" }] }] }),
       ],
     });
@@ -309,13 +337,11 @@ describe("2: entities that have not reported for a long time", () => {
   });
 
   it("leaves out the quiet domains, disabled entities and disabled devices", () => {
-    const r = check(
-      [
-        { id: "button.restart", state: "unknown", changed: 9 * D },
-        { id: "scene.evening", state: "unknown", changed: 9 * D },
-        { id: "sensor.off", state: "unavailable", changed: 9 * D, disabled: true },
-      ],
-    );
+    const r = check([
+      { id: "button.restart", state: "unknown", changed: 9 * D },
+      { id: "scene.evening", state: "unknown", changed: 9 * D },
+      { id: "sensor.off", state: "unavailable", changed: 9 * D, disabled: true },
+    ]);
     expect(ids(r, "unavailable")).toEqual([]);
   });
 });
@@ -355,7 +381,10 @@ describe("4: conditions that can never pass", () => {
   it("finds a state or numeric condition on an entity that is not there, and reports the id once", () => {
     const cfg = {
       triggers: [{ trigger: "time", at: "06:00:00" }],
-      conditions: [{ condition: "numeric_state", entity_id: "sensor.gone", below: 3 }, { condition: "state", entity_id: "light.living_spots", state: "on" }],
+      conditions: [
+        { condition: "numeric_state", entity_id: "sensor.gone", below: 3 },
+        { condition: "state", entity_id: "light.living_spots", state: "on" },
+      ],
       actions: [{ action: "light.turn_on", target: { entity_id: "light.gone_too" } }],
     };
     const r = check([light("living_spots"), autoEntity("a")], { items: [automation("a", cfg, "Water")] });
@@ -390,7 +419,10 @@ describe("4: conditions that can never pass", () => {
     const r = check([autoEntity("a")], {
       items: [
         automation("a", {
-          conditions: [{ condition: "or", conditions: [{ condition: "state", entity_id: "light.gone1", state: "on" }] }, { condition: "not", conditions: [{ condition: "state", entity_id: "light.gone2", state: "on" }] }],
+          conditions: [
+            { condition: "or", conditions: [{ condition: "state", entity_id: "light.gone1", state: "on" }] },
+            { condition: "not", conditions: [{ condition: "state", entity_id: "light.gone2", state: "on" }] },
+          ],
           actions: [{ choose: [{ conditions: [{ condition: "state", entity_id: "light.gone3", state: "on" }], sequence: [] }] }],
         }),
       ],
@@ -402,7 +434,10 @@ describe("4: conditions that can never pass", () => {
   describe("a state condition on a switch only a person changes", () => {
     const watching = (extra: unknown[] = [], entities: E[] = []) =>
       check([{ id: "input_boolean.guest_mode", state: "off", area: null }, autoEntity("a"), autoEntity("b"), ...entities], {
-        items: [automation("a", { conditions: [{ condition: "state", entity_id: "input_boolean.guest_mode", state: "on" }], actions: [] }, "Welcome"), automation("b", { actions: extra })],
+        items: [
+          automation("a", { conditions: [{ condition: "state", entity_id: "input_boolean.guest_mode", state: "on" }], actions: [] }, "Welcome"),
+          automation("b", { actions: extra }),
+        ],
       });
 
     it("is an info, and says it can only be changed by hand", () => {
@@ -436,7 +471,10 @@ describe("5: switches turned only one way", () => {
 
   it("warns about a switch that is turned on and never off, and the other way round", () => {
     const r = check([sw(), sw("movie_mode"), autoEntity("a"), scriptEntity("s")], {
-      items: [automation("a", calls("input_boolean.turn_on"), "Night on"), item("script", "s", { sequence: [{ action: "input_boolean.turn_off", target: { entity_id: "input_boolean.movie_mode" } }] }, "Movie over")],
+      items: [
+        automation("a", calls("input_boolean.turn_on"), "Night on"),
+        item("script", "s", { sequence: [{ action: "input_boolean.turn_off", target: { entity_id: "input_boolean.movie_mode" } }] }, "Movie over"),
+      ],
     });
     expect(one(r, "switches:input_boolean.night_mode:on-only")).toMatchObject({ severity: "warning", title: "night mode is turned on but never off" });
     expect(one(r, "switches:input_boolean.night_mode:on-only").detail).toContain("Turned on by Automation “Night on”");
@@ -444,7 +482,9 @@ describe("5: switches turned only one way", () => {
   });
 
   it("does not warn when something turns it both ways, including a toggle", () => {
-    const both = check([sw(), autoEntity("a"), autoEntity("b")], { items: [automation("a", calls("input_boolean.turn_on")), automation("b", calls("input_boolean.turn_off"))] });
+    const both = check([sw(), autoEntity("a"), autoEntity("b")], {
+      items: [automation("a", calls("input_boolean.turn_on")), automation("b", calls("input_boolean.turn_off"))],
+    });
     expect(ids(both, "switches")).toEqual([]);
     const toggle = check([sw(), autoEntity("a")], { items: [automation("a", calls("input_boolean.toggle"))] });
     expect(ids(toggle, "switches")).toEqual([]);
@@ -453,32 +493,49 @@ describe("5: switches turned only one way", () => {
   });
 
   it("counts a scene as setting its switches, by the state it lists", () => {
-    const off = check([sw(), autoEntity("a")], { items: [automation("a", calls("input_boolean.turn_on")), item("scene", "sc", { entities: { "input_boolean.night_mode": { state: "off" } } })] });
+    const off = check([sw(), autoEntity("a")], {
+      items: [automation("a", calls("input_boolean.turn_on")), item("scene", "sc", { entities: { "input_boolean.night_mode": { state: "off" } } })],
+    });
     expect(ids(off, "switches")).toEqual([]);
-    const on = check([sw(), autoEntity("a")], { items: [automation("a", calls("input_boolean.turn_on")), item("scene", "sc", { entities: { "input_boolean.night_mode": "on" } })] });
+    const on = check([sw(), autoEntity("a")], {
+      items: [automation("a", calls("input_boolean.turn_on")), item("scene", "sc", { entities: { "input_boolean.night_mode": "on" } })],
+    });
     expect(ids(on, "switches")).toEqual(["switches:input_boolean.night_mode:on-only"]);
   });
 
   it("finds the switch by its area, label or device when that is how it is called", () => {
     const entities = [{ ...sw(), area: "kitchen" }, autoEntity("a"), autoEntity("b")];
-    const r = check(entities, { items: [automation("a", { actions: [{ action: "input_boolean.turn_on", target: { area_id: "kitchen" } }] }), automation("b", calls("input_boolean.turn_off"))] });
+    const r = check(entities, {
+      items: [
+        automation("a", { actions: [{ action: "input_boolean.turn_on", target: { area_id: "kitchen" } }] }),
+        automation("b", calls("input_boolean.turn_off")),
+      ],
+    });
     expect(ids(r, "switches")).toEqual([]);
   });
 
   it("stands back when a call might reach any switch, and for what a blueprint does with its inputs", () => {
     const dynamic = check([sw(), autoEntity("a"), autoEntity("b")], {
-      items: [automation("a", calls("input_boolean.turn_on")), automation("b", { actions: [{ action: "input_boolean.turn_off", target: { entity_id: "{{ x }}" } }] })],
+      items: [
+        automation("a", calls("input_boolean.turn_on")),
+        automation("b", { actions: [{ action: "input_boolean.turn_off", target: { entity_id: "{{ x }}" } }] }),
+      ],
     });
     expect(ids(dynamic, "switches")).toEqual([]);
     const blueprint = check([sw(), autoEntity("a"), autoEntity("b")], {
-      items: [automation("a", calls("input_boolean.turn_on")), automation("b", { use_blueprint: { path: "someone/blueprint.yaml", input: { target_switch: "input_boolean.night_mode" } } })],
+      items: [
+        automation("a", calls("input_boolean.turn_on")),
+        automation("b", { use_blueprint: { path: "someone/blueprint.yaml", input: { target_switch: "input_boolean.night_mode" } } }),
+      ],
     });
     expect(ids(blueprint, "switches")).toEqual([]);
   });
 
   it("leaves out the pause switch Taxis makes, a disabled switch, and the recipes' automations", () => {
     const r = check([{ id: "input_boolean.living_paused", state: "off", area: "living_room" }, { ...sw(), disabled: true }, autoEntity("a")], {
-      items: [automation("a", { actions: [{ action: "input_boolean.turn_on", target: { entity_id: ["input_boolean.living_paused", "input_boolean.night_mode"] } }] })],
+      items: [
+        automation("a", { actions: [{ action: "input_boolean.turn_on", target: { entity_id: ["input_boolean.living_paused", "input_boolean.night_mode"] } }] }),
+      ],
     });
     expect(ids(r, "switches")).toEqual([]);
   });
@@ -491,10 +548,20 @@ describe("5: switches turned only one way", () => {
 
 describe("6: several automations switching the same lights", () => {
   const turn = (service: string, entity: unknown, key = "entity_id") => ({ actions: [{ action: service, target: { [key]: entity } }] });
-  const lights = [light("living_spots"), light("living_lamp"), { id: "light.living_all", platform: "group", members: ["light.living_spots", "light.living_lamp"], name: "Living all" }, light("kitchen_main", { area: "kitchen" })];
+  const lights = [
+    light("living_spots"),
+    light("living_lamp"),
+    { id: "light.living_all", platform: "group", members: ["light.living_spots", "light.living_lamp"], name: "Living all" },
+    light("kitchen_main", { area: "kitchen" }),
+  ];
 
   it("warns when two automations switch the same light, and lists them", () => {
-    const r = check([...lights, autoEntity("a"), autoEntity("b")], { items: [automation("a", turn("light.turn_on", "light.living_spots"), "Sunset"), automation("b", turn("light.turn_off", "light.living_spots"), "Midnight")] });
+    const r = check([...lights, autoEntity("a"), autoEntity("b")], {
+      items: [
+        automation("a", turn("light.turn_on", "light.living_spots"), "Sunset"),
+        automation("b", turn("light.turn_off", "light.living_spots"), "Midnight"),
+      ],
+    });
     const f = by(r, "lights")[0];
     expect(f).toMatchObject({ severity: "warning", area: "living_room", entity: "light.living_spots", entities: ["light.living_spots"] });
     expect(f.detail).toMatch(/Sunset and Midnight both turn the same lights/);
@@ -502,13 +569,23 @@ describe("6: several automations switching the same lights", () => {
   });
 
   it("sees a group and its members as the same lights", () => {
-    const r = check([...lights, autoEntity("a"), autoEntity("b")], { items: [automation("a", turn("light.turn_on", "light.living_all")), automation("b", turn("light.turn_off", ["light.living_lamp"]))] });
+    const r = check([...lights, autoEntity("a"), autoEntity("b")], {
+      items: [automation("a", turn("light.turn_on", "light.living_all")), automation("b", turn("light.turn_off", ["light.living_lamp"]))],
+    });
     expect(by(r, "lights")[0].entities).toEqual(["light.living_lamp"]);
   });
 
   it("does not warn for lights in different places, for one automation, or for a light only one switches", () => {
     const r = check([...lights, autoEntity("a"), autoEntity("b")], {
-      items: [automation("a", { actions: [{ action: "light.turn_on", target: { entity_id: "light.living_spots" } }, { action: "light.turn_off", target: { entity_id: "light.living_spots" } }] }), automation("b", turn("light.turn_on", "light.kitchen_main"))],
+      items: [
+        automation("a", {
+          actions: [
+            { action: "light.turn_on", target: { entity_id: "light.living_spots" } },
+            { action: "light.turn_off", target: { entity_id: "light.living_spots" } },
+          ],
+        }),
+        automation("b", turn("light.turn_on", "light.kitchen_main")),
+      ],
     });
     expect(ids(r, "lights")).toEqual([]);
   });
@@ -534,26 +611,43 @@ describe("6: several automations switching the same lights", () => {
   });
 
   it("leaves out an automation that is off", () => {
-    const r = check([...lights, autoEntity("a"), autoEntity("b", { state: "off" })], { items: [automation("a", turn("light.turn_on", "light.living_spots")), automation("b", turn("light.turn_off", "light.living_spots"))] });
+    const r = check([...lights, autoEntity("a"), autoEntity("b", { state: "off" })], {
+      items: [automation("a", turn("light.turn_on", "light.living_spots")), automation("b", turn("light.turn_off", "light.living_spots"))],
+    });
     expect(ids(r, "lights")).toEqual([]);
   });
 
   it("puts lights with the same automations in one finding", () => {
-    const r = check([...lights, autoEntity("a"), autoEntity("b")], { items: [automation("a", turn("light.turn_on", ["light.living_spots", "light.living_lamp"])), automation("b", turn("light.turn_off", "light.living_all"))] });
+    const r = check([...lights, autoEntity("a"), autoEntity("b")], {
+      items: [automation("a", turn("light.turn_on", ["light.living_spots", "light.living_lamp"])), automation("b", turn("light.turn_off", "light.living_all"))],
+    });
     expect(by(r, "lights")).toHaveLength(1);
     expect(by(r, "lights")[0].entities).toEqual(["light.living_all", "light.living_lamp", "light.living_spots"].filter((id) => id !== "light.living_all"));
   });
 
   it("counts the recipes Taxis installed, and says so", () => {
-    const recipe = automation("taxis_motion_lights_living", { use_blueprint: { path: "taxis/motion_lights.yaml", input: { light_target: "light.living_all", main_lights: ["light.living_spots"], accent_lights: [], night_lights: ["light.living_lamp"] } } }, "Living room – Motion lights (Taxis)");
-    const r = check([...lights, { id: "automation.taxis_motion_lights_living", area: null, state: "on", triggered: H }, autoEntity("a")], { items: [recipe, automation("a", turn("light.turn_on", "light.living_spots"), "Sunset")] });
+    const recipe = automation(
+      "taxis_motion_lights_living",
+      {
+        use_blueprint: {
+          path: "taxis/motion_lights.yaml",
+          input: { light_target: "light.living_all", main_lights: ["light.living_spots"], accent_lights: [], night_lights: ["light.living_lamp"] },
+        },
+      },
+      "Living room – Motion lights (Taxis)",
+    );
+    const r = check([...lights, { id: "automation.taxis_motion_lights_living", area: null, state: "on", triggered: H }, autoEntity("a")], {
+      items: [recipe, automation("a", turn("light.turn_on", "light.living_spots"), "Sunset")],
+    });
     const f = by(r, "lights")[0];
     expect(f.detail).toMatch(/Living room – Motion lights \(Taxis\) \(Taxis recipe\)/);
     expect(f.entities).toContain("light.living_spots");
   });
 
   it("leaves a call that might reach any light to nobody", () => {
-    const r = check([...lights, autoEntity("a"), autoEntity("b")], { items: [automation("a", turn("light.turn_off", "all")), automation("b", turn("light.turn_on", "light.living_spots"))] });
+    const r = check([...lights, autoEntity("a"), autoEntity("b")], {
+      items: [automation("a", turn("light.turn_off", "all")), automation("b", turn("light.turn_on", "light.living_spots"))],
+    });
     expect(ids(r, "lights")).toEqual([]);
   });
 });
@@ -577,7 +671,8 @@ describe("6b: Area climate and its thermostats", () => {
     automation("taxis_area_climate_living", { alias: name, use_blueprint: { path: CLIMATE.path, input } }, name);
   const recipeEntity: E = { id: "automation.taxis_area_climate_living", area: null, state: "on", triggered: H };
   const turn = (service: string, entity: unknown, key = "entity_id") => ({ actions: [{ action: service, target: { [key]: entity } }] });
-  const withRecipe = (entities: E[], extra: HealthItem[] = [], o: Opts = {}) => check([...entities, recipeEntity], { ...o, items: [climateItem(), ...extra, ...(o.items ?? [])] });
+  const withRecipe = (entities: E[], extra: HealthItem[] = [], o: Opts = {}) =>
+    check([...entities, recipeEntity], { ...o, items: [climateItem(), ...extra, ...(o.items ?? [])] });
 
   it("reports a thermostat that has not answered for 10 minutes, and not before", () => {
     const r = withRecipe([valve({ state: "unavailable", changed: 3 * H })]);
@@ -602,8 +697,13 @@ describe("6b: Area climate and its thermostats", () => {
     const r = withRecipe([valve({ state: "unavailable", changed: H }), tado({ state: "unavailable", changed: 2 * H })]);
     // The recipe only knows the valve.
     expect(one(r, "climate:thermostat:living_room").entities).toEqual(["climate.living_valve"]);
-    const both = check([valve({ state: "unavailable", changed: H }), tado({ state: "unavailable", changed: 2 * H }), recipeEntity], { items: [climateItem(recipeInput({ climate_entities: ["climate.living_valve", "climate.living_tado"] }))] });
-    expect(one(both, "climate:thermostat:living_room")).toMatchObject({ title: "Living room has 2 thermostats that are not answering", entities: ["climate.living_valve", "climate.living_tado"] });
+    const both = check([valve({ state: "unavailable", changed: H }), tado({ state: "unavailable", changed: 2 * H }), recipeEntity], {
+      items: [climateItem(recipeInput({ climate_entities: ["climate.living_valve", "climate.living_tado"] }))],
+    });
+    expect(one(both, "climate:thermostat:living_room")).toMatchObject({
+      title: "Living room has 2 thermostats that are not answering",
+      entities: ["climate.living_valve", "climate.living_tado"],
+    });
   });
 
   it("leaves a thermostat alone where Area climate isn't installed, and takes it from the sources check where it is", () => {
@@ -615,7 +715,10 @@ describe("6b: Area climate and its thermostats", () => {
     const installed = withRecipe([valve({ state: "unavailable", changed: 3 * H })]);
     expect(ids(installed, "setup").filter((id) => id.startsWith("setup:sources"))).toEqual([]);
     // Another sensor of the same area is still the sources check's.
-    const other = withRecipe([valve({ state: "unavailable", changed: 3 * H }), { id: "binary_sensor.living_pir", dc: "motion", state: "unavailable", changed: 3 * H }]);
+    const other = withRecipe([
+      valve({ state: "unavailable", changed: 3 * H }),
+      { id: "binary_sensor.living_pir", dc: "motion", state: "unavailable", changed: 3 * H },
+    ]);
     expect(one(other, "setup:sources:living_room").entities).toEqual(["binary_sensor.living_pir"]);
   });
 
@@ -655,18 +758,37 @@ describe("6b: Area climate and its thermostats", () => {
   });
 
   it("sees every service that sets a thermostat, an area target, a script, and the same thermostats once", () => {
-    for (const service of ["climate.set_hvac_mode", "climate.set_preset_mode", "climate.turn_off", "climate.turn_on", "climate.toggle", "homeassistant.turn_off"]) {
+    for (const service of [
+      "climate.set_hvac_mode",
+      "climate.set_preset_mode",
+      "climate.turn_off",
+      "climate.turn_on",
+      "climate.toggle",
+      "homeassistant.turn_off",
+    ]) {
       const r = withRecipe([valve(), autoEntity("heat")], [automation("heat", turn(service, "climate.living_valve"))]);
-      expect(by(r, "climate").filter((x) => x.id.startsWith("climate:competing")), service).toHaveLength(1);
+      expect(
+        by(r, "climate").filter((x) => x.id.startsWith("climate:competing")),
+        service,
+      ).toHaveLength(1);
     }
     // By area, and through a script.
     const byArea = withRecipe([valve(), autoEntity("heat")], [automation("heat", turn("climate.set_temperature", "living_room", "area_id"))]);
     expect(by(byArea, "climate").some((x) => x.id.startsWith("climate:competing"))).toBe(true);
-    const viaScript = withRecipe([valve(), autoEntity("heat"), scriptEntity("warm")], [automation("heat", { actions: [{ action: "script.warm" }] }), item("script", "warm", { sequence: [{ action: "climate.set_temperature", target: { entity_id: "climate.living_valve" } }] })]);
+    const viaScript = withRecipe(
+      [valve(), autoEntity("heat"), scriptEntity("warm")],
+      [
+        automation("heat", { actions: [{ action: "script.warm" }] }),
+        item("script", "warm", { sequence: [{ action: "climate.set_temperature", target: { entity_id: "climate.living_valve" } }] }),
+      ],
+    );
     expect(by(viaScript, "climate").some((x) => x.id.startsWith("climate:competing"))).toBe(true);
     // Two thermostats with the same two controllers are one finding.
     const both = check([valve(), tado(), recipeEntity, autoEntity("heat")], {
-      items: [climateItem(recipeInput({ climate_entities: ["climate.living_valve", "climate.living_tado"], temperature_entity: "sensor.x" })), automation("heat", turn("climate.set_temperature", ["climate.living_valve", "climate.living_tado"]))],
+      items: [
+        climateItem(recipeInput({ climate_entities: ["climate.living_valve", "climate.living_tado"], temperature_entity: "sensor.x" })),
+        automation("heat", turn("climate.set_temperature", ["climate.living_valve", "climate.living_tado"])),
+      ],
     });
     expect(by(both, "climate").filter((x) => x.id.startsWith("climate:competing"))).toHaveLength(1);
     expect(by(both, "climate").find((x) => x.id.startsWith("climate:competing"))!.title).toBe("2 automations set Radiator valve and 1 other thermostat");
@@ -674,16 +796,30 @@ describe("6b: Area climate and its thermostats", () => {
 
   it("does not warn for automations that don't set the thermostat, one that is off, a service that isn't a setting, or two automations of the household's own", () => {
     const heat = (service: string, entity = "climate.living_valve") => automation("heat", turn(service, entity));
-    expect(ids(withRecipe([valve(), tado(), autoEntity("heat")], [heat("climate.set_temperature", "climate.living_tado")]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
-    expect(ids(withRecipe([valve(), autoEntity("heat", { state: "off" })], [heat("climate.set_temperature")]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
+    expect(
+      ids(withRecipe([valve(), tado(), autoEntity("heat")], [heat("climate.set_temperature", "climate.living_tado")]), "climate").filter((id) =>
+        id.includes("competing"),
+      ),
+    ).toEqual([]);
+    expect(
+      ids(withRecipe([valve(), autoEntity("heat", { state: "off" })], [heat("climate.set_temperature")]), "climate").filter((id) => id.includes("competing")),
+    ).toEqual([]);
     expect(ids(withRecipe([valve(), autoEntity("heat")], [heat("climate.set_fan_mode")]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
     expect(ids(withRecipe([valve(), autoEntity("heat")], [heat("light.turn_on")]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
     // Two of the household's own on the same thermostat is the household's business, with no recipe in it.
-    const twoOfTheirs = check([valve(), autoEntity("a"), autoEntity("b")], { items: [automation("a", turn("climate.set_temperature", "climate.living_valve")), automation("b", turn("climate.set_hvac_mode", "climate.living_valve"))] });
+    const twoOfTheirs = check([valve(), autoEntity("a"), autoEntity("b")], {
+      items: [automation("a", turn("climate.set_temperature", "climate.living_valve")), automation("b", turn("climate.set_hvac_mode", "climate.living_valve"))],
+    });
     expect(ids(twoOfTheirs, "climate")).toEqual([]);
     // Another recipe of Taxis's is not a rival.
-    const motion = automation("taxis_motion_lights_living", { use_blueprint: { path: "taxis/motion_lights.yaml", input: { light_target: "light.living_all" } } });
-    expect(ids(withRecipe([valve(), { id: "automation.taxis_motion_lights_living", area: null, state: "on", triggered: H }], [motion]), "climate").filter((id) => id.includes("competing"))).toEqual([]);
+    const motion = automation("taxis_motion_lights_living", {
+      use_blueprint: { path: "taxis/motion_lights.yaml", input: { light_target: "light.living_all" } },
+    });
+    expect(
+      ids(withRecipe([valve(), { id: "automation.taxis_motion_lights_living", area: null, state: "on", triggered: H }], [motion]), "climate").filter((id) =>
+        id.includes("competing"),
+      ),
+    ).toEqual([]);
   });
 
   it("leaves a call that might reach any thermostat to nobody", () => {
@@ -736,13 +872,31 @@ describe("7: the recipes after Area climate", () => {
     for (const input of f.fix.inputs) expect(validateInput(input)).toBeNull();
     // With the sensor there, or the list making it, nothing is reported.
     expect(ids(check([hygro, humidity, extractor, paused, rate, fanEntity], { installed: fanInstalled(fanInput) }), "setup")).toEqual([]);
-    const pending = { id: 1, kind: "helper", op: "create", targetId: "sensor.living_humidity_rate", scope: null, before: {}, after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" }, createdAt: "" } as Change;
+    const pending = {
+      id: 1,
+      kind: "helper",
+      op: "create",
+      targetId: "sensor.living_humidity_rate",
+      scope: null,
+      before: {},
+      after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" },
+      createdAt: "",
+    } as Change;
     expect(ids(check([hygro, humidity, extractor, paused, fanEntity], { installed: fanInstalled(fanInput), changes: [pending] }), "setup")).toEqual([]);
   });
 
   describe("the notify services", () => {
     const door: E = { id: "binary_sensor.living_door", dc: "door" };
-    const leftInput = { door_entities: ["binary_sensor.living_door"], window_entities: [], door_minutes: 10, window_minutes: 30, repeat_minutes: 0, notify_targets: [] as string[], area_name: "Living room", pause_switch: "input_boolean.living_paused" };
+    const leftInput = {
+      door_entities: ["binary_sensor.living_door"],
+      window_entities: [],
+      door_minutes: 10,
+      window_minutes: 30,
+      repeat_minutes: 0,
+      notify_targets: [] as string[],
+      area_name: "Living room",
+      pause_switch: "input_boolean.living_paused",
+    };
     const installed = (input: Record<string, unknown>): RecipeInstalled => ({
       ...NOTHING_INSTALLED,
       blueprints: ALL,
@@ -757,7 +911,9 @@ describe("7: the recipes after Area climate", () => {
         title: "No notify service is set for the recipes that notify",
         fix: { kind: "link", label: "Set the notify services", to: { page: "parameters", tab: "house" } },
       });
-      expect(one(r, "setup:notify").detail).toMatch(/Left open in Living room installed.*only in Home Assistant's own notifications.*can't tell whether a service you add exists/);
+      expect(one(r, "setup:notify").detail).toMatch(
+        /Left open in Living room installed.*only in Home Assistant's own notifications.*can't tell whether a service you add exists/,
+      );
     });
 
     it("says nothing when a service is set, or when no recipe that notifies is installed", () => {
@@ -801,17 +957,32 @@ describe("7: the recipes after Area climate", () => {
     });
 
     it("is reported when Taxis would no longer write it: the text-to-speech entity is gone", () => {
-      const r = check(entities.filter((e) => e !== tts), { installed: there(stored), parameters: params });
+      const r = check(
+        entities.filter((e) => e !== tts),
+        { installed: there(stored), parameters: params },
+      );
       const f = one(r, "setup:announce");
       expect(f).toMatchObject({ severity: "warning", title: "Announce cannot work as it is set up", fix: { kind: "link", to: { page: "recipes" } } });
       expect(f.detail).toContain("The text-to-speech entity “tts.cloud” isn't in Home Assistant");
       // With no script, a missing prerequisite is the Recipes page's to say, not Health's.
-      expect(ids(check(entities.filter((e) => e !== tts && e !== scriptEntity("taxis_announce")), { installed: { ...there(stored), scripts: {} }, parameters: params }), "setup").filter((id) => id === "setup:announce")).toEqual([]);
+      expect(
+        ids(
+          check(
+            entities.filter((e) => e !== tts && e !== scriptEntity("taxis_announce")),
+            { installed: { ...there(stored), scripts: {} }, parameters: params },
+          ),
+          "setup",
+        ).filter((id) => id === "setup:announce"),
+      ).toEqual([]);
     });
 
     it("is one of Taxis's own: what it points at is not checked as a missing reference of someone else's script", () => {
       const gone = { ...stored, input: { ...stored.input, areas: [{ ...areas[0], speakers: ["media_player.gone"] }] } };
-      const r = check(entities, { items: [item("script", "taxis_announce", { alias: "Announce (Taxis)", use_blueprint: { path: ANNOUNCE_PATH, input: gone.input } })], installed: there(gone), parameters: params });
+      const r = check(entities, {
+        items: [item("script", "taxis_announce", { alias: "Announce (Taxis)", use_blueprint: { path: ANNOUNCE_PATH, input: gone.input } })],
+        installed: there(gone),
+        parameters: params,
+      });
       expect(ids(r, "references")).toEqual([]);
     });
   });
@@ -845,10 +1016,19 @@ describe("7: Taxis setup", () => {
     automations: { taxis_occupancy_living: { alias: "Living room – Occupancy (Taxis)", path: OCC.path, input } },
     timers: { "timer.living_hold": 300 },
   });
-  const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">): Change => ({ id: 1, op: "update", scope: null, before: {}, createdAt: "", ...c });
+  const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">): Change => ({
+    id: 1,
+    op: "update",
+    scope: null,
+    before: {},
+    createdAt: "",
+    ...c,
+  });
 
   it("reports a recipe that is out of date, with the change that brings it up to date", () => {
-    const r = check([pir, ...runtime, { id: "automation.taxis_occupancy_living", state: "on", area: null, triggered: H }], { installed: installedWith({ ...occupancyInput, hold_minutes: 3 }) });
+    const r = check([pir, ...runtime, { id: "automation.taxis_occupancy_living", state: "on", area: null, triggered: H }], {
+      installed: installedWith({ ...occupancyInput, hold_minutes: 3 }),
+    });
     const f = one(r, "setup:recipe:living_room:occupancy");
     expect(f).toMatchObject({ severity: "warning", area: "living_room", title: "Living room: Occupancy is out of date" });
     expect(f.detail).toContain("Hold timeout (min): 3 → 5");
@@ -863,7 +1043,11 @@ describe("7: Taxis setup", () => {
     const entities = [pir, ...runtime, { id: "automation.taxis_occupancy_living", state: "on", area: null, triggered: H }];
     expect(ids(check(entities, { installed: installedWith(occupancyInput) }), "setup").filter((id) => id.startsWith("setup:recipe"))).toEqual([]);
     const pending = change({ kind: "automation", targetId: "taxis_occupancy_living", after: { automation_id: "taxis_occupancy_living" } });
-    expect(ids(check(entities, { installed: installedWith({ ...occupancyInput, hold_minutes: 3 }), changes: [pending] }), "setup").filter((id) => id.startsWith("setup:recipe"))).toEqual([]);
+    expect(
+      ids(check(entities, { installed: installedWith({ ...occupancyInput, hold_minutes: 3 }), changes: [pending] }), "setup").filter((id) =>
+        id.startsWith("setup:recipe"),
+      ),
+    ).toEqual([]);
   });
 
   it("skips the recipe checks and says so when the blueprints could not be read", () => {
@@ -883,8 +1067,14 @@ describe("7: Taxis setup", () => {
 
     const missing = check([light("living_spots")]);
     const m = one(missing, "setup:occupancy:living_room");
-    expect(m.detail).toMatch(/Missing: A motion or presence sensor/);
+    expect(m.detail).toMatch(/Missing: One or more motion or presence sensors, or TVs, selected to start occupancy/);
     expect(m.fix).toEqual({ kind: "link", label: "Open the area's Capabilities", to: { page: "area", areaId: "living_room", tab: "capabilities" } });
+  });
+
+  it("does not recommend an explicitly unwanted Occupancy recipe", () => {
+    const inv = setRecipeWanted(EMPTY_INVENTORY, "living_room", "occupancy", false);
+    const report = check([light("living_spots"), pir], { inventory: inv });
+    expect(ids(report, "setup")).not.toContain("setup:occupancy:living_room");
   });
 
   it("does not note an area with no lights that count, or one that has Occupancy", () => {
@@ -906,7 +1096,11 @@ describe("7: Taxis setup", () => {
   it("reports counted sensors out for more than an hour and less than the general limit", () => {
     const sensor = (changed: number): E => ({ id: "binary_sensor.living_pir", dc: "motion", state: "unavailable", changed });
     const r = check([sensor(6 * H)]);
-    expect(one(r, "setup:sources:living_room")).toMatchObject({ severity: "warning", entity: "binary_sensor.living_pir", title: "Living room counts on 1 sensor that is not reporting" });
+    expect(one(r, "setup:sources:living_room")).toMatchObject({
+      severity: "warning",
+      entity: "binary_sensor.living_pir",
+      title: "Living room counts on 1 sensor that is not reporting",
+    });
     expect(one(r, "setup:sources:living_room").detail).toContain("for 6 hours");
     // Sooner than an hour is a blip; later than the limit is the general check's.
     expect(ids(check([sensor(30 * 60_000)]), "setup").filter((id) => id.startsWith("setup:sources"))).toEqual([]);
@@ -927,7 +1121,11 @@ describe("7: Taxis setup", () => {
     const r = check([light("living_spots")], { areas: areas("sensor.old_temp", "sensor.old_humidity") });
     const t = one(r, "setup:area-sensor:living_room:temperature");
     expect(t).toMatchObject({ severity: "warning", entity: "sensor.old_temp" });
-    expect(t.fix).toEqual({ kind: "changes", label: "Clear the setting", inputs: [{ kind: "area", op: "update", targetId: "living_room", fields: { temperature_entity_id: null } }] });
+    expect(t.fix).toEqual({
+      kind: "changes",
+      label: "Clear the setting",
+      inputs: [{ kind: "area", op: "update", targetId: "living_room", fields: { temperature_entity_id: null } }],
+    });
     const hum = one(r, "setup:area-sensor:living_room:humidity");
     expect(hum.fix).toMatchObject({ kind: "changes", inputs: [{ fields: { humidity_entity_id: null } }] });
     for (const f of [t, hum]) if (f.fix?.kind === "changes") for (const input of f.fix.inputs) expect(validateInput(input)).toBeNull();
@@ -939,12 +1137,21 @@ describe("7: Taxis setup", () => {
     expect(better.fix).toMatchObject({ label: "Use sensor.living_temperature", inputs: [{ fields: { temperature_entity_id: "sensor.living_temperature" } }] });
     expect(ids(check([mean], { areas: areas("sensor.living_temperature") }), "setup").filter((id) => id.startsWith("setup:area-sensor"))).toEqual([]);
     const pending = change({ kind: "area", targetId: "living_room", after: { temperature_entity_id: null } });
-    expect(ids(check([light("living_spots")], { areas: areas("sensor.old_temp"), changes: [pending] }), "setup").filter((id) => id.startsWith("setup:area-sensor"))).toEqual([]);
+    expect(
+      ids(check([light("living_spots")], { areas: areas("sensor.old_temp"), changes: [pending] }), "setup").filter((id) => id.startsWith("setup:area-sensor")),
+    ).toEqual([]);
   });
 });
 
 describe("7b: lights without an area, and areas without a floor", () => {
-  const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">): Change => ({ id: 1, op: "update", scope: null, before: {}, createdAt: "", ...c });
+  const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">): Change => ({
+    id: 1,
+    op: "update",
+    scope: null,
+    before: {},
+    createdAt: "",
+    ...c,
+  });
   const lost = [light("stairs", { area: null }), light("hall_lamp", { area: null, name: "Hall lamp" })];
 
   it("is a check of its own, after Taxis's setup, with the names the page shows", () => {
@@ -957,7 +1164,13 @@ describe("7b: lights without an area, and areas without a floor", () => {
   it("warns once about every light in no area, by name, with a link to where they are placed", () => {
     const r = check([...lost, light("living_spots")]);
     const f = one(r, "light-areas:none");
-    expect(f).toMatchObject({ check: "light-areas", severity: "warning", title: "2 lights have no area", entity: "light.hall_lamp", entities: ["light.hall_lamp", "light.stairs"] });
+    expect(f).toMatchObject({
+      check: "light-areas",
+      severity: "warning",
+      title: "2 lights have no area",
+      entity: "light.hall_lamp",
+      entities: ["light.hall_lamp", "light.stairs"],
+    });
     expect(f.area).toBeUndefined();
     expect(f.detail).toContain("Hall lamp and stairs");
     expect(f.fix).toEqual({ kind: "link", label: "Choose their areas", to: { page: "parameters", tab: "capabilities" } });
@@ -1016,7 +1229,14 @@ describe("7b: lights without an area, and areas without a floor", () => {
 });
 
 describe("7c: the light groups of the floors and the house", () => {
-  const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">): Change => ({ id: 1, op: "update", scope: null, before: {}, createdAt: "", ...c });
+  const change = (c: Partial<Change> & Pick<Change, "kind" | "targetId" | "after">): Change => ({
+    id: 1,
+    op: "update",
+    scope: null,
+    before: {},
+    createdAt: "",
+    ...c,
+  });
   const living = light("living_all", { platform: "group", entry: "G1", members: ["light.living_spots"] });
   const kitchen = light("kitchen_all", { area: "kitchen", platform: "group", entry: "G2", members: ["light.kitchen_main"] });
   const lamps = [light("living_spots"), light("kitchen_main", { area: "kitchen" })];
@@ -1025,11 +1245,19 @@ describe("7c: the light groups of the floors and the house", () => {
     const ground = light("ground_all", { area: null, platform: "group", entry: "G3", members: ["light.living_all"] });
     const r = check([...lamps, living, kitchen, ground]);
     const f = one(r, "setup:light-group:ground");
-    expect(f).toMatchObject({ check: "setup", severity: "warning", entity: "light.ground_all", entities: ["light.ground_all", "light.kitchen_all"], title: "light.ground_all is missing 1 light group" });
+    expect(f).toMatchObject({
+      check: "setup",
+      severity: "warning",
+      entity: "light.ground_all",
+      entities: ["light.ground_all", "light.kitchen_all"],
+      title: "light.ground_all is missing 1 light group",
+    });
     expect(f.detail).toContain("The light group of “Ground floor” should gather kitchen all and living all, and it lacks kitchen all");
     expect(f.fix).toMatchObject({ kind: "changes", label: "Update the members" });
     if (f.fix?.kind !== "changes") throw new Error("no fix");
-    expect(f.fix.inputs).toEqual([{ kind: "helper", op: "update", targetId: "light.ground_all", fields: { entities: ["light.kitchen_all", "light.living_all"] } }]);
+    expect(f.fix.inputs).toEqual([
+      { kind: "helper", op: "update", targetId: "light.ground_all", fields: { entities: ["light.kitchen_all", "light.living_all"] } },
+    ]);
     for (const input of f.fix.inputs) expect(validateInput(input)).toBeNull();
   });
 
@@ -1037,13 +1265,16 @@ describe("7c: the light groups of the floors and the house", () => {
     const ground = light("ground_all", { area: null, platform: "group", entry: "G3", members: ["light.living_all", "light.kitchen_all"] });
     const all = light("all", { area: null, platform: "group", entry: "G4", members: ["light.old_group"] });
     const garage = light("garage_all", { area: "garage", platform: "group", entry: "G5", members: ["light.living_spots"] });
-    const r = check([...lamps, living, kitchen, ground, all, garage, light("old_group", { area: null, platform: "group", entry: "G6", members: ["light.living_spots"] })], {
-      areas: [
-        { area_id: "living_room", name: "Living room", floor_id: "ground" },
-        { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
-        { area_id: "garage", name: "Garage", floor_id: null },
-      ],
-    });
+    const r = check(
+      [...lamps, living, kitchen, ground, all, garage, light("old_group", { area: null, platform: "group", entry: "G6", members: ["light.living_spots"] })],
+      {
+        areas: [
+          { area_id: "living_room", name: "Living room", floor_id: "ground" },
+          { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
+          { area_id: "garage", name: "Garage", floor_id: null },
+        ],
+      },
+    );
     const f = one(r, "setup:light-group:house");
     expect(f.title).toBe("light.all is missing 2 light groups");
     expect(f.detail).toContain("The light group of the house should gather");
@@ -1067,7 +1298,12 @@ describe("7c: the light groups of the floors and the house", () => {
     const strip = light("ground_all", { area: null, name: "Strip" });
     const r = check([...lamps, living, kitchen, strip]);
     const f = one(r, "setup:helper:floor:ground");
-    expect(f).toMatchObject({ severity: "warning", entity: "light.ground_all", title: "light.ground_all cannot be the light group of “Ground floor”", fix: { kind: "link", label: "Change the codes", to: { page: "settings" } } });
+    expect(f).toMatchObject({
+      severity: "warning",
+      entity: "light.ground_all",
+      title: "light.ground_all cannot be the light group of “Ground floor”",
+      fix: { kind: "link", label: "Change the codes", to: { page: "settings" } },
+    });
     expect(f.area).toBeUndefined();
     expect(f.detail).toContain("“Strip”");
     expect(f.detail).toContain("floor code or house group name");
@@ -1083,6 +1319,14 @@ describe("7c: the light groups of the floors and the house", () => {
 });
 
 describe("8: helpers nothing uses", () => {
+  it("recognizes the selected legacy occupancy timer as a recipe helper", () => {
+    const legacy: E = { id: "timer.old_living_motion_hold", area: "living_room", platform: "timer", state: "idle" };
+    expect(ids(check([legacy]), "helpers")).not.toContain("helpers:timer.old_living_motion_hold");
+    const ambiguous: E = { id: "timer.other_motion_hold", area: "living_room", platform: "timer", state: "idle" };
+    const found = ids(check([legacy, ambiguous]), "helpers");
+    expect(found).toContain("helpers:timer.old_living_motion_hold");
+    expect(found).toContain("helpers:timer.other_motion_hold");
+  });
   const helpers: E[] = [
     { id: "input_boolean.spare", area: null },
     { id: "input_number.threshold", area: null, state: "5" },
@@ -1093,19 +1337,41 @@ describe("8: helpers nothing uses", () => {
 
   it("lists helpers that no config, group or area setting uses", () => {
     const r = check([...helpers, light("a")]);
-    expect(ids(r, "helpers").sort()).toEqual(["helpers:input_boolean.spare", "helpers:input_number.threshold", "helpers:light.all_downstairs", "helpers:sensor.heat_index", "helpers:timer.laundry"]);
+    expect(ids(r, "helpers").sort()).toEqual([
+      "helpers:input_boolean.spare",
+      "helpers:input_number.threshold",
+      "helpers:light.all_downstairs",
+      "helpers:sensor.heat_index",
+      "helpers:timer.laundry",
+    ]);
     expect(one(r, "helpers:input_boolean.spare")).toMatchObject({ severity: "info", entity: "input_boolean.spare" });
   });
 
   it("does not list one that an automation, script, scene or dashboard uses, or a group holds, or an area points at", () => {
-    const r = check([...helpers, light("a"), { id: "group_member.x", area: null }, { id: "input_boolean.member", area: null }, { id: "group.house", platform: "group", members: ["input_boolean.member"], area: null }, autoEntity("a")], {
-      items: [
-        automation("a", { actions: [{ action: "x.y", data: { v: "{{ states('input_number.threshold') }}" } }], triggers: [{ trigger: "state", entity_id: "input_boolean.spare" }] }),
-        item("scene", "s", { entities: { "light.all_downstairs": "on" } }),
-        item("dashboard", "lovelace", { views: [{ cards: [{ type: "entity", entity: "timer.laundry" }] }] }),
+    const r = check(
+      [
+        ...helpers,
+        light("a"),
+        { id: "group_member.x", area: null },
+        { id: "input_boolean.member", area: null },
+        { id: "group.house", platform: "group", members: ["input_boolean.member"], area: null },
+        autoEntity("a"),
       ],
-      areas: [{ area_id: "living_room", name: "Living room", floor_id: "ground", temperature_entity_id: "sensor.heat_index" }, { area_id: "kitchen", name: "Kitchen", floor_id: "ground" }],
-    });
+      {
+        items: [
+          automation("a", {
+            actions: [{ action: "x.y", data: { v: "{{ states('input_number.threshold') }}" } }],
+            triggers: [{ trigger: "state", entity_id: "input_boolean.spare" }],
+          }),
+          item("scene", "s", { entities: { "light.all_downstairs": "on" } }),
+          item("dashboard", "lovelace", { views: [{ cards: [{ type: "entity", entity: "timer.laundry" }] }] }),
+        ],
+        areas: [
+          { area_id: "living_room", name: "Living room", floor_id: "ground", temperature_entity_id: "sensor.heat_index" },
+          { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
+        ],
+      },
+    );
     expect(ids(r, "helpers")).toEqual([]);
   });
 
@@ -1128,7 +1394,10 @@ describe("8: helpers nothing uses", () => {
 });
 
 describe("9: device-based triggers, conditions and actions", () => {
-  const cfg = (deviceId: string) => ({ triggers: [{ trigger: "device", domain: "mqtt", device_id: deviceId, type: "action" }], actions: [{ action: "light.turn_on", target: { device_id: deviceId } }] });
+  const cfg = (deviceId: string) => ({
+    triggers: [{ trigger: "device", domain: "mqtt", device_id: deviceId, type: "action" }],
+    actions: [{ action: "light.turn_on", target: { device_id: deviceId } }],
+  });
 
   it("lists an automation that names a device, and which parts", () => {
     const r = check([autoEntity("a")], { items: [automation("a", cfg("btn"), "Button")], devices: [{ id: "btn", name: "Bedroom button" }] });
@@ -1144,13 +1413,26 @@ describe("9: device-based triggers, conditions and actions", () => {
   });
 
   it("leaves a scene, a dashboard and a blueprint's inputs alone", () => {
-    const r = check([], { items: [item("scene", "s", cfg("x")), item("dashboard", "lovelace", cfg("x")), automation("b", { use_blueprint: { path: "x.yaml", input: { device_id: "x" } } })] });
+    const r = check([], {
+      items: [
+        item("scene", "s", cfg("x")),
+        item("dashboard", "lovelace", cfg("x")),
+        automation("b", { use_blueprint: { path: "x.yaml", input: { device_id: "x" } } }),
+      ],
+    });
     expect(ids(r, "devices")).toEqual([]);
   });
 });
 
 describe("groups that point at entities that don't exist", () => {
-  const group = (id: string, members: string[] | undefined, o: Partial<E> = {}): E => ({ id: `light.${id}`, platform: "group", entry: "e1", members, state: "on", ...o });
+  const group = (id: string, members: string[] | undefined, o: Partial<E> = {}): E => ({
+    id: `light.${id}`,
+    platform: "group",
+    entry: "e1",
+    members,
+    state: "on",
+    ...o,
+  });
 
   it("is quiet when every member is there", () => {
     const r = check([light("lamp"), group("all", ["light.lamp"])]);
@@ -1160,7 +1442,13 @@ describe("groups that point at entities that don't exist", () => {
   it("names the members that don't exist, as a warning, with a link to the helpers", () => {
     const r = check([light("lamp"), group("balcony_open", ["light.balcony_open_a", "light.balcony_open_b"], { state: "unavailable" })]);
     const f = one(r, "groups:light.balcony_open");
-    expect(f).toMatchObject({ check: "groups", severity: "warning", area: "living_room", entity: "light.balcony_open", title: "balcony open points at 2 entities that don't exist" });
+    expect(f).toMatchObject({
+      check: "groups",
+      severity: "warning",
+      area: "living_room",
+      entity: "light.balcony_open",
+      title: "balcony open points at 2 entities that don't exist",
+    });
     expect(f.entities).toEqual(["light.balcony_open", "light.balcony_open_a", "light.balcony_open_b"]);
     expect(f.detail).toMatch(/light\.balcony_open_a and light\.balcony_open_b are not in Home Assistant, so nothing in the group works/);
     expect(f.fix).toEqual({ kind: "link", label: "Fix in Taxis", to: { page: "parameters", tab: "helpers" } });
@@ -1175,12 +1463,24 @@ describe("groups that point at entities that don't exist", () => {
   it("offers the area's own group the lights the area counts", () => {
     const r = check([light("lamp"), light("spots"), group("living_all", ["light.lamp", "light.gone"])]);
     const f = one(r, "groups:light.living_all");
-    expect(f.fix).toMatchObject({ kind: "changes", inputs: [{ kind: "helper", op: "update", targetId: "light.living_all", fields: { entities: ["light.lamp", "light.spots"] } }] });
+    expect(f.fix).toMatchObject({
+      kind: "changes",
+      inputs: [{ kind: "helper", op: "update", targetId: "light.living_all", fields: { entities: ["light.lamp", "light.spots"] } }],
+    });
     expect(f.detail).toMatch(/Taxis can give it the 2 entities the area counts now/);
   });
 
   it("leaves it out once that fix is in the change list", () => {
-    const pending: Change = { id: 1, kind: "helper", op: "update", targetId: "light.living_all", scope: null, before: { entities: ["light.lamp", "light.gone"] }, after: { entities: ["light.lamp", "light.spots"] }, createdAt: "now" };
+    const pending: Change = {
+      id: 1,
+      kind: "helper",
+      op: "update",
+      targetId: "light.living_all",
+      scope: null,
+      before: { entities: ["light.lamp", "light.gone"] },
+      after: { entities: ["light.lamp", "light.spots"] },
+      createdAt: "now",
+    };
     expect(ids(check([light("lamp"), light("spots"), group("living_all", ["light.lamp", "light.gone"])], { changes: [pending] }), "groups")).toEqual([]);
   });
 

@@ -95,7 +95,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
       <PageHeader
         title="Guide"
         icon={<ListChecks className="size-5 text-accent" aria-hidden />}
-        description="Taxis guides you, step by step, to a complete and well-organised Home Assistant: areas, entities, names, helpers, automations, then a clean Health."
+        description="Organise your rooms, choose what they should do, then build it in Home Assistant."
       />
       {areaId ? (
         <>

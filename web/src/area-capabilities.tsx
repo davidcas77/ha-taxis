@@ -32,7 +32,7 @@ export function AreaCapabilitySummary({ h, areaId }: { h: Hierarchy; areaId: str
       cell: (row) =>
         row.sourceIds.length ? (
           <TooltipButton
-            label={`Entities counted for ${row.label}`}
+            label={`Entities included for ${row.label}`}
             className="tabular-nums text-accent"
             content={
               <ul className="space-y-2">
