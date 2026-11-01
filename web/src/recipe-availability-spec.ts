@@ -1,12 +1,15 @@
 import type { RecipeKey } from "../../shared/blueprints.ts";
 import { HOUSE_AREAS_OCCUPIED_ID, HOUSE_OCCUPIED_ID, HOUSE_PAUSE_ID } from "../../shared/climate.ts";
-import { canonicalId, helperExclusions, helperSuffixes } from "../../shared/helpers.ts";
+import { areaCodeConflicts, canonicalId, helperExclusions, helperSuffixes } from "../../shared/helpers.ts";
 import { planHouseModes, type HouseModeKey } from "../../shared/house-modes.ts";
 import { areaInventory, type Capability, type InventorySettings } from "../../shared/inventory.ts";
 import { areaCodes, houseGroupId, type NamingSettings } from "../../shared/naming.ts";
+import { canonicalPeriods, DEFAULT_COMFORT_PERIODS } from "../../shared/periods.ts";
 import { resolve, resolveIn, type ParameterSettings, type ParamKey } from "../../shared/parameters.ts";
-import { runtimeIds } from "../../shared/recipes.ts";
-import type { Change, Hierarchy } from "../../shared/types.ts";
+import { areaHasRoomType } from "../../shared/area-room-types.ts";
+import { OVERRIDE_PLACEHOLDER_SECONDS, resolveHoldTimer, runtimeIds } from "../../shared/recipes.ts";
+import { ENTITY_ID_RE } from "../../shared/changes.ts";
+import type { Change, ChangeInput, Hierarchy } from "../../shared/types.ts";
 
 export type RecipeAvailability = { capabilities: readonly Capability[]; areaParams: readonly ParamKey[]; houseParams: readonly ParamKey[] };
 
@@ -258,7 +261,8 @@ export function recipeHelperSpecs({ recipe, h, areaId, inventory, naming, parame
       managed(ids.timer, "hold", "Hold timer", "timer");
       managed(ids.occupied, "occupied", "Area occupancy virtual sensor", "binary_sensor", "template");
       pause();
-      managed(ids.rate, "humidity rate", "Humidity rate (optional; Bathroom fan)", "sensor", "derivative", true, "Bathroom fan");
+      if (areaHasRoomType(h, inventory, areaId, "bathroom"))
+        managed(ids.rate, "humidity rate", "Measures how quickly humidity rises for Bathroom fan (optional)", "sensor", "derivative", true, "Bathroom fan");
       break;
     case "motion_lights":
       lights();
@@ -325,4 +329,86 @@ export function recipeHouseEntities(recipe: "battery_low" | "unavailable_watch",
       for (const row of inv[cap]) if (row.counts && (cap !== "power" || row.appliance)) ids.add(row.entityId);
   }
   return [...ids].sort().slice(0, 500);
+}
+
+// Helper-only forms of the same managed proposals used by the recipe planners.
+// These do not depend on whether an automation has enough inputs to be planned.
+export function standaloneAreaHelperInputs({ h, areaId, inventory, naming, parameters, changes }: RecipeHelperContext): ChangeInput[] {
+  if (!areaId || !h.areas[areaId] || areaCodeConflicts(h, naming).has(areaId)) return [];
+  const area = h.areas[areaId];
+  const code = areaCodes(h, naming)[areaId]?.code;
+  if (!code) return [];
+  const ids = runtimeIds(code, h, areaId, changes);
+  const holdResolution = resolveHoldTimer(code, h, areaId, changes);
+  const hold = resolve(parameters, h, inventory, areaId, "hold_timeout").value;
+  const override = resolve(parameters, h, inventory, areaId, "override_duration").value;
+  const periods = canonicalPeriods(resolve(parameters, h, inventory, areaId, "comfort_periods").value) ?? DEFAULT_COMFORT_PERIODS;
+  const humidityId = canonicalId("sensor", code, helperSuffixes(naming).humidity);
+  if (![ids.timer, ids.switch, ids.override, ids.occupied, ids.schedule, ids.rate, humidityId].every((id) => ENTITY_ID_RE.test(id))) return [];
+
+  const inv = areaInventory(h, inventory, areaId, helperExclusions(h, naming)(areaId));
+  if (typeof hold !== "number" || typeof override !== "number") return [];
+  return [
+    { kind: "helper", op: "create", fields: { helper: "schedule", name: `${area.name} climate`, entity_id: ids.schedule, area_id: areaId, periods } },
+    ...(inv.humidity.some((row) => row.counts)
+      ? [
+          {
+            kind: "helper" as const,
+            op: "create" as const,
+            fields: { helper: "derivative", name: `${area.name} humidity rate`, entity_id: ids.rate, entities: [humidityId], area_id: areaId },
+          },
+        ]
+      : []),
+    ...(!holdResolution.issue
+      ? [
+          {
+            kind: "helper" as const,
+            op: "create" as const,
+            fields: { helper: "timer", name: `${area.name} hold`, entity_id: ids.timer, area_id: areaId, duration: hold * 60 },
+          },
+        ]
+      : []),
+    {
+      kind: "helper",
+      op: "create",
+      fields: {
+        helper: "timer",
+        name: `${area.name} override`,
+        entity_id: ids.override,
+        area_id: areaId,
+        duration: override > 0 ? override * 60 : OVERRIDE_PLACEHOLDER_SECONDS,
+      },
+    },
+    {
+      kind: "helper",
+      op: "create",
+      fields: { helper: "input_boolean", name: `${area.name} automations paused`, entity_id: ids.switch, area_id: areaId, icon: "mdi:pause-circle-outline" },
+    },
+    ...(!holdResolution.issue
+      ? [
+          {
+            kind: "helper" as const,
+            op: "create" as const,
+            fields: {
+              helper: "template",
+              name: `${area.name} occupied`,
+              entity_id: ids.occupied,
+              area_id: areaId,
+              state_template: `{{ is_state('${ids.timer}','active') }}`,
+              device_class: "occupancy",
+            },
+          },
+        ]
+      : []),
+  ];
+}
+
+export function standaloneHouseHelperInputs(): ChangeInput[] {
+  return [
+    {
+      kind: "helper",
+      op: "create",
+      fields: { helper: "input_boolean", name: "Taxis house automations paused", entity_id: HOUSE_PAUSE_ID, icon: "mdi:pause-circle-outline" },
+    },
+  ];
 }

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.93
+
+- **Recipes.** Top recipe actions show the proposed configuration count and link
+  to related queued changes. Readiness includes inline Wanted controls and visible
+  installed status.
+  Individual helpers can be created with safe dependencies and clear blockers;
+  section links and two-point dividers improve navigation.
+- **Occupancy.** TV interactions can be marked Not applicable per area. This
+  preserves selected roles and excludes only TV signals from occupancy.
+- **Area types.** Fourteen native Home Assistant area type labels can be assigned
+  through Changes, creating missing labels or reusing existing IDs while preserving
+  unrelated labels. Other is neutral. Labels inform bedroom and bathroom recipe,
+  helper and fan parameters; legacy classification is a fallback until native
+  labels are present. The planner reads labels; HA templates can use them.
+
 ## 0.7.92
 
 - **Recipes and parameters.** All 15 recipes lead with Description and

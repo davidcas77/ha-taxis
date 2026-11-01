@@ -1,5 +1,6 @@
 import type { AreaRecipeKey } from "./blueprints.ts";
 import type { EntityItem, Hierarchy } from "./types.ts";
+import { areaHasRoomType, setAreaRoomTypes, type AreaRoomType } from "./area-room-types.ts";
 
 // The capability inventory: what each area has (lights, motion, doors,
 // temperature…), read from Home Assistant, and the choices the user makes on
@@ -79,7 +80,13 @@ export type EntityChoice = {
   bed?: boolean;
   appliance?: boolean;
 };
-export type AreaChoice = { type?: AreaType; bedroom?: boolean; recipePreferences?: Partial<Record<AreaRecipeKey, boolean>> };
+export type AreaChoice = {
+  type?: AreaType;
+  bedroom?: boolean;
+  roomTypes?: AreaRoomType[];
+  tvOccupancyNotApplicable?: true;
+  recipePreferences?: Partial<Record<AreaRecipeKey, boolean>>;
+};
 export type InventorySettings = { entities: Record<string, EntityChoice>; areas: Record<string, AreaChoice> };
 
 export const EMPTY_INVENTORY: InventorySettings = { entities: {}, areas: {} };
@@ -303,9 +310,13 @@ export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string
   return out;
 }
 
-export const areaChoice = (s: InventorySettings, areaId: string): { type: AreaType; bedroom: boolean } => ({
+export const areaChoice = (s: InventorySettings, areaId: string, h?: Hierarchy): { type: AreaType; bedroom: boolean } => ({
   type: ownArea(s, areaId)?.type ?? "interior",
-  bedroom: ownArea(s, areaId)?.bedroom ?? false,
+  bedroom: h
+    ? areaHasRoomType(h, s, areaId, "bedroom")
+    : ownArea(s, areaId)?.roomTypes !== undefined
+      ? ownArea(s, areaId)!.roomTypes!.includes("bedroom")
+      : (ownArea(s, areaId)?.bedroom ?? false),
 });
 
 // ---------------------------------------------------------------------------
@@ -456,7 +467,16 @@ export function resetEntity(s: InventorySettings, entityId: string): InventorySe
 
 export const setAreaType = (s: InventorySettings, areaId: string, type: AreaType): InventorySettings => patchArea(s, areaId, "type", type, "interior");
 
-export const setBedroom = (s: InventorySettings, areaId: string, bedroom: boolean): InventorySettings => patchArea(s, areaId, "bedroom", bedroom, false);
+export const setBedroom = (s: InventorySettings, areaId: string, bedroom: boolean): InventorySettings => {
+  const roomTypes = ownArea(s, areaId)?.roomTypes;
+  if (roomTypes !== undefined) return setAreaRoomTypes(s, areaId, bedroom ? [...roomTypes, "bedroom"] : roomTypes.filter((type) => type !== "bedroom"));
+  return patchArea(s, areaId, "bedroom", bedroom, false);
+};
+
+export const tvOccupancyNotApplicable = (s: InventorySettings, areaId: string): boolean => ownArea(s, areaId)?.tvOccupancyNotApplicable === true;
+
+export const setTvOccupancyNotApplicable = (s: InventorySettings, areaId: string, notApplicable: boolean): InventorySettings =>
+  patchArea(s, areaId, "tvOccupancyNotApplicable", notApplicable ? true : undefined, undefined);
 
 // A missing preference preserves the original planning behavior.
 export const recipeWanted = (s: InventorySettings, areaId: string, recipe: AreaRecipeKey): boolean => ownArea(s, areaId)?.recipePreferences?.[recipe] !== false;

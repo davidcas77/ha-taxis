@@ -1,7 +1,7 @@
 # Taxis handover
 
-State prepared for **0.7.92**. Version 0.7.91 was tagged `v0.7.91` on
-2026-10-30; verify the current merge, tag and publication state independently.
+State prepared for **0.7.93**. Verify the current merge, tag and publication
+state independently.
 Written for whoever continues the work (a person, Claude or another assistant): what Taxis is, how it got here, what
 is in it, how to work on it, and what is left (§9). Details of the
 smart-areas design are in [design/smart-areas.md](design/smart-areas.md); the
@@ -79,6 +79,17 @@ Hard rules that hold everywhere:
 | 0.7.7   | Health checks for automations (start-up actions, conflicts, lost first press, duplicate ids, unknown persons, impossible conditions); six new recipes (leak alert, covers and sun, low batteries, not reporting, house presence, goodbye); leak capability; Covers tab |
 | 0.7.8   | Guide goals for the house recipes; covers_sun v2 knows which side the window faces (azimuth range); Chip / Card used for role toggles, label pills and house modes                                                                                                     |
 
+The 0.7.93 top recipe actions show the proposed configuration count and link to
+related queued changes. The changes also add inline Wanted controls and visible
+installed status in readiness, individual helper
+creation with safe dependencies and clear blockers, section links and two-point
+dividers. Occupancy TV interactions can be marked Not applicable per area, retaining
+roles while excluding only TV signals. Fourteen native HA area type labels can be
+assigned through Changes: missing labels are created, existing IDs reused and
+unrelated labels preserved; Other is neutral. Labels inform bedroom and bathroom
+recipe, helper and fan parameters, with legacy classification as a fallback until
+native labels exist. The planner reads labels and HA templates can use them.
+
 The 0.7.92 implementation makes all 15 recipes description- and availability-first,
 adds floor and area records and source, role, helper and parameter tables, and allows
 shared parameter editing across overlapping motion, ambient and night settings.
@@ -87,15 +98,17 @@ inclusion. Occupancy blueprint v5 optionally uses TV interactions to start or ho
 occupancy with the existing timeout. Same-area legacy `*_motion_hold` timer reuse
 prefers the canonical helper and blocks ambiguity or unverified templates. Sticky,
 independently scrolling panes, Buttons navigation and a compact Guide refine the UI.
-Label discovery and per-device virtual helpers remain planned, not implemented.
+Label-based occupancy-source discovery and per-device virtual occupancy helpers
+remain planned; area-type label classification is implemented.
 
 Full notes per version: `taxis/CHANGELOG.md`.
 
 ## 3. What is in the app
 
-Top navigation: **Guide · Areas · Organize · Automations · Parameters · Health ·
-Changes**, and **Settings** at the right. Automations has the tabs **Recipes** and
-**Buttons**; Settings has **General** and **AI**. The sparkle button (bottom right)
+Top navigation: **Guide · Areas · Organize · Recipes · Buttons · Parameters · Health ·
+Changes · Settings**. Recipes and Buttons are separate pages; their existing
+`#automations/recipes` and `#automations/buttons` deep links remain. Settings has
+**General** and **AI**. The sparkle button (bottom right)
 opens Ask Taxis on any page. The route type and the hash parser are in
 `web/src/route.ts` (`#automations/recipes`, `#automations/buttons/<control>`,
 `#settings/ai`, `#guide`, ...). Old hashes (`#recipes`, `#buttons`, `#ai-admin`,

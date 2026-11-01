@@ -24,9 +24,28 @@ import {
   setLightRole,
   setRole,
   setTvOccupancyRole,
+  setTvOccupancyNotApplicable,
+  tvOccupancyNotApplicable,
   type Capability,
   type InventorySettings,
 } from "./inventory.ts";
+
+describe("TV occupancy applicability", () => {
+  it("defaults to applicable and preserves entity and area choices through a round trip", () => {
+    const initial: InventorySettings = {
+      entities: { "media_player.tv": { counts: false, tvOccupancyRole: "holds" } },
+      areas: { living_room: { bedroom: true }, kitchen: { type: "exterior" } },
+    };
+    expect(tvOccupancyNotApplicable(initial, "living_room")).toBe(false);
+    const off = setTvOccupancyNotApplicable(initial, "living_room", true);
+    expect(off.areas.living_room).toEqual({ bedroom: true, tvOccupancyNotApplicable: true });
+    expect(off.entities).toEqual(initial.entities);
+    expect(tvOccupancyNotApplicable(off, "kitchen")).toBe(false);
+    expect(setTvOccupancyNotApplicable(off, "living_room", false)).toEqual(initial);
+    expect(setTvOccupancyNotApplicable(EMPTY_INVENTORY, "living_room", false)).toBe(EMPTY_INVENTORY);
+    expect(setTvOccupancyNotApplicable(setTvOccupancyNotApplicable(EMPTY_INVENTORY, "living_room", true), "living_room", false)).toEqual(EMPTY_INVENTORY);
+  });
+});
 
 type Spec = {
   id: string;

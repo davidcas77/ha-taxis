@@ -47,6 +47,7 @@ import { EntityLabels } from "./entity-labels.tsx";
 import { AreaCapabilitySummary } from "./area-capabilities.tsx";
 import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
 import { AreaCapabilitiesTab } from "./capabilities.tsx";
+import { AreaTypes } from "./area-types.tsx";
 import { AreaFindings, useAreaFindings, useHealth } from "./health.tsx";
 import { DevicesEntities } from "./devices-view.tsx";
 import { AreaNamingTab } from "./naming.tsx";
@@ -1042,6 +1043,7 @@ function AreaView({
       <div role="tabpanel" id={tabPanelId("Area tools")} className="min-w-0">
         {tab === "overview" && (
           <div className="flex flex-col gap-5">
+            <AreaTypes key={area.id} h={h} area={area} />
             <AreaCapabilitySummary h={h} areaId={area.id} />
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
               <Stat dense label="Devices" value={area.deviceIds.length} onClick={() => onTab("devices-entities")} />

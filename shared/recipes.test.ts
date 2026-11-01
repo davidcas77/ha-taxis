@@ -20,6 +20,7 @@ import {
   setLightRole,
   setRole,
   setTvOccupancyRole,
+  setTvOccupancyNotApplicable,
   type InventorySettings,
 } from "./inventory.ts";
 import { closureFor } from "./apply-plan.ts";
@@ -38,7 +39,8 @@ import {
   type RecipeCell,
   type RecipeInstalled,
 } from "./recipes.ts";
-import type { Change, ChangeInput } from "./types.ts";
+import type { Change, ChangeInput, Hierarchy } from "./types.ts";
+import { setAreaRoomTypes } from "./area-room-types.ts";
 
 type Spec = {
   id: string;
@@ -108,10 +110,23 @@ const mediaGroup = {
   name: "Living room media",
 };
 
-type Opts = { inv?: InventorySettings; params?: ParameterSettings; installed?: Partial<RecipeInstalled>; changes?: Change[]; naming?: NamingSettings };
+type Opts = {
+  inv?: InventorySettings;
+  params?: ParameterSettings;
+  installed?: Partial<RecipeInstalled>;
+  changes?: Change[];
+  naming?: NamingSettings;
+  h?: Hierarchy;
+};
+const nativeBedroom = (specs: Spec[]): Hierarchy => {
+  const h = house(specs);
+  h.labels.custom_id = { id: "custom_id", name: "Bedroom", color: null, icon: null, description: null };
+  h.areas.living_room.labels = ["custom_id"];
+  return h;
+};
 const plan = (specs: Spec[], o: Opts = {}) =>
   planRecipes(
-    house(specs),
+    o.h ?? house(specs),
     o.inv ?? EMPTY_INVENTORY,
     o.naming ?? naming,
     o.params ?? EMPTY_PARAMETERS,
@@ -405,6 +420,17 @@ describe("occupancy: ready", () => {
     expect(autoInput(cell(plan(specs, { inv: setCounts(h, inv, bed.id, false) }), "occupancy")).bed_entities).toEqual([]);
     // A presence sensor that isn't marked as a bed stays out.
     expect(autoInput(cell(plan([motion, presence, spots], { inv: setBedroom(EMPTY_INVENTORY, "living_room", true) }), "occupancy")).bed_entities).toEqual([]);
+  });
+
+  it("uses explicit bedroom among multiple room types for occupancy inputs", () => {
+    const bed = { id: "binary_sensor.living_bed", dc: "occupancy" };
+    const specs = [motion, bed, spots, lights, ...runtime];
+    const legacy = setBedroom(setBed(EMPTY_INVENTORY, bed.id, true), "living_room", true);
+    const selected = setAreaRoomTypes(legacy, "living_room", ["bathroom", "bedroom"]);
+    expect(autoInput(cell(plan(specs, { inv: selected }), "occupancy")).bed_entities).toEqual([bed.id]);
+    const cleared = setAreaRoomTypes(selected, "living_room", []);
+    expect(autoInput(cell(plan(specs, { inv: cleared }), "occupancy")).bed_entities).toEqual([]);
+    expect(autoInput(cell(plan(specs, { inv: cleared, h: nativeBedroom(specs) }), "occupancy")).bed_entities).toEqual([bed.id]);
   });
 
   it("all of it passes the change list's own checks", () => {
@@ -728,6 +754,12 @@ describe("motion lights: roles, sleep and the manual override", () => {
     const inv = setBedroom(setBed(EMPTY_INVENTORY, bed.id, true), "living_room", true);
     const c = motionCell(specs, { inv });
     expect(autoInput(c).bed_entities).toEqual(["binary_sensor.living_bed"]);
+    const multiple = setAreaRoomTypes(inv, "living_room", ["bedroom", "bathroom"]);
+    expect(autoInput(motionCell(specs, { inv: multiple }))).toMatchObject({ is_bedroom: true, bed_entities: [bed.id] });
+    const cleared = setAreaRoomTypes(multiple, "living_room", []);
+    expect(autoInput(motionCell(specs, { inv: cleared })).bed_entities).toEqual([]);
+    expect(autoInput(motionCell(specs, { inv: cleared }))).not.toHaveProperty("is_bedroom");
+    expect(autoInput(motionCell(specs, { inv: cleared, h: nativeBedroom(specs) }))).toMatchObject({ is_bedroom: true, bed_entities: [bed.id] });
     expect(c.notes).toEqual([
       "No light level helper yet, so the lights go on at any light level",
       "No night lights, so no light goes on while someone is in bed",
@@ -1416,6 +1448,23 @@ describe("area climate", () => {
       const c = climate([...inPlace, bedSensor], { inv });
       expect(autoInput(c)).toMatchObject({ bed_entities: ["binary_sensor.living_bed"], is_bedroom: true, comfort_needs_occupancy: false });
       expect(c.notes).toContain("A bedroom: comfort doesn't need anyone in the room unless you set it to");
+      const multiple = setAreaRoomTypes(inv, "living_room", ["bathroom", "bedroom"]);
+      expect(autoInput(climate([...inPlace, bedSensor], { inv: multiple }))).toMatchObject({
+        bed_entities: [bedSensor.id],
+        is_bedroom: true,
+        comfort_needs_occupancy: false,
+      });
+      const cleared = setAreaRoomTypes(multiple, "living_room", []);
+      expect(autoInput(climate([...inPlace, bedSensor], { inv: cleared }))).toMatchObject({
+        bed_entities: [],
+        is_bedroom: false,
+        comfort_needs_occupancy: true,
+      });
+      expect(autoInput(climate([...inPlace, bedSensor], { inv: cleared, h: nativeBedroom([...inPlace, bedSensor]) }))).toMatchObject({
+        bed_entities: [bedSensor.id],
+        is_bedroom: true,
+        comfort_needs_occupancy: false,
+      });
       // Told otherwise at the house, interior or area level, it is: a choice is a choice.
       for (const scope of [{ level: "house" }, { level: "type", id: "interior" }, { level: "area", id: "living_room" }] as const) {
         const p = setParameter(EMPTY_PARAMETERS, scope, "comfort_needs_occupancy", true);
@@ -2577,7 +2626,7 @@ describe("announce", () => {
     Object.fromEntries(codes.map((c) => [`taxis_occupancy_${c}`, { alias: "x", path: OCC.path, input: occupancyInput }]));
   const tellMe = (specs: Spec[], o: Opts = {}) =>
     planAnnounce(
-      house(specs),
+      o.h ?? house(specs),
       o.inv ?? EMPTY_INVENTORY,
       o.naming ?? naming,
       o.params ?? EMPTY_PARAMETERS,
@@ -2647,6 +2696,19 @@ describe("announce", () => {
     const inv = setBedroom(setBed(EMPTY_INVENTORY, bed.id, true), "living_room", true);
     const c = tellMe([...specs, bed, tv], { params: ready, inv, installed: { automations: installedOcc("living") } });
     expect(scriptInput(c).areas[0]).toMatchObject({ bed: ["binary_sensor.living_bed"], speakers: ["media_player.living_speaker"] });
+    const multiple = setAreaRoomTypes(inv, "living_room", ["bedroom", "bathroom"]);
+    expect(scriptInput(tellMe([...specs, bed, tv], { params: ready, inv: multiple, installed: { automations: installedOcc("living") } })).areas[0].bed).toEqual(
+      [bed.id],
+    );
+    const cleared = setAreaRoomTypes(multiple, "living_room", []);
+    expect(scriptInput(tellMe([...specs, bed, tv], { params: ready, inv: cleared, installed: { automations: installedOcc("living") } })).areas[0].bed).toEqual(
+      [],
+    );
+    expect(
+      scriptInput(
+        tellMe([...specs, bed, tv], { params: ready, inv: cleared, h: nativeBedroom([...specs, bed, tv]), installed: { automations: installedOcc("living") } }),
+      ).areas[0].bed,
+    ).toEqual([bed.id]);
   });
 
   it("writes the blueprint (a script blueprint) first, then the script, and passes the change list's checks", () => {
@@ -2836,6 +2898,31 @@ describe("optional house modes in native recipes", () => {
 });
 
 describe("TV occupancy", () => {
+  it("excludes and restores TV starts and holds for occupancy only", () => {
+    const tv2 = { ...tv, id: "media_player.living_tv2" };
+    const specs = [motion, tv, tv2, ...runtime];
+    const h = house(specs);
+    const selected = setTvOccupancyRole(h, setTvOccupancyRole(h, EMPTY_INVENTORY, tv.id, "starts"), tv2.id, "holds");
+    const off = setTvOccupancyNotApplicable(selected, "living_room", true);
+    expect(autoInput(cell(plan(specs, { inv: selected }), "occupancy"))).toMatchObject({ tv_starts_entities: [tv.id], tv_holds_entities: [tv2.id] });
+    expect(autoInput(cell(plan(specs, { inv: off }), "occupancy"))).toMatchObject({ tv_starts_entities: [], tv_holds_entities: [] });
+    expect(autoInput(cell(plan(specs, { inv: setTvOccupancyNotApplicable(off, "living_room", false) }), "occupancy"))).toMatchObject({
+      tv_starts_entities: [tv.id],
+      tv_holds_entities: [tv2.id],
+    });
+    const installed = { blueprints: BLUEPRINTS_THERE, automations: { taxis_occupancy_living: installedOccupancy }, timers: { "timer.living_hold": 300 } };
+    expect(cell(plan(specs, { inv: off, installed }), "media_off")).toEqual(cell(plan(specs, { inv: selected, installed }), "media_off"));
+    const withTvs = {
+      ...installed,
+      automations: {
+        taxis_occupancy_living: { ...installedOccupancy, input: { ...occupancyInput, tv_starts_entities: [tv.id], tv_holds_entities: [tv2.id] } },
+      },
+    };
+    const changed = cell(plan(specs, { inv: off, installed: withTvs }), "occupancy");
+    expect(changed.status).toBe("out-of-date");
+    expect(changed.reasons.join(" ")).toContain(tv.id);
+    expect(changed.reasons.join(" ")).toContain(tv2.id);
+  });
   it("requires explicit selection and only uses counted TVs in their current area", () => {
     const h = house([tv, speaker]);
     expect(cell(plan([tv]), "occupancy").status).toBe("missing");

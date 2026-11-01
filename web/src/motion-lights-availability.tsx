@@ -13,12 +13,16 @@ import { RECIPE_AVAILABILITY, recipeHelperSpecs } from "./recipe-availability-sp
 
 export function MotionLightsAvailability({
   h,
+  chosen,
+  onChoose,
   cells,
   error,
   loading,
   renderDetail,
 }: {
   h: Hierarchy;
+  chosen: string | null;
+  onChoose: (id: string) => void;
   cells: readonly RecipeCell[];
   error: string | null;
   loading: boolean;
@@ -26,7 +30,6 @@ export function MotionLightsAvailability({
 }) {
   const { inventory, inventoryLoaded, naming, namingLoaded, parameters, parametersLoaded, changes } = useTaxis();
   const areas = Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-  const [chosen, setChosen] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(false);
   const area = (chosen && h.areas[chosen]) || areas[0] || null;
   const groups = h.floors.map((floor) => ({ id: floor.id, name: floor.name, areas: areas.filter((item) => item.floorId === floor.id) }));
@@ -55,7 +58,7 @@ export function MotionLightsAvailability({
                     type="button"
                     aria-current={area?.id === item.id ? "true" : undefined}
                     onClick={() => {
-                      setChosen(item.id);
+                      onChoose(item.id);
                       setShowDetail(true);
                     }}
                     className={`w-full break-words px-3 py-1 text-left text-sm ${area?.id === item.id ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`}
@@ -76,15 +79,6 @@ export function MotionLightsAvailability({
           </button>
           <h3 className="text-base font-semibold">{area.name}</h3>
           <RecipeWanted key={`wanted:${area.id}`} areaId={area.id} recipe="motion_lights" cell={selectedCell} />
-          {!inv ? <p className="text-sm text-muted">Loading light settings…</p> : <LightSelections key={area.id} areaId={area.id} lights={inv.lights} />}
-          <section>
-            <h4 className="text-sm font-semibold">Lighting parameters</h4>
-            <AreaRecipeParameters h={h} areaId={area.id} keys={RECIPE_AVAILABILITY.motion_lights.areaParams} />
-          </section>
-          <section>
-            <h4 className="text-sm font-semibold">Helpers</h4>
-            <RecipeHelpers h={h} changes={changes} helpers={helperSpecs} loading={!inventoryLoaded || !namingLoaded || !parametersLoaded} />
-          </section>
           {error ? (
             <p role="alert" className="text-sm text-danger">
               Taxis couldn't check installed recipes, so proposals are unavailable. {error}
@@ -96,6 +90,33 @@ export function MotionLightsAvailability({
           ) : (
             <p className="text-sm text-muted">No availability is available for this area.</p>
           )}
+          {!inv ? <p className="text-sm text-muted">Loading light settings…</p> : <LightSelections key={area.id} areaId={area.id} lights={inv.lights} />}
+          <section className="border-t-[2pt] border-line pt-4">
+            <div className="flex items-center gap-3">
+              <h4 className="text-sm font-semibold">Lighting parameters</h4>
+              <a className="text-xs text-accent underline" href="#parameters/lighting">
+                Parameters
+              </a>
+            </div>
+            <AreaRecipeParameters h={h} areaId={area.id} keys={RECIPE_AVAILABILITY.motion_lights.areaParams} />
+          </section>
+          <section className="border-t-[2pt] border-line pt-4">
+            <div className="flex items-center gap-3">
+              <h4 className="text-sm font-semibold">Helpers</h4>
+              <a className="text-xs text-accent underline" href="#parameters/helpers">
+                Helpers
+              </a>
+            </div>
+            <RecipeHelpers
+              h={h}
+              changes={changes}
+              helpers={helperSpecs}
+              cells={cells}
+              areaId={area.id}
+              enabled={!error && !loading}
+              loading={!inventoryLoaded || !namingLoaded || !parametersLoaded}
+            />
+          </section>
         </div>
       )}
     </div>

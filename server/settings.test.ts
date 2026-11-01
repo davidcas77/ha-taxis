@@ -133,6 +133,14 @@ describe("validateGroups", () => {
 });
 
 describe("validateInventory", () => {
+  it("validates and canonically retains explicit room types including an empty choice", () => {
+    expect(validateInventory({ areas: { a: { bedroom: true, roomTypes: ["bathroom", "bedroom"] }, b: { roomTypes: [] } } })).toEqual({
+      ok: true,
+      value: { entities: {}, areas: { a: { bedroom: true, roomTypes: ["bedroom", "bathroom"] }, b: { roomTypes: [] } } },
+    });
+    for (const roomTypes of [null, "bedroom", ["unknown"], ["bedroom", "bedroom"], [1]])
+      expect(validateInventory({ areas: { a: { roomTypes } } })).toMatchObject({ ok: false });
+  });
   const good = {
     entities: {
       "light.lamp": { counts: false, light: "night" },
@@ -724,6 +732,22 @@ describe("validateInventory: TV occupancy", () => {
     for (const role of ["always", null, true, 1])
       expect(validateInventory({ entities: { "media_player.tv": { tvOccupancyRole: role } } })).toMatchObject({ ok: false });
     expect(validateInventory({ entities: { "media_player.tv": { unknownTvSetting: true } } })).toMatchObject({ ok: false });
+  });
+  it("validates, canonicalizes and persists the per-area applicability choice", () => {
+    const value = {
+      entities: { "media_player.tv": { counts: false, tvOccupancyRole: "starts" as const } },
+      areas: { living_room: { tvOccupancyNotApplicable: true as const } },
+    };
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const store = settingsStore(db);
+    expect(validateInventory(value)).toEqual({ ok: true, value });
+    store.saveInventory(value);
+    expect(store.inventory()).toEqual(value);
+    expect(validateInventory({ areas: { living_room: { tvOccupancyNotApplicable: false } } })).toEqual({ ok: true, value: { entities: {}, areas: {} } });
+    for (const invalid of [null, 0, "true", {}, []])
+      expect(validateInventory({ areas: { living_room: { tvOccupancyNotApplicable: invalid } } })).toMatchObject({ ok: false });
+    db.close();
   });
 });
 

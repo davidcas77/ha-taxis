@@ -2,7 +2,7 @@ import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeK
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
 import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID, kindRunsIn, type Season } from "./climate.ts";
 import { RECIPE_HELPER_SUFFIX, areaCodeConflicts, canonicalId, helperSuffixes, helperExclusions } from "./helpers.ts";
-import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, recipeWanted, type InventorySettings, type LightRole } from "./inventory.ts";
+import { CLIMATE_KIND_LABEL, areaChoice, areaInventory, recipeWanted, tvOccupancyNotApplicable, type InventorySettings, type LightRole } from "./inventory.ts";
 import { areaCodes, type NamingSettings } from "./naming.ts";
 import { entryLights, roleLights, resolve, resolveAll, resolveIn, withSeconds, type ParameterSettings } from "./parameters.ts";
 import { canonicalPeriods, DEFAULT_COMFORT_PERIODS } from "./periods.ts";
@@ -448,7 +448,7 @@ export function planRecipes(
     const timerUpdate = (id: string, seconds: number): ChangeInput => ({ kind: "helper", op: "update", targetId: id, fields: { duration: seconds } });
 
     // The sensors of the area that sleep is read from: bed sensors, in a bedroom.
-    const bedSensors = areaChoice(inventory, area.id).bedroom
+    const bedSensors = areaChoice(inventory, area.id, h).bedroom
       ? inv.presence
           .filter((r) => r.counts && r.bed)
           .map((r) => r.entityId)
@@ -465,11 +465,12 @@ export function planRecipes(
       .filter((r) => r.role === "holds")
       .map((r) => r.entityId)
       .sort();
-    const tvStarts = inv.tv
+    const occupancyTvs = tvOccupancyNotApplicable(inventory, area.id) ? [] : inv.tv;
+    const tvStarts = occupancyTvs
       .filter((r) => r.counts && r.tvOccupancyRole === "starts")
       .map((r) => r.entityId)
       .sort();
-    const tvHolds = inv.tv
+    const tvHolds = occupancyTvs
       .filter((r) => r.counts && r.tvOccupancyRole === "holds")
       .map((r) => r.entityId)
       .sort();
@@ -618,7 +619,7 @@ export function planRecipes(
       accent_lights: accentLights,
       night_lights: nightLights,
       bed_entities: bedSensors,
-      ...(areaChoice(inventory, area.id).bedroom ? { is_bedroom: true } : {}),
+      ...(areaChoice(inventory, area.id, h).bedroom ? { is_bedroom: true } : {}),
       ...(modes.away ? { away_entity: modes.away } : {}),
       ...(modes.sleep ? { sleep_entity: modes.sleep } : {}),
       ...guestInput,
@@ -753,7 +754,7 @@ export function planRecipes(
       .map((r) => r.entityId)
       .sort();
     const climateSkipped = climateCounted.filter((r) => !thermostats.includes(r.entityId));
-    const bedroom = areaChoice(inventory, area.id).bedroom;
+    const bedroom = areaChoice(inventory, area.id, h).bedroom;
     const text = (k: "away_mode_entity" | "sleep_mode_entity" | "preset_comfort" | "preset_eco" | "preset_away" | "preset_sleep") => String(values[k] ?? "");
     // The house switches: the ones the user picked, else the two Taxis makes.
     const awayPicked = text("away_mode_entity");
@@ -1345,7 +1346,7 @@ export function planAnnounce(
       noOccupancy.push(area.name);
       continue;
     }
-    const beds = areaChoice(inventory, area.id).bedroom
+    const beds = areaChoice(inventory, area.id, h).bedroom
       ? inv.presence
           .filter((r) => r.counts && r.bed)
           .map((r) => r.entityId)

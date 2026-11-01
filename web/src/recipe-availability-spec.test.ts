@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildHierarchy, type RawRegistry } from "../../server/model/hierarchy.ts";
+import { setAreaRoomTypes } from "../../shared/area-room-types.ts";
 import { RECIPE_KEYS } from "../../shared/blueprints.ts";
 import { HOUSE_AREAS_OCCUPIED_ID, HOUSE_OCCUPIED_ID, HOUSE_PAUSE_ID } from "../../shared/climate.ts";
 import { canonicalId, helperSuffixes } from "../../shared/helpers.ts";
@@ -7,7 +8,14 @@ import { CAPABILITIES, EMPTY_INVENTORY, setAppliance, setCounts } from "../../sh
 import { DEFAULT_NAMING } from "../../shared/naming.ts";
 import { EMPTY_PARAMETERS, PARAM_DEF, setParameter } from "../../shared/parameters.ts";
 import { runtimeIds } from "../../shared/recipes.ts";
-import { RECIPE_AVAILABILITY, recipeHelperSpecs, recipeHouseEntities, type RecipeHelperContext } from "./recipe-availability-spec.ts";
+import {
+  RECIPE_AVAILABILITY,
+  recipeHelperSpecs,
+  recipeHouseEntities,
+  standaloneAreaHelperInputs,
+  standaloneHouseHelperInputs,
+  type RecipeHelperContext,
+} from "./recipe-availability-spec.ts";
 
 const raw: RawRegistry = {
   config: { location_name: "House" },
@@ -93,7 +101,7 @@ describe("recipe availability metadata", () => {
         expect.objectContaining({ id: ids.rate, platform: "derivative" }),
       ]),
     );
-    expect(specs("occupancy").find((s) => s.id === ids.rate)).toMatchObject({ optional: true, provider: "Bathroom fan" });
+    expect(specs("occupancy").some((s) => s.id === ids.rate)).toBe(false);
     expect(specs("left_open").map((s) => s.id)).toEqual([ids.switch]);
     expect(RECIPE_AVAILABILITY.goodbye.capabilities).toContain("lights");
   });
@@ -148,4 +156,80 @@ describe("recipe availability metadata", () => {
     expect(recipeHouseEntities("unavailable_watch", h, inventory, naming)).toEqual(["binary_sensor.kitchen_motion", "sensor.kitchen_washer"]);
     expect(recipeHouseEntities("battery_low", h, inventory, naming)).toEqual(["binary_sensor.remote_battery", "sensor.remote_battery"]);
   });
+});
+
+describe("standalone managed helper proposals", () => {
+  it("matches the planner's area timer and occupancy template without requiring an actionable recipe", () => {
+    const ids = runtimeIds("kit");
+    const inputs = standaloneAreaHelperInputs(context);
+    expect(inputs.find((input) => input.fields?.entity_id === ids.timer)).toMatchObject({
+      kind: "helper",
+      op: "create",
+      fields: { helper: "timer", area_id: "kitchen" },
+    });
+    expect(inputs.find((input) => input.fields?.entity_id === ids.occupied)).toMatchObject({
+      fields: { helper: "template", state_template: `{{ is_state('${ids.timer}','active') }}` },
+    });
+    expect(inputs.every((input) => input.kind === "helper" && input.op === "create")).toBe(true);
+    expect(standaloneAreaHelperInputs({ ...context, areaId: "missing" })).toEqual([]);
+  });
+  it("does not propose hold or occupancy when legacy hold timers are ambiguous or unavailable", () => {
+    const timer = (id: string) => ({ entity_id: id, platform: "timer", area_id: "kitchen", unique_id: id });
+    const one = "timer.first_motion_hold";
+    const two = "timer.second_motion_hold";
+    const fixture = (ids: string[], state: string) =>
+      buildHierarchy(
+        { ...raw, entities: [...raw.entities, ...ids.map(timer)], states: [...raw.states, ...ids.map((id) => ({ entity_id: id, state, attributes: {} }))] },
+        "now",
+      );
+    for (const hierarchy of [fixture([one, two], "idle"), fixture([one], "unavailable")]) {
+      const inputs = standaloneAreaHelperInputs({ ...context, h: hierarchy });
+      expect(
+        inputs.some(
+          (input) =>
+            input.fields?.entity_id === "timer.kit_hold" || input.fields?.entity_id === "binary_sensor.kit_occupied" || input.fields?.entity_id === one,
+        ),
+      ).toBe(false);
+      expect(inputs.some((input) => input.fields?.entity_id === "input_boolean.kit_paused")).toBe(true);
+    }
+  });
+});
+
+it("offers schedule and humidity derivative independently of thermostat and fan", () => {
+  const humid = "sensor.kitchen_humidity_source";
+  const hierarchy = buildHierarchy(
+    {
+      ...raw,
+      entities: [...raw.entities, { entity_id: humid, platform: "demo", area_id: "kitchen", unique_id: "humidity" }],
+      states: [...raw.states, { entity_id: humid, state: "50", attributes: { device_class: "humidity" } }],
+    },
+    "now",
+  );
+  const inputs = standaloneAreaHelperInputs({ ...context, h: hierarchy });
+  const ids = runtimeIds("kit");
+  expect(inputs.find((input) => input.fields?.entity_id === ids.schedule)).toMatchObject({ fields: { helper: "schedule", periods: expect.any(String) } });
+  expect(inputs.find((input) => input.fields?.entity_id === ids.rate)).toMatchObject({
+    fields: { helper: "derivative", entities: [canonicalId("sensor", "kit", helperSuffixes(naming).humidity)] },
+  });
+  expect(standaloneHouseHelperInputs()[0]).toMatchObject({ kind: "helper", op: "create", fields: { entity_id: HOUSE_PAUSE_ID, helper: "input_boolean" } });
+});
+
+it("uses explicit area types for the optional occupancy humidity rate, while Bathroom fan keeps its required helper", () => {
+  const ids = runtimeIds("kit");
+  for (const name of ["Balcony", "Kitchen"]) {
+    const hierarchy = { ...h, areas: { ...h.areas, kitchen: { ...h.areas.kitchen, name } } };
+    expect(specs("occupancy", { h: hierarchy }).some((item) => item.id === ids.rate)).toBe(false);
+    expect(specs("bathroom_fan", { h: hierarchy }).find((item) => item.id === ids.rate)).toMatchObject({ role: "Humidity rate" });
+  }
+  for (const name of ["Bathroom", "Bedroom Bathroom"]) {
+    const hierarchy = { ...h, areas: { ...h.areas, kitchen: { ...h.areas.kitchen, name } } };
+    expect(specs("occupancy", { h: hierarchy }).find((item) => item.id === ids.rate)).toMatchObject({
+      role: "Measures how quickly humidity rises for Bathroom fan (optional)",
+      optional: true,
+    });
+  }
+  const selectedBathroom = setAreaRoomTypes(EMPTY_INVENTORY, "kitchen", ["bathroom", "bedroom"]);
+  expect(specs("occupancy", { inventory: selectedBathroom }).find((item) => item.id === ids.rate)).toMatchObject({ optional: true });
+  const bathroomName = { ...h, areas: { ...h.areas, kitchen: { ...h.areas.kitchen, name: "Bathroom" } } };
+  expect(specs("occupancy", { h: bathroomName, inventory: setAreaRoomTypes(EMPTY_INVENTORY, "kitchen", []) }).some((item) => item.id === ids.rate)).toBe(false);
 });

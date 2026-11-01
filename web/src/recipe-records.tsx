@@ -1,16 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 
 import { isHouseRecipe, type HouseRecipeKey } from "../../shared/blueprints.ts";
-import {
-  HOUSE_RECIPE_LABEL,
-  RECIPES,
-  RECIPE_LABEL,
-  automationIdFor,
-  recipeChangeInputs,
-  type RecipeCell,
-  type RecipeInstalled,
-  type RecipeStatus,
-} from "../../shared/recipes.ts";
+import { HOUSE_RECIPE_LABEL, RECIPES, RECIPE_LABEL, automationIdFor, recipeChangeInputs, type RecipeCell, type RecipeInstalled } from "../../shared/recipes.ts";
 import { HOUSE_AUTOMATION_CODE } from "../../shared/recipes-house.ts";
 import { areaCodes } from "../../shared/naming.ts";
 import type { Hierarchy } from "../../shared/types.ts";
@@ -18,35 +9,11 @@ import { DataTable, type Column } from "./data-table.tsx";
 import { RecordsSplit } from "./records.tsx";
 import { RECIPE_GUIDE } from "./recipe-guide.ts";
 import { MotionLightsAvailability } from "./motion-lights-availability.tsx";
+import { countRelatedChanges } from "./recipe-queue-count.ts";
+import { recipeHelperSpecs } from "./recipe-availability-spec.ts";
 import { RecipeAvailability } from "./recipe-availability.tsx";
 import { useTaxis } from "./state.tsx";
 import { Button, EmptyState } from "./ui.tsx";
-
-const STATUS: Record<RecipeStatus, string> = {
-  ready: "Ready",
-  "out-of-date": "Out of date",
-  "in-changes": "In changes",
-  missing: "Missing requirements",
-  installed: "Installed",
-};
-const areaLabel = (cell: RecipeCell) => (isHouseRecipe(cell.recipe) ? "House" : cell.areaName);
-const PARAMETER_TAB: Record<RecipeCell["recipe"], string> = {
-  occupancy: "occupancy",
-  motion_lights: "lighting",
-  media_off: "media",
-  area_climate: "climate",
-  bathroom_fan: "fan",
-  exterior_lights: "exterior",
-  left_open: "safety",
-  appliance_done: "safety",
-  announce: "house",
-  leak_alert: "safety",
-  covers_sun: "covers",
-  goodbye: "house",
-  house_presence: "house",
-  battery_low: "safety",
-  unavailable_watch: "safety",
-};
 
 export function RecipeRecords({
   h,
@@ -61,20 +28,44 @@ export function RecipeRecords({
   error: string | null;
   loading: boolean;
 }) {
-  const { naming, propose, busy } = useTaxis();
+  const { naming, inventory, inventorySaving, parameters, parametersSaving, changes, propose, busy } = useTaxis();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<RecipeCell["recipe"]>("occupancy");
+  const [chosenArea, setChosenArea] = useState<string | null>(null);
   const [showingDetails, setShowingDetails] = useState(false);
   const [detailTab, setDetailTab] = useState<"description" | "availability">("description");
   const tabRefs = useRef<Record<"description" | "availability", HTMLButtonElement | null>>({ description: null, availability: null });
   const selectRecipe = (key: RecipeCell["recipe"]) => {
     setSelected(key);
+    setChosenArea(null);
     setShowingDetails(true);
     setDetailTab("description");
   };
   const types = [...RECIPES.map((r) => r.key), ...(Object.keys(HOUSE_RECIPE_LABEL) as HouseRecipeKey[])];
   const filtered = types.filter((key) => RECIPE_LABEL[key].toLowerCase().includes(query.trim().toLowerCase()));
   const recipe = RECIPE_GUIDE[selected];
+  const areas = Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const areaId = chosenArea && h.areas[chosenArea] ? chosenArea : areas[0]?.id;
+  const selectedCell = cells.find((cell) => cell.recipe === selected && (isHouseRecipe(selected) || cell.areaId === areaId));
+  const inputs = selectedCell ? recipeChangeInputs([selectedCell]) : [];
+  const helperIds = new Set(
+    recipeHelperSpecs({ recipe: selected, h, areaId: isHouseRecipe(selected) ? null : areaId, inventory, naming, parameters, changes }).map(
+      (helper) => helper.id,
+    ),
+  );
+  const code = isHouseRecipe(selected) ? HOUSE_AUTOMATION_CODE : areaId ? areaCodes(h, naming)[areaId]?.code : undefined;
+  const script = selected === "announce" || selected === "goodbye";
+  const configId = script ? `taxis_${selected}` : code ? automationIdFor(selected, code) : null;
+  const relatedQueued = countRelatedChanges(changes, helperIds, configId, script);
+  const actionDisabled =
+    busy ||
+    inventorySaving ||
+    parametersSaving ||
+    !selectedCell?.actionable ||
+    inputs.length === 0 ||
+    !!error ||
+    loading ||
+    (!isHouseRecipe(selected) && detailTab !== "availability");
   const columns: Column<RecipeCell["recipe"]>[] = [
     {
       id: "recipe",
@@ -129,33 +120,54 @@ export function RecipeRecords({
             <header>
               <h2 className="text-lg font-semibold">{RECIPE_LABEL[selected]}</h2>
             </header>
-            <div role="tablist" aria-label="Recipe details sections" className="flex gap-1 border-b border-line">
-              {(["description", "availability"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  ref={(element) => {
-                    tabRefs.current[tab] = element;
-                  }}
-                  type="button"
-                  role="tab"
-                  id={`recipe-tab-${tab}`}
-                  aria-controls={`recipe-panel-${tab}`}
-                  aria-selected={detailTab === tab}
-                  tabIndex={detailTab === tab ? 0 : -1}
-                  onClick={() => setDetailTab(tab)}
-                  onKeyDown={(event) => {
-                    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-                    event.preventDefault();
-                    const next =
-                      event.key === "Home" ? "description" : event.key === "End" ? "availability" : tab === "description" ? "availability" : "description";
-                    setDetailTab(next);
-                    tabRefs.current[next]?.focus();
-                  }}
-                  className={`border-b-2 px-3 py-2 text-[13px] ${detailTab === tab ? "border-accent font-medium text-accent" : "border-transparent text-muted hover:text-fg"}`}
-                >
-                  {tab === "description" ? "Description" : "Availability"}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-end gap-2 border-b border-line">
+              <div role="tablist" aria-label="Recipe details sections" className="flex gap-1">
+                {(["description", "availability"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    ref={(element) => {
+                      tabRefs.current[tab] = element;
+                    }}
+                    type="button"
+                    role="tab"
+                    id={`recipe-tab-${tab}`}
+                    aria-controls={`recipe-panel-${tab}`}
+                    aria-selected={detailTab === tab}
+                    tabIndex={detailTab === tab ? 0 : -1}
+                    onClick={() => setDetailTab(tab)}
+                    onKeyDown={(event) => {
+                      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                      event.preventDefault();
+                      const next =
+                        event.key === "Home" ? "description" : event.key === "End" ? "availability" : tab === "description" ? "availability" : "description";
+                      setDetailTab(next);
+                      tabRefs.current[next]?.focus();
+                    }}
+                    className={`border-b-2 px-3 py-2 text-[13px] ${detailTab === tab ? "border-accent font-medium text-accent" : "border-transparent text-muted hover:text-fg"}`}
+                  >
+                    {tab === "description" ? "Description" : "Availability"}
+                  </button>
+                ))}
+              </div>
+              <span id="recipe-action-scope" className="ml-auto mb-2 text-xs text-muted">
+                {isHouseRecipe(selected) ? "House" : areaId ? h.areas[areaId].name : "No area selected"}
+              </span>
+              <Button
+                className="mb-1 disabled:!bg-sunken disabled:!text-muted disabled:!opacity-100"
+                tone="primary"
+                aria-describedby="recipe-action-scope"
+                disabled={actionDisabled}
+                onClick={() => {
+                  if (!actionDisabled) void propose(inputs);
+                }}
+              >
+                {busy ? "Adding…" : `Add to Changes (${inputs.length})`}
+              </Button>
+              {relatedQueued > 0 && (
+                <a className="mb-2 text-xs text-accent underline" href="#changes">
+                  Review related Changes ({relatedQueued})
+                </a>
+              )}
             </div>
           </div>
           {detailTab !== "description" && <div role="tabpanel" id="recipe-panel-description" aria-labelledby="recipe-tab-description" hidden />}
@@ -212,29 +224,25 @@ export function RecipeRecords({
                 <div className="mt-2 flex min-h-0 min-w-0 flex-1 flex-col">
                   <MotionLightsAvailability
                     h={h}
+                    chosen={chosenArea}
+                    onChoose={setChosenArea}
                     cells={cells}
                     error={error}
                     loading={loading}
-                    renderDetail={(cell) =>
-                      installed ? (
-                        <RecipeDetail cell={cell} h={h} installed={installed} adding={busy} add={() => propose(recipeChangeInputs([cell]))} naming={naming} />
-                      ) : null
-                    }
+                    renderDetail={(cell) => (installed ? <RecipeDetail cell={cell} h={h} installed={installed} naming={naming} /> : null)}
                   />
                 </div>
               ) : (
                 <RecipeAvailability
                   key={selected}
                   recipe={selected}
+                  chosen={chosenArea}
+                  onChoose={setChosenArea}
                   h={h}
                   cells={cells}
                   error={error}
                   loading={loading}
-                  renderDetail={(cell) =>
-                    installed ? (
-                      <RecipeDetail cell={cell} h={h} installed={installed} adding={busy} add={() => propose(recipeChangeInputs([cell]))} naming={naming} />
-                    ) : null
-                  }
+                  renderDetail={(cell) => (installed ? <RecipeDetail cell={cell} h={h} installed={installed} naming={naming} /> : null)}
                 />
               )}
             </section>
@@ -245,34 +253,32 @@ export function RecipeRecords({
   );
 }
 
-function RecipeDetail({
-  cell,
-  h,
-  installed,
-  adding,
-  add,
-  naming,
-}: {
-  cell: RecipeCell;
-  h: Hierarchy;
-  installed: RecipeInstalled;
-  adding: boolean;
-  add: () => Promise<boolean>;
-  naming: Parameters<typeof areaCodes>[1];
-}) {
-  const inputs = recipeChangeInputs([cell]);
+function RecipeDetail({ cell, h, installed, naming }: { cell: RecipeCell; h: Hierarchy; installed: RecipeInstalled; naming: Parameters<typeof areaCodes>[1] }) {
   const code = isHouseRecipe(cell.recipe) ? HOUSE_AUTOMATION_CODE : (areaCodes(h, naming)[cell.areaId]?.code ?? cell.areaId);
   const isScript = cell.recipe === "announce" || cell.recipe === "goodbye";
   const id = isScript ? `taxis_${cell.recipe}` : automationIdFor(cell.recipe, code);
   const actual = isScript ? installed.scripts[id] : installed.automations[id];
   return (
-    <article aria-label="Recipe details" className="flex flex-col gap-5 p-4">
-      <header>
-        <h2 className="text-lg font-semibold">
-          {RECIPE_LABEL[cell.recipe]} · {areaLabel(cell)}
-        </h2>
-        <p className="mt-2 text-xs font-medium">{cell.wanted === false ? "Not wanted" : STATUS[cell.status]}</p>
-      </header>
+    <article aria-label="Installation details" className="flex flex-col gap-5">
+      <p className="text-xs text-muted">{actual ? "Configuration found in Home Assistant." : "No configuration found in Home Assistant."}</p>
+      {(cell.reasons.length > 0 || cell.notes.length > 0) && (
+        <section>
+          {cell.reasons.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-[13px] text-warn">
+              {cell.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          )}
+          {cell.notes.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted">
+              {cell.notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       <section>
         {cell.wanted !== false && cell.missing.length > 0 && (
           <>
@@ -291,12 +297,6 @@ function RecipeDetail({
           >
             Capabilities
           </a>
-          <a className="text-accent hover:underline" href={`#parameters/${PARAMETER_TAB[cell.recipe]}`}>
-            Parameters
-          </a>
-          <a className="text-accent hover:underline" href="#parameters/helpers">
-            Helpers
-          </a>
         </p>
       </section>
       {cell.controlledBy.length > 0 && (
@@ -312,62 +312,6 @@ function RecipeDetail({
           </ul>
         </section>
       )}
-      <section>
-        <h3 className="mb-1 text-sm font-semibold">Current installation</h3>
-        <p className="text-[13px] text-muted">
-          {actual ? "A configuration for this recipe exists in Home Assistant." : "No configuration for this recipe was found in Home Assistant."}
-        </p>
-        {cell.reasons.length > 0 && (
-          <ul className="mt-2 list-disc space-y-1 pl-4 text-[13px] text-warn">
-            {cell.reasons.map((reason) => (
-              <li key={reason}>{reason}</li>
-            ))}
-          </ul>
-        )}
-        {cell.notes.length > 0 && (
-          <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted">
-            {cell.notes.map((note) => (
-              <li key={note}>{note}</li>
-            ))}
-          </ul>
-        )}
-      </section>
-      <section className="rounded-lg border border-line bg-surface p-3">
-        <h3 className="mb-1 text-sm font-semibold">
-          {inputs.length} proposed change{inputs.length === 1 ? "" : "s"}
-        </h3>
-        <p className="mb-2 text-xs text-muted">Adds the required configuration to Changes for review. Home Assistant is changed only when you apply it.</p>
-        <Button tone="primary" disabled={adding || !cell.actionable || inputs.length === 0} onClick={() => void add()}>
-          {adding ? "Adding…" : cell.status === "in-changes" ? "Already in changes" : "Add to changes"}
-        </Button>
-        {inputs.length > 0 && (
-          <details className="mt-3 text-xs text-muted">
-            <summary className="cursor-pointer text-accent">Proposed configuration</summary>
-            <ul className="mt-2 space-y-1">
-              {inputs.map((input, index) => (
-                <li key={index}>
-                  {input.op} {input.kind}:{" "}
-                  <code className="break-all">
-                    {String(
-                      input.fields?.entity_id ??
-                        input.fields?.automation_id ??
-                        input.fields?.script_id ??
-                        input.targetId ??
-                        input.fields?.name ??
-                        input.fields?.alias ??
-                        input.fields?.path ??
-                        input.fields?.automation_id ??
-                        input.fields?.script_id ??
-                        input.targetId ??
-                        "configuration",
-                    )}
-                  </code>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-      </section>
       <details className="text-xs text-muted">
         <summary className="cursor-pointer text-accent">Technical details</summary>
         <p className="mt-2">

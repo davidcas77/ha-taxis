@@ -24,10 +24,15 @@ import { AreaRecipeParameters, HouseRecipeParameters } from "./parameter-table.t
 import { RECIPE_AVAILABILITY, recipeHelperSpecs, recipeHouseEntities } from "./recipe-availability-spec.ts";
 import { useTaxis } from "./state.tsx";
 import { RecipeWanted } from "./recipe-wanted.tsx";
+import { PARAMETER_TAB } from "./recipe-parameter-tab.ts";
+import { RECIPE_STATUS } from "./recipe-status.ts";
+import { TvOccupancyApplicability } from "./tv-occupancy-applicability.tsx";
 import { RecipeHelpers } from "./recipe-helpers.tsx";
 
 type Props = {
   recipe: RecipeKey;
+  chosen: string | null;
+  onChoose: (id: string) => void;
   h: Hierarchy;
   cells: readonly RecipeCell[];
   error: string | null;
@@ -35,8 +40,7 @@ type Props = {
   renderDetail: (cell: RecipeCell) => ReactNode;
 };
 
-export function RecipeAvailability({ recipe, h, cells, error, loading, renderDetail }: Props) {
-  const [chosen, setChosen] = useState<string | null>(null);
+export function RecipeAvailability({ recipe, chosen, onChoose, h, cells, error, loading, renderDetail }: Props) {
   const [showDetail, setShowDetail] = useState(false);
   const house = isHouseRecipe(recipe);
   const areas = Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
@@ -73,7 +77,7 @@ export function RecipeAvailability({ recipe, h, cells, error, loading, renderDet
                         type="button"
                         aria-current={area?.id === item.id ? "true" : undefined}
                         onClick={() => {
-                          setChosen(item.id);
+                          onChoose(item.id);
                           setShowDetail(true);
                         }}
                         className={`w-full break-words px-3 py-1 text-left text-sm ${area?.id === item.id ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`}
@@ -94,9 +98,11 @@ export function RecipeAvailability({ recipe, h, cells, error, loading, renderDet
           <button type="button" className="text-sm text-accent md:hidden" onClick={() => setShowDetail(false)}>
             ← Back to {house ? "House" : "areas"}
           </button>
-          <h3 className="text-base font-semibold">{house ? "House" : area!.name}</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-base font-semibold">{house ? "House" : area!.name}</h3>
+            {house && selected && <span className="text-xs font-medium">{RECIPE_STATUS[selected.status]}</span>}
+          </div>
           {!house && area && !isHouseRecipe(recipe) && <RecipeWanted key={`wanted:${recipe}:${area.id}`} areaId={area.id} recipe={recipe} cell={selected} />}
-          <AvailabilityContents key={`${recipe}:${house ? "house" : area!.id}`} recipe={recipe} h={h} areaId={house ? null : area!.id} />
           {error ? (
             <p role="alert" className="text-sm text-danger">
               Taxis couldn't check installed recipes, so proposals are unavailable. {error}
@@ -108,13 +114,33 @@ export function RecipeAvailability({ recipe, h, cells, error, loading, renderDet
           ) : (
             <p className="text-sm text-muted">No availability is available for this {house ? "house" : "area"}.</p>
           )}
+          <AvailabilityContents
+            key={`${recipe}:${house ? "house" : area!.id}`}
+            recipe={recipe}
+            h={h}
+            areaId={house ? null : area!.id}
+            cells={cells}
+            enabled={!error && !loading}
+          />
         </div>
       )}
     </div>
   );
 }
 
-function AvailabilityContents({ recipe, h, areaId }: { recipe: RecipeKey; h: Hierarchy; areaId: string | null }) {
+function AvailabilityContents({
+  recipe,
+  h,
+  areaId,
+  cells,
+  enabled,
+}: {
+  recipe: RecipeKey;
+  h: Hierarchy;
+  areaId: string | null;
+  cells: readonly RecipeCell[];
+  enabled: boolean;
+}) {
   const { inventory, inventoryLoaded, inventorySaving, saveInventory, naming, namingLoaded, parameters, parametersLoaded, changes } = useTaxis();
   const [error, setError] = useState<string | null>(null);
   const spec = RECIPE_AVAILABILITY[recipe];
@@ -141,34 +167,43 @@ function AvailabilityContents({ recipe, h, areaId }: { recipe: RecipeKey; h: Hie
           {!inv ? (
             <p className="text-xs text-muted">Loading source settings…</p>
           ) : (
-            spec.capabilities.map((capability) => (
-              <div key={capability} className="mt-3">
-                <h5 className="text-xs font-semibold">{CAPABILITY_LABEL[capability]}</h5>
-                {!inv[capability].length ? (
-                  <p className="text-xs text-muted">None found in this area.</p>
-                ) : (
-                  <div className="mt-1 max-w-full overflow-x-auto">
-                    <table aria-label={`${CAPABILITY_LABEL[capability]} sources`} className="w-full min-w-[360px] text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-line">
-                          <th scope="col" className="p-2">
-                            Entity
-                          </th>
-                          <th scope="col" className="p-2">
-                            Role
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {inv[capability].map((row) => (
-                          <SourceRow key={row.entityId} h={h} recipe={recipe} row={row} locked={inventorySaving} save={save} />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ))
+            spec.capabilities.map((capability) => {
+              const sourceContent = !inv[capability].length ? (
+                <p className="text-xs text-muted">None found in this area.</p>
+              ) : (
+                <div className="mt-1 max-w-full overflow-x-auto">
+                  <table aria-label={`${CAPABILITY_LABEL[capability]} sources`} className="w-full min-w-[360px] text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-line">
+                        <th scope="col" className="p-2">
+                          Entity
+                        </th>
+                        <th scope="col" className="p-2">
+                          Role
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inv[capability].map((row) => (
+                        <SourceRow key={row.entityId} h={h} recipe={recipe} row={row} locked={inventorySaving} save={save} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+              return (
+                <div key={capability} className="mt-3">
+                  {recipe === "occupancy" && capability === "tv" ? (
+                    <TvOccupancyApplicability areaId={areaId}>{sourceContent}</TvOccupancyApplicability>
+                  ) : (
+                    <>
+                      <h5 className="text-xs font-semibold">{CAPABILITY_LABEL[capability]}</h5>
+                      {sourceContent}
+                    </>
+                  )}
+                </div>
+              );
+            })
           )}
           {error && (
             <p role="alert" className="mt-2 text-xs text-danger">
@@ -180,20 +215,35 @@ function AvailabilityContents({ recipe, h, areaId }: { recipe: RecipeKey; h: Hie
       {recipe === "exterior_lights" && <PeopleSources h={h} enabledOnly />}
       {house && <HouseSources recipe={recipe} h={h} />}
       {areaId && spec.areaParams.length > 0 && (
-        <section>
-          <h4 className="text-sm font-semibold">Area parameters</h4>
+        <section className="border-t-[2pt] border-line pt-4">
+          <div className="flex items-center gap-3">
+            <h4 className="text-sm font-semibold">Area parameters</h4>
+            <a className="text-xs text-accent underline" href={`#parameters/${PARAMETER_TAB[recipe]}`}>
+              Parameters
+            </a>
+          </div>
           <AreaRecipeParameters h={h} areaId={areaId} keys={spec.areaParams} />
         </section>
       )}
       {spec.houseParams.length > 0 && (
-        <section>
-          <h4 className="text-sm font-semibold">House parameters</h4>
+        <section className="border-t-[2pt] border-line pt-4">
+          <div className="flex items-center gap-3">
+            <h4 className="text-sm font-semibold">House parameters</h4>
+            <a className="text-xs text-accent underline" href={`#parameters/${PARAMETER_TAB[recipe]}`}>
+              Parameters
+            </a>
+          </div>
           <HouseRecipeParameters h={h} keys={spec.houseParams} />
         </section>
       )}
-      <section>
-        <h4 className="text-sm font-semibold">Helpers</h4>
-        <RecipeHelpers h={h} changes={changes} helpers={helperSpecs} loading={!ready || !parametersLoaded} />
+      <section className="border-t-[2pt] border-line pt-4">
+        <div className="flex items-center gap-3">
+          <h4 className="text-sm font-semibold">Helpers</h4>
+          <a className="text-xs text-accent underline" href="#parameters/helpers">
+            Helpers
+          </a>
+        </div>
+        <RecipeHelpers h={h} changes={changes} helpers={helperSpecs} cells={cells} areaId={areaId} enabled={enabled} loading={!ready || !parametersLoaded} />
       </section>
     </>
   );
