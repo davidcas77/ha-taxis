@@ -1,4 +1,14 @@
-import { areaChoice, areaInventory, recipeWanted, CAPABILITIES, type AreaType, type Capability, type InventorySettings } from "./inventory.ts";
+import {
+  areaChoice,
+  areaInventory,
+  recipeWanted,
+  tvOccupancyNotApplicable,
+  CAPABILITIES,
+  type AreaType,
+  type Capability,
+  type InventorySettings,
+} from "./inventory.ts";
+import { areaHasRoomType, isBathroomLikeName } from "./area-room-types.ts";
 import { helperExclusions } from "./helpers.ts";
 import type { NamingSettings } from "./naming.ts";
 import { isHouseRecipe, type AreaRecipeKey } from "./blueprints.ts";
@@ -35,24 +45,25 @@ export type AreaFacts = {
   name: string;
   type: AreaType;
   bedroom: boolean;
+  bathroom?: boolean;
   // Counted TVs explicitly selected to start occupancy.
   tvStarts: number;
   // How many candidate entities the area has of each capability.
   has: Record<Capability, number>;
 };
 
-const BATHROOM_NAME = /\b(bath|bathroom|toilet|wc|shower|washroom|restroom|powder|ensuite|en-suite|lavatory)\b/i;
-export const isBathroomLike = (name: string): boolean => BATHROOM_NAME.test(name);
+export const isBathroomLike = isBathroomLikeName;
 
 export function areaFacts(h: Hierarchy, inventory: InventorySettings, naming: NamingSettings, areaId: string): AreaFacts {
   const inv = areaInventory(h, inventory, areaId, helperExclusions(h, naming)(areaId));
-  const choice = areaChoice(inventory, areaId);
+  const choice = areaChoice(inventory, areaId, h);
   const has = Object.fromEntries(CAPABILITIES.map((c) => [c.key, inv[c.key].length])) as Record<Capability, number>;
   return {
     name: h.areas[areaId]?.name ?? areaId,
     type: choice.type,
     bedroom: choice.bedroom,
-    tvStarts: inv.tv.filter((row) => row.counts && row.tvOccupancyRole === "starts").length,
+    bathroom: areaHasRoomType(h, inventory, areaId, "bathroom"),
+    tvStarts: tvOccupancyNotApplicable(inventory, areaId) ? 0 : inv.tv.filter((row) => row.counts && row.tvOccupancyRole === "starts").length,
     has,
   };
 }
@@ -70,7 +81,7 @@ export function recipeSuitsArea(f: AreaFacts, recipe: AreaRecipeKey): boolean {
     case "area_climate":
       return interior && (f.has.thermostat > 0 || f.bedroom);
     case "bathroom_fan":
-      return interior && (f.has.fan > 0 || (f.has.humidity > 0 && isBathroomLike(f.name)));
+      return interior && (f.has.fan > 0 || (f.has.humidity > 0 && (f.bathroom ?? isBathroomLike(f.name))));
     case "exterior_lights":
       return f.type === "exterior";
     case "left_open":

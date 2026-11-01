@@ -1,24 +1,19 @@
 import { useMemo, useState, type ReactNode } from "react";
 
 import {
-  AREA_TYPES,
   CAPABILITIES,
   CLIMATE_KINDS,
   CLIMATE_KIND_LABEL,
   LIGHT_ROLES,
-  areaChoice,
   areaInventory,
   inventoryMatrix,
   setAppliance,
-  setAreaType,
   setBed,
-  setBedroom,
   setClimateKind,
   setCounts,
   setKind,
   setLightRole,
   setRole,
-  type AreaType,
   type Capability,
   type InventoryFlag,
   type InventoryRow,
@@ -29,6 +24,7 @@ import {
 import { entryLights, setParameter } from "../../shared/parameters.ts";
 import type { AreaNode, EntityItem, Hierarchy } from "../../shared/types.ts";
 import { helperExclusions, helperKeyFor, type HelperKey } from "../../shared/helpers.ts";
+import { AreaTypes } from "./area-types.tsx";
 import { CombinedHelperRow, useAreaHelperLines } from "./helpers.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { CapabilityIcon } from "./capability-icons.tsx";
@@ -355,7 +351,6 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
   const [error, setError] = useState<string | null>(null);
   const locked = !inventoryLoaded || inventorySaving;
   const inv = useMemo(() => areaInventory(h, inventory, area.id, helperExclusions(h, naming)(area.id)), [h, inventory, naming, area.id]);
-  const choice = areaChoice(inventory, area.id);
   // The combined entity of each capability, planned from the counts above, so
   // it follows a change to Counts at once.
   const helperLines = useAreaHelperLines(h, area.id);
@@ -382,33 +377,7 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
     <div className="flex flex-col gap-5">
       <p className="max-w-[68ch] text-[13px] text-muted">{CAPABILITIES_NOTE}</p>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px]">
-        <label className="flex items-center gap-2">
-          Type
-          <select
-            className={selectClass}
-            value={choice.type}
-            disabled={locked}
-            onChange={(e) => void run((s) => setAreaType(s, area.id, e.target.value as AreaType))}
-          >
-            {AREA_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {cap(t)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex cursor-pointer items-center gap-2">
-          <input
-            type="checkbox"
-            checked={choice.bedroom}
-            disabled={locked}
-            onChange={(e) => void run((s) => setBedroom(s, area.id, e.target.checked))}
-            className="accent-[var(--accent)]"
-          />
-          Bedroom
-        </label>
-      </div>
+      <AreaTypes key={area.id} h={h} area={area} />
 
       {error && (
         <p role="alert" className="text-xs text-danger">

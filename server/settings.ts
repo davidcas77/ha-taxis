@@ -2,7 +2,7 @@ import { RECIPE_KEYS, isHouseRecipe, type AreaRecipeKey } from "../shared/bluepr
 import type { DatabaseSync } from "node:sqlite";
 import { EMPTY_GUIDE, validateGuide, type GuideSettings } from "../shared/guide.ts";
 import { DEFAULT_JEV, isJevKey, validateJev, type JevSettings, type JevView } from "../shared/jev.ts";
-
+import { AREA_ROOM_TYPES, isAreaRoomType } from "../shared/area-room-types.ts";
 import {
   AI_EFFORTS,
   AI_TIERS,
@@ -442,6 +442,13 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
       } else if (key === "bedroom") {
         if (typeof v !== "boolean") return { ok: false, error: `bedroom for area ${id} must be true or false.` };
         choice.bedroom = v;
+      } else if (key === "roomTypes") {
+        if (!Array.isArray(v) || v.length > AREA_ROOM_TYPES.length || v.some((type) => !isAreaRoomType(type)) || new Set(v).size !== v.length)
+          return { ok: false, error: `Choose valid, unique room types for area ${id}.` };
+        choice.roomTypes = AREA_ROOM_TYPES.filter((type) => v.includes(type.key)).map((type) => type.key);
+      } else if (key === "tvOccupancyNotApplicable") {
+        if (typeof v !== "boolean") return { ok: false, error: `tvOccupancyNotApplicable for area ${id} must be true or false.` };
+        if (v) choice.tvOccupancyNotApplicable = true;
       } else if (key === "recipePreferences") {
         if (!isRecord(v)) return { ok: false, error: `Recipe preferences for area ${id} weren't readable.` };
         const preferences: Partial<Record<AreaRecipeKey, boolean>> = {};

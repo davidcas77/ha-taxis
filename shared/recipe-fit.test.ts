@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
-import { CAPABILITIES, EMPTY_INVENTORY, setAreaType, setBedroom, setCounts, setTvOccupancyRole, type Capability } from "./inventory.ts";
+import {
+  CAPABILITIES,
+  EMPTY_INVENTORY,
+  setAreaType,
+  setBedroom,
+  setCounts,
+  setTvOccupancyNotApplicable,
+  setTvOccupancyRole,
+  type Capability,
+} from "./inventory.ts";
 import { DEFAULT_NAMING } from "./naming.ts";
 import { areaFacts, isBathroomLike, recipeFits, recipeSuitsArea, splitByFit, type AreaFacts } from "./recipe-fit.ts";
 import { NOTHING_INSTALLED, planRecipes } from "./recipes.ts";
 import { planHouseRecipes } from "./recipes-house.ts";
 import { EMPTY_PARAMETERS } from "./parameters.ts";
+import { setAreaRoomTypes } from "./area-room-types.ts";
 
 const facts = (has: Partial<Record<Capability, number>> = {}, rest: Partial<AreaFacts> = {}): AreaFacts => ({
   name: "Room",
@@ -136,6 +146,16 @@ describe("areaFacts", () => {
   };
   const h = buildHierarchy(reg, "now");
 
+  it("uses explicit bathroom classification instead of the name while retaining fan applicability", () => {
+    const cleared = setAreaRoomTypes(EMPTY_INVENTORY, "bathroom", []);
+    const f = areaFacts(h, cleared, DEFAULT_NAMING, "bathroom");
+    expect(f.bathroom).toBe(false);
+    expect(recipeSuitsArea({ ...f, has: { ...f.has, fan: 0 } }, "bathroom_fan")).toBe(false);
+    expect(recipeSuitsArea(f, "bathroom_fan")).toBe(true);
+    const named = setAreaRoomTypes(EMPTY_INVENTORY, "garden", ["bedroom", "bathroom"]);
+    expect(areaFacts(h, named, DEFAULT_NAMING, "garden")).toMatchObject({ bedroom: true, bathroom: true });
+  });
+
   it("counts the candidates of each capability, counted or not", () => {
     const f = areaFacts(h, EMPTY_INVENTORY, DEFAULT_NAMING, "bathroom");
     expect(f).toMatchObject({ name: "Bathroom", type: "interior", bedroom: false });
@@ -232,6 +252,9 @@ describe("TV occupancy recipe fit", () => {
     const starts = setTvOccupancyRole(h, EMPTY_INVENTORY, "media_player.tv", "starts");
     expect(recipeSuitsArea(f(starts), "occupancy")).toBe(true);
     expect(recipeSuitsArea(f(starts), "motion_lights")).toBe(true);
+    const notApplicable = f(setTvOccupancyNotApplicable(starts, "room", true));
+    expect(recipeSuitsArea(notApplicable, "occupancy")).toBe(false);
+    expect(recipeSuitsArea(notApplicable, "media_off")).toBe(true);
     expect(recipeSuitsArea({ ...f(starts), has: { ...f(starts).has, lights: 0 } }, "motion_lights")).toBe(false);
     expect(recipeSuitsArea({ ...f(starts), type: "exterior" }, "motion_lights")).toBe(false);
     expect(recipeSuitsArea(f(setTvOccupancyRole(h, starts, "media_player.tv", "holds")), "occupancy")).toBe(false);

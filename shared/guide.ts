@@ -252,7 +252,7 @@ export function assessHouse(
           change.before?.area_id === area.id,
       );
       const equipment: EquipmentCheck[] = [];
-      if (choice?.profile === "bedroom" && (selected.has("night") || selected.has("climate")) && !areaChoice(inventory, area.id).bedroom) {
+      if (choice?.profile === "bedroom" && (selected.has("night") || selected.has("climate")) && !areaChoice(inventory, area.id, h).bedroom) {
         equipment.push({
           key: "bedroom_behavior",
           label: "Bedroom behavior in Capabilities",
@@ -434,7 +434,7 @@ export function assessHouse(
       const relevantIds = new Set([...area.entityIds, ...neededHelpers.map((helper) => helper.row.canonicalId)]);
       const configuration = guideConfiguration({
         choice: choice && { ...choice, goals: [...choice.goals].sort() },
-        area: { id: area.id, floorId: area.floorId, choice: areaChoice(inventory, area.id), code: codes[area.id].code },
+        area: { id: area.id, floorId: area.floorId, choice: areaChoice(inventory, area.id, h), code: codes[area.id].code },
         parameters: resolveAll(parameters, h, inventory, area.id),
         inventory: [...relevantIds].sort().map((id) => [id, inventory.entities[id] ?? null]),
         entities: [...relevantIds].sort().map((id) => {

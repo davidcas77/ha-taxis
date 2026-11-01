@@ -1,3 +1,4 @@
+import { areaHasRoomType } from "../../shared/area-room-types.ts";
 import { useStoredChoice, useStoredFlag } from "./storage.ts";
 import { PARAM_HELP } from "./parameter-help.ts";
 import { Pencil, X } from "lucide-react";
@@ -711,7 +712,10 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
     return rest.filter((row) => {
       if (row.scope.level !== "area") return true;
       const capabilities = areaInventory(h, inventory, row.scope.id, exclude(row.scope.id));
-      return capabilities.fan.some((item) => item.counts) && capabilities.humidity.some((item) => item.counts);
+      return (
+        areaHasRoomType(h, inventory, row.scope.id, "bathroom") ||
+        (capabilities.fan.some((item) => item.counts) && capabilities.humidity.some((item) => item.counts))
+      );
     });
   }, [rest, tab, showAllFanAreas, h, inventory, naming]);
 
@@ -829,7 +833,8 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       {tab === "fan" && (
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
           <p className="flex-1">
-            Used only where Bathroom fan recipe is installed. By default, areas need an included fan and humidity sensor in Capabilities.
+            Used only where Bathroom fan is installed. Bathroom areas and areas with an included fan and humidity sensor are shown. The recipe still needs
+            suitable hardware.
           </p>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={showAllFanAreas} onChange={(event) => setShowAllFanAreas(event.target.checked)} />
@@ -839,7 +844,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       )}
       {tab === "fan" && !relevant.length && (
         <EmptyState>
-          No areas have both an included fan and humidity sensor. Check{" "}
+          No bathroom areas or areas with both an included fan and humidity sensor. Check{" "}
           <a className="text-accent underline" href="#parameters/capabilities">
             Capabilities
           </a>{" "}
