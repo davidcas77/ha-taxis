@@ -1,9 +1,9 @@
+import { resolveSpaces } from "../../shared/spaces.ts";
 import type { PathStepKey } from "../../shared/guide-path.ts";
 import { useState } from "react";
 import { House, Layers, Zap } from "lucide-react";
 import { hasPendingChange, helperExclusions, planHelpers, type HelperRow } from "../../shared/helpers.ts";
 import { CAPABILITIES, inventoryMatrix } from "../../shared/inventory.ts";
-import { PARAM_DEF } from "../../shared/parameters.ts";
 import { RECIPE_LABEL, type RecipeCell } from "../../shared/recipes.ts";
 import type { Change, Hierarchy } from "../../shared/types.ts";
 import { useTaxis, type Route } from "./state.tsx";
@@ -106,10 +106,9 @@ export function RecipeExample({ selected, onSelect }: { selected: keyof typeof R
 export const INSTRUCTIONS: Partial<Record<PathStepKey, { paragraphs: string[]; links?: { label: string; route: Route }[] }>> = {
   areas: {
     paragraphs: [
-      "Create floors and areas that match the house and put each room on its floor. Short, unique floor and area codes make groups and generated IDs recognisable; review them under Parameters → Area codes.",
-      "For example, with the legacy default light suffix all, a Ground Floor code gf makes light.gf_all and Kitchen code kit makes light.kit_all. Search for kit_ to find the room's objects; predictable names make troubleshooting and replacement easier. Choose your own unique codes and review the configured suffix.",
-      "Settings → General contains the naming patterns. The default entity ID pattern is {area}_{type}_{name}, for example light.kitchen_light_counter, and the default display name pattern is {Area} {Name}. Your configured codes and type words determine the actual suggestions.",
-      "Example with code kit and the default pattern: light.bulb_3 → light.kit_light_counter and display name 'Bulb 3' → 'Kitchen Counter'. These are illustrations, not automatic renames; inspect each suggestion and its references.",
+      "Create physical floors and areas for your rooms. A Space is a logical Taxis grouping, not a native Home Assistant feature: Taxis uses native area labels such as Space: Office to record membership.",
+      "In Floors → Space → area, a Space can contain several areas across floors; each area belongs to at most one Space. For example, Keli and Studio can be separate Spaces, while Coffee, Meeting and Work areas can belong to one Office Space.",
+      "Review each Space's controls and recipes separately. The global light.all group is optional legacy support when using Spaces. Changing a Space label alone does not update existing automations; review their plans and changes.",
     ],
     links: [
       { label: "Review area codes", route: { page: "parameters", tab: "area-codes" } },
@@ -118,44 +117,51 @@ export const INSTRUCTIONS: Partial<Record<PathStepKey, { paragraphs: string[]; l
   },
   entities: {
     paragraphs: [
-      "Assign devices and entities to the right area. A device's area is inherited unless an entity has its own area. Check unassigned entities and the equipment in each room; not all entities need to be used by an automation.",
-      "The room view and Capabilities show detected equipment and what is missing for an intended outcome. A sensor on a different floor or in another room may need its assignment reviewed before it can count.",
+      "Place devices and entities in their correct area. Entities inherit their device’s area unless assigned their own; review unassigned items and the equipment in each room.",
+      "Correct placement lets Taxis find equipment for that room’s helpers and recipes. Not every entity needs to be used.",
     ],
   },
   naming: {
     paragraphs: [
-      "Review device names and entity IDs so you can identify what belongs to each room. Area naming suggestions cover supported entities; a matching count is not proof that every device or entity is correctly named.",
-      "For example, light.bulb_3 could become light.kit_light_counter and 'Bulb 3' could become 'Kitchen Counter' using the default pattern and code kit. Open Organize → Devices to select and edit a device name; use the room's Naming tab to review entity suggestions.",
-      "Renaming an entity ID can affect references in automations and other configuration. Review the listed uses and manual work in Changes before applying; Taxis cannot rewrite every possible reference.",
+      "Review area codes, device names and entity IDs so each room’s equipment is easy to identify. A matching count does not prove every name is correct.",
+      "For example, with code kit and the default pattern, light.bulb_3 could become light.kit_light_counter and Bulb 3 could become Kitchen Counter. Review suggestions in the room’s Naming tab; edit device names in Organize → Devices.",
+      "Entity ID changes can affect automations and other configuration. Review references and manual work in Changes; Taxis cannot rewrite every reference.",
     ],
     links: [{ label: "Open devices", route: { page: "organize", type: "devices", id: null } }],
   },
   capabilities: {
     paragraphs: [
-      "Review the equipment Taxis detects in each area, such as lights, motion, presence, openings, temperature, humidity, media, climate and power. Confirm what should count and correct any role or exclusion.",
-      "Capabilities are inputs to helper and recipe planning, not a checklist of devices every room must own. The recipes you select determine which gaps matter.",
+      "Check which lights, sensors and other equipment Taxis detects in each area. Include the equipment you want to use and correct its role or exclusion.",
+      "These choices feed helper and recipe planning. Only the gaps for the outcomes you want need attention.",
     ],
   },
   helpers: {
     paragraphs: [
-      "Review the proposed room, floor and house groups. Adopt a suitable existing helper or queue a missing one; resolve naming conflicts and review group members. These groups provide stable room-level inputs when equipment changes.",
-      "For example, a kitchen light group can keep its ID light.kit_all while you replace one old bulb in its member list with a new bulb. Automations can keep targeting that group; review and apply the updated membership. The actual suffix follows your naming settings.",
-      "Temperature, humidity and illuminance helpers can average included sensors so recipes use one room-level value; media groups can bring included speakers and TVs together. Review the actual sources and helper configuration before creating or adopting them.",
-      "Recipes can also plan runtime helpers: occupancy uses a hold timer and occupied sensor, lighting can use an override timer, and recipes use pause switches. House modes include away, sleep and guest where needed. Day/night times and brightness are parameters, not a promised day/night helper. Check each recipe's dependencies before adding it.",
+      "Review the proposed area groups and their included members; create or adopt suitable helpers. Floor and whole-installation light groups are optional legacy uses when using Spaces; Space groups are planned in Recipes.",
+      "A stable group such as light.kit_all can keep the same ID when its bulb membership changes. Review and apply the new membership so automations can continue targeting the group.",
+      "Temperature, humidity and illuminance helpers can average sensors; media groups combine speakers and TVs. Recipes may also plan timers, occupied sensors and pause switches. Review their sources and dependencies before adding them.",
     ],
   },
   parameters: {
     paragraphs: [
-      "Parameters inherit from the house to interior or exterior and then to an individual area; the nearest chosen value wins, otherwise Taxis uses its default. Some are house-only or area-only. Review the source shown in the table before overriding a value.",
-      `For example, night starts at ${PARAM_DEF.night_start.default} and ends at ${PARAM_DEF.night_end.default} by default; day brightness is ${PARAM_DEF.day_brightness.default}%, night brightness ${PARAM_DEF.night_brightness.default}%, and hold timeout ${PARAM_DEF.hold_timeout.default} minutes. Override a room's brightness or timeout when it needs different behaviour. Climate comfort periods, temperatures and notifications have their own settings.`,
+      "Review the source shown for each value: parameters can inherit from installation, type, Space and area settings. Space control bindings do not inherit legacy House bindings.",
+      "Keep the defaults or override settings where needed. For example, adjust a room’s brightness or hold timeout; climate comfort periods, temperatures and notifications have their own settings.",
     ],
   },
   recipes: {
     paragraphs: [
-      "Select only recipes that fit each room. The planner shows ready, installed, out-of-date and missing inputs, including conflicts and dependencies. Add a ready recipe to Changes and review its proposed blueprint, helpers and automation.",
-      "Goodbye is a house script that can turn off the house light group and included media and set away mode. Welcome is not a Taxis recipe: if you want arrival behaviour, configure an existing or new Home Assistant automation yourself, for example using a zone and a person tracked by the mobile app. Check presence accuracy and test it before relying on it.",
-      "For phone presence, enable location and background tracking in the Home Assistant Companion app, connect its device_tracker to a Person, and review the Home zone. A Home Assistant zone trigger can react when that person enters or leaves. A tracker that is unknown or unavailable is not reliable evidence that someone has left. Phone permissions, battery restrictions and delayed updates affect accuracy.",
-      "A visitor may be home without a tracked phone. Use a suitable guest mode guard and review the House presence notes before enabling away behaviour; the planner warns when no guest switch is in place. For a welcome example, create your own Home Assistant automation triggered by a person entering Home, with conditions and actions you choose. Taxis does not create this welcome automation.",
+      "Choose the outcomes you want for each room or Space. The planner shows readiness, missing inputs, conflicts and dependencies; add ready recipes to Changes and review the proposed objects.",
+      "Goodbye can target a chosen Space or the optional legacy all-areas scope, each with its own light group and mode bindings. Review presence and guest mode before using away behaviour, then test it.",
+    ],
+  },
+  buttons: {
+    paragraphs: [
+      "After the room recipes work, review detected buttons and remotes. Assign the gestures you want, check existing automations for overlap, and test each action after applying changes.",
+    ],
+  },
+  health: {
+    paragraphs: [
+      "Open Health and address errors first, then review warnings and notes. Recheck after applying changes and test the intended behaviour in Home Assistant.",
     ],
   },
 };
@@ -175,12 +181,34 @@ export function StepInstruction({
   const instruction = INSTRUCTIONS[step];
   if (!instruction) return null;
   return (
-    <details className="mt-2 w-full text-[13px]">
-      <summary className="cursor-pointer text-accent">What to do and why</summary>
+    <div className="mt-2 w-full text-[13px]">
+      <h4 className="font-semibold">What to do and why</h4>
       <div className="mt-2 space-y-2 text-fg">
-        {instruction.paragraphs.map((p) => (
-          <p key={p}>{p}</p>
-        ))}
+        {instruction.paragraphs.map((p, index) =>
+          step === "areas" && index === 0 ? (
+            <div key={p} className="rounded border border-accent/60 bg-accent/10 p-3">
+              <strong>Spaces are a Taxis feature</strong>
+              <p className="mt-1">
+                {p}{" "}
+                <a className="text-accent underline" href="https://www.home-assistant.io/docs/organizing/labels/" target="_blank" rel="noreferrer">
+                  Home Assistant labels
+                </a>
+              </p>
+            </div>
+          ) : (
+            <p key={p}>{p}</p>
+          ),
+        )}
+        {step === "areas" && (
+          <details className="rounded border border-line p-3">
+            <summary className="cursor-pointer">Naming and group examples</summary>
+            <p className="mt-2">
+              Choose unique area codes under Parameters → Area codes. With code kit and the default pattern, light.bulb_3 might be suggested as
+              light.kit_light_counter, with display name Kitchen Counter. The legacy light group may be light.kit_all; actual IDs follow your settings. Review
+              suggestions and references before applying them.
+            </p>
+          </details>
+        )}
         {step === "entities" && inventoryLoaded && namingLoaded && (
           <details className="rounded border border-line p-3">
             <summary className="cursor-pointer">Equipment by area</summary>
@@ -213,26 +241,44 @@ export function StepInstruction({
             </ul>
           </details>
         )}
-        {step === "recipes" && plan && <RecipeReadiness cells={[...plan.area, ...plan.house]} />}
+        {step === "recipes" && plan && (
+          <>
+            <p>Area readiness is shown below. Select a Space in Recipes to review its scoped plan; legacy all-areas goals are separate.</p>
+            <RecipeReadiness cells={plan.area} />
+          </>
+        )}
         {step === "helpers" && inventoryLoaded && namingLoaded && (
-          <HelperPlan rows={planHelpers(h, inventory, naming, changes)} changes={changes} plan={plan} />
+          <HelperPlan
+            rows={planHelpers(h, inventory, naming, changes).filter((row) => resolveSpaces(h, changes).length === 0 || row.level === "area")}
+            changes={changes}
+            plan={resolveSpaces(h, changes).length && plan ? { ...plan, house: [] } : plan}
+          />
         )}
         {step === "recipes" && (
-          <p>
-            Home Assistant documentation:{" "}
-            <a className="text-accent underline" href="https://companion.home-assistant.io/docs/core/location/" target="_blank" rel="noreferrer">
-              Companion app location
-            </a>
-            ,{" "}
-            <a className="text-accent underline" href="https://www.home-assistant.io/integrations/person/" target="_blank" rel="noreferrer">
-              Person and zone triggers
-            </a>
-            , and{" "}
-            <a className="text-accent underline" href="https://www.home-assistant.io/integrations/device_tracker/" target="_blank" rel="noreferrer">
-              device tracker states
-            </a>
-            .
-          </p>
+          <details className="rounded border border-line p-3">
+            <summary className="cursor-pointer">Phone presence and arrival</summary>
+            <p className="mt-2">
+              Welcome is not a Taxis recipe. To create arrival behaviour yourself in Home Assistant, connect the Companion app's device tracker to a Person,
+              review the Home zone and use a zone trigger. Enable location and background tracking, and check phone permissions and battery restrictions.
+              Delayed, unknown or unavailable tracker states are not reliable evidence that someone has left. A visitor may be home without a tracked phone;
+              review the guest mode guard and test presence before relying on it.
+            </p>
+            <p className="mt-2">
+              Home Assistant documentation:{" "}
+              <a className="text-accent underline" href="https://companion.home-assistant.io/docs/core/location/" target="_blank" rel="noreferrer">
+                Companion app location
+              </a>
+              ,{" "}
+              <a className="text-accent underline" href="https://www.home-assistant.io/integrations/person/" target="_blank" rel="noreferrer">
+                Person and zone triggers
+              </a>
+              , and{" "}
+              <a className="text-accent underline" href="https://www.home-assistant.io/integrations/device_tracker/" target="_blank" rel="noreferrer">
+                device tracker states
+              </a>
+              .
+            </p>
+          </details>
         )}
         {instruction.links && (
           <div className="flex flex-wrap gap-2">
@@ -244,7 +290,7 @@ export function StepInstruction({
           </div>
         )}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -270,7 +316,7 @@ function HelperPlan({ rows, changes, plan }: { rows: HelperRow[]; changes: Chang
   const runtime = plan ? runtimeHelperInputs([...plan.area, ...plan.house]) : [];
   return (
     <details className="rounded border border-line p-3">
-      <summary className="cursor-pointer">Current helper plan by area, floor and house</summary>
+      <summary className="cursor-pointer">Current helper plan</summary>
       <p className="mt-2 text-muted">
         These are planner results, not changes already queued. A pending marker indicates an existing item in Changes. Open Helpers to review and add a
         proposal.

@@ -9,25 +9,22 @@ export const GUIDE_CHECKS = [
   {
     key: "still",
     label: "Sitting still stays comfortable",
-    detail:
-      "Remain still in the usual seat or work position beyond the hold time. Check for false clear states before trusting automatic off.",
+    detail: "Remain still in the usual seat or work position beyond the hold time. Check for false clear states before trusting automatic off.",
   },
   {
     key: "day",
     label: "Daylight and daytime lighting are right",
-    detail: "Test in bright and dim conditions. Confirm the chosen entry lights, brightness and darkness threshold.",
+    detail: "Test in bright and dim conditions. Confirm the chosen Motion lights, brightness and darkness threshold.",
   },
   {
     key: "night",
     label: "Night lighting is gentle",
-    detail:
-      "Test during the configured night window and check the actual targets, brightness and glare. Test bedroom sleep behavior if selected.",
+    detail: "Test during the configured night window and check the actual targets, brightness and glare. Test bedroom sleep behavior if selected.",
   },
   {
     key: "manual",
     label: "Manual light choices are respected",
-    detail:
-      "Switch a light on and off manually. Confirm the override duration and when automation resumes after the room clears.",
+    detail: "Switch a light on and off manually. Confirm the override duration and when automation resumes after the room clears.",
   },
   {
     key: "climate",
@@ -38,14 +35,12 @@ export const GUIDE_CHECKS = [
   {
     key: "media",
     label: "Media waits until the room is empty",
-    detail:
-      "Check both speaker and TV timeouts as applicable. Return before the timeout and confirm playback is not interrupted.",
+    detail: "Check both speaker and TV timeouts as applicable. Return before the timeout and confirm playback is not interrupted.",
   },
   {
     key: "ventilation",
     label: "Ventilation responds and stops",
-    detail:
-      "Observe a normal shower/humidity cycle, the selected thresholds, maximum run time and the return to normal humidity.",
+    detail: "Observe a normal shower/humidity cycle, the selected thresholds, maximum run time and the return to normal humidity.",
   },
   {
     key: "exterior",
@@ -55,38 +50,32 @@ export const GUIDE_CHECKS = [
   {
     key: "openings",
     label: "Opening reminders arrive correctly",
-    detail:
-      "Leave a selected opening open beyond its delay, confirm the destination and confirm the reminder stops when it closes.",
+    detail: "Leave a selected opening open beyond its delay, confirm the destination and confirm the reminder stops when it closes.",
   },
   {
     key: "appliance",
     label: "An appliance completes a real cycle",
-    detail:
-      "Observe a full cycle including pauses, then confirm exactly one completion reminder at the appropriate time.",
+    detail: "Observe a full cycle including pauses, then confirm exactly one completion reminder at the appropriate time.",
   },
   {
     key: "pause",
     label: "Pause leaves the room under manual control",
-    detail:
-      "Turn the area's Pause on in Home Assistant. Confirm its automations leave the equipment alone, including any running delayed action.",
+    detail: "Turn the area's Pause on in Home Assistant. Confirm its automations leave the equipment alone, including any running delayed action.",
   },
   {
     key: "guest",
     label: "Guests remain comfortable when residents leave",
-    detail:
-      "With Guest on, test the intended lighting/media exceptions and scheduled climate. Confirm resident Away does not override guest comfort.",
+    detail: "With Guest on, test the intended lighting/media exceptions and scheduled climate. Confirm resident Away does not override guest comfort.",
   },
   {
     key: "away",
     label: "Away has the intended effect",
-    detail:
-      "With Guest off, check that automatic indoor light turn-on is suppressed and climate uses its configured away behavior, where installed.",
+    detail: "With Guest off, check that automatic indoor light turn-on is suppressed and climate uses its configured away behavior, where installed.",
   },
   {
     key: "sleep",
     label: "Sleep uses the intended bedroom and night behavior",
-    detail:
-      "Test Sleep on and off. Confirm bedroom night targets and climate settings; a mode change should not force a light on.",
+    detail: "Test Sleep on and off. Confirm bedroom night targets and climate settings; a mode change should not force a light on.",
   },
 ] as const;
 export type GuideCheckKey = (typeof GUIDE_CHECKS)[number]["key"];
@@ -105,8 +94,7 @@ export function roomChecks(choice: AreaGuideChoice | null, modes: { guest: boole
     keys.add("manual");
   }
   if (goals.has("night")) keys.add("night");
-  for (const goal of ["climate", "media", "ventilation", "exterior", "openings"] as const)
-    if (goals.has(goal)) keys.add(goal);
+  for (const goal of ["climate", "media", "ventilation", "exterior", "openings"] as const) if (goals.has(goal)) keys.add(goal);
   if (goals.has("appliances")) keys.add("appliance");
   const indoor = goals.has("lighting") || goals.has("night") || goals.has("climate");
   if (modes.guest && (indoor || goals.has("media"))) keys.add("guest");
@@ -135,15 +123,6 @@ export function guideConfiguration(value: unknown): string {
   return `room-v1-${hash.toString(16).padStart(16, "0")}`;
 }
 
-export function currentRoomTest(
-  record: GuideTestRecord | null,
-  configuration: string,
-  checks: readonly { key: GuideCheckKey }[],
-): boolean {
-  return (
-    !!record &&
-    record.configuration === configuration &&
-    checks.length > 0 &&
-    checks.every((check) => record.checked.includes(check.key))
-  );
+export function currentRoomTest(record: GuideTestRecord | null, configuration: string, checks: readonly { key: GuideCheckKey }[]): boolean {
+  return !!record && record.configuration === configuration && checks.length > 0 && checks.every((check) => record.checked.includes(check.key));
 }

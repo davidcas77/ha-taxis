@@ -2,7 +2,8 @@ import { useState, type ReactNode } from "react";
 import { isHouseRecipe, type RecipeKey } from "../../shared/blueprints.ts";
 import { HOUSE_AREAS_OCCUPIED_ID } from "../../shared/climate.ts";
 import { areaCodes } from "../../shared/naming.ts";
-import { helperExclusions } from "../../shared/helpers.ts";
+import { helperExclusions, planSpaceLightGroup } from "../../shared/helpers.ts";
+import type { Space } from "../../shared/spaces.ts";
 import {
   areaInventory,
   CAPABILITY_LABEL,
@@ -23,7 +24,7 @@ import type { Hierarchy } from "../../shared/types.ts";
 import { AreaRecipeParameters, HouseRecipeParameters } from "./parameter-table.tsx";
 import { RECIPE_AVAILABILITY, recipeHelperSpecs, recipeHouseEntities } from "./recipe-availability-spec.ts";
 import { useTaxis } from "./state.tsx";
-import { RecipeWanted } from "./recipe-wanted.tsx";
+import { AreaRecipeConfiguration, RecipeAreaNavigation, RecipeAreaStatus } from "./recipe-wanted.tsx";
 import { PARAMETER_TAB } from "./recipe-parameter-tab.ts";
 import { RECIPE_STATUS } from "./recipe-status.ts";
 import { TvOccupancyApplicability } from "./tv-occupancy-applicability.tsx";
@@ -33,6 +34,9 @@ type Props = {
   recipe: RecipeKey;
   chosen: string | null;
   onChoose: (id: string) => void;
+  chosenScope: string | null;
+  onChooseScope: (id: string) => void;
+  spaces: readonly Space[];
   h: Hierarchy;
   cells: readonly RecipeCell[];
   error: string | null;
@@ -40,89 +44,206 @@ type Props = {
   renderDetail: (cell: RecipeCell) => ReactNode;
 };
 
-export function RecipeAvailability({ recipe, chosen, onChoose, h, cells, error, loading, renderDetail }: Props) {
+export function RecipeAvailability({ recipe, chosen, onChoose, chosenScope, onChooseScope, spaces, h, cells, error, loading, renderDetail }: Props) {
   const [showDetail, setShowDetail] = useState(false);
   const house = isHouseRecipe(recipe);
   const areas = Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const area = (chosen && h.areas[chosen]) || areas[0] || null;
-  const groups = h.floors.map((floor) => ({ id: floor.id, name: floor.name, areas: areas.filter((item) => item.floorId === floor.id) }));
-  const floorIds = new Set(h.floors.map((floor) => floor.id));
-  const noFloor = areas.filter((item) => !item.floorId || !floorIds.has(item.floorId));
-  if (noFloor.length) groups.push({ id: "__no_floor__", name: "No floor", areas: noFloor });
-  const selected = cells.find((cell) => cell.recipe === recipe && (house || cell.areaId === area?.id));
+  const space = spaces.find((item) => `space:${item.id}` === chosenScope);
+  const selected = cells.find(
+    (cell) =>
+      cell.recipe === recipe &&
+      (house
+        ? chosenScope !== null &&
+          (chosenScope === "legacy"
+            ? !cell.scope || cell.scope.kind === "legacy"
+            : cell.scope?.kind === "space" && `space:${cell.scope.space.id}` === chosenScope)
+        : cell.areaId === area?.id),
+  );
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row">
-      <nav
-        aria-label={`${house ? "House" : "Recipe areas"}`}
-        className={`${showDetail ? "hidden" : "block"} min-h-0 min-w-0 flex-1 overflow-y-auto md:block md:w-52 md:flex-none`}
-      >
-        {house ? (
+      {house ? (
+        <nav aria-label="Recipe scopes" className={`${showDetail ? "hidden" : "block"} min-h-0 min-w-0 flex-1 overflow-y-auto md:block md:w-52 md:flex-none`}>
+          <p className="mb-2 text-xs text-muted">Choose a scope</p>
+          {spaces.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              aria-current={chosenScope === `space:${item.id}` ? "true" : undefined}
+              onClick={() => {
+                onChooseScope(`space:${item.id}`);
+                setShowDetail(true);
+              }}
+              className={`w-full rounded px-3 py-2 text-left text-sm ${chosenScope === `space:${item.id}` ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`}
+            >
+              {item.name}
+            </button>
+          ))}
           <button
             type="button"
-            aria-current="true"
-            onClick={() => setShowDetail(true)}
-            className="w-full rounded bg-accent-soft px-3 py-2 text-left text-sm text-accent"
+            aria-current={chosenScope === "legacy" ? "true" : undefined}
+            onClick={() => {
+              onChooseScope("legacy");
+              setShowDetail(true);
+            }}
+            className={`w-full rounded px-3 py-2 text-left text-sm ${chosenScope === "legacy" ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`}
           >
-            House
+            All areas (legacy)
           </button>
-        ) : (
-          <>
-            {groups.map((group) => (
-              <details key={group.id} open className="mb-2 rounded border border-line">
-                <summary className="cursor-pointer px-2 py-1 text-sm font-semibold">{group.name}</summary>
-                <ul className="pb-1">
-                  {group.areas.map((item) => (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        aria-current={area?.id === item.id ? "true" : undefined}
-                        onClick={() => {
-                          onChoose(item.id);
-                          setShowDetail(true);
-                        }}
-                        className={`w-full break-words px-3 py-1 text-left text-sm ${area?.id === item.id ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`}
-                      >
-                        {item.name}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            ))}
-            {!areas.length && <p className="text-sm text-muted">No areas found.</p>}
-          </>
-        )}
-      </nav>
-      {(house || area) && (
+        </nav>
+      ) : (
+        !isHouseRecipe(recipe) && (
+          <RecipeAreaNavigation
+            key={recipe}
+            h={h}
+            recipe={recipe}
+            selectedId={area?.id ?? null}
+            label="Recipe areas"
+            className={`${showDetail ? "hidden" : "block"} min-h-0 min-w-0 flex-1 overflow-y-auto md:block md:w-52 md:flex-none`}
+            onChoose={(id) => {
+              onChoose(id);
+              setShowDetail(true);
+            }}
+          />
+        )
+      )}
+      {house && chosenScope === null && (
+        <div className="space-y-2">
+          <p className="text-sm text-muted">Choose a Space or All areas (legacy) to see its configuration.</p>
+          {error && (
+            <p role="alert" className="text-sm text-danger">
+              Could not check installed recipes: {error}
+            </p>
+          )}
+        </div>
+      )}
+      {house && chosenScope !== null && chosenScope !== "legacy" && space && (
+        <SpaceRecipeContents
+          h={h}
+          recipe={recipe}
+          space={space}
+          cell={selected}
+          error={error}
+          loading={loading}
+          renderDetail={renderDetail}
+          onBack={() => setShowDetail(false)}
+          showDetail={showDetail}
+        />
+      )}
+      {((house && chosenScope === "legacy") || (!house && area)) && (
         <div className={`${showDetail ? "block" : "hidden"} min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto md:block`}>
           <button type="button" className="text-sm text-accent md:hidden" onClick={() => setShowDetail(false)}>
-            ← Back to {house ? "House" : "areas"}
+            ← Back to {house ? "scopes" : "areas"}
           </button>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-base font-semibold">{house ? "House" : area!.name}</h3>
-            {house && selected && <span className="text-xs font-medium">{RECIPE_STATUS[selected.status]}</span>}
+            <h3 className="text-base font-semibold">{house ? "All areas (legacy)" : area!.name}</h3>
+            {house && selected && selected.status !== "missing" && <span className="text-xs font-medium">{RECIPE_STATUS[selected.status]}</span>}
           </div>
-          {!house && area && !isHouseRecipe(recipe) && <RecipeWanted key={`wanted:${recipe}:${area.id}`} areaId={area.id} recipe={recipe} cell={selected} />}
-          {error ? (
-            <p role="alert" className="text-sm text-danger">
-              Taxis couldn't check installed recipes, so proposals are unavailable. {error}
-            </p>
-          ) : loading ? (
-            <p className="text-sm text-muted">Checking settings and installed recipes…</p>
-          ) : selected ? (
-            renderDetail(selected)
-          ) : (
-            <p className="text-sm text-muted">No availability is available for this {house ? "house" : "area"}.</p>
-          )}
-          <AvailabilityContents
-            key={`${recipe}:${house ? "house" : area!.id}`}
-            recipe={recipe}
-            h={h}
-            areaId={house ? null : area!.id}
-            cells={cells}
-            enabled={!error && !loading}
-          />
+          {!house && area && !isHouseRecipe(recipe) && <RecipeAreaStatus areaId={area.id} recipe={recipe} cell={selected} />}
+          <AreaRecipeConfiguration areaId={house ? null : area!.id} recipe={isHouseRecipe(recipe) ? null : recipe}>
+            {error ? (
+              <p role="alert" className="text-sm text-danger">
+                Taxis couldn't check installed recipes, so proposals are unavailable. {error}
+              </p>
+            ) : loading ? (
+              <p className="text-sm text-muted">Checking settings and installed recipes…</p>
+            ) : selected ? (
+              renderDetail(selected)
+            ) : (
+              <p className="text-sm text-muted">No availability is available for this {house ? "house" : "area"}.</p>
+            )}
+            <AvailabilityContents
+              key={`${recipe}:${house ? "house" : area!.id}`}
+              recipe={recipe}
+              h={h}
+              areaId={house ? null : area!.id}
+              cells={cells}
+              enabled={!error && !loading}
+            />
+          </AreaRecipeConfiguration>
         </div>
+      )}
+    </div>
+  );
+}
+
+function SpaceRecipeContents({
+  h,
+  recipe,
+  space,
+  cell,
+  error,
+  loading,
+  renderDetail,
+  onBack,
+  showDetail,
+}: {
+  h: Hierarchy;
+  recipe: RecipeKey;
+  space: Space;
+  cell?: RecipeCell;
+  error: string | null;
+  loading: boolean;
+  renderDetail: (cell: RecipeCell) => ReactNode;
+  onBack: () => void;
+  showDetail: boolean;
+}) {
+  const { inventory, naming, changes, propose, busy, parametersSaving, reviewChanges } = useTaxis();
+  const group = recipe === "goodbye" ? planSpaceLightGroup(h, inventory, naming, changes, space) : null;
+  const pending = group?.id && changes.some((change) => change.kind === "helper" && (change.targetId === group.id || change.after.entity_id === group.id));
+  return (
+    <div className={`${showDetail ? "block" : "hidden"} min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto md:block`}>
+      <button type="button" className="text-sm text-accent md:hidden" onClick={onBack}>
+        ← Back to scopes
+      </button>
+      <h3 className="text-base font-semibold">{space.name}</h3>
+      <p className="text-xs text-muted">
+        Areas: {space.areaIds.map((id) => h.areas[id]?.name ?? id).join(", ") || "None assigned"}. Existing automations remain unchanged until reviewed and
+        updated.
+      </p>
+      {(space.blocked || cell?.scopeBlocked) && (
+        <p role="alert" className="text-sm text-warn">
+          {space.blocked || cell?.scopeBlocked}
+        </p>
+      )}
+      {error ? (
+        <p role="alert" className="text-sm text-danger">
+          Could not check installed recipes: {error}
+        </p>
+      ) : loading ? (
+        <p className="text-sm text-muted">Checking installed recipes…</p>
+      ) : cell ? (
+        renderDetail(cell)
+      ) : (
+        <p className="text-sm text-muted">This recipe is not available for this Space.</p>
+      )}
+      {group && (
+        <section className="border-t-[2pt] border-line pt-4">
+          <h4 className="text-sm font-semibold">Space light group</h4>
+          <p className="text-xs text-muted">
+            {group.id || "Not available"} · {pending ? "In Changes; apply before using" : group.status}
+            {group.reason ? ` · ${group.reason}` : ""}
+          </p>
+          {group.members.length > 0 && <p className="text-xs text-muted">Area groups: {group.members.join(", ")}</p>}
+          {group.inputs.length > 0 && (
+            <button
+              type="button"
+              className="text-xs text-accent underline disabled:opacity-50"
+              disabled={!cell || !!space.blocked || !!cell.scopeBlocked || !!pending || busy || parametersSaving || !!error || loading}
+              onClick={() => void propose(group.inputs)}
+            >
+              {reviewChanges ? "Add Space light group to Changes" : "Preview Space light group"}
+            </button>
+          )}
+        </section>
+      )}
+      {recipe !== "battery_low" && (
+        <section className="border-t-[2pt] border-line pt-4">
+          <h4 className="text-sm font-semibold">Space parameters</h4>
+          <fieldset disabled={!cell || !!space.blocked || !!cell.scopeBlocked} inert={!cell || !!space.blocked || !!cell.scopeBlocked}>
+            <HouseRecipeParameters h={h} keys={RECIPE_AVAILABILITY[recipe].houseParams} space={space} />
+          </fieldset>
+        </section>
       )}
     </div>
   );
@@ -141,7 +262,7 @@ function AvailabilityContents({
   cells: readonly RecipeCell[];
   enabled: boolean;
 }) {
-  const { inventory, inventoryLoaded, inventorySaving, saveInventory, naming, namingLoaded, parameters, parametersLoaded, changes } = useTaxis();
+  const { inventory, inventoryLoaded, inventorySaving, saveInventory, naming, namingLoaded, parameters, parametersLoaded, changes, reviewChanges } = useTaxis();
   const [error, setError] = useState<string | null>(null);
   const spec = RECIPE_AVAILABILITY[recipe];
   const ready = inventoryLoaded && namingLoaded;
@@ -159,7 +280,9 @@ function AvailabilityContents({
         <section>
           <h4 className="text-sm font-semibold">Sources</h4>
           <p className="mt-1 text-xs text-muted">
-            Candidate sources are shared with Capabilities. The recipe uses compatible selected sources according to its settings.{" "}
+            {reviewChanges
+              ? "These selections are saved in Taxis. Add the recipe changes to update Home Assistant."
+              : "Preview the affected helpers and automations before applying."}{" "}
             <a className="text-accent underline" href={`#area/${encodeURIComponent(areaId)}/capabilities`}>
               Manage capability types
             </a>

@@ -1,7 +1,7 @@
 import type { BlueprintInfo } from "./types.ts";
 
 // ---------------------------------------------------------------------------
-// Bathroom fan: the fan runs while the room is steamed up.
+// Ventilation: the fan responds to humidity in the area.
 //
 // One run per cycle (mode single), which is what lets it remember the humidity it
 // started from without any helper:
@@ -20,12 +20,12 @@ import type { BlueprintInfo } from "./types.ts";
 // ---------------------------------------------------------------------------
 
 const YAML = `blueprint:
-  name: Taxis bathroom fan
+  name: Taxis ventilation
   domain: automation
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Runs the fan of an area while it is steamed up. The fan goes on when the humidity rises at least as fast as the rise rate, when it is at least the delta above the reference sensor, or when it is at least the absolute level. It goes off when the humidity is back within the off delta of the reference (or, with no reference sensor, of the humidity when the fan started) and no longer rising fast, when the rate has been flat for the flat time, or after the maximum time. A fan that is already on is left alone, and with the sleep option nothing starts while the sleep switch is on. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 2."
+  description: "Runs an area fan in response to humidity. The fan goes on when the humidity rises at least as fast as the rise rate, when it is at least the delta above the reference sensor, or when it is at least the absolute level. It goes off when the humidity is back within the off delta of the reference (or, with no reference sensor, of the humidity when the fan started) and no longer rising fast, when the rate has been flat for the flat time, or after the maximum time. A fan that is already on is left alone, and with the sleep option nothing starts while the sleep switch is on. Does nothing while the pause switch is on. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 3."
   input:
     humidity_entity:
       name: Humidity sensor
@@ -220,7 +220,7 @@ export const bathroomFanBlueprint: BlueprintInfo = {
   path: "taxis/bathroom_fan.yaml",
   recipe: "bathroom_fan",
   domain: "automation",
-  version: 2,
+  version: 3,
   yaml: YAML,
   inputs: {
     humidity_entity: { kind: "entity", required: true, domain: "sensor" },

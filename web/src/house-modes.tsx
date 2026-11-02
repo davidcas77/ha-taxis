@@ -4,7 +4,7 @@ import { useTaxis, type Route } from "./state.tsx";
 import { Button, Card } from "./ui.tsx";
 
 export function HouseModes({ h, areaId = null, go }: { h: Hierarchy; areaId?: string | null; go: (route: Route) => void }) {
-  const { parameters, inventory, changes, propose, busy } = useTaxis();
+  const { parameters, inventory, changes, propose, busy, reviewChanges } = useTaxis();
   const rows = planHouseModes(h, parameters, inventory, changes, areaId);
   return (
     <section aria-label="House modes">
@@ -29,7 +29,7 @@ export function HouseModes({ h, areaId = null, go }: { h: Hierarchy; areaId?: st
                 <p className="mt-2 text-xs text-muted">{row.purpose}</p>
                 {row.inputs.length > 0 && (
                   <Button className="mt-3" disabled={busy} onClick={() => void propose(row.inputs)}>
-                    Add {row.label.toLowerCase()} switch to changes
+                    {reviewChanges ? `Add ${row.label.toLowerCase()} switch to changes` : `Create ${row.label.toLowerCase()} switch`}
                   </Button>
                 )}
               </Card>
@@ -37,9 +37,9 @@ export function HouseModes({ h, areaId = null, go }: { h: Hierarchy; areaId?: st
           ))}
         </ul>
         <p className="mt-3 text-xs text-muted">
-          Adding a switch only adds its creation to the changes. Review Changes and Apply when ready, then refresh and review each room's recipe updates.
-          Existing automations keep their saved inputs until updated. Per-area Pause always wins. Guest lighting and media behavior can be changed per area in
-          Parameters; climate keeps window, season, sleep and night protections.
+          {reviewChanges ? "Review Changes and Apply to create switches." : "Switches are created in Home Assistant immediately."} Refresh and review each
+          room's recipe updates. Existing automations keep their saved inputs until updated. Per-area Pause always wins. Guest lighting and media behavior can
+          be changed per area in Parameters; climate keeps window, season, sleep and night protections.
         </p>
       </Card>
     </section>

@@ -40,6 +40,8 @@ export type EntityItem = {
   // The class the user chose in the registry (null: the integration's own).
   deviceClassOverride: string | null;
   state: string | null;
+  // Configured timer duration in seconds, when Home Assistant reports it.
+  timerDuration?: number | null;
   unit: string | null;
   icon: string | null;
   deviceId: string | null;
@@ -176,9 +178,26 @@ export type ChangeOp = "create" | "update" | "delete";
 // The fields each kind of change may set, named as Home Assistant names them.
 export type ChangeFields = {
   // new_entity_id renames the entity; Apply also updates what uses the old id.
-  entity: { new_entity_id?: string; name?: string | null; icon?: string | null; area_id?: string | null; labels?: string[]; categories?: Partial<Record<CategoryScope, string | null>>; hidden_by?: "user" | null; disabled_by?: "user" | null; device_class?: string | null };
+  entity: {
+    new_entity_id?: string;
+    name?: string | null;
+    icon?: string | null;
+    area_id?: string | null;
+    labels?: string[];
+    categories?: Partial<Record<CategoryScope, string | null>>;
+    hidden_by?: "user" | null;
+    disabled_by?: "user" | null;
+    device_class?: string | null;
+  };
   device: { name_by_user?: string | null; area_id?: string | null; labels?: string[]; disabled_by?: "user" | null };
-  area: { name?: string; floor_id?: string | null; icon?: string | null; labels?: string[]; temperature_entity_id?: string | null; humidity_entity_id?: string | null };
+  area: {
+    name?: string;
+    floor_id?: string | null;
+    icon?: string | null;
+    labels?: string[];
+    temperature_entity_id?: string | null;
+    humidity_entity_id?: string | null;
+  };
   floor: { name?: string; level?: number | null; icon?: string | null };
   label: { name?: string; color?: string | null; icon?: string | null; description?: string | null };
   category: { name?: string; icon?: string | null };
@@ -239,6 +258,8 @@ export type Change = {
   before: Record<string, unknown>;
   after: Record<string, unknown>;
   createdAt: string;
+  // Safe, server-generated notes about replacement effects; never config values.
+  disclosures?: string[];
 };
 
 export type ChangeInput = {
@@ -246,6 +267,10 @@ export type ChangeInput = {
   op: ChangeOp;
   targetId?: string;
   scope?: CategoryScope;
+  // A proposal only: the server verifies the label and membership against HA.
+  space?: { labelId: string; areaIds: string[] };
+  // Explicit destination identity; the server verifies its native label name.
+  areaMove?: { spaceLabelId: string | null; sourceSpaces: { id: string; name: string }[] };
   fields?: Record<string, unknown>;
 };
 
@@ -283,13 +308,13 @@ export type HealthResponse = {
   ha: { configured: boolean; reason?: string };
 };
 
-export type HierarchyResponse =
-  | { ok: true; hierarchy: Hierarchy; cached: boolean }
-  | { ok: false; error: string };
+export type HierarchyResponse = { ok: true; hierarchy: Hierarchy; cached: boolean } | { ok: false; error: string };
 
 // `version` fingerprints the whole list (every change, before and after). Apply
 // sends back the version the user saw; any difference means they must look again.
 export type ChangesResponse = { ok: true; changes: Change[]; version: string } | { ok: false; error: string };
+
+export type GeneralResponse = { ok: true; revision?: string; general: import("./general-settings.ts").GeneralSettings } | { ok: false; error: string };
 
 export type NamingResponse = { ok: true; revision?: string; naming: import("./naming.ts").NamingSettings } | { ok: false; error: string };
 
@@ -302,7 +327,6 @@ export type InventoryResponse = { ok: true; revision?: string; inventory: import
 export type ParametersResponse = { ok: true; revision?: string; parameters: import("./parameters.ts").ParameterSettings } | { ok: false; error: string };
 
 export type ApplyResponse = ({ ok: true } & ApplyResult) | { ok: false; error: string };
-
 
 export type ApplyRun = {
   id: number;
@@ -319,7 +343,6 @@ export type HistoryResponse = { ok: true; runs: ApplyRun[] } | { ok: false; erro
 export type RepairsResponse = { ok: true; repairs: RepairItem[] } | { ok: false; error: string };
 
 export type ApplyStatus = "verified" | "stored" | "loaded" | "partial" | "unverified" | "failed";
-
 
 export type BlueprintItem = {
   domain: "automation" | "script";

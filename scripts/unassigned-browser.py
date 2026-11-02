@@ -134,11 +134,15 @@ class UnassignedRegression(unittest.TestCase):
         h = self.body["hierarchy"]
         floor = next(floor for floor in h["floors"] if floor["areaIds"])
         area = h["areas"][floor["areaIds"][0]]
-        spaces = self.page.get_by_role("navigation", name="Spaces", exact=True)
+        spaces = self.page.get_by_role("navigation", name="Floors and areas", exact=True)
         floor_label = spaces.locator("button[aria-expanded]").get_by_text(floor["name"], exact=True)
         area_label = spaces.locator("button:not([aria-expanded])").get_by_text(area["name"], exact=True)
-        self.assertAlmostEqual(area_label.bounding_box()["x"] - floor_label.bounding_box()["x"], 12, delta=1)
-        self.assertAlmostEqual(area_label.locator("..").bounding_box()["width"], floor_label.locator("..").bounding_box()["width"], delta=1)
+        # The selected area is nested under its Space (or No Space) on this floor.
+        group = area_label.locator("xpath=../../..")
+        space_label = group.locator("button[aria-expanded] span").first
+        self.assertAlmostEqual(space_label.bounding_box()["x"] - floor_label.bounding_box()["x"], 14, delta=1)
+        self.assertAlmostEqual(area_label.bounding_box()["x"] - space_label.bounding_box()["x"], 12, delta=1)
+        self.assertAlmostEqual(area_label.locator("../..").bounding_box()["width"], floor_label.locator("../..").bounding_box()["width"], delta=1)
         table = self.table()
         self.assertEqual(table.locator("tbody tr").count(), 100)
         # In a narrow window the least important columns give way; the Columns menu brings one back.

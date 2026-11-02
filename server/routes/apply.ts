@@ -1,12 +1,17 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 
 import { closureFor } from "../../shared/apply-plan.ts";
 import type { ApplyResponse, ApplyResult, Change } from "../../shared/types.ts";
 import { applyAll } from "../changes/all.ts";
+import type { ConfirmedReferences } from "../changes/direct-references.ts";
 import { applyPreflight } from "../changes/preflight.ts";
 import type { AppContext } from "../context.ts";
 import { ConfigCache } from "../ha/reader.ts";
 import { FULL_READ, READS, type ReadScope } from "../ha/registry.ts";
+import { buildHierarchy } from "../model/hierarchy.ts";
+import { spaceBaseline, spaceChangeGuard, type SpaceBaseline } from "../changes/space-safety.ts";
+import { sameValue } from "../../shared/changes.ts";
+import { spaceContext } from "../changes/space-context.ts";
 
 // Only these need the naming preflight (they name helpers after area codes).
 const NEEDS_PREFLIGHT = new Set(["helper", "automation", "script"]);
@@ -32,7 +37,7 @@ function validOnly(only: unknown): only is number[] {
 //   6. let the finished changes leave the list, drop every cache, and read Home
 //      Assistant once more, so the next view is current and a snapshot is kept.
 export function applyRoutes(ctx: AppContext): Hono {
-  const { reader, changes, history, settings, logger, ha, rest, target, mode, clock } = ctx;
+  const { reader, changes, ha, rest, target } = ctx;
   const app = new Hono();
 
   app.post("/apply", async (c) => {
@@ -60,80 +65,164 @@ export function applyRoutes(ctx: AppContext): Hono {
     }
 
     if (!reader.tryBeginApply()) return c.json<ApplyResponse>({ ok: false, error: "Changes are already being applied." }, 409);
-    let runId: number | null = null;
-    try {
-      runId = history.begin(pending);
+    return runLockedApply(ctx, c, pending, body);
+  });
 
-      if (pending.some((change) => NEEDS_PREFLIGHT.has(change.kind))) {
-        const raw = await reader.readParts(READS.hierarchy);
-        const error = applyPreflight(raw, pending, settings.naming());
+  return app;
+}
+
+// Caller holds the Apply lock and supplies exactly the newly validated changes.
+export async function runLockedApply(
+  ctx: AppContext,
+  c: Context,
+  pending: Change[],
+  body: ApplyBody,
+  verifyReferences?: () => Promise<ConfirmedReferences | null>,
+): Promise<Response> {
+  const { reader, changes, history, settings, logger, ha, rest, mode, clock } = ctx;
+  if (!ha || !rest) {
+    reader.endApply();
+    return c.json<ApplyResponse>({ ok: false, error: ctx.notConfigured }, 503);
+  }
+  let runId: number | null = null;
+  try {
+    runId = history.begin(pending);
+
+    if (pending.some((change) => NEEDS_PREFLIGHT.has(change.kind))) {
+      const raw = await reader.readParts(READS.hierarchy);
+      const error = applyPreflight(raw, pending, settings.naming());
+      if (error) {
+        history.finish(runId, [], error, false);
+        return c.json<ApplyResponse>({ ok: false, error }, 409);
+      }
+    }
+
+    // Backup first. Inside Home Assistant it's required: no backup, no changes.
+    // In development there's no Supervisor, so applying needs an explicit OK.
+    let backup: ApplyResult["backup"];
+    if (mode === "app") {
+      const name = `Taxis before applying ${pending.length} change${pending.length === 1 ? "" : "s"}`;
+      logger.info(`Making a backup: ${name}`);
+      const made = await ctx.backup(name);
+      if (!made.ok) {
+        history.finish(runId, [], `Backup failed; nothing was changed. ${made.reason}`, false);
+        logger.error("Backup failed, nothing was applied", made.reason);
+        return c.json<ApplyResponse>({ ok: false, error: `Nothing was changed. ${made.reason}` }, 502);
+      }
+      backup = { made: true, name, slug: made.slug };
+    } else if (body.allowWithoutBackup) {
+      backup = { made: false, reason: "Running outside Home Assistant, so no backup was possible." };
+    } else {
+      history.finish(runId, [], "Development Apply requires explicit confirmation without a backup; nothing was changed.", false);
+      return c.json<ApplyResponse>({ ok: false, error: "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one." }, 409);
+    }
+
+    history.backup(runId, backup);
+    // Membership can change during a backup. Recheck immediately before any
+    // write, including changes queued before Space labels were introduced.
+    if (pending.some((change) => NEEDS_PREFLIGHT.has(change.kind) || change.before.spaceSnapshot)) {
+      let raw = await reader.readParts(READS.hierarchy);
+      let live = buildHierarchy(raw, "");
+      const context = pending.some((change) => change.before.spaceSnapshot) ? await spaceContext(ctx, { raw, live }) : undefined;
+      if (context) {
+        // Reading installed configs can take time; the last hierarchy snapshot
+        // must come after those reads and immediately before the write checks.
+        raw = await reader.readParts(READS.hierarchy);
+        live = buildHierarchy(raw, "");
+      }
+      const transitions = pending.map((change) => (change.before.spaceSnapshot as SpaceBaseline | undefined)?.transition).filter((item) => item !== undefined);
+      if (transitions.length) {
+        const transition = transitions[0]!;
+        if (
+          !context ||
+          transitions.some((item) => !sameValue(item, transition)) ||
+          !sameValue(context.inventory, transition.after.inventory) ||
+          !sameValue(context.parameters, transition.after.parameters)
+        ) {
+          const error = "Space settings changed after review. Nothing was applied; review again.";
+          history.finish(runId, [], error, false);
+          return c.json<ApplyResponse>({ ok: false, error }, 409);
+        }
+        context.transition = transition;
+      }
+      for (const change of pending) {
+        if (!NEEDS_PREFLIGHT.has(change.kind) && !change.before.spaceSnapshot) continue;
+        const snapshot = change.before.spaceSnapshot as SpaceBaseline | undefined;
+        const otherChanges =
+          snapshot && ["area", "device", "entity", "label"].includes(change.kind) ? pending.filter((item) => item.id !== change.id) : pending;
+        if (snapshot) {
+          const current = spaceBaseline({ labelId: snapshot.labelId, areaIds: snapshot.areaIds }, live, otherChanges, context);
+          if (typeof current === "string" || !sameValue(current, snapshot)) {
+            const error = "Space membership or entity ownership changed after review. Nothing was applied; review again.";
+            history.finish(runId, [], error, false);
+            return c.json<ApplyResponse>({ ok: false, error }, 409);
+          }
+        }
+        const error = spaceChangeGuard(
+          {
+            kind: change.kind,
+            op: change.op,
+            targetId: change.targetId,
+            fields: change.after,
+            ...(snapshot ? { space: { labelId: snapshot.labelId, areaIds: snapshot.areaIds } } : {}),
+          },
+          live,
+          otherChanges,
+          context,
+        );
         if (error) {
           history.finish(runId, [], error, false);
           return c.json<ApplyResponse>({ ok: false, error }, 409);
         }
       }
-
-      // Backup first. Inside Home Assistant it's required: no backup, no changes.
-      // In development there's no Supervisor, so applying needs an explicit OK.
-      let backup: ApplyResult["backup"];
-      if (mode === "app") {
-        const name = `Taxis before applying ${pending.length} change${pending.length === 1 ? "" : "s"}`;
-        logger.info(`Making a backup: ${name}`);
-        const made = await ctx.backup(name);
-        if (!made.ok) {
-          history.finish(runId, [], `Backup failed; nothing was changed. ${made.reason}`, false);
-          logger.error("Backup failed, nothing was applied", made.reason);
-          return c.json<ApplyResponse>({ ok: false, error: `Nothing was changed. ${made.reason}` }, 502);
-        }
-        backup = { made: true, name, slug: made.slug };
-      } else if (body.allowWithoutBackup) {
-        backup = { made: false, reason: "Running outside Home Assistant, so no backup was possible." };
-      } else {
-        history.finish(runId, [], "Development Apply requires explicit confirmation without a backup; nothing was changed.", false);
-        return c.json<ApplyResponse>({ ok: false, error: "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one." }, 409);
-      }
-
-      history.backup(runId, backup);
-      logger.info(`Applying ${pending.length} change(s) to Home Assistant`);
-
-      // Configs read during this Apply are shared between its steps (the rename
-      // step reads every automation; the button step wants the same ones) and
-      // forgotten as soon as Apply itself writes them. Verification never uses
-      // this cache: it reads Home Assistant through `rest`.
-      const configs = new ConfigCache(rest, clock, Number.POSITIVE_INFINITY);
-      const outcome = await applyAll(pending, {
-        ha,
-        rest: configs.observing(rest),
-        configReads: configs.view(),
-        // Each check reads only what it looks at (registry.ts).
-        readFresh: (scope?: ReadScope) => reader.readParts(scope ?? FULL_READ),
-      });
-      const { results } = outcome;
-      const appliedIds = results.filter((r) => r.ok).map((r) => r.changeId);
-      for (const r of results) {
-        const change = pending.find((x) => x.id === r.changeId)!;
-        const line = `${change.op} ${change.kind} ${change.targetId}: ${r.message}`;
-        if (r.ok) logger.info(line);
-        else logger.error(line);
-        for (const d of r.details ?? []) logger.info(`  ${d}`);
-      }
-      // Done changes leave the list; the rest stay. Creations that happened hand
-      // their real ids to the changes still pointing at them.
-      changes.settle(outcome, () => history.finish(runId!, results));
-      logger.info(`Applied ${appliedIds.length} of ${pending.length} change(s)`);
-      await refreshAfterApply(ctx);
-      return c.json<ApplyResponse>({ ok: true, backup, results });
-    } catch (e) {
-      if (runId !== null) history.finish(runId, [], ctx.errorText(e));
-      logger.error("Applying changes failed", e);
-      reader.invalidate();
-      return c.json<ApplyResponse>({ ok: false, error: ctx.errorText(e) }, 502);
-    } finally {
-      reader.endApply();
     }
-  });
+    let confirmedReferences: ConfirmedReferences | undefined;
+    if (verifyReferences) {
+      confirmedReferences = (await verifyReferences()) ?? undefined;
+      if (!confirmedReferences) {
+        const error = "References changed after your preview. Nothing was applied; review them again.";
+        history.finish(runId, [], error, false);
+        return c.json<ApplyResponse>({ ok: false, error }, 409);
+      }
+    }
+    logger.info(`Applying ${pending.length} change(s) to Home Assistant`);
 
-  return app;
+    // Configs read during this Apply are shared between its steps (the rename
+    // step reads every automation; the button step wants the same ones) and
+    // forgotten as soon as Apply itself writes them. Verification never uses
+    // this cache: it reads Home Assistant through `rest`.
+    const configs = new ConfigCache(rest, clock, Number.POSITIVE_INFINITY);
+    const outcome = await applyAll(pending, {
+      ha,
+      rest: configs.observing(rest),
+      configReads: configs.view(),
+      // Each check reads only what it looks at (registry.ts).
+      readFresh: (scope?: ReadScope) => reader.readParts(scope ?? FULL_READ),
+      confirmedReferences,
+    });
+    const { results } = outcome;
+    const appliedIds = results.filter((r) => r.ok).map((r) => r.changeId);
+    for (const r of results) {
+      const change = pending.find((x) => x.id === r.changeId)!;
+      const line = `${change.op} ${change.kind} ${change.targetId}: ${r.message}`;
+      if (r.ok) logger.info(line);
+      else logger.error(line);
+      for (const d of r.details ?? []) logger.info(`  ${d}`);
+    }
+    // Done changes leave the list; the rest stay. Creations that happened hand
+    // their real ids to the changes still pointing at them.
+    changes.settle(outcome, () => history.finish(runId!, results));
+    logger.info(`Applied ${appliedIds.length} of ${pending.length} change(s)`);
+    await refreshAfterApply(ctx);
+    return c.json<ApplyResponse>({ ok: true, backup, results });
+  } catch (e) {
+    if (runId !== null) history.finish(runId, [], ctx.errorText(e));
+    logger.error("Applying changes failed", e);
+    reader.invalidate();
+    return c.json<ApplyResponse>({ ok: false, error: ctx.errorText(e) }, 502);
+  } finally {
+    reader.endApply();
+  }
 }
 
 // Whatever happened, the next view must come from a fresh read, of the

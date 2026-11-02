@@ -40,7 +40,10 @@ import { AreaSelect, Button, Chip, EditedDot, EmptyState, Toolbar } from "./ui.t
 const selectClass =
   "rounded-md border border-line bg-bg px-2 py-1 text-[13px] outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50";
 
-const CAPABILITIES_NOTE = "Detected from each entity's area, domain and device class. Choices are stored in Taxis only; nothing changes in Home Assistant.";
+const capabilitiesNote = (review: boolean) =>
+  review
+    ? "These selections are saved in Taxis. Add the recipe changes to update Home Assistant."
+    : "Preview the affected helpers and automations before applying.";
 
 // ---------------------------------------------------------------------------
 // Lights without an area.
@@ -67,7 +70,7 @@ function cannotPlace(e: EntityItem, named: boolean): string | null {
 // The lights that sit in no area, with a picker per light. Adding them puts an
 // area change per light in the list; the preview then shows them in their areas.
 function LightsWithoutArea({ h }: { h: Hierarchy }) {
-  const { propose, busy } = useTaxis();
+  const { propose, busy, reviewChanges } = useTaxis();
   const lights = useMemo(() => lightsWithoutArea(h), [h]);
   const [chosen, setChosen] = useState<Record<string, string | null>>({});
   const [named, setNamed] = useState<Record<string, boolean>>({});
@@ -96,7 +99,7 @@ function LightsWithoutArea({ h }: { h: Hierarchy }) {
         </h2>
         {picked.length > 0 && (
           <Button tone="primary" disabled={busy} onClick={() => void add()}>
-            Add {picked.length} to changes
+            {reviewChanges ? `Add ${picked.length} to changes` : `Apply ${picked.length} changes`}
           </Button>
         )}
       </div>
@@ -214,7 +217,7 @@ function floorKey(r: MatrixRow): string | null {
 }
 
 export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
-  const { inventory, inventoryLoaded, naming } = useTaxis();
+  const { inventory, inventoryLoaded, naming, reviewChanges } = useTaxis();
   const [showEmpty, setShowEmpty] = useState(false);
   // An area's own canonical helpers are under Helpers, not counted here.
   const all = useMemo(() => inventoryMatrix(h, inventory, helperExclusions(h, naming)).sort((a, b) => a.name.localeCompare(b.name)), [h, inventory, naming]);
@@ -287,7 +290,7 @@ export function CapabilitiesMatrix({ h, go }: { h: Hierarchy; go: (r: Route) => 
   return (
     <div className="flex min-w-0 flex-col gap-3">
       <LightsWithoutArea h={h} />
-      <p className="max-w-[68ch] text-[13px] text-muted">{CAPABILITIES_NOTE}</p>
+      <p className="max-w-[68ch] text-[13px] text-muted">{capabilitiesNote(reviewChanges)}</p>
       <Toolbar label="Capabilities filters">
         <label htmlFor="show-empty-areas" className="flex w-fit cursor-pointer items-center gap-2 text-[13px]">
           <input
@@ -328,7 +331,7 @@ const FLAGS: Record<InventoryFlag, { label: string; hint: string; tone: string }
 const ROLE_HINT = "Starts: turns the room occupied. Holds: keeps an occupied room occupied, but doesn't start it.";
 
 const FAN_HINT =
-  "A fan counts by default. A switch is listed too but doesn't count: tick Counts on the ones that run a fan, so the Bathroom fan recipe can switch them.";
+  "A fan counts by default. A switch is listed too but doesn't count: tick Counts on the ones that run a fan, so the Ventilation recipe can switch them.";
 const CLIMATE_HINT =
   "AC, Heating or Valve, read from the modes each one offers: one that can cool is an AC, one that only heats is Heating. Switch a radiator valve to Valve. Area climate runs an AC in both seasons, and heating and valves only in the heating season.";
 const APPLIANCE_HINT =
@@ -347,7 +350,7 @@ const KIND_LABEL: Partial<Record<Capability, string>> = { door: "Door", window: 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
-  const { inventory, inventoryLoaded, inventorySaving, saveInventory, naming } = useTaxis();
+  const { inventory, inventoryLoaded, inventorySaving, saveInventory, naming, reviewChanges } = useTaxis();
   const [error, setError] = useState<string | null>(null);
   const locked = !inventoryLoaded || inventorySaving;
   const inv = useMemo(() => areaInventory(h, inventory, area.id, helperExclusions(h, naming)(area.id)), [h, inventory, naming, area.id]);
@@ -375,7 +378,7 @@ export function AreaCapabilitiesTab({ h, area, go }: { h: Hierarchy; area: AreaN
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="max-w-[68ch] text-[13px] text-muted">{CAPABILITIES_NOTE}</p>
+      <p className="max-w-[68ch] text-[13px] text-muted">{capabilitiesNote(reviewChanges)}</p>
 
       <AreaTypes key={area.id} h={h} area={area} />
 

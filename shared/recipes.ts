@@ -1,3 +1,4 @@
+import { areaSpace, scopeProblem, spaceIds, type RecipeScope } from "./spaces.ts";
 import { ANNOUNCE_PATH, ANNOUNCE_SCRIPT_ID, blueprintForRecipe, type AreaRecipeKey, type HouseRecipeKey, type RecipeKey } from "./blueprints.ts";
 import { ENTITY_ID_RE, sameValue } from "./changes.ts";
 import { HOUSE_AWAY_ID, HOUSE_SLEEP_ID, kindRunsIn, type Season } from "./climate.ts";
@@ -22,7 +23,7 @@ export const RECIPES: readonly { key: AreaRecipeKey; label: string }[] = [
   { key: "motion_lights", label: "Motion lights" },
   { key: "media_off", label: "Media off" },
   { key: "area_climate", label: "Area climate" },
-  { key: "bathroom_fan", label: "Bathroom fan" },
+  { key: "bathroom_fan", label: "Ventilation" },
   { key: "exterior_lights", label: "Exterior lights" },
   { key: "left_open", label: "Left open" },
   { key: "appliance_done", label: "Appliance done" },
@@ -45,7 +46,8 @@ export const ANNOUNCE_ALIAS = "Announce (Taxis)";
 
 export const automationIdFor = (recipe: RecipeKey, code: string) => `taxis_${recipe}_${code}`;
 
-export const automationAlias = (areaName: string, recipe: RecipeKey) => `${areaName} – ${RECIPE_LABEL[recipe]} (Taxis)`;
+export const automationAlias = (areaName: string, recipe: RecipeKey) =>
+  `${areaName} – ${recipe === "bathroom_fan" ? "Bathroom fan" : RECIPE_LABEL[recipe]} (Taxis)`;
 
 // The helpers the recipes of an area need, by entity id: the hold timer, the
 // occupied sensor and the pause switch (Occupancy makes them, the others use
@@ -141,6 +143,9 @@ export type RecipesResponse = { ok: true; installed: RecipeInstalled } | { ok: f
 export type RecipeStatus = "missing" | "ready" | "installed" | "out-of-date" | "in-changes";
 
 export type RecipeCell = {
+  scope?: RecipeScope;
+  targetId?: string;
+  scopeBlocked?: string;
   areaId: string;
   areaName: string;
   recipe: RecipeKey;
@@ -184,7 +189,7 @@ const INPUT_LABEL: Record<string, string> = {
   guest_entities: "Guest mode switches",
   guest_pause_lighting: "Guest mode pauses automatic lighting",
   guest_pause_media: "Guest mode keeps media on",
-  entry_lights: "Entry lights",
+  entry_lights: "Motion lights",
   main_lights: "Main lights",
   accent_lights: "Accent lights",
   night_lights: "Night lights",
@@ -353,6 +358,7 @@ export function planRecipes(
   params: ParameterSettings,
   installed: RecipeInstalled,
   changes: readonly Change[],
+  projectDesired = false,
 ): RecipeCell[] {
   const codes = areaCodes(h, naming);
   const conflicts = areaCodeConflicts(h, naming);
@@ -520,7 +526,7 @@ export function planRecipes(
     const occStatus = statusOf(occupancyId, occMissing, occReasons);
 
     const occInputs: ChangeInput[] = [];
-    if (occStatus === "ready" || occStatus === "out-of-date") {
+    if (occStatus === "ready" || occStatus === "out-of-date" || projectDesired) {
       occInputs.push(...blueprintInput("occupancy"));
       if (timer.state === "absent" && !pendingHelper(changes, ids.timer)) {
         occInputs.push(timerCreate(`${area.name} hold`, ids.timer, holdSeconds));
@@ -573,9 +579,9 @@ export function planRecipes(
     // What the recipes that follow Occupancy need of it: the automation, installed
     // or in the list, and the occupied sensor and pause switch it makes.
     const needsOccupancy = (): string[] => {
-      if (!(occInstalled || (recipeWanted(inventory, area.id, "occupancy") && pendingAutomation(changes, occupancyId))))
+      if (!(occInstalled || (recipeWanted(inventory, area.id, "occupancy", h) && pendingAutomation(changes, occupancyId))))
         return [
-          recipeWanted(inventory, area.id, "occupancy") ? "Occupancy (install it first)" : "Occupancy is not wanted here (enable it and install it first)",
+          recipeWanted(inventory, area.id, "occupancy", h) ? "Occupancy (install it first)" : "Occupancy is not wanted here (enable it and install it first)",
         ];
       if (!usable) return ["An area code that makes valid entity ids (Settings)"];
       return (
@@ -661,7 +667,7 @@ export function planRecipes(
       motionReasons.push(`The override timer is ${timerNow(ids.override)! / 60} min, the override setting says ${overrideSeconds / 60}`);
     const motionStatus = statusOf(motionId, lightMissing, motionReasons);
     const motionInputs: ChangeInput[] = [];
-    if (motionStatus === "ready" || motionStatus === "out-of-date") {
+    if (motionStatus === "ready" || motionStatus === "out-of-date" || projectDesired) {
       motionInputs.push(...blueprintInput("motion_lights"));
       if (overrideTimer.state === "absent" && !pendingHelper(changes, ids.override)) {
         motionInputs.push(timerCreate(`${area.name} override`, ids.override, overrideSeconds));
@@ -675,11 +681,11 @@ export function planRecipes(
     if (entry.lights.length === 0 && inv.lights.some((r) => r.counts)) {
       notes.push(
         nightLights.length > 0
-          ? "No entry or main lights, so only the night lights go on"
-          : "No entry or main lights, so no light goes on by day (set an entry light, or a light's role, on the area's Capabilities tab)",
+          ? "No Motion lights, so only the Night lights go on"
+          : "No Motion lights, so no light goes on by day (choose Motion lights for this area)",
       );
     }
-    if (entry.set && entry.source !== "set") notes.push("The entry lights set for this area don't count here any more, so the suggested ones are used");
+    if (entry.set && entry.source !== "set") notes.push("The Motion lights set for this area don't count here any more, so the suggested ones are used");
     if (bedSensors.length > 0 && nightLights.length === 0) notes.push("No night lights, so no light goes on while someone is in bed");
     out.push({
       areaId: area.id,
@@ -728,7 +734,7 @@ export function planRecipes(
     if (installed.automations[mediaOffId]) mediaReasons.push(...blueprintReason("media_off"));
     const mediaStatus = statusOf(mediaOffId, mediaMissing, mediaReasons);
     const mediaInputs: ChangeInput[] = [];
-    if (mediaStatus === "ready" || mediaStatus === "out-of-date")
+    if (mediaStatus === "ready" || mediaStatus === "out-of-date" || projectDesired)
       mediaInputs.push(...blueprintInput("media_off"), automationInput("media_off", mediaOffId, mediaInput));
     out.push({
       areaId: area.id,
@@ -759,22 +765,24 @@ export function planRecipes(
     // The house switches: the ones the user picked, else the two Taxis makes.
     const awayPicked = text("away_mode_entity");
     const sleepPicked = text("sleep_mode_entity");
-    const awayId = awayPicked || HOUSE_AWAY_ID;
-    const sleepId = sleepPicked || HOUSE_SLEEP_ID;
+    const awayId = houseModes.find((mode) => mode.key === "away")?.id ?? HOUSE_AWAY_ID;
+    const sleepId = houseModes.find((mode) => mode.key === "sleep")?.id ?? HOUSE_SLEEP_ID;
     const climateMissing: string[] = [];
+    const modeScope = areaSpace(h, area.id, changes);
+    const modeSettings = modeScope.kind === "space" ? "Space" : "House";
     // A house switch: the one the user picked (which has to exist), else the one Taxis makes.
     // What stops a recipe is put in `missing`.
     const houseSwitch = (missing: string[], id: string, picked: string, what: string, name: string, icon: string): ChangeInput[] => {
       if (picked) {
         const e = h.entities[picked];
-        if (!e) missing.push(`The ${what} switch “${picked}” isn't in Home Assistant (Parameters, House)`);
+        if (!e) missing.push(`The ${what} switch “${picked}” isn't in Home Assistant (Parameters, ${modeSettings})`);
         else if (e.domain !== "input_boolean") missing.push(`The ${what} switch “${picked}” isn't a toggle (an input boolean)`);
         else if (e.disabled || !["on", "off"].includes(e.state ?? "")) missing.push(`The ${what} switch “${picked}” is disabled or unavailable`);
         return [];
       }
       const held = heldBy(h, id, "input_boolean");
       if (held.state === "taken") {
-        missing.push(`${id} is already used by “${held.name}”. Pick a switch of your own for ${what} (Parameters, House)`);
+        missing.push(`${id} is already used by “${held.name}”. Pick a switch of your own for ${what} (Parameters, ${modeSettings})`);
         return [];
       }
       if (held.state === "ok" && (h.entities[id].disabled || !["on", "off"].includes(h.entities[id].state ?? ""))) {
@@ -784,12 +792,15 @@ export function planRecipes(
       if (held.state === "ok" || pendingHelper(changes, id)) return [];
       return [{ kind: "helper", op: "create", fields: { helper: "input_boolean", name, entity_id: id, icon } }];
     };
+    const modePrefix = modeScope.kind === "space" ? `Taxis ${modeScope.space.name}` : "Taxis";
     const houseInputs = [
-      ...houseSwitch(climateMissing, awayId, awayPicked, "away mode", "Taxis away mode", "mdi:home-export-outline"),
-      ...houseSwitch(climateMissing, sleepId, sleepPicked, "sleep mode", "Taxis sleep mode", "mdi:sleep"),
+      ...houseSwitch(climateMissing, awayId, awayPicked, "away mode", `${modePrefix} away mode`, "mdi:home-export-outline"),
+      ...houseSwitch(climateMissing, sleepId, sleepPicked, "sleep mode", `${modePrefix} sleep mode`, "mdi:sleep"),
     ];
 
     climateMissing.push(...modeProblems(["guest"]));
+    for (const mode of houseModes.filter((row) => ["away", "sleep"].includes(row.key) && row.status === "review" && row.detail.includes("another Space")))
+      climateMissing.push(`${mode.label} mode: ${mode.detail} (${mode.id})`);
 
     const windowId = canonicalId("binary_sensor", code, suffix.window);
     const doorId = canonicalId("binary_sensor", code, suffix.door);
@@ -800,7 +811,7 @@ export function planRecipes(
     );
     const tempThere = groupThere(tempId, "min_max");
     const occupiedThere =
-      (occInstalled || (recipeWanted(inventory, area.id, "occupancy") && pendingAutomation(changes, occupancyId))) &&
+      (occInstalled || (recipeWanted(inventory, area.id, "occupancy", h) && pendingAutomation(changes, occupancyId))) &&
       (occupied.state === "ok" || pendingHelper(changes, ids.occupied));
     // A bedroom that hasn't been given a choice doesn't need anyone in it for comfort.
     const needsResolved = resolve(params, h, inventory, area.id, "comfort_needs_occupancy");
@@ -873,7 +884,7 @@ export function planRecipes(
     }
     const climateStatus = statusOf(climateId, climateMissing, climateReasons);
     const climateInputs: ChangeInput[] = [];
-    if (climateStatus === "ready" || climateStatus === "out-of-date") {
+    if (climateStatus === "ready" || climateStatus === "out-of-date" || projectDesired) {
       climateInputs.push(...blueprintInput("area_climate"), ...houseInputs);
       if (toggle.state === "absent" && !pendingHelper(changes, ids.switch)) {
         climateInputs.push({
@@ -961,7 +972,7 @@ export function planRecipes(
       controlledBy: RecipeCell["controlledBy"] = [],
     ): void => {
       const status = statusOf(id, missing, reasons);
-      const inputs = status === "ready" || status === "out-of-date" ? build() : [];
+      const inputs = status === "ready" || status === "out-of-date" || projectDesired ? build() : [];
       out.push({
         areaId: area.id,
         areaName: area.name,
@@ -996,7 +1007,7 @@ export function planRecipes(
     const switchGone = (installedHere: boolean): string[] =>
       installedHere && toggle.state === "absent" && !pendingHelper(changes, ids.switch) ? [`${ids.switch} is missing`] : [];
     const notifyTargets = values.notify_targets as string[];
-    const noTargets = "No notify services are set (Parameters, House), so the message appears in Home Assistant's notifications";
+    const noTargets = `No notify services are set (Parameters, ${modeSettings}), so the message appears in Home Assistant's notifications`;
 
     // ---- Bathroom fan -----------------------------------------------------
     const fanId = automationIdFor("bathroom_fan", code);
@@ -1014,8 +1025,11 @@ export function planRecipes(
     if (fans.length === 0) fanMissing.push("A fan, or a switch marked as a fan (Capabilities)");
     if (!usable) fanMissing.push("An area code that makes valid entity ids (Settings)");
     else for (const m of [taken(ids.rate, rate), taken(ids.switch, toggle)]) if (m) fanMissing.push(m);
-    if (reference && !h.entities[reference]) fanMissing.push(`The reference humidity sensor “${reference}” isn't in Home Assistant (Parameters, Bathroom fan)`);
-    const fanSleepSwitch = suppress ? houseSwitch(fanMissing, sleepId, sleepPicked, "sleep mode", "Taxis sleep mode", "mdi:sleep") : [];
+    if (reference && !h.entities[reference]) fanMissing.push(`The reference humidity sensor “${reference}” isn't in Home Assistant (Parameters, Ventilation)`);
+    const fanSleepSwitch = suppress ? houseSwitch(fanMissing, sleepId, sleepPicked, "sleep mode", `${modePrefix} sleep mode`, "mdi:sleep") : [];
+    if (suppress)
+      for (const mode of houseModes.filter((row) => row.key === "sleep" && row.status === "review" && row.detail.includes("another Space")))
+        fanMissing.push(`${mode.label} mode: ${mode.detail} (${mode.id})`);
     const fanInput: Record<string, unknown> = {
       humidity_entity: humidityId,
       rate_entity: ids.rate,
@@ -1041,7 +1055,7 @@ export function planRecipes(
     const fanNotes: string[] = [];
     if (!reference)
       fanNotes.push(
-        "No reference humidity sensor, so the fan starts on the rise rate and the humidity level only, and stops when the humidity is back near where it started (Parameters, Bathroom fan)",
+        "No reference humidity sensor, so the fan starts on the rise rate and the humidity level only, and stops when the humidity is back near where it started (Parameters, Ventilation)",
       );
     if (values.humidity_hold_rate === 0) fanNotes.push("A shower doesn't hold the area occupied yet (Parameters, Occupancy)");
     finish("bathroom_fan", fanId, fanMissing, fanReasons, fanNotes, () => [
@@ -1064,7 +1078,7 @@ export function planRecipes(
     // ---- Exterior lights --------------------------------------------------
     const exteriorId = automationIdFor("exterior_lights", code);
     const exteriorMissing: string[] = [];
-    if (areaChoice(inventory, area.id).type !== "exterior") exteriorMissing.push("An exterior area (Capabilities, Type)");
+    if (areaChoice(inventory, area.id, h).type !== "exterior") exteriorMissing.push("An exterior area (Capabilities, Type)");
     if (!lights) {
       if (!lightsPending) exteriorMissing.push("A light group (make it on the Helpers tab)");
     } else if (lights.domain !== "light" || lights.platform !== "group") {
@@ -1076,8 +1090,9 @@ export function planRecipes(
       .filter((r) => r.counts)
       .map((r) => r.entityId)
       .sort();
+    const areaMembership = areaSpace(h, area.id, changes);
     const people = Object.values(h.entities)
-      .filter((e) => e.domain === "person" && !e.disabled)
+      .filter((e) => areaMembership.kind === "legacy" && e.domain === "person" && !e.disabled)
       .map((e) => e.entityId)
       .sort();
     const exteriorInput: Record<string, unknown> = {
@@ -1199,7 +1214,7 @@ export function planRecipes(
       .filter((r) => r.counts)
       .map((r) => r.entityId)
       .sort();
-    const valve = String(resolveIn(params, [{ level: "house" }], "leak_valve_entity").value ?? "");
+    const valve = String(resolve(params, h, inventory, area.id, "leak_valve_entity").value ?? "");
     const leakMissing: string[] = [];
     if (leaks.length === 0) leakMissing.push("A leak (moisture) sensor that counts (Capabilities)");
     if (!usable) leakMissing.push("An area code that makes valid entity ids (Settings)");
@@ -1208,6 +1223,14 @@ export function planRecipes(
       if (m) leakMissing.push(m);
     }
     if (valve && !h.entities[valve]) leakMissing.push(`The water valve “${valve}” isn't in Home Assistant (Parameters, Safety)`);
+    const valveScope = areaSpace(h, area.id, changes);
+    if (
+      valve &&
+      valveScope.kind === "space" &&
+      h.entities[valve] &&
+      (!h.entities[valve].areaId || !valveScope.space.areaIds.includes(h.entities[valve].areaId!))
+    )
+      leakMissing.push(`The water valve “${valve}” is not assigned to an area in this Space. Review its assignment before using it.`);
     const leakInput: Record<string, unknown> = {
       leak_entities: leaks,
       notify_targets: notifyTargets,
@@ -1278,18 +1301,28 @@ export function planRecipes(
       automationInput("covers_sun", coversId, coversInput),
     ]);
   }
-  return out.map((cell) =>
-    recipeWanted(inventory, cell.areaId, cell.recipe as AreaRecipeKey)
-      ? cell
+  return out.map((cell) => {
+    const scope = areaSpace(h, cell.areaId, changes);
+    const blocked = scope.kind === "conflict" ? scope.error : scope.kind === "space" ? scope.space.blocked : null;
+    if (blocked)
+      return { ...cell, status: "missing" as const, scopeBlocked: blocked, missing: [blocked], notes: [], reasons: [], inputs: [], actionable: false };
+    const scoped = scope.kind === "space" ? { labelId: scope.space.id, areaIds: [...scope.space.areaIds] } : null;
+    const decorated: RecipeCell = {
+      ...cell,
+      ...(scope.kind === "space" ? { scope } : {}),
+      inputs: scoped ? cell.inputs.map((input) => (input.kind === "blueprint" ? input : { ...input, space: scoped })) : cell.inputs,
+    };
+    return recipeWanted(inventory, cell.areaId, cell.recipe as AreaRecipeKey, h)
+      ? decorated
       : {
-          ...cell,
+          ...decorated,
           wanted: false,
           installed: Boolean(installed.automations[automationIdFor(cell.recipe as AreaRecipeKey, codes[cell.areaId].code)]),
           pending: pendingAutomation(changes, automationIdFor(cell.recipe as AreaRecipeKey, codes[cell.areaId].code)),
           actionable: false,
-          inputs: [],
-        },
-  );
+          inputs: projectDesired ? decorated.inputs : [],
+        };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1306,12 +1339,35 @@ export function planAnnounce(
   params: ParameterSettings,
   installed: RecipeInstalled,
   changes: readonly Change[],
+  projectDesired = false,
+  scope: RecipeScope = { kind: "legacy" },
 ): RecipeCell {
+  const blocked = scopeProblem(h, changes, scope);
+  if (blocked)
+    return {
+      scope,
+      scopeBlocked: blocked,
+      areaId: "",
+      areaName: scope.kind === "space" ? scope.space.name : "House",
+      recipe: "announce",
+      status: "missing",
+      missing: [blocked],
+      reasons: [],
+      notes: [],
+      controlledBy: [],
+      controls: "lights",
+      inputs: [],
+      actionable: false,
+    };
+  const scoped = scope.kind === "space" ? scope.space : null;
+  const scriptId = scoped ? spaceIds(scoped.id).announce : ANNOUNCE_SCRIPT_ID;
+  const metadata = scoped ? { labelId: scoped.id, areaIds: [...scoped.areaIds] } : undefined;
   const codes = areaCodes(h, naming);
   const conflicts = areaCodeConflicts(h, naming);
   const exclusions = helperExclusions(h, naming);
   // The house settings: the same for every area.
-  const house = (key: "tts_entity" | "announce_volume") => resolveIn(params, [{ level: "house" }], key).value;
+  const house = (key: "tts_entity" | "announce_volume") =>
+    resolveIn(params, scoped ? [{ level: "space", id: scoped.id }, { level: "house" }] : [{ level: "house" }], key).value;
   const missing: string[] = [];
   let hasConflictingSpeaker = false;
   const notes: string[] = [];
@@ -1321,6 +1377,7 @@ export function planAnnounce(
   const areas: AnnounceArea[] = [];
   const noOccupancy: string[] = [];
   for (const area of Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))) {
+    if (scoped && !scoped.areaIds.includes(area.id)) continue;
     const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
     const speakers = inv.speaker
       .filter((r) => r.counts)
@@ -1337,7 +1394,14 @@ export function planAnnounce(
     const ids = runtimeIds(code);
     const occupancyId = automationIdFor("occupancy", code);
     const exists = (id: string, domain: string, platform?: string) => heldBy(h, id, domain, platform).state === "ok" || pendingHelper(changes, id);
+    const areaOwns = (id: string) =>
+      !scoped ||
+      (h.entities[id]
+        ? h.entities[id].areaId === area.id
+        : changes.some((c) => c.kind === "helper" && c.op === "create" && c.after.entity_id === id && c.after.area_id === area.id));
     const occupied =
+      areaOwns(ids.occupied) &&
+      areaOwns(ids.switch) &&
       ENTITY_ID_RE.test(ids.occupied) &&
       Boolean(installed.automations[occupancyId] || pendingAutomation(changes, occupancyId)) &&
       exists(ids.occupied, "binary_sensor", "template") &&
@@ -1357,17 +1421,22 @@ export function planAnnounce(
 
   // The text-to-speech entity is a house setting.
   const tts = String(house("tts_entity") ?? "");
-  if (!tts) missing.push("A text-to-speech entity (Parameters, House)");
-  else if (!h.entities[tts]) missing.push(`The text-to-speech entity “${tts}” isn't in Home Assistant (Parameters, House)`);
-  if (areas.length === 0) missing.push("A speaker that counts in an area that has Occupancy (Capabilities, Recipes)");
-  const held = h.entities[`script.${ANNOUNCE_SCRIPT_ID}`];
-  const there = installed.scripts[ANNOUNCE_SCRIPT_ID] ?? null;
+  if (!tts) missing.push(`A text-to-speech entity (Parameters, ${scoped ? "Space" : "House"})`);
+  else if (!h.entities[tts]) missing.push(`The text-to-speech entity “${tts}” isn't in Home Assistant (Parameters, ${scoped ? "Space" : "House"})`);
+  if (areas.length === 0)
+    missing.push(
+      scoped
+        ? "A selected speaker in an area that has Occupancy (Capabilities, Recipes)"
+        : "A speaker that counts in an area that has Occupancy (Capabilities, Recipes)",
+    );
+  const held = h.entities[`script.${scriptId}`];
+  const there = installed.scripts[scriptId] ?? null;
   if (unavailableRecipe(there)) missing.push(unavailableRecipeMessage);
-  if (held && !there && !pendingScript(changes, ANNOUNCE_SCRIPT_ID))
-    missing.push(`script.${ANNOUNCE_SCRIPT_ID} is already used by “${held.name}”, which Taxis didn't make or can't edit`);
+  if (held && !there && !pendingScript(changes, scriptId))
+    missing.push(`script.${scriptId} is already used by “${held.name}”, which Taxis didn't make or can't edit`);
 
   const input: Record<string, unknown> = { areas, tts_entity: tts, default_volume: house("announce_volume") };
-  const alias = ANNOUNCE_ALIAS;
+  const alias = scoped ? `${scoped.name} – Announce (Taxis)` : ANNOUNCE_ALIAS;
 
   const reasons: string[] = [];
   if (there) {
@@ -1403,7 +1472,7 @@ export function planAnnounce(
 
   const status: RecipeStatus = hasConflictingSpeaker
     ? "missing"
-    : pendingScript(changes, ANNOUNCE_SCRIPT_ID)
+    : pendingScript(changes, scriptId)
       ? "in-changes"
       : missing.length > 0
         ? "missing"
@@ -1413,7 +1482,7 @@ export function planAnnounce(
             : "out-of-date"
           : "ready";
   const inputs: ChangeInput[] = [];
-  if (status === "ready" || status === "out-of-date") {
+  if (status === "ready" || status === "out-of-date" || projectDesired) {
     const bp = blueprintForRecipe("announce");
     const version = installed.blueprints[bp.path] ?? null;
     if (version !== bp.version && !pendingBlueprint(changes, bp.path, bp.version)) {
@@ -1421,13 +1490,16 @@ export function planAnnounce(
     }
     inputs.push({
       kind: "script",
+      ...(metadata ? { space: metadata } : {}),
       op: there ? "update" : "create",
-      fields: { script_id: ANNOUNCE_SCRIPT_ID, alias, use_blueprint: { path: ANNOUNCE_PATH, input } },
+      fields: { script_id: scriptId, alias, use_blueprint: { path: ANNOUNCE_PATH, input } },
     });
   }
   return {
+    scope,
+    targetId: scriptId,
     areaId: "",
-    areaName: "House",
+    areaName: scoped?.name ?? "House",
     recipe: "announce",
     status,
     missing: status === "missing" ? missing : [],

@@ -433,9 +433,9 @@ describe("motion lights", () => {
       /\(t >= night_start or t < night_end\) if night_start > night_end else \(night_start <= t < night_end\)/,
     );
     // The lights: night lights while asleep, or at night when there are some; by day the
-    // entry lights, and the main lights when there are none (also at night with no night lights).
+    // motion lights by day and at night when there are no night lights.
     expect(String(variable(tree, "profile_lights"))).toBe(
-      "{{ night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else (entry_lights if (profile == 'day' and (entry_lights | count) > 0) else main_lights) }}",
+      "{{ night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else motion_lights }}",
     );
     expect(String(variable(tree, "brightness"))).toMatch(/day_brightness if profile == 'day' else night_brightness/);
     expect(String(variable(tree, "kelvin"))).toMatch(/day_kelvin if profile == 'day' else night_kelvin/);
@@ -456,15 +456,16 @@ describe("motion lights", () => {
     }
   });
 
-  it("is version 5: the entry lights are an optional list of lights, empty by default, and the day profile turns them on", () => {
-    expect(BLUEPRINTS.find((b) => b.path === "taxis/motion_lights.yaml")!.version).toBe(5);
+  it("is version 6: motion lights are used by day and as the night fallback", () => {
+    expect(BLUEPRINTS.find((b) => b.path === "taxis/motion_lights.yaml")!.version).toBe(6);
     const entry = obj(obj(obj(tree.blueprint).input).entry_lights);
     expect(entry.default).toEqual([]);
     expect(obj(obj(entry.selector).entity).multiple).toBe(true);
     expect(BLUEPRINTS.find((b) => b.path === "taxis/motion_lights.yaml")!.inputs.entry_lights).toEqual({ kind: "entities", required: false, domain: "light" });
-    // By day, with entry lights, only they go on at the start: the main lights are the fallback.
-    expect(String(variable(tree, "profile_lights"))).toContain("(entry_lights if (profile == 'day' and (entry_lights | count) > 0) else main_lights)");
-    // Night and sleep are unchanged: the night lights, or the main lights at night when there are none.
+    // Motion lights are used when not asleep and no night selection applies.
+    expect(String(variable(tree, "motion_lights"))).toBe("{{ entry_lights if (entry_lights | count) > 0 else main_lights }}");
+    expect(String(variable(tree, "profile_lights"))).toContain("else motion_lights");
+    // Sleep uses night lights only, including when that selection is empty.
     expect(String(variable(tree, "profile_lights"))).toContain(
       "night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else",
     );
@@ -815,6 +816,10 @@ describe("area climate", () => {
 
 describe("bathroom fan", () => {
   const tree = parsed("taxis/bathroom_fan.yaml");
+  it("names the humidity-driven blueprint Ventilation and retains its stable path", () => {
+    expect(obj(tree.blueprint).name).toBe("Taxis ventilation");
+    expect(BLUEPRINTS.find((blueprint) => blueprint.path === "taxis/bathroom_fan.yaml")!.version).toBe(3);
+  });
   const trigger = obj(list(tree.triggers)[0]);
   const actions = list(tree.actions).map(obj);
 

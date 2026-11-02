@@ -214,7 +214,7 @@ it("offers schedule and humidity derivative independently of thermostat and fan"
   expect(standaloneHouseHelperInputs()[0]).toMatchObject({ kind: "helper", op: "create", fields: { entity_id: HOUSE_PAUSE_ID, helper: "input_boolean" } });
 });
 
-it("uses explicit area types for the optional occupancy humidity rate, while Bathroom fan keeps its required helper", () => {
+it("uses explicit area types for the optional occupancy humidity rate, while Ventilation keeps its required helper", () => {
   const ids = runtimeIds("kit");
   for (const name of ["Balcony", "Kitchen"]) {
     const hierarchy = { ...h, areas: { ...h.areas, kitchen: { ...h.areas.kitchen, name } } };
@@ -224,7 +224,7 @@ it("uses explicit area types for the optional occupancy humidity rate, while Bat
   for (const name of ["Bathroom", "Bedroom Bathroom"]) {
     const hierarchy = { ...h, areas: { ...h.areas, kitchen: { ...h.areas.kitchen, name } } };
     expect(specs("occupancy", { h: hierarchy }).find((item) => item.id === ids.rate)).toMatchObject({
-      role: "Measures how quickly humidity rises for Bathroom fan (optional)",
+      role: "Measures how quickly humidity rises for Ventilation (optional)",
       optional: true,
     });
   }

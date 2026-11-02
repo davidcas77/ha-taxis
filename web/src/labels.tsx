@@ -4,8 +4,9 @@ import { type CategoryItem, type ChangeInput, type EntityItem, type Hierarchy, t
 import { SCOPE_NAMES } from "./editors.tsx";
 import { AssignTool } from "./assign.tsx";
 import { EntityLabels } from "./entity-labels.tsx";
+import { Actions } from "./edit-actions.tsx";
 import { useTaxis } from "./state.tsx";
-import { Actions, ConfirmAction, Field, HeaderBar, PageHeader, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
+import { ConfirmAction, Field, HeaderBar, PageHeader, inputClass, LABEL_COLORS, labelColor } from "./ui.tsx";
 
 // Label and category details, shown in the Organize page's right pane. Labels
 // go on areas, devices and entities; categories file automations, scripts,

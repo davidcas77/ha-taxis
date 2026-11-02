@@ -12,6 +12,7 @@ import { HOUSE_AREAS_OCCUPIED_ID, HOUSE_HELPER_IDS, HOUSE_OCCUPIED_ID, HOUSE_OCC
 import { BUTTON_AUTOMATION_ID, validButtonMap } from "./buttons.ts";
 import { deviceClassError } from "./device-classes.ts";
 import { checkPeriods } from "./periods.ts";
+import { spaceFloorFromDescription, spaceIds } from "./spaces.ts";
 import { CATEGORY_SCOPES, type CategoryScope, type Change, type ChangeInput, type ChangeKind, type Hierarchy } from "./types.ts";
 
 // The change list: what may be changed, and how a new edit folds into the edits
@@ -115,7 +116,7 @@ export const FIELDS: Record<ChangeKind, Record<string, Check>> = {
     button_map: validButtonMap,
   },
   script: {
-    script_id: (v) => typeof v === "string" && SCRIPT_IDS.includes(v),
+    script_id: (v) => typeof v === "string" && (SCRIPT_IDS.includes(v) || /^taxis_space_s[0-9a-f]{16}_(announce|goodbye)$/.test(v)),
     alias: str(),
     use_blueprint: useBlueprint,
   },
@@ -143,6 +144,18 @@ const an = (kind: string) => (/^[aeiou]/.test(kind) ? `an ${kind}` : `a ${kind}`
 export function validateInput(input: ChangeInput): string | null {
   if (!(input.kind in FIELDS)) return `Unknown kind "${String(input.kind)}".`;
   if (!["create", "update", "delete"].includes(input.op)) return `Unknown operation "${String(input.op)}".`;
+  if (
+    input.areaMove !== undefined &&
+    (input.kind !== "area" ||
+      input.op !== "update" ||
+      !input.areaMove ||
+      Object.keys(input.areaMove).some((key) => key !== "spaceLabelId" && key !== "sourceSpaces") ||
+      (input.areaMove.spaceLabelId !== null && !id(input.areaMove.spaceLabelId)) ||
+      !Array.isArray(input.fields?.labels) ||
+      !Array.isArray(input.areaMove.sourceSpaces) ||
+      !input.areaMove.sourceSpaces.every((item) => item && id(item.id) && typeof item.name === "string"))
+  )
+    return "The area move destination wasn't readable.";
   if (NEVER_DELETED.has(input.kind) && input.op === "delete") return `${cap(an(input.kind))} can be created or updated, not deleted.`;
   if (input.op !== "update" && !CREATABLE.has(input.kind)) return `${cap(an(input.kind))} can be edited, not created or deleted.`;
   if (input.kind === "category") {
@@ -166,10 +179,10 @@ export function validateInput(input: ChangeInput): string | null {
   }
   if (input.op === "create" && !keyed && !str()(fields.name)) return `A new ${input.kind} needs a name.`;
   if (input.op === "update" && Object.keys(fields).length === 0) return "Nothing to change.";
-  if (input.kind === "helper") return validateHelper(input.op, fields);
+  if (input.kind === "helper") return validateHelper(input.op, fields, input.space);
   if (input.kind === "blueprint") return validateBlueprint(fields);
   if (input.kind === "automation") return validateAutomation(fields);
-  if (input.kind === "script") return validateScript(fields);
+  if (input.kind === "script") return validateScript(fields, input.space);
   return null;
 }
 
@@ -214,10 +227,16 @@ function validateAutomation(fields: Record<string, unknown>): string | null {
 
 // The scripts Taxis makes (announce, goodbye): one each for the house, from its
 // own blueprint, under its own id.
-function validateScript(fields: Record<string, unknown>): string | null {
+function validateScript(fields: Record<string, unknown>, scope?: ChangeInput["space"]): string | null {
   for (const key of ["script_id", "alias", "use_blueprint"]) if (!(key in fields)) return `A script change needs ${key.replace("_", " ")}.`;
   const ub = fields.use_blueprint as { path: string };
-  if (ub.path !== SCRIPT_BLUEPRINTS[String(fields.script_id)]) return "That script uses another blueprint.";
+  let expected = SCRIPT_BLUEPRINTS[String(fields.script_id)];
+  if (scope && typeof scope.labelId === "string" && scope.labelId && !scope.labelId.startsWith("new:")) {
+    const ids = spaceIds(scope.labelId);
+    if (fields.script_id === ids.announce) expected = SCRIPT_BLUEPRINTS.taxis_announce;
+    else if (fields.script_id === ids.goodbye) expected = SCRIPT_BLUEPRINTS.taxis_goodbye;
+  }
+  if (!expected || ub.path !== expected) return "That script uses another blueprint.";
   return null;
 }
 
@@ -233,7 +252,7 @@ const OWN_FIELDS = {
   schedule: ["helper", "name", "entity_id", "area_id", "periods"],
 } as const;
 
-function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>): string | null {
+function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>, scope?: ChangeInput["space"]): string | null {
   if (op === "update") {
     const only = (key: string) => Object.keys(fields).every((k) => k === key);
     return only("entities") || only("duration") || only("periods")
@@ -244,10 +263,18 @@ function validateHelper(op: ChangeInput["op"], fields: Record<string, unknown>):
   if (!("entity_id" in fields)) return "A new helper needs an entity id.";
   // The house's mode switches, its pause switch and its occupied sensors belong to no area.
   const entity = String(fields.entity_id);
+  let scopedHouse = false;
+  if (scope && typeof scope.labelId === "string" && scope.labelId && !scope.labelId.startsWith("new:")) {
+    const ids = spaceIds(scope.labelId);
+    scopedHouse =
+      (fields.helper === "input_boolean" && [ids.away, ids.sleep, ids.guest, ids.pause].includes(entity)) ||
+      (fields.helper === "group" && fields.group_type === "binary_sensor" && entity === ids.areasOccupied);
+  }
   const house =
     (fields.helper === "input_boolean" && HOUSE_HELPER_IDS.includes(entity)) ||
     (fields.helper === "template" && entity === HOUSE_OCCUPIED_ID) ||
-    (fields.helper === "group" && fields.group_type === "binary_sensor" && entity === HOUSE_AREAS_OCCUPIED_ID);
+    (fields.helper === "group" && fields.group_type === "binary_sensor" && entity === HOUSE_AREAS_OCCUPIED_ID) ||
+    scopedHouse;
   if (house && "area_id" in fields) return "The house's own helpers have no area.";
   // A light group of a floor or of the house gathers other groups and goes in no area.
   const floating = fields.helper === "group" && fields.group_type === "light";
@@ -396,6 +423,8 @@ export function refsOf(c: { before?: Record<string, unknown>; after: Record<stri
   const out: Ref[] = [];
   if (typeof after.area_id === "string") out.push({ kind: "area", id: after.area_id });
   if (typeof after.floor_id === "string") out.push({ kind: "floor", id: after.floor_id });
+  const spaceFloor = spaceFloorFromDescription(after.description);
+  if (spaceFloor) out.push({ kind: "floor", id: spaceFloor });
   for (const l of labelDiff({ before: c.before ?? {}, after })?.added ?? []) out.push({ kind: "label", id: l });
   if (after.categories && typeof after.categories === "object") {
     for (const [scope, c] of Object.entries(after.categories)) if (typeof c === "string") out.push({ kind: "category", id: c, scope: scope as CategoryScope });
@@ -409,6 +438,8 @@ export function stripRef(change: Change, ref: string): Record<string, unknown> {
   const after = { ...change.after };
   if (after.area_id === ref) delete after.area_id;
   if (after.floor_id === ref) delete after.floor_id;
+  // Keep a Space placement hint if its pending floor is discarded. Apply will
+  // reject the missing reference instead of silently creating an unplaced Space.
   if (Array.isArray(after.labels) && after.labels.includes(ref)) {
     after.labels = after.labels.filter((l) => l !== ref);
     if (sameValue(after.labels, change.before.labels)) delete after.labels;

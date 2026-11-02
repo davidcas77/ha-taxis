@@ -10,7 +10,7 @@ import { useTaxisData } from "./state.tsx";
 import { AreaSelect, Button } from "./ui.tsx";
 
 export function UnassignedDevices({ h, showDisabled }: { h: Hierarchy; showDisabled: boolean }) {
-  const { propose, busy } = useTaxisData();
+  const { propose, busy, reviewChanges } = useTaxisData();
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -136,7 +136,7 @@ export function UnassignedDevices({ h, showDisabled }: { h: Hierarchy; showDisab
                   className="shrink-0"
                   disabled={locked}
                   aria-label={`Use suggested area ${h.areas[suggestion.areaId].name} for device ${device.name}`}
-                  title="Add this device area assignment to Changes"
+                  title={reviewChanges ? "Add this device area assignment to Changes" : "Apply this device area assignment"}
                   onClick={() => void assign([device.id], suggestion.areaId)}
                 >
                   <Check className="size-3" aria-hidden />

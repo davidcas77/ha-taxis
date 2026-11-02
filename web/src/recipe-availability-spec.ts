@@ -25,6 +25,8 @@ export const RECIPE_AVAILABILITY: Record<RecipeKey, RecipeAvailability> = {
     capabilities: ["lights", "presence", "illuminance"],
     areaParams: [
       "entry_lights",
+      "main_lights",
+      "strong_lights",
       "ambient_lights",
       "night_lights",
       "away_mode_entity",
@@ -262,7 +264,7 @@ export function recipeHelperSpecs({ recipe, h, areaId, inventory, naming, parame
       managed(ids.occupied, "occupied", "Area occupancy virtual sensor", "binary_sensor", "template");
       pause();
       if (areaHasRoomType(h, inventory, areaId, "bathroom"))
-        managed(ids.rate, "humidity rate", "Measures how quickly humidity rises for Bathroom fan (optional)", "sensor", "derivative", true, "Bathroom fan");
+        managed(ids.rate, "humidity rate", "Measures how quickly humidity rises for Ventilation (optional)", "sensor", "derivative", true, "Ventilation");
       break;
     case "motion_lights":
       lights();

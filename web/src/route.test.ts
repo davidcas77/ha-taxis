@@ -9,6 +9,7 @@ const ROUTES: Route[] = [
   { page: "guide", areaId: "kitchen" },
   AREAS_HOME,
   { page: "areas", sel: { kind: "floor", id: "ground" }, tab: "overview" },
+  { page: "areas", sel: { kind: "space", id: "new:label/a b" }, tab: "overview" },
   { page: "areas", sel: { kind: "area", id: "kitchen" }, tab: "overview" },
   { page: "areas", sel: { kind: "area", id: "kitchen" }, tab: "naming" },
   { page: "areas", sel: { kind: "area", id: "a b/c" }, tab: "devices-entities" },

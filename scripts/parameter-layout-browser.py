@@ -1,4 +1,4 @@
-"""Lighting layout and Bathroom fan area filtering; all settings writes intercepted."""
+"""Lighting layout and Ventilation area filtering; all settings writes intercepted."""
 import copy
 import json
 import os
@@ -65,7 +65,7 @@ class ParameterLayoutRegression(unittest.TestCase):
 
     def open(self, tab):
         self.page.goto(BASE + "/#parameters/" + tab, wait_until="domcontentloaded")
-        return self.page.get_by_role("table", name="Lighting" if tab == "lighting" else "Bathroom fan", exact=True)
+        return self.page.get_by_role("table", name="Lighting" if tab == "lighting" else "Ventilation", exact=True)
 
     def area_row(self, table, name):
         """The row of a level (house default, interior, exterior, an area) by the name in its first column."""
@@ -82,12 +82,12 @@ class ParameterLayoutRegression(unittest.TestCase):
         widths = row.locator("td").evaluate_all("cells => cells.map(cell => cell.getBoundingClientRect().width)")
         self.assertTrue(all(width <= 320 for width in widths), widths)
         self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
-        trigger = row.get_by_role("button", name="Entry lights for Laundry: 20 lights, set here", exact=True)
+        trigger = row.get_by_role("button", name="Motion lights for Laundry: 20 lights, set here", exact=True)
         trigger.hover()
         tooltip = self.page.get_by_role("tooltip")
         tooltip.get_by_text(self.light_ids[-1], exact=True).wait_for()
         trigger.click()
-        dialog = self.page.get_by_role("dialog", name="Entry lights for Laundry", exact=True)
+        dialog = self.page.get_by_role("dialog", name="Motion lights for Laundry", exact=True)
         dialog.wait_for()
         self.assertEqual(dialog.get_by_role("checkbox").count(), 20)
         self.assertLessEqual(dialog.bounding_box()["height"], 546)
@@ -98,8 +98,8 @@ class ParameterLayoutRegression(unittest.TestCase):
         self.assertEqual(len(self.puts[-1]["areas"]["laundry"]["entry_lights"]), 19)
         self.page.keyboard.press("Escape")
         expect(dialog).to_have_count(0)
-        row.get_by_role("button", name="Clear Entry lights for Laundry", exact=True).click()
-        suggested = row.get_by_role("button", name="Entry lights for Laundry: 20 lights, suggested", exact=True)
+        row.get_by_role("button", name="Clear Motion lights for Laundry", exact=True).click()
+        suggested = row.get_by_role("button", name="Motion lights for Laundry: 20 lights, suggested", exact=True)
         suggested.wait_for()
         self.assertLessEqual(row.bounding_box()["height"], 60)
         suggested.click()
@@ -139,14 +139,21 @@ class ParameterLayoutRegression(unittest.TestCase):
 
     def test_fan_empty_relevance_keeps_defaults_and_explains_recovery(self):
         self.inventory["entities"]["fan.laundry_fan"] = {"counts": False}
+        # No fixture area is a Bathroom, regardless of the copied HA area's labels.
+        for area_id, area in self.body["hierarchy"]["areas"].items():
+            area["labels"] = []
+            self.inventory["areas"][area_id] = {"roomTypes": []}
         table = self.open("fan")
-        self.page.get_by_role("status").filter(has_text="No areas have both an included fan").wait_for()
+        self.page.get_by_role("status").filter(has_text="No bathroom areas or areas with both an included fan and humidity sensor").wait_for()
         # Only the house, interior and exterior defaults remain: no area and no floor heading.
         self.assertEqual(table.locator("tbody tr").count(), 3)
         for name in ["House default", "Interior", "Exterior"]:
             self.assertEqual(table.get_by_text(name, exact=True).count(), 1)
         self.assertEqual(table.get_by_text("Test floor", exact=True).count(), 0)
         self.page.get_by_role("link", name="Capabilities", exact=True).wait_for()
+        self.page.get_by_role("checkbox", name="Show all areas", exact=True).check()
+        self.area_row(table, "Living room").wait_for()
+        self.assertEqual(self.parameters["areas"]["nofan"]["fan_abs_on"], 91)
         self.assertEqual(self.puts, [])
 
 

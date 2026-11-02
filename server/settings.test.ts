@@ -474,6 +474,15 @@ describe("validateNaming: helper names", () => {
 });
 
 describe("validateParameters", () => {
+  it("validates Space values and keeps area-only settings out of Space rows", () => {
+    const spaces = { studio: { notify_targets: ["notify.mobile_app_phone"], hold_timeout: 7 } };
+    const areas = { kitchen: { leak_valve_entity: "valve.water" } };
+    expect(validateParameters({ spaces, areas })).toEqual({ ok: true, value: { house: {}, types: {}, spaces, areas } });
+    expect(validateParameters({ spaces: { "new:label:1": { hold_timeout: 7 } } }).ok).toBe(false);
+    expect(validateParameters({ spaces: { studio: { main_lights: ["light.one"] } } }).ok).toBe(false);
+    expect(validateParameters({ areas: { kitchen: { announce_volume: 20 } } }).ok).toBe(false);
+    expect(validateParameters({ spaces: Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`s${i}`, {}])) }).ok).toBe(false);
+  });
   const ok = {
     house: { night_start: "22:00", hold_timeout: 8 },
     types: { exterior: { hold_timeout: 2 } },
@@ -483,7 +492,7 @@ describe("validateParameters", () => {
   it("validates independent motion light lists including an explicit empty selection", () => {
     const value = { areas: { kitchen: { ambient_lights: [], night_lights: ["light.main"] } } };
     expect(validateParameters(value)).toEqual({ ok: true, value: { house: {}, types: {}, ...value } });
-    for (const key of ["ambient_lights", "night_lights"]) {
+    for (const key of ["main_lights", "strong_lights", "ambient_lights", "night_lights"]) {
       expect(validateParameters({ house: { [key]: [] } }).ok).toBe(false);
       expect(validateParameters({ areas: { kitchen: { [key]: ["switch.unsafe"] } } }).ok).toBe(false);
       expect(validateParameters({ areas: { kitchen: { [key]: Array.from({ length: 21 }, (_, i) => `light.l${i}`) } } }).ok).toBe(false);
@@ -498,7 +507,7 @@ describe("validateParameters", () => {
     for (const bad of [[], "light.a", ["switch.a"], ["light.a", "light.a"], [1]]) {
       expect(validateParameters({ areas: { kitchen: { entry_lights: bad } } }), JSON.stringify(bad)).toMatchObject({
         ok: false,
-        error: expect.stringContaining("Entry lights must be a list"),
+        error: expect.stringContaining("Motion lights must be a list"),
       });
     }
   });
@@ -685,10 +694,8 @@ describe("validateParameters: the house-only values and the later recipes", () =
         ok: false,
         error: expect.stringContaining("can only be set for the house (exterior areas)"),
       });
-      expect(validateParameters({ areas: { kitchen: { [key]: value } } }), key).toMatchObject({
-        ok: false,
-        error: expect.stringContaining("can only be set for the house (area kitchen)"),
-      });
+      if (key === "announce_volume") expect(validateParameters({ areas: { kitchen: { [key]: value } } }), key).toMatchObject({ ok: false });
+      else expect(validateParameters({ areas: { kitchen: { [key]: value } } }), key).toMatchObject({ ok: true });
     }
   });
 
@@ -762,6 +769,9 @@ describe("area recipe preferences", () => {
     expect(store.inventory()).toEqual(value);
     for (const preferences of [{ goodbye: false }, { unknown: false }, { occupancy: "no" }, []])
       expect(validateInventory({ areas: { garden: { recipePreferences: preferences } } })).toMatchObject({ ok: false });
-    expect(validateInventory({ areas: { garden: { recipePreferences: { occupancy: true } } } })).toEqual({ ok: true, value: { entities: {}, areas: {} } });
+    expect(validateInventory({ areas: { garden: { recipePreferences: { occupancy: true } } } })).toEqual({
+      ok: true,
+      value: { entities: {}, areas: { garden: { recipePreferences: { occupancy: true } } } },
+    });
   });
 });

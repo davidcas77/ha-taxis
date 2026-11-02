@@ -212,6 +212,7 @@ export function Actions({
   saving = false,
   error,
   danger,
+  saveLabel = "Add to changes",
 }: {
   dirty: boolean;
   onSave: () => void;
@@ -219,13 +220,14 @@ export function Actions({
   saving?: boolean;
   error?: string | null;
   danger?: ReactNode;
+  saveLabel?: string;
 }) {
   return (
     <>
       {dirty && <span className="text-xs text-muted">Unsaved edits</span>}
       {dirty && (
         <Button tone="primary" onClick={onSave} disabled={saving}>
-          Add to changes
+          {saveLabel}
         </Button>
       )}
       {onCancel && (

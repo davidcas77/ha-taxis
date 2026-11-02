@@ -26,7 +26,7 @@ import { GuideRoomTest } from "./guide-room-test.tsx";
 import type { GuideTestRecord } from "../../shared/guide-checks.ts";
 
 export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | null; go: (route: Route) => void }) {
-  const { inventory, naming, parameters, changes, inventoryLoaded, namingLoaded, parametersLoaded, propose, busy, notify } = useTaxis();
+  const { inventory, naming, parameters, changes, inventoryLoaded, namingLoaded, parametersLoaded, propose, busy, notify, reviewChanges } = useTaxis();
   const [guide, setGuide] = useState<GuideSettings | null>(null);
   const [guideError, setGuideError] = useState<string | null>(null);
   const [installed, setInstalled] = useState<RecipeInstalled | null>(null);
@@ -233,7 +233,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
                             </div>
                             {helper.row.actionable && !helper.pending && (
                               <Button disabled={busy} onClick={() => void propose(helperChangeInputs(helper.row))}>
-                                Add helper to changes
+                                {reviewChanges ? "Add helper to changes" : "Apply helper"}
                               </Button>
                             )}
                           </li>
@@ -302,7 +302,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
                             </div>
                             {recipe.cell?.actionable && (
                               <Button disabled={busy} onClick={() => void propose(recipeChangeInputs([recipe.cell!]))}>
-                                Add {RECIPE_LABEL[recipe.key]} to changes
+                                {reviewChanges ? `Add ${RECIPE_LABEL[recipe.key]} to changes` : `Apply ${RECIPE_LABEL[recipe.key]}`}
                               </Button>
                             )}
                           </div>

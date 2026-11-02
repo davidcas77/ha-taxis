@@ -11,11 +11,12 @@ import {
 } from "../../shared/blueprints.ts";
 import { isDeepStrictEqual } from "node:util";
 import { sameValue } from "../../shared/changes.ts";
+import { resolveSpaces, spaceIds } from "../../shared/spaces.ts";
 import { parseDuration, type InstalledAutomation, type RecipeInstalled } from "../../shared/recipes.ts";
 import type { Change } from "../../shared/types.ts";
 import { READS, type FreshRead } from "../ha/registry.ts";
 import type { ConfigKind, HaConfig, RestApi } from "../ha/rest.ts";
-import type { RawRegistry } from "../model/hierarchy.ts";
+import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
 import { searchRelated } from "../references/find.ts";
 import { rewrite } from "../references/rewrite.ts";
 import { mapLimit } from "../references/snapshot.ts";
@@ -264,8 +265,22 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
       continue;
     }
 
-    const config = configOf(c, input);
     try {
+      const baseline = io.renamed?.size ? rewrite(c.before.configSnapshot, io.renamed).value : c.before.configSnapshot;
+      let config = configOf(c, input);
+      if (c.before.preserveConfig === true) {
+        if (!baseline || typeof baseline !== "object" || Array.isArray(baseline)) {
+          outcome.set(c.id, fail(c, "This targeted edit has no readable configuration baseline. Review it again."));
+          continue;
+        }
+        const original = baseline as HaConfig;
+        const originalUse = original.use_blueprint;
+        if (!originalUse || typeof originalUse !== "object" || Array.isArray(originalUse) || (originalUse as UseBlueprint).path !== ub.path) {
+          outcome.set(c.id, fail(c, "This targeted edit no longer uses the expected blueprint. Review it again."));
+          continue;
+        }
+        config = { ...original, use_blueprint: { ...originalUse, input } };
+      }
       // This fresh read catches prior edits; HA offers no atomic compare-and-swap
       // here, so another edit between this read and the POST can still race it.
       const existing = await io.rest.get(restKind, id);
@@ -277,7 +292,6 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
         outcome.set(c.id, fail(c, "This change has no saved configuration baseline. Remove it and plan again."));
         continue;
       }
-      const baseline = io.renamed?.size ? rewrite(c.before.configSnapshot, io.renamed).value : c.before.configSnapshot;
       if (existing === null && fresh.states.some((s) => stateOf(s, id))) {
         outcome.set(c.id, fail(c, "Home Assistant already lists this automation or script, but its config is not editable. Check it before installing."));
         continue;
@@ -315,7 +329,8 @@ async function applyConfigChanges(all: Change[], io: RecipeIO, kind: "automation
         continue;
       }
       if (!stored) wrong.set(c.id, `Home Assistant doesn't have the ${what} after saving it.`);
-      else if (!sameConfig(stored, sent.get(c.id)!)) wrong.set(c.id, "Home Assistant stored something different from what Taxis sent.");
+      else if (c.before.preserveConfig === true ? !isDeepStrictEqual(stored, sent.get(c.id)!) : !sameConfig(stored, sent.get(c.id)!))
+        wrong.set(c.id, "Home Assistant stored something different from what Taxis sent.");
       else {
         const state = states.find((x) => stateOf(x, c.targetId));
         if (!state) wrong.set(c.id, `Home Assistant saved the ${what}, but has not listed it as loaded yet. Check it before retrying.`);
@@ -372,7 +387,13 @@ export async function readInstalled(
   });
 
   // The scripts Taxis makes (announce, goodbye), when Home Assistant lists one under its id.
-  for (const scriptId of SCRIPT_IDS) {
+  const spaceScripts = resolveSpaces(buildHierarchy(raw, ""))
+    .filter((space) => !space.id.startsWith("new:"))
+    .flatMap((space) => {
+      const ids = spaceIds(space.id);
+      return [ids.announce, ids.goodbye];
+    });
+  for (const scriptId of [...SCRIPT_IDS, ...spaceScripts]) {
     const state = raw.states.find((s) => s.entity_id === `script.${scriptId}`);
     if (!state) continue;
     const config = await io.rest.get("script", scriptId);

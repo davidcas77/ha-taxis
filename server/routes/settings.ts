@@ -1,3 +1,4 @@
+import { validateGeneral } from "../../shared/general-settings.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
@@ -15,6 +16,19 @@ import { checkAreaCodes, validateGroups, validateInventory, validateNaming, vali
 export function settingsRoutes(ctx: AppContext): Hono {
   const { reader, settings, logger } = ctx;
   const app = new Hono();
+
+  app.get("/settings/general", (c) => c.json({ ok: true, general: settings.general() }));
+  app.put("/settings/general", bodyLimit({ maxSize: 1024, onError: (c) => c.json({ ok: false, error: "The settings are too large." }, 413) }), async (c) => {
+    const checked = validateGeneral(await c.req.json().catch(() => null));
+    if (!checked.ok) return c.json({ ok: false, error: checked.error }, 400);
+    if (reader.isApplying()) return c.json({ ok: false, error: "Changes are being applied. Try again in a moment." }, 409);
+    if (!checked.value.reviewChangesBeforeApplying && ctx.changes.list().length) {
+      return c.json({ ok: false, error: "Review or discard the pending changes before turning off review." }, 409);
+    }
+    settings.saveGeneral(checked.value);
+    logger.info("Saved general settings");
+    return c.json({ ok: true, general: checked.value });
+  });
 
   // Naming settings: area codes, patterns, type words. Nothing in Home
   // Assistant changes when they do.
@@ -99,6 +113,8 @@ export function settingsRoutes(ctx: AppContext): Hono {
     bodyLimit({ maxSize: 1024 * 1024, onError: (c) => c.json<InventoryResponse>({ ok: false, error: "The inventory settings are too large." }, 413) }),
     async (c) => {
       const checked = validateInventory(await c.req.json().catch(() => null));
+      if (reader.isApplying() || !settings.general().reviewChangesBeforeApplying)
+        return c.json<InventoryResponse>({ ok: false, error: "Review the direct setting change before saving." }, 409);
       if (!checked.ok) return c.json<InventoryResponse>({ ok: false, error: checked.error }, 400);
       settings.saveInventory(checked.value);
       logger.info("Saved inventory settings");
@@ -117,6 +133,8 @@ export function settingsRoutes(ctx: AppContext): Hono {
     bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json<ParametersResponse>({ ok: false, error: "The parameters are too large." }, 413) }),
     async (c) => {
       const checked = validateParameters(await c.req.json().catch(() => null));
+      if (reader.isApplying() || !settings.general().reviewChangesBeforeApplying)
+        return c.json<ParametersResponse>({ ok: false, error: "Review the direct setting change before saving." }, 409);
       if (!checked.ok) return c.json<ParametersResponse>({ ok: false, error: checked.error }, 400);
       settings.saveParameters(checked.value);
       logger.info("Saved parameters");

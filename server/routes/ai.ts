@@ -24,7 +24,15 @@ export function aiPageRoutes(ctx: AppContext): Hono {
     buttonRoutes({
       read: (refresh) => reader.buttons(refresh),
       changes,
+      directContext: ctx,
       applying: () => reader.isApplying(),
+      reviewRevision: () =>
+        settings.general().reviewChangesBeforeApplying
+          ? String(
+              (db.prepare("SELECT revision FROM setting_revisions WHERE path = ?").get("/api/settings/general") as { revision: number } | undefined)
+                ?.revision ?? 0,
+            )
+          : null,
       ai: ctx.ai,
       redact: ctx.redact,
     }),

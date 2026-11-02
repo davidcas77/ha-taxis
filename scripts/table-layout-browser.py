@@ -72,6 +72,10 @@ class TableLayoutRegression(unittest.TestCase):
     def assert_every_table_has_a_chooser_above_it(self, context=""):
         for table in self.page.get_by_role("table").all():
             label = table.get_attribute("aria-label")
+            # The recipe area navigation has a compact native table per floor.
+            if not label and table.locator("xpath=ancestor::nav[@aria-label='Recipe areas' or @aria-label='Motion lights areas']/details").count():
+                self.assertEqual(table.locator("xpath=ancestor::*[@data-table-id][1]").count(), 0)
+                continue
             self.assertTrue(label, context)
             native_labels = {"Area light sources", "Recipe helpers", "Area parameters", "House parameters",
                              "House source entities", "Area occupancy source entities", "House area source entities", "People entities"}
@@ -226,6 +230,7 @@ class TableLayoutRegression(unittest.TestCase):
         table.wait_for()
         header = table.get_by_role("columnheader", name="Floor", exact=True)
         handle = header.get_by_role("separator", name="Resize Floor column", exact=True)
+        handle.scroll_into_view_if_needed()
         original = header.bounding_box()["width"]
         original_sort = header.get_attribute("aria-sort")
         box = handle.bounding_box()
@@ -376,8 +381,8 @@ class TableLayoutRegression(unittest.TestCase):
         editor.press("Escape")
         self.page.set_viewport_size({"width": 1100, "height": 1100})
         self.open("#parameters/lighting")
-        self.page.get_by_role("button", name=re.compile(r"^Entry lights for Living room:")).click()
-        choices = self.page.get_by_role("dialog", name="Entry lights for Living room", exact=True)
+        self.page.get_by_role("button", name=re.compile(r"^Motion lights for Living room:")).click()
+        choices = self.page.get_by_role("dialog", name="Motion lights for Living room", exact=True)
         choices.wait_for()
         self.assertGreater(choices.get_by_role("checkbox").count(), 0)
         self.assertTrue(choices.evaluate("e=>{const r=e.getBoundingClientRect();return !e.closest('table')&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;}"))

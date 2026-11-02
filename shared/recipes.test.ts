@@ -736,10 +736,16 @@ describe("motion lights: roles, sleep and the manual override", () => {
     inv = setCounts(h, inv, nightlight.id, false);
     const area = { level: "area", id: "living_room" } as const;
     let params = setParameter(EMPTY_PARAMETERS, area, "entry_lights", [spots.id]);
+    const beforeRoles = autoInput(motionCell(specs, { inv, params }));
+    params = setParameter(params, area, "main_lights", [lamp.id, spots.id]);
+    params = setParameter(params, area, "strong_lights", [spots.id]);
+    expect(params.areas.living_room).toMatchObject({ main_lights: [lamp.id, spots.id], strong_lights: [spots.id] });
+    expect(autoInput(motionCell(specs, { inv, params }))).toEqual(beforeRoles);
     params = setParameter(params, area, "ambient_lights", [spots.id, nightlight.id, "light.moved"]);
     params = setParameter(params, area, "night_lights", [spots.id]);
     expect(autoInput(motionCell(specs, { inv, params }))).toMatchObject({
       entry_lights: [spots.id],
+      main_lights: [spots.id],
       accent_lights: [spots.id],
       night_lights: [spots.id],
     });
@@ -776,11 +782,11 @@ describe("motion lights: roles, sleep and the manual override", () => {
     inv = setLightRole(inv, "light.living_lamp", "accent");
     expect(motionCell([...base, spots, lamp], { inv }).notes).toEqual([
       "No light level helper yet, so the lights go on at any light level",
-      "No entry or main lights, so no light goes on by day (set an entry light, or a light's role, on the area's Capabilities tab)",
+      "No Motion lights, so no light goes on by day (choose Motion lights for this area)",
     ]);
     expect(autoInput(motionCell([...base, spots, lamp], { inv })).entry_lights).toEqual([]);
     const night = setLightRole(inv, "light.living_night", "night");
-    expect(motionCell([...base, spots, lamp, nightlight], { inv: night }).notes[1]).toBe("No entry or main lights, so only the night lights go on");
+    expect(motionCell([...base, spots, lamp, nightlight], { inv: night }).notes[1]).toBe("No Motion lights, so only the Night lights go on");
     // An entry light of one's own settles it.
     const own = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "entry_lights", ["light.living_lamp"]);
     const c = motionCell([...base, spots, lamp], { inv, params: own });
@@ -872,12 +878,12 @@ describe("motion lights: roles, sleep and the manual override", () => {
     expect(c.status).toBe("out-of-date");
     expect(c.reasons).toEqual([
       "Extended after (min): none → 30",
-      "Entry lights: none → light.living_spots",
+      "Motion lights: none → light.living_spots",
       "Main lights: none → light.living_spots",
       "Accent lights: none → light.living_lamp",
       "Override timer: none → timer.living_override",
       "Manual override lasts (min): none → 0",
-      "The blueprint is version 3, Taxis has 5",
+      "The blueprint is version 3, Taxis has 6",
     ]);
   });
 
@@ -891,7 +897,7 @@ describe("motion lights: roles, sleep and the manual override", () => {
     expect(cell(plan(specs, { installed }), "motion_lights").status).toBe("installed");
     const inv = setLightRole(EMPTY_INVENTORY, lamp.id, "night");
     expect(cell(plan(specs, { installed, inv }), "motion_lights").reasons).toEqual([
-      "Entry lights: light.living_lamp, light.living_spots → light.living_spots",
+      "Motion lights: light.living_lamp, light.living_spots → light.living_spots",
       "Main lights: light.living_lamp, light.living_spots → light.living_spots",
       "Night lights: none → light.living_lamp",
     ]);
@@ -922,7 +928,7 @@ describe("motion lights: roles, sleep and the manual override", () => {
       const own = setParameter(EMPTY_PARAMETERS, area, "entry_lights", ["light.living_lamp"]);
       const c = motionCell([...base, spots, lamp], { params: own, inv: setCounts(h, EMPTY_INVENTORY, lamp.id, false) });
       expect(entryOf(c)).toEqual(["light.living_spots"]);
-      expect(c.notes).toContain("The entry lights set for this area don't count here any more, so the suggested ones are used");
+      expect(c.notes).toContain("The Motion lights set for this area don't count here any more, so the suggested ones are used");
     });
 
     it("make an installed automation out of date when they change, and not otherwise", () => {
@@ -937,7 +943,7 @@ describe("motion lights: roles, sleep and the manual override", () => {
       const own = setParameter(EMPTY_PARAMETERS, area, "entry_lights", ["light.living_lamp"]);
       const c = cell(plan(specs, { installed, params: own }), "motion_lights");
       expect(c.status).toBe("out-of-date");
-      expect(c.reasons).toEqual(["Entry lights: light.living_lamp, light.living_spots → light.living_lamp"]);
+      expect(c.reasons).toEqual(["Motion lights: light.living_lamp, light.living_spots → light.living_lamp"]);
       expect(c.inputs.map((i) => i.kind)).toEqual(["automation"]);
       for (const i of c.inputs) expect(validateInput(i)).toBeNull();
     });
@@ -1078,7 +1084,7 @@ describe("media off", () => {
     const cells = plan([motion, tv, ...runtime, { id: "media_player.kitchen_radio", area: "kitchen" }], { installed: occupancyThere });
     expect(cell(cells, "media_off", "living_room").status).toBe("ready");
     expect(cell(cells, "media_off", "kitchen").status).toBe("missing");
-    expect(cell(cells, "media_off", "kitchen").missing).toEqual(["Occupancy (install it first)"]);
+    expect(cell(cells, "media_off", "kitchen").missing).toEqual(["Occupancy is not wanted here (enable it and install it first)"]);
   });
 });
 
@@ -1399,7 +1405,9 @@ describe("area climate", () => {
         change({ kind: "automation", targetId: "taxis_occupancy_living", after: {} }),
         change({ kind: "helper", targetId: "binary_sensor.living_occupied", after: { entity_id: "binary_sensor.living_occupied" } }),
       ];
-      expect(autoInput(climate(inPlace, { changes: pending })).occupied_entities).toEqual(["binary_sensor.living_occupied"]);
+      expect(
+        autoInput(climate(inPlace, { changes: pending, inv: setRecipeWanted(EMPTY_INVENTORY, "living_room", "occupancy", true) })).occupied_entities,
+      ).toEqual(["binary_sensor.living_occupied"]);
       // Occupancy in the list but its sensor nowhere: not named.
       expect(autoInput(climate(inPlace, { changes: pending.slice(0, 1) })).occupied_entities).toEqual([]);
     });
@@ -2087,7 +2095,15 @@ describe("bathroom fan", () => {
   const plug = { id: "switch.living_fan_plug" };
   const rateSensor = { id: "sensor.living_humidity_rate", platform: "derivative", state: "0", entry: "RATE1" };
   const sleepSwitch = { id: "input_boolean.taxis_sleep", platform: "input_boolean", area: "" };
-  const fan = (specs: Spec[], o: Opts = {}) => cell(plan(specs, { ...o, installed: { blueprints: ALL_THERE, ...o.installed } }), "bathroom_fan");
+  const fan = (specs: Spec[], o: Opts = {}) =>
+    cell(
+      plan(specs, {
+        ...o,
+        inv: setRecipeWanted(o.inv ?? EMPTY_INVENTORY, "living_room", "bathroom_fan", true, o.h ?? house(specs)),
+        installed: { blueprints: ALL_THERE, ...o.installed },
+      }),
+      "bathroom_fan",
+    );
   // Everything in place, so only the automation is left.
   const inPlace = [hygro, humidityMean, extractor, rateSensor, toggle];
 
@@ -2112,7 +2128,7 @@ describe("bathroom fan", () => {
   it("is named like the others", () => {
     expect(automationIdFor("bathroom_fan", "living")).toBe("taxis_bathroom_fan_living");
     expect(automationAlias("Living room", "bathroom_fan")).toBe("Living room – Bathroom fan (Taxis)");
-    expect(RECIPE_LABEL.bathroom_fan).toBe("Bathroom fan");
+    expect(RECIPE_LABEL.bathroom_fan).toBe("Ventilation");
   });
 
   describe("what is missing", () => {
@@ -2163,7 +2179,7 @@ describe("bathroom fan", () => {
     it("needs the reference sensor to exist, when one is chosen", () => {
       const p = setHouse(EMPTY_PARAMETERS, "fan_reference", "sensor.hall_humidity");
       expect(fan(inPlace, { params: p }).missing).toEqual([
-        "The reference humidity sensor “sensor.hall_humidity” isn't in Home Assistant (Parameters, Bathroom fan)",
+        "The reference humidity sensor “sensor.hall_humidity” isn't in Home Assistant (Parameters, Ventilation)",
       ]);
       expect(fan([...inPlace, { id: "sensor.hall_humidity", dc: "humidity", area: "kitchen" }], { params: p }).status).toBe("ready");
     });
@@ -2201,7 +2217,11 @@ describe("bathroom fan", () => {
       const pending = [
         change({ kind: "helper", targetId: "sensor.living_humidity_rate", after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" } }),
         change({ kind: "helper", targetId: "input_boolean.living_paused", after: { helper: "input_boolean", entity_id: "input_boolean.living_paused" } }),
-        change({ kind: "blueprint", targetId: "taxis/bathroom_fan.yaml", after: { path: "taxis/bathroom_fan.yaml", version: 2 } }),
+        change({
+          kind: "blueprint",
+          targetId: "taxis/bathroom_fan.yaml",
+          after: { path: "taxis/bathroom_fan.yaml", version: BLUEPRINTS.find((b) => b.path === "taxis/bathroom_fan.yaml")!.version },
+        }),
       ];
       expect(kindsOf(fan([hygro, humidityMean, extractor], { changes: pending, installed: { blueprints: {} } }))).toEqual([
         "automation:create:taxis_bathroom_fan_living",
@@ -2293,7 +2313,7 @@ describe("bathroom fan", () => {
 
     it("is out of date for an older blueprint, a missing pause switch and another name", () => {
       expect(fan(inPlace, { installed: { ...installedWith(defaults), blueprints: { "taxis/bathroom_fan.yaml": 0 } } }).reasons).toEqual([
-        "The blueprint is version 0, Taxis has 2",
+        `The blueprint is version 0, Taxis has ${BLUEPRINTS.find((b) => b.path === "taxis/bathroom_fan.yaml")!.version}`,
       ]);
       expect(
         fan(
@@ -2793,7 +2813,10 @@ describe("the chosen cells of the later recipes", () => {
     const humidityMean = { id: "sensor.living_humidity", platform: "min_max", dc: "humidity", entry: "HUM1" };
     const door = { id: "binary_sensor.living_front_door", dc: "door" };
     const door2 = { id: "binary_sensor.kitchen_door", dc: "door", area: "kitchen" };
-    const cells = plan([hygro, humidityMean, { id: "fan.living_extractor" }, door, door2], { installed: { blueprints: {} } });
+    const cells = plan([hygro, humidityMean, { id: "fan.living_extractor" }, door, door2], {
+      inv: setRecipeWanted(EMPTY_INVENTORY, "living_room", "bathroom_fan", true),
+      installed: { blueprints: {} },
+    });
     const chosen = [cell(cells, "left_open", "living_room"), cell(cells, "left_open", "kitchen"), cell(cells, "bathroom_fan")];
     const paths = recipeChangeInputs(chosen)
       .filter((i) => i.kind === "blueprint")
@@ -2957,7 +2980,10 @@ describe("area recipe preferences", () => {
     expect(after).toMatchObject({ wanted: false, actionable: false, inputs: [] });
     expect(recipeChangeInputs([after])).toEqual([]);
     expect(cell(plan([motion], { inv: off }), "motion_lights").missing).toContain("Occupancy is not wanted here (enable it and install it first)");
-    expect(setRecipeWanted(off, "living_room", "occupancy", true)).toEqual(initial);
+    expect(setRecipeWanted(off, "living_room", "occupancy", true)).toEqual({
+      ...initial,
+      areas: { ...initial.areas, living_room: { ...initial.areas.living_room, recipePreferences: { occupancy: true } } },
+    });
   });
   it("keeps installed and queued automations visible and does not schedule removal", () => {
     const inv = setRecipeWanted(EMPTY_INVENTORY, "living_room", "occupancy", false);

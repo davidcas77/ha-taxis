@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.94
+
+- **Editing and Changes.** Choose direct editing or review through Changes in
+  Settings. Detailed previews show the proposed changes, and stale-state checks
+  protect writes while preserving unrelated metadata.
+- **Spaces and areas.** Organize floors, spaces and areas in a tree, create and
+  rename spaces, and move areas between them. Area moves update registry metadata;
+  review existing groups, scripts and recipes afterwards. Empty-space placement
+  uses a Taxis-owned marker in the label description.
+- **Labels and recipes.** Native area type and location labels, including
+  Staircase, inform defaults and Ventilation. Lighting Main and Strong groups,
+  space-scoped groups, parameters and recipes use source evidence. Low batteries
+  remains sitewide; existing min/max sensor assignment is blocked when its
+  sources cannot be verified.
+- **Guide.** Expandable instructions and updated guidance make setup easier to
+  navigate.
+
 ## 0.7.93
 
 - **Recipes.** Top recipe actions show the proposed configuration count and link

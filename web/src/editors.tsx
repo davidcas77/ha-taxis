@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { ENTITY_ID_RE } from "../../shared/changes.ts";
 import { organizeEntityType } from "../../shared/organize.ts";
 import { CATEGORY_SCOPES, type AreaNode, type ChangeInput, type DeviceItem, type EntityItem, type FloorNode, type Hierarchy } from "../../shared/types.ts";
 import { DataTable, type Column } from "./data-table.tsx";
 import { useDraftGuard } from "./draft-guard.ts";
+import { Actions } from "./edit-actions.tsx";
 import { useTaxis } from "./state.tsx";
-import { Actions, AreaSelect, Button, ConfirmAction, EmptyState, Field, inputClass, LabelPicker, Panel, Section } from "./ui.tsx";
+import { AreaSelect, Button, ConfirmAction, EmptyState, Field, inputClass, LabelPicker, Panel, Section } from "./ui.tsx";
 
 // Editors. Each one shows the values as they'll be (pending changes included),
 // and "Add to changes" appears once a field differs and proposes only those. Nothing reaches
@@ -432,7 +433,20 @@ export function FloorEditor({ floor, onClose, onDeleted }: { floor: FloorNode; o
 }
 
 // A one-line form that creates an area (on a floor) or a floor.
-export function NewItemForm({ kind, floorId, onDone }: { kind: "area" | "floor"; floorId?: string | null; onDone: () => void }) {
+export function NewItemForm({
+  kind,
+  floorId,
+  spaceLabelId,
+  onDone,
+  onCancel,
+}: {
+  kind: "area" | "floor";
+  floorId?: string | null;
+  spaceLabelId?: string;
+  onDone: () => void;
+  onCancel?: () => void;
+}) {
+  const nameId = useId();
   const [name, setName] = useState("");
   const [level, setLevel] = useState("");
   const guard = useDraftGuard(name.trim() !== "" || level.trim() !== "");
@@ -448,6 +462,7 @@ export function NewItemForm({ kind, floorId, onDone }: { kind: "area" | "floor";
     if (!name.trim()) return setError(`Give the new ${kind} a name.`);
     const fields: Record<string, unknown> = { name: name.trim() };
     if (kind === "area" && floorId) fields.floor_id = floorId;
+    if (kind === "area" && spaceLabelId) fields.labels = [spaceLabelId];
     if (kind === "floor" && level !== "") {
       if (!/^-?\d+$/.test(level)) return setError("The level is a whole number.");
       fields.level = Number(level);
@@ -462,9 +477,9 @@ export function NewItemForm({ kind, floorId, onDone }: { kind: "area" | "floor";
         create();
       }}
     >
-      <Field label={kind === "area" ? "New area" : "New floor"} htmlFor={`new-${kind}`}>
+      <Field label={kind === "area" ? "New area" : "New floor"} htmlFor={nameId}>
         <input
-          id={`new-${kind}`}
+          id={nameId}
           className={inputClass}
           value={name}
           placeholder={kind === "area" ? "Laundry room" : "Basement"}
@@ -485,6 +500,55 @@ export function NewItemForm({ kind, floorId, onDone }: { kind: "area" | "floor";
       )}
       <Button type="submit" disabled={saving}>
         Add
+      </Button>
+      {onCancel && (
+        <Button type="button" tone="ghost" disabled={saving} onClick={() => guard.close(onCancel)}>
+          Cancel
+        </Button>
+      )}
+      {error && (
+        <span role="alert" className="text-xs text-danger">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
+
+export function NewSpaceForm({ names, description, onDone, onCancel }: { names: string[]; description: string; onDone: () => void; onCancel: () => void }) {
+  const nameId = useId();
+  const [name, setName] = useState("");
+  const guard = useDraftGuard(name.trim() !== "");
+  const { saving, error, setError, submit } = useSubmit(onDone, () => guard.release());
+  return (
+    <form
+      className="flex flex-wrap items-end gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const trimmed = name.trim();
+        if (!trimmed) return setError("Give the new Space a name.");
+        if (names.some((existing) => existing.trim().toLocaleLowerCase() === trimmed.toLocaleLowerCase()))
+          return setError("A Space with this name already exists.");
+        setError(null);
+        void submit({ kind: "label", op: "create", fields: { name: `Space: ${trimmed}`, description } });
+      }}
+    >
+      <Field label="New Space" htmlFor={nameId}>
+        <input
+          id={nameId}
+          className={inputClass}
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            setError(null);
+          }}
+        />
+      </Field>
+      <Button type="submit" disabled={saving}>
+        Add
+      </Button>
+      <Button type="button" tone="ghost" disabled={saving} onClick={() => guard.close(onCancel)}>
+        Cancel
       </Button>
       {error && (
         <span role="alert" className="text-xs text-danger">

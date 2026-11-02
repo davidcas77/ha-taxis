@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import unittest
 import urllib.request
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from browser_common import BASE, launch, screenshot_dir
 
 
@@ -123,13 +123,34 @@ class GuideRegression(unittest.TestCase):
         self.page.get_by_role("heading", name="How Taxis builds your home", exact=True).wait_for()
         steps = self.page.get_by_role("list", name="Steps", exact=True)
         self.assertEqual(steps.get_by_role("listitem").count(), 7)
-        instructions = steps.get_by_text("What to do and why", exact=True)
-        self.assertEqual(instructions.count(), 7)
-        for item in instructions.all():
-            item.click()
+        titles = steps.locator(":scope > li > div > div > h3 > button")
+        self.assertEqual(titles.count(), 7)
+        previous = None
+        for title in titles.all():
+            expect(title).to_have_attribute("aria-expanded", "false")
+            title.click()
+            expect(title).to_have_attribute("aria-expanded", "true")
+            if previous is not None:
+                expect(previous).to_have_attribute("aria-expanded", "false")
+            self.assertEqual(steps.get_by_text("What to do and why", exact=True).count(), 1)
+            previous = title
+        areas_title = titles.nth(0)
+        areas_title.click()
+        link = steps.get_by_role("link", name="Home Assistant labels", exact=True)
+        self.assertIn("home-assistant.io/docs/organizing/labels/", link.get_attribute("href"))
+        self.context.route("https://www.home-assistant.io/**", lambda route: route.abort())
+        with self.context.expect_page() as popup_info:
+            link.click()
+        popup_info.value.close()
+        expect(areas_title).to_have_attribute("aria-expanded", "true")
+        entities_title = titles.nth(1)
+        entities_title.click()
         self.page.get_by_text("Equipment by area", exact=True).click()
+        expect(entities_title).to_have_attribute("aria-expanded", "true")
         self.assertIn("No included motion or presence sensor", steps.inner_text())
-        self.page.get_by_text("Current helper plan by area, floor and house", exact=True).click()
+        titles.nth(4).click()
+        expect(entities_title).to_have_attribute("aria-expanded", "false")
+        self.page.get_by_text("Current helper plan", exact=True).click()
         self.assertIn("light.living_all", steps.inner_text())
         self.assertIn("Review, build and verify", self.page.locator("body").inner_text())
         self.assertIn("Buttons and remotes are a later phase", self.page.locator("body").inner_text())
@@ -197,7 +218,7 @@ class GuideRegression(unittest.TestCase):
         self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["state"] = "unavailable"
         self.open(True)
         equipment = self.page.get_by_role("region", name="Equipment readiness", exact=True)
-        activity = equipment.get_by_role("listitem").filter(has_text="Motion or presence detection").first
+        activity = equipment.get_by_role("listitem").filter(has_text="Motion, presence or an opted-in TV").first
         self.assertIn("Review existing entities", activity.inner_text())
         self.assertIn("before buying anything", activity.inner_text())
         self.assertNotIn("Needed for this goal", activity.inner_text())

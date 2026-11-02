@@ -10,7 +10,8 @@ import { buildMockRegistry, withRecipeDemo } from "../../scripts/mock-ha-core.ts
 import { blueprintForRecipe } from "../../shared/blueprints.ts";
 import { validateInput } from "../../shared/changes.ts";
 import { helperChangeInputs, planHelpers } from "../../shared/helpers.ts";
-import { EMPTY_INVENTORY } from "../../shared/inventory.ts";
+import { EMPTY_INVENTORY, setRole } from "../../shared/inventory.ts";
+import { settingEffects } from "./direct-settings.ts";
 import { DEFAULT_NAMING } from "../../shared/naming.ts";
 import { EMPTY_PARAMETERS, setParameter, type ParameterSettings } from "../../shared/parameters.ts";
 import { areaThermostats, canonicalLightGroups, planRecipes, recipeChangeInputs, type RecipeCell } from "../../shared/recipes.ts";
@@ -310,7 +311,10 @@ describe("installing media off, and the override timer", () => {
     // The living room's TV and the kitchen's speaker; Occupancy is installed in both (the kitchen's is out of date, which is enough).
     expect([status("living_room"), status("kitchen")]).toEqual(["ready", "ready"]);
     expect(cell(cells, "media_off", "study")!.missing).toEqual(["Occupancy (install it first)", "A speaker or a TV that counts (Capabilities)"]);
-    expect(cell(cells, "media_off", "garage")!.missing).toEqual(["Occupancy (install it first)", "A speaker or a TV that counts (Capabilities)"]);
+    expect(cell(cells, "media_off", "garage")!.missing).toEqual([
+      "Occupancy is not wanted here (enable it and install it first)",
+      "A speaker or a TV that counts (Capabilities)",
+    ]);
 
     t.add(recipeChangeInputs([cell(cells, "media_off", "living_room")!, cell(cells, "media_off", "kitchen")!]));
     expect(t.store.list().map((x) => `${x.kind}:${x.op}:${x.targetId}`)).toEqual([
@@ -987,4 +991,77 @@ describe("blueprints and automations on their own", () => {
     expect(await applyBlueprintChanges([odd], io)).toEqual([{ changeId: 1, ok: false, message: "Taxis has no blueprint at that path any more." }]);
     expect(t.fake.ws.filter((x) => x.kind === "write")).toEqual([]);
   });
+});
+
+it("direct setting role changes patch only affected installed recipe inputs", async () => {
+  const t = setup();
+  t.fake.home.entities.push({ entity_id: "binary_sensor.study_motion_extra", platform: "demo", area_id: "study", unique_id: "extra" });
+  t.fake.home.states.push({ entity_id: "binary_sensor.study_motion_extra", state: "off", attributes: { device_class: "motion" } });
+  t.fake.home.entities.push({ entity_id: "binary_sensor.study_motion_other", platform: "demo", area_id: "study", unique_id: "other" });
+  t.fake.home.states.push({ entity_id: "binary_sensor.study_motion_other", state: "off", attributes: { device_class: "motion" } });
+  t.add(recipeChangeInputs([t.cell(await t.plan(), "occupancy", "study")]));
+  const installedResult = await t.apply();
+  expect(
+    installedResult.results.every((r) => r.ok),
+    JSON.stringify(installedResult.results),
+  ).toBe(true);
+  t.store.clear();
+  const config = t.fake.home.automations.taxis_occupancy_study as Record<string, unknown>;
+  config.description = "Personal description";
+  config.mode = "queued";
+  config.custom_metadata = { owner: "keep me" };
+  const storedUse = config.use_blueprint as { input: Record<string, unknown> };
+  storedUse.input.hold_minutes = 999;
+  storedUse.input.custom_input = "preserve unknown";
+  const installed = await t.installed();
+  installed.automations.taxis_occupancy_living = { alias: null, path: null, input: { unrelated: "keep" } };
+  const h = t.live();
+  const before = { inventory: EMPTY_INVENTORY, parameters: EMPTY_PARAMETERS };
+  const after = { ...before, inventory: setRole(h, EMPTY_INVENTORY, "binary_sensor.study_motion_extra", "holds") };
+  const effects = settingEffects(h, DEFAULT_NAMING, before, after, installed);
+  expect("inputs" in effects, JSON.stringify(effects)).toBe(true);
+  if (!("inputs" in effects)) return;
+  const item = effects.inputs.find((input) => input.fields?.automation_id === "taxis_occupancy_study");
+  expect(item).toBeDefined();
+  const input = (item!.fields!.use_blueprint as { input: Record<string, unknown> }).input;
+  expect(input.hold_minutes).toBe(999);
+  expect(input.holds_entities).toContain("binary_sensor.study_motion_extra");
+  expect(input.starts_entities).not.toContain("binary_sensor.study_motion_extra");
+  expect(effects.inputs.every((input) => input.fields?.automation_id !== "taxis_occupancy_living")).toBe(true);
+  const baselines = new Map<number, unknown>();
+  for (const [index, change] of effects.inputs.entries()) {
+    if (change.kind === "automation") baselines.set(index, structuredClone(t.fake.home.automations[String(change.fields?.automation_id)] ?? null));
+    if (change.kind === "script") baselines.set(index, structuredClone(t.fake.home.scripts[String(change.fields?.script_id)] ?? null));
+  }
+  expect(t.store.addMany(effects.inputs, h, baselines, undefined, true)).toBeNull();
+  const applied = await t.apply();
+  expect(
+    applied.results.every((r) => r.ok),
+    JSON.stringify(applied.results),
+  ).toBe(true);
+  expect(t.fake.home.automations.taxis_occupancy_study).toMatchObject({
+    description: "Personal description",
+    mode: "queued",
+    custom_metadata: { owner: "keep me" },
+    use_blueprint: { input: { hold_minutes: 999, custom_input: "preserve unknown" } },
+  });
+});
+
+it("direct parameter changes include the affected existing timer but not unrelated drift", async () => {
+  const t = setup();
+  t.add(recipeChangeInputs([t.cell(await t.plan(), "occupancy", "study")]));
+  const result = await t.apply();
+  expect(
+    result.results.every((r) => r.ok),
+    JSON.stringify(result.results),
+  ).toBe(true);
+  t.store.clear();
+  const h = t.live();
+  const installed = await t.installed();
+  const before = { inventory: EMPTY_INVENTORY, parameters: EMPTY_PARAMETERS };
+  const after = { ...before, parameters: setParameter(EMPTY_PARAMETERS, { level: "area", id: "study" }, "hold_timeout", 8) };
+  const effects = settingEffects(h, DEFAULT_NAMING, before, after, installed);
+  expect("inputs" in effects, JSON.stringify(effects)).toBe(true);
+  if (!("inputs" in effects)) return;
+  expect(effects.inputs).toContainEqual({ kind: "helper", op: "update", targetId: "timer.study_hold", fields: { duration: 480 } });
 });

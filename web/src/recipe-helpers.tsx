@@ -7,6 +7,7 @@ import { planHouseModes } from "../../shared/house-modes.ts";
 import { recipeChangeInputs, runtimeIds, type RecipeCell } from "../../shared/recipes.ts";
 import { standaloneAreaHelperInputs, standaloneHouseHelperInputs } from "./recipe-availability-spec.ts";
 import { helperCreateInput } from "./recipe-helper-action.ts";
+import { scopedAreaHelperInputs } from "./scoped-helper-inputs.ts";
 import { useTaxis } from "./state.tsx";
 import type { Change, Hierarchy } from "../../shared/types.ts";
 import { heldBy, pendingHelper, pendingRename } from "../../shared/recipes.ts";
@@ -79,12 +80,18 @@ export function RecipeHelpers({
               ...standaloneHouseHelperInputs(),
               ...standaloneAreaHelperInputs({ recipe: "occupancy", h, areaId, inventory, naming, parameters, changes }),
             ];
-            const createInputs = helperCreateInput(h, changes, helper.id, helper.provider === "External selection", plannerCandidates);
+            const scoped = scopedAreaHelperInputs(
+              h,
+              changes,
+              areaId,
+              helperCreateInput(h, changes, helper.id, helper.provider === "External selection", plannerCandidates),
+            );
+            const createInputs = scoped.inputs;
             const canCreate = createInputs.length > 0;
             const providerRecipe =
               helper.provider === "Occupancy"
                 ? "occupancy"
-                : helper.provider === "Bathroom fan"
+                : helper.provider === "Ventilation"
                   ? "bathroom_fan"
                   : helper.provider === "House presence"
                     ? "house_presence"
@@ -161,7 +168,7 @@ export function RecipeHelpers({
                     {helper.optional ? "Optional" : "Required"}
                     {helper.provider ? ` · ${helper.provider}` : ""}
                   </span>
-                  {status === "Missing" && !canCreate && <span className="mt-1 block text-muted">{reason}</span>}
+                  {status === "Missing" && !canCreate && <span className="mt-1 block text-muted">{scoped.error ?? reason}</span>}
                 </td>
                 <td className="p-2">
                   {status === "Missing" && (

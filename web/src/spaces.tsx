@@ -19,6 +19,7 @@ import {
   MapPin,
   MousePointerClick,
   Pencil,
+  Plus,
   SlidersHorizontal,
   Sparkles,
   Sun,
@@ -31,12 +32,14 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ROLE_ORDER, displayRole } from "../../shared/roles.ts";
 import { suggestEntityArea } from "../../shared/area-suggestion.ts";
 import { unassignedDevices } from "../../shared/unassigned-devices.ts";
 import { sortRows } from "../../shared/sort.ts";
+import { resolveSpaces, spaceFloorDescription } from "../../shared/spaces.ts";
+import { planAreaMove, type AreaMoveDestination } from "../../shared/area-move.ts";
 import { arrangeGroups, membershipIndex, summarizeRoom, type BinarySummary, type NumericSummary } from "../../shared/rooms.ts";
 import type { AreaNode, ChangeInput, EntityItem, EntityRole, Hierarchy } from "../../shared/types.ts";
 import { diagnosisText } from "../../shared/entity-diagnosis.ts";
@@ -45,9 +48,12 @@ import { analyzeArea } from "../../shared/naming.ts";
 import { namingFit } from "../../shared/naming-ignores.ts";
 import { EntityLabels } from "./entity-labels.tsx";
 import { AreaCapabilitySummary } from "./area-capabilities.tsx";
-import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm } from "./editors.tsx";
+import { AreaEditor, DeviceEditor, EntityEditor, FloorEditor, NewItemForm, NewSpaceForm } from "./editors.tsx";
 import { AreaCapabilitiesTab } from "./capabilities.tsx";
 import { AreaTypes } from "./area-types.tsx";
+import { SpaceManagement } from "./space-management.tsx";
+import SpaceDetails from "./space-details.tsx";
+import { confirmDraftNavigation } from "./draft-guard.ts";
 import { AreaFindings, useAreaFindings, useHealth } from "./health.tsx";
 import { DevicesEntities } from "./devices-view.tsx";
 import { AreaNamingTab } from "./naming.tsx";
@@ -74,6 +80,9 @@ import {
 import { WhyIcon, useWhy } from "./why.tsx";
 import { TooltipButton } from "./tooltip.tsx";
 import { UnassignedDevices } from "./unassigned-devices.tsx";
+import { api } from "./api.ts";
+
+const AREA_DRAG_TYPE = "application/x-taxis-area";
 
 const ROLE_ICONS: Record<EntityRole, LucideIcon> = {
   light: Lightbulb,
@@ -150,6 +159,11 @@ function TreeRow({
   edited,
   expanded,
   onClick,
+  onToggle,
+  addArea,
+  dragArea,
+  dropTarget,
+  moveArea,
 }: {
   depth: number;
   icon: LucideIcon;
@@ -163,35 +177,85 @@ function TreeRow({
   // Set on a row that folds its areas away: whether they are showing.
   expanded?: boolean;
   onClick: () => void;
+  onToggle?: () => void;
+  addArea?: { label: string; onClick: () => void };
+  dragArea?: { start: (event: React.DragEvent) => void; end: () => void; disabled: boolean };
+  dropTarget?: { over: (event: React.DragEvent) => void; leave: () => void; drop: (event: React.DragEvent) => void; highlighted: boolean };
+  moveArea?: { label: string; onClick: () => void; disabled: boolean };
 }) {
   const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={active ? "true" : undefined}
-      aria-expanded={expanded}
-      // Floors have an extra chevron before their icon. Account for its width
-      // so an area's label sits 12px beyond the floor label, not before it.
-      style={{ paddingLeft: 8 + depth * 14 + (depth === 2 ? 16 : 0) }}
-      className={`flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px] ${
-        active ? "bg-accent-soft font-medium text-accent" : muted ? "text-muted hover:bg-sunken" : "hover:bg-sunken"
-      }`}
+    <div
+      className={`flex min-w-0 items-center rounded-md ${dropTarget?.highlighted ? "ring-2 ring-accent bg-accent-soft" : ""}`}
+      onDragOver={dropTarget?.over}
+      onDragLeave={dropTarget?.leave}
+      onDrop={dropTarget?.drop}
     >
-      {expanded !== undefined && <Chevron className="-mr-1 size-3.5 shrink-0 text-muted" aria-hidden />}
-      <Icon className="size-4 shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {edited && <EditedDot />}
-      {health && (
-        <span
-          role="img"
-          aria-label={`${health.total} health ${health.total === 1 ? "issue" : "issues"}`}
-          title={`${health.total} health ${health.total === 1 ? "issue" : "issues"}`}
-          className={`size-2 shrink-0 rounded-full ${health.severity === "error" ? "bg-danger" : "bg-warn"}`}
-        />
+      {onToggle && (
+        <button
+          type="button"
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
+          aria-expanded={expanded}
+          onClick={onToggle}
+          style={{ marginLeft: 8 + depth * 14 }}
+          className="shrink-0 rounded p-1 text-muted hover:bg-sunken"
+        >
+          <Chevron className="size-3.5" aria-hidden />
+        </button>
       )}
-      {count !== undefined && <span className="shrink-0 text-xs tabular-nums text-muted">{count}</span>}
-    </button>
+      <button
+        type="button"
+        draggable={dragArea ? !dragArea.disabled : undefined}
+        onDragStart={dragArea?.start}
+        onDragEnd={dragArea?.end}
+        onClick={onClick}
+        aria-current={active ? "true" : undefined}
+        aria-expanded={onToggle ? undefined : expanded}
+        // Floors have an extra chevron before their icon. Account for its width
+        // so an area's label sits 12px beyond the floor label, not before it.
+        style={{ paddingLeft: onToggle ? 0 : 8 + depth * 14 + (expanded === undefined && depth > 0 ? 16 : 0) }}
+        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px] ${
+          active ? "bg-accent-soft font-medium text-accent" : muted ? "text-muted hover:bg-sunken" : "hover:bg-sunken"
+        }`}
+      >
+        {expanded !== undefined && !onToggle && <Chevron className="-mr-1 size-3.5 shrink-0 text-muted" aria-hidden />}
+        <Icon className="size-4 shrink-0" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {edited && <EditedDot />}
+        {health && (
+          <span
+            role="img"
+            aria-label={`${health.total} health ${health.total === 1 ? "issue" : "issues"}`}
+            title={`${health.total} health ${health.total === 1 ? "issue" : "issues"}`}
+            className={`size-2 shrink-0 rounded-full ${health.severity === "error" ? "bg-danger" : "bg-warn"}`}
+          />
+        )}
+        {count !== undefined && <span className="shrink-0 text-xs tabular-nums text-muted">{count}</span>}
+      </button>
+      {moveArea && (
+        <button
+          type="button"
+          aria-label={moveArea.label}
+          title={moveArea.label}
+          disabled={moveArea.disabled}
+          onClick={moveArea.onClick}
+          className="shrink-0 rounded p-1.5 text-muted hover:bg-sunken hover:text-fg disabled:opacity-50"
+        >
+          <span aria-hidden>↗</span>
+        </button>
+      )}
+      {addArea && (
+        <button
+          type="button"
+          aria-label={addArea.label}
+          title={addArea.label}
+          onClick={addArea.onClick}
+          className="shrink-0 rounded p-1.5 text-muted hover:bg-sunken hover:text-fg"
+        >
+          <Plus className="size-4" aria-hidden />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -210,29 +274,146 @@ export function SpaceTree({
   query: string;
   showEmpty?: boolean;
 }) {
-  const { edited, naming, namingIgnores } = useTaxis();
+  const { edited, naming, namingIgnores, propose, busy, changes } = useTaxis();
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [moveNotice, setMoveNotice] = useState<string | null>(null);
+  const [dragged, setDragged] = useState<string | null>(null);
+  const dragRef = useRef<string | null>(null);
+  const moveLock = useRef(false);
+  const [highlight, setHighlight] = useState<string | null>(null);
+  const [moveMenu, setMoveMenu] = useState<string | null>(null);
+  const [moveDestination, setMoveDestination] = useState("");
   // The health report is read once for the whole home; an area's badge is the
   // number on its Health tab (its own lists and the report's findings about it).
   const { report } = useHealth();
   const badges = useMemo(() => healthBadges(h, naming, namingIgnores, report?.findings ?? null), [h, naming, namingIgnores, report]);
-  const q = query.trim().toLowerCase();
-  const matches = (a: AreaNode) => !q || a.name.toLowerCase().includes(q);
-  // Floors folded away, per viewer: "floor:<id>", or "loose" for areas on no floor.
-  const [collapsed, changeCollapsed] = useStoredSet("taxis:tree-collapsed");
-  // Choosing an area (a link, say) opens the floor it is on.
-  const selectedArea = sel.kind === "area" ? h.areas[sel.id] : undefined;
-  const selectedGroup = selectedArea ? (selectedArea.floorId ? `floor:${selectedArea.floorId}` : "loose") : null;
+  const treeRef = useRef<HTMLElement>(null);
+  const newFormRef = useRef<HTMLElement>(null);
+  const moveFormRef = useRef<HTMLElement>(null);
+  const [newItem, setNewItem] = useState<{ kind: "space" | "area"; floorId: string | null; floorName: string; spaceId?: string; spaceName?: string } | null>(
+    null,
+  );
+  const openNewItem = (target: NonNullable<typeof newItem>) => {
+    if (!newItem || confirmDraftNavigation()) {
+      setMoveMenu(null);
+      setNewItem(target);
+    }
+  };
   useEffect(() => {
-    if (selectedGroup) changeCollapsed((s) => s.delete(selectedGroup));
-  }, [selectedGroup, sel, changeCollapsed]);
-  // A search shows every match, folded or not.
+    if (!newItem) return;
+    const form = newFormRef.current;
+    const tree = treeRef.current;
+    form?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    if (form && tree) {
+      const rect = form.getBoundingClientRect(),
+        viewport = tree.getBoundingClientRect();
+      if (rect.bottom > viewport.bottom) tree.scrollTop += rect.bottom - viewport.bottom;
+      else if (rect.top < viewport.top) tree.scrollTop -= viewport.top - rect.top;
+    }
+  }, [newItem]);
+  useEffect(() => {
+    if (!moveMenu) return;
+    treeRef.current?.scrollTo({ top: 0 });
+    moveFormRef.current?.querySelector<HTMLSelectElement>("select")?.focus({ preventScroll: true });
+  }, [moveMenu]);
+  useEffect(() => {
+    if (moveError) treeRef.current?.scrollTo({ top: 0 });
+  }, [moveError]);
+  const spaces = useMemo(() => resolveSpaces(h, changes), [h, changes]);
+  const areaGroup = useMemo(() => {
+    const memberships = new Map<string, typeof spaces>();
+    for (const space of spaces) for (const id of space.areaIds) memberships.set(id, [...(memberships.get(id) ?? []), space]);
+    return (id: string) => {
+      const assigned = memberships.get(id) ?? [];
+      if (assigned.length > 1) return { id: "conflict", name: "Conflicting Spaces" };
+      return assigned.length ? { id: `space:${assigned[0].id}`, name: assigned[0].name } : { id: "none", name: "No Space" };
+    };
+  }, [spaces]);
+  const q = query.trim().toLowerCase();
+  const matches = (a: AreaNode) => !q || a.name.toLowerCase().includes(q) || areaGroup(a.id).name.toLowerCase().includes(q);
+  const [collapsed, changeCollapsed] = useStoredSet("taxis:tree-collapsed");
+  const selectedArea = sel.kind === "area" ? h.areas[sel.id] : undefined;
+  const floorKey = selectedArea && h.floors.some((f) => f.id === selectedArea.floorId) ? `floor:${selectedArea.floorId}` : "loose";
+  const selectedGroup = selectedArea ? `${floorKey}|${areaGroup(selectedArea.id).id}` : null;
+  useEffect(() => {
+    if (selectedGroup)
+      changeCollapsed((s) => {
+        s.delete(floorKey);
+        s.delete(selectedGroup);
+      });
+  }, [selectedGroup, floorKey, sel, changeCollapsed]);
+  useEffect(() => {
+    if (sel.kind !== "space") return;
+    const space = spaces.find((item) => item.id === sel.id);
+    if (!space) return;
+    const floors = new Set(space.declaredFloorIds.map((id) => `floor:${id}`));
+    for (const id of space.areaIds) {
+      const floor = h.areas[id]?.floorId;
+      floors.add(floor && h.floors.some((item) => item.id === floor) ? `floor:${floor}` : "loose");
+    }
+    if (!floors.size) floors.add("loose");
+    changeCollapsed((s) => {
+      for (const floor of floors) s.delete(floor);
+    });
+  }, [sel, spaces, h, changeCollapsed]);
+  // Searching reveals matching areas even when their groups are folded.
   const isOpen = (group: string) => Boolean(q) || !collapsed.has(group);
   const fold = (group: string) => changeCollapsed((s) => void (s.delete(group) || s.add(group)));
-  // Without the empty areas (no entities under the filters), the selected one apart.
+  const move = async (areaId: string, destination: AreaMoveDestination) => {
+    if (busy || moveLock.current) return;
+    moveLock.current = true;
+    setMoving(true);
+    setMoveError(null);
+    setMoveNotice(null);
+    try {
+      const current = await api.hierarchy();
+      if (!current.ok) return setMoveError(current.error);
+      const plan = planAreaMove(current.hierarchy, areaId, destination);
+      if (!plan.ok) return setMoveError(plan.error);
+      setMoveNotice(plan.warning);
+      if (!(await propose(plan.input))) return;
+      const floor = destination.floorId === null ? "loose" : `floor:${destination.floorId}`;
+      const assigned =
+        destination.space.kind === "set"
+          ? destination.space.labelId
+          : (resolveSpaces(current.hierarchy).find((space) => space.areaIds.includes(areaId))?.id ?? null);
+      changeCollapsed((s) => {
+        s.delete(floor);
+        s.delete(`${floor}|${assigned ? `space:${assigned}` : "none"}`);
+      });
+      setMoveMenu(null);
+    } catch (error) {
+      setMoveError(error instanceof Error ? error.message : "Could not move the area.");
+    } finally {
+      moveLock.current = false;
+      setMoving(false);
+    }
+  };
+  const target = (key: string, destination: AreaMoveDestination) => ({
+    highlighted: highlight === key,
+    over: (event: React.DragEvent) => {
+      if (busy || moving || !dragRef.current || !event.dataTransfer.types.includes(AREA_DRAG_TYPE)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setHighlight(key);
+    },
+    leave: () => setHighlight((value) => (value === key ? null : value)),
+    drop: (event: React.DragEvent) => {
+      if (busy || moving || !dragRef.current || event.dataTransfer.getData(AREA_DRAG_TYPE) !== dragRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const id = dragRef.current;
+      dragRef.current = null;
+      setDragged(null);
+      setHighlight(null);
+      void move(id, destination);
+    },
+  });
   const selectedAreaId = sel.kind === "area" ? sel.id : null;
   const listed = (ids: readonly string[]) =>
     listedAreas(
-      ids.filter((id) => matches(h.areas[id])),
+      ids.filter((id) => h.areas[id] && matches(h.areas[id])),
       (id) => countVisible(h.areas[id].entityIds, h, filters),
       showEmpty,
       selectedAreaId,
@@ -240,24 +421,202 @@ export function SpaceTree({
   const areaRow = (a: AreaNode) => (
     <TreeRow
       key={a.id}
-      depth={2}
+      depth={3}
       icon={MapPin}
       label={a.name}
       count={countVisible(a.entityIds, h, filters)}
       health={badges.get(a.id)}
       active={sel.kind === "area" && sel.id === a.id}
       edited={edited.has(`area:${a.id}`)}
+      dragArea={{
+        disabled: busy || moving,
+        start: (event) => {
+          dragRef.current = a.id;
+          setDragged(a.id);
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData(AREA_DRAG_TYPE, a.id);
+        },
+        end: () => {
+          dragRef.current = null;
+          setDragged(null);
+          setHighlight(null);
+        },
+      }}
+      moveArea={{
+        label: `Move ${a.name}`,
+        disabled: busy || moving,
+        onClick: () => {
+          if (newItem && !confirmDraftNavigation()) return;
+          setNewItem(null);
+          setMoveMenu(a.id);
+          setMoveDestination("");
+          setMoveError(null);
+        },
+      }}
       onClick={() => select({ kind: "area", id: a.id })}
     />
   );
+  const spaceGroups = (floor: string, floorId: string | null, floorName: string, ids: string[]) => {
+    const groups = new Map<string, { name: string; areas: AreaNode[] }>();
+    for (const id of ids) {
+      const group = areaGroup(id);
+      const entry = groups.get(group.id) ?? { name: group.name, areas: [] };
+      entry.areas.push(h.areas[id]);
+      groups.set(group.id, entry);
+    }
+    for (const space of spaces) {
+      if (
+        !groups.has(`space:${space.id}`) &&
+        (floorId
+          ? space.declaredFloorIds.includes(floorId) ||
+            (sel.kind === "space" && sel.id === space.id && space.areaIds.some((id) => h.areas[id]?.floorId === floorId))
+          : (!space.areaIds.length && space.declaredFloorIds.length === 0) ||
+            (sel.kind === "space" && sel.id === space.id && space.areaIds.some((id) => h.looseAreaIds.includes(id)))) &&
+        (!q || space.name.toLowerCase().includes(q))
+      )
+        groups.set(`space:${space.id}`, { name: space.name, areas: [] });
+    }
+    if (!q && !groups.has("none")) groups.set("none", { name: "No Space", areas: [] });
+    if (dragged) {
+      if (!groups.has("none")) groups.set("none", { name: "No Space", areas: [] });
+      for (const space of spaces) if (!groups.has(`space:${space.id}`)) groups.set(`space:${space.id}`, { name: space.name, areas: [] });
+    }
+    return [...groups.entries()]
+      .sort((a, b) => a[1].name.localeCompare(b[1].name) || a[0].localeCompare(b[0]))
+      .map(([id, group]) => {
+        const key = `${floor}|${id}`;
+        const groupSpaceId = id.startsWith("space:") ? id.slice(6) : undefined;
+        const canAddArea = id === "none" || groupSpaceId !== undefined;
+        return (
+          <div key={key}>
+            <TreeRow
+              depth={2}
+              icon={Home}
+              label={group.name}
+              muted={id === "none" || id === "conflict"}
+              expanded={isOpen(key)}
+              active={sel.kind === "space" && sel.id === groupSpaceId}
+              onToggle={
+                groupSpaceId === undefined
+                  ? undefined
+                  : () => {
+                      if (newItem?.kind === "area" && newItem.floorId === floorId && newItem.spaceId === groupSpaceId) {
+                        if (!confirmDraftNavigation()) return;
+                        setNewItem(null);
+                      }
+                      fold(key);
+                    }
+              }
+              dropTarget={
+                id === "none"
+                  ? target(key, { floorId, space: { kind: "set", labelId: null } })
+                  : id.startsWith("space:")
+                    ? target(key, { floorId, space: { kind: "set", labelId: id.slice(6) } })
+                    : undefined
+              }
+              onClick={() => {
+                if (groupSpaceId !== undefined) {
+                  select({ kind: "space", id: groupSpaceId });
+                  return;
+                }
+                if (canAddArea && newItem?.kind === "area" && newItem.floorId === floorId && newItem.spaceId === groupSpaceId) {
+                  if (!confirmDraftNavigation()) return;
+                  setNewItem(null);
+                }
+                fold(key);
+              }}
+              addArea={
+                canAddArea
+                  ? {
+                      label: `Add area to ${group.name} on ${floorName}`,
+                      onClick: () => openNewItem({ kind: "area", floorId, floorName, spaceId: groupSpaceId, spaceName: groupSpaceId ? group.name : undefined }),
+                    }
+                  : undefined
+              }
+            />
+            {canAddArea && newItem?.kind === "area" && newItem.floorId === floorId && newItem.spaceId === groupSpaceId && (
+              <section ref={newFormRef} aria-label="Create area" className="my-2 ml-8 rounded border border-line p-2">
+                <p className="mb-2 text-xs text-muted">
+                  New area on {floorName}
+                  {groupSpaceId && <> · Space: {group.name}</>}
+                </p>
+                <NewItemForm
+                  key={key}
+                  kind="area"
+                  floorId={floorId}
+                  spaceLabelId={groupSpaceId}
+                  onDone={() => {
+                    changeCollapsed((s) => {
+                      s.delete(floor);
+                      s.delete(key);
+                    });
+                    setNewItem(null);
+                  }}
+                  onCancel={() => setNewItem(null)}
+                />
+              </section>
+            )}
+            {isOpen(key) && group.areas.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).map(areaRow)}
+          </div>
+        );
+      });
+  };
   return (
-    <nav aria-label="Spaces" className="min-h-0 flex-1 overflow-y-auto p-1.5">
-      <TreeRow depth={0} icon={Home} label={h.home.name} active={sel.kind === "home"} onClick={() => select({ kind: "home" })} />
+    <nav ref={treeRef} aria-label="Floors and areas" className="min-h-0 flex-1 overflow-y-auto p-1.5">
+      <TreeRow depth={0} icon={Home} label="Home Assistant" active={sel.kind === "home"} onClick={() => select({ kind: "home" })} />
+      {moveError && (
+        <p role="alert" className="p-2 text-xs text-danger">
+          {moveError}
+        </p>
+      )}
+      {moveNotice && (
+        <p role="status" className="p-2 text-xs text-warn">
+          {moveNotice}
+        </p>
+      )}
+      {moveMenu && h.areas[moveMenu] && (
+        <section ref={moveFormRef} aria-label={`Move ${h.areas[moveMenu].name}`} className="my-2 rounded border border-line p-2">
+          <label className="block text-xs">
+            Destination
+            <select
+              aria-label="Move destination"
+              className={`${inputClass} mt-1`}
+              value={moveDestination}
+              disabled={busy || moving}
+              onChange={(e) => setMoveDestination(e.target.value)}
+            >
+              <option value="">Choose a destination…</option>
+              {[...h.floors.map((f) => ({ id: f.id as string | null, name: f.name })), { id: null, name: "No floor" }].map((floor) => (
+                <optgroup key={floor.id ?? "loose"} label={floor.name}>
+                  <option value={JSON.stringify({ floorId: floor.id, space: { kind: "keep" } })}>{floor.name} · keep Space</option>
+                  <option value={JSON.stringify({ floorId: floor.id, space: { kind: "set", labelId: null } })}>{floor.name} · No Space</option>
+                  {spaces.map((space) => (
+                    <option key={space.id} value={JSON.stringify({ floorId: floor.id, space: { kind: "set", labelId: space.id } })}>
+                      {floor.name} · {space.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <div className="mt-2 flex gap-2">
+            <Button disabled={!moveDestination || busy || moving} onClick={() => void move(moveMenu, JSON.parse(moveDestination) as AreaMoveDestination)}>
+              Move
+            </Button>
+            <Button disabled={busy || moving} onClick={() => setMoveMenu(null)}>
+              Cancel
+            </Button>
+          </div>
+        </section>
+      )}
       {h.floors.map((f) => {
         const { ids, hidden } = listed(f.areaIds);
         const areas = ids.map((id) => h.areas[id]);
-        if (q && areas.length === 0) return null;
-        if (!floorListed(f.areaIds.length, hidden, sel.kind === "floor" && sel.id === f.id)) return null;
+        const emptySpaceMatches = spaces.some((space) => space.declaredFloorIds.includes(f.id) && (!q || space.name.toLowerCase().includes(q)));
+        if (q && areas.length === 0 && !emptySpaceMatches) return null;
+        const selectedSpaceOnFloor =
+          sel.kind === "space" && spaces.some((space) => space.id === sel.id && space.areaIds.some((id) => h.areas[id]?.floorId === f.id));
+        if (!emptySpaceMatches && !floorListed(f.areaIds.length, hidden, (sel.kind === "floor" && sel.id === f.id) || selectedSpaceOnFloor)) return null;
         return (
           <div key={f.id}>
             <TreeRow
@@ -267,33 +626,73 @@ export function SpaceTree({
               expanded={isOpen(`floor:${f.id}`)}
               active={sel.kind === "floor" && sel.id === f.id}
               edited={edited.has(`floor:${f.id}`)}
+              dropTarget={target(`floor:${f.id}`, { floorId: f.id, space: { kind: "keep" } })}
+              addArea={{ label: `Add Space to ${f.name}`, onClick: () => openNewItem({ kind: "space", floorId: f.id, floorName: f.name }) }}
               onClick={() => {
+                if (newItem?.kind === "area" && newItem.floorId === f.id && isOpen(`floor:${f.id}`)) {
+                  if (!confirmDraftNavigation()) return;
+                  setNewItem(null);
+                  fold(`floor:${f.id}`);
+                  // Let the discarded form unregister its draft before navigation checks it.
+                  window.setTimeout(() => select({ kind: "floor", id: f.id }), 0);
+                  return;
+                }
                 fold(`floor:${f.id}`);
                 select({ kind: "floor", id: f.id });
               }}
             />
-            {isOpen(`floor:${f.id}`) && areas.map(areaRow)}
+            {newItem?.kind === "space" && newItem.floorId === f.id && (
+              <section ref={newFormRef} aria-label="Create Space" className="my-2 ml-6 rounded border border-line p-2">
+                <NewSpaceForm
+                  names={[
+                    ...spaces.map((space) => space.name),
+                    ...changes.flatMap((change) => {
+                      const name = change.kind === "label" ? /^space:\s*(.+)$/i.exec(String(change.after.name ?? ""))?.[1] : undefined;
+                      return name ? [name] : [];
+                    }),
+                  ]}
+                  description={spaceFloorDescription(f.id)}
+                  onDone={() => {
+                    changeCollapsed((s) => {
+                      s.delete(`floor:${f.id}`);
+                    });
+                    setNewItem(null);
+                  }}
+                  onCancel={() => setNewItem(null)}
+                />
+              </section>
+            )}
+            {isOpen(`floor:${f.id}`) && spaceGroups(`floor:${f.id}`, f.id, f.name, ids)}
           </div>
         );
       })}
-      {h.looseAreaIds.length > 0 &&
-        floorListed(h.looseAreaIds.filter((id) => matches(h.areas[id])).length, listed(h.looseAreaIds).hidden, sel.kind === "loose") && (
-          <div>
-            <TreeRow
-              depth={1}
-              icon={Layers}
-              label="No floor"
-              muted
-              expanded={isOpen("loose")}
-              active={sel.kind === "loose"}
-              onClick={() => {
-                fold("loose");
-                select({ kind: "loose" });
-              }}
-            />
-            {isOpen("loose") && listed(h.looseAreaIds).ids.map((id) => areaRow(h.areas[id]))}
-          </div>
-        )}
+      {(!q ||
+        dragged ||
+        spaces.some((space) => !space.areaIds.length && !space.declaredFloorIds.length && (!q || space.name.toLowerCase().includes(q))) ||
+        (h.looseAreaIds.length > 0 &&
+          floorListed(
+            h.looseAreaIds.filter((id) => matches(h.areas[id])).length,
+            listed(h.looseAreaIds).hidden,
+            sel.kind === "loose" ||
+              (sel.kind === "space" && spaces.some((space) => space.id === sel.id && space.areaIds.some((id) => h.looseAreaIds.includes(id)))),
+          ))) && (
+        <div>
+          <TreeRow
+            depth={1}
+            icon={Layers}
+            label="No floor"
+            muted
+            expanded={isOpen("loose")}
+            active={sel.kind === "loose"}
+            dropTarget={target("loose", { floorId: null, space: { kind: "keep" } })}
+            onClick={() => {
+              fold("loose");
+              select({ kind: "loose" });
+            }}
+          />
+          {isOpen("loose") && spaceGroups("loose", null, "No floor", listed(h.looseAreaIds).ids)}
+        </div>
+      )}
       <TreeRow
         depth={0}
         icon={AlertTriangle}
@@ -361,7 +760,9 @@ export function SpaceView({
   const rows = { picked, toggle, edit: (id: string) => setEditing({ kind: "entity", id }) };
 
   let body: ReactNode;
-  if (sel.kind === "area") {
+  if (sel.kind === "space") {
+    body = <SpaceDetails id={sel.id} />;
+  } else if (sel.kind === "area") {
     const area = h.areas[sel.id];
     body = area ? (
       <AreaView
@@ -447,7 +848,7 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
 }
 
 function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; filters: Filters; edit: (id: string) => void; onDevices: () => void }) {
-  const { propose, busy: applying } = useTaxis();
+  const { propose, busy: applying, reviewChanges } = useTaxis();
   const [assigning, setAssigning] = useState(false);
   const assignArea = async (entity: EntityItem, area: string | null) => {
     if (!area || !h.areas[area] || !entity.inRegistry || (entity.needsOwnName && !entity.customName) || applying || assigning) return;
@@ -573,7 +974,7 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
                     className="shrink-0"
                     disabled={!!reason || applying || assigning}
                     aria-label={`Use suggested area ${h.areas[suggestion.areaId].name} for ${e.name}`}
-                    title="Add this area assignment to Changes"
+                    title={reviewChanges ? "Add this area assignment to Changes" : "Apply this area assignment"}
                     onClick={() => void assignArea(e, suggestion.areaId)}
                   >
                     <Check className="size-3" aria-hidden />
@@ -773,7 +1174,7 @@ function HomeView({ h, filters, select }: { h: Hierarchy; filters: Filters; sele
   ];
   return (
     <div className="flex flex-col gap-6">
-      <Heading title={h.home.name} subtitle={h.home.haVersion ? `Home Assistant ${h.home.haVersion}` : undefined} />
+      <Heading title="Home Assistant" subtitle={h.home.haVersion ? `Version ${h.home.haVersion}` : undefined} />
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
         <Stat label="Floors" value={h.counts.floors} />
         <Stat label="Areas" value={h.counts.areas} />
@@ -785,6 +1186,9 @@ function HomeView({ h, filters, select }: { h: Hierarchy; filters: Filters; sele
         />
         <Stat label="Not in any area" value={countVisible(h.unassignedEntityIds, h, filters)} note="entities" onClick={() => select({ kind: "unassigned" })} />
       </div>
+      <Section title="Spaces">
+        <SpaceManagement h={h} />
+      </Section>
       <Section title="Floors">
         {/* The floors in the order Home Assistant gives them (the areas on no floor last) until a column is clicked. */}
         <DataTable id="home-floors" label="Floors" rows={floorRows} rowKey={(r) => r.key} columns={floorColumns} defaultSort={{ key: "order", dir: "asc" }} />

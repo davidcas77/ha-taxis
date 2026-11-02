@@ -26,6 +26,7 @@ import {
 import { helperExclusions, planHelpers } from "../../shared/helpers.ts";
 import { planRecipes, type RecipeInstalled } from "../../shared/recipes.ts";
 import { planHouseRecipes } from "../../shared/recipes-house.ts";
+import { resolveSpaces } from "../../shared/spaces.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { useHealth } from "./health.tsx";
@@ -70,6 +71,7 @@ export function GuidePath({
   const { inventory, naming, namingIgnores, parameters, changes, inventoryLoaded, namingLoaded, namingIgnoresLoaded, parametersLoaded } = useTaxis();
   const health = useHealth();
 
+  const [expandedStep, setExpandedStep] = useState<PathStep["key"] | null>(null);
   const [buttons, setButtons] = useState<Loaded<ButtonFacts>>(loading());
   const [buttonsTry, setButtonsTry] = useState(0);
   useEffect(() => {
@@ -95,7 +97,14 @@ export function GuidePath({
   );
   const helpers = useMemo(
     () =>
-      inventoryLoaded && namingLoaded ? ready(helperFacts(planHelpers(h, inventory, naming, changes), changes)) : loading<ReturnType<typeof helperFacts>>(),
+      inventoryLoaded && namingLoaded
+        ? ready(
+            helperFacts(
+              planHelpers(h, inventory, naming, changes).filter((row) => resolveSpaces(h, changes).length === 0 || row.level === "area"),
+              changes,
+            ),
+          )
+        : loading<ReturnType<typeof helperFacts>>(),
     [h, inventory, naming, changes, inventoryLoaded, namingLoaded],
   );
   const params = useMemo(
@@ -175,17 +184,24 @@ export function GuidePath({
         {path.steps.map((step) => {
           const status = STATUS[step.status];
           const isNext = path.next?.key === step.key;
+          const expanded = expandedStep === step.key;
+          const toggle = () => setExpandedStep((current) => (current === step.key ? null : step.key));
           return (
             <li
               key={step.key}
               aria-current={isNext ? "step" : undefined}
+              onClick={(event) => {
+                if (event.target instanceof Element && !event.target.closest("button, a, input, select, textarea, summary, [data-guide-drawer]")) toggle();
+              }}
               className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-surface p-3 ${isNext ? "border-2 border-accent/60" : "border-line"}`}
             >
               <StatusIcon step={step} />
               <div className="min-w-[14rem] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-[13px] font-semibold">
-                    {step.number}. {step.title}
+                    <button type="button" className="text-left" aria-expanded={expanded} aria-controls={`guide-step-${step.key}`} onClick={toggle}>
+                      {step.number}. {step.title}
+                    </button>
                   </h3>
                   {isNext && <Badge tone="info">Next step</Badge>}
                   <Badge tone={step.error ? "error" : status.tone}>{step.error ? "Couldn't read" : step.loading ? "Reading" : status.label}</Badge>
@@ -202,16 +218,18 @@ export function GuidePath({
                   {step.action}
                 </Button>
               </div>
-              <StepInstruction step={step.key} h={h} plan={plan} go={go} />
+              <div id={`guide-step-${step.key}`} data-guide-drawer className="w-full" hidden={!expanded}>
+                {expanded && <StepInstruction step={step.key} h={h} plan={plan} go={go} />}
+              </div>
             </li>
           );
         })}
       </ol>
 
       <details className="rounded-lg border border-line bg-surface p-4">
-        <summary className="cursor-pointer text-sm font-semibold">More house and safety goals</summary>
+        <summary className="cursor-pointer text-sm font-semibold">Legacy all-areas and safety goals</summary>
         <p className="-mt-1 text-xs text-muted">
-          Recipes that look after the house. Each is listed only when it applies, and done once its recipes are installed or waiting in Changes.
+          These are legacy all-areas goals, not Space readiness. Open Recipes and select a Space to review its own plan.
         </p>
         {goals.state === "loading" ? (
           <p className="text-[13px] text-muted">Reading…</p>

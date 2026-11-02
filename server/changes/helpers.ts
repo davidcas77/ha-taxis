@@ -257,7 +257,6 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
     const domain = canonical.split(".")[0];
     const members = (a.entities ?? []).map(current);
     const details: string[] = [];
-    let uniqueId: string | null = null;
 
     // The area: a new one made in this list has its real id by now.
     let areaId: string | null = null;
@@ -280,8 +279,14 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
           message: `${canonical} is already taken by something else (${held.platform || "no integration"}). Change the helper name in Settings, remove this change and plan again.`,
         };
       }
+      // A create was planned while this ID was absent. A timer that appeared
+      // since then has no reviewed duration baseline, so never change or place
+      // it unless its current duration already matches the requested value.
+      // This still permits retrying an interrupted creation with its original
+      // duration, without taking over a timer whose settings may be unrelated.
+      if (a.helper === "timer" && durationOf(before, canonical) !== a.duration)
+        return { ok: false, message: "A timer appeared or changed after review and its duration does not match. Remove this change and plan again." };
       details.push("It was already in Home Assistant; Taxis only checked where it is.");
-      uniqueId = held.unique_id ?? null;
     } else {
       // The same helper under another id: made by an earlier Apply that stopped
       // before renaming it, or by hand. A second one would be a duplicate.
@@ -302,14 +307,12 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
         if (a.helper === "timer") {
           const item = await io.ha.write<{ id?: unknown }>("timer/create", { name: a.name, duration: formatDuration(a.duration!), restore: true });
           if (typeof item?.id !== "string") throw new Error("Home Assistant didn't say which timer it made.");
-          uniqueId = item.id;
           made = await entityOfStorage("timer", item.id).catch(() => null);
         } else if (a.helper === "schedule") {
           const parsed = parsePeriods(a.periods);
           if (!parsed.ok) throw new Error(parsed.error);
           const item = await io.ha.write<Record<string, unknown>>("schedule/create", { name: a.name, ...scheduleDays(parsed.days) });
           if (typeof item?.id !== "string") throw new Error("Home Assistant didn't say which schedule it made.");
-          uniqueId = item.id;
           if (!sameSchedule(item, parsed.days))
             throw new Error(`Home Assistant made the schedule, but stored other periods than Taxis sent. Check ${canonical} in Home Assistant.`);
           made = await entityOfStorage("schedule", item.id).catch(() => null);
@@ -317,7 +320,6 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
           // No initial state: a new toggle is off, so the area's recipes run until it is turned on.
           const item = await io.ha.write<{ id?: unknown }>("input_boolean/create", { name: a.name, ...(a.icon ? { icon: a.icon } : {}) });
           if (typeof item?.id !== "string") throw new Error("Home Assistant didn't say which toggle it made.");
-          uniqueId = item.id;
           made = await entityOfStorage("input_boolean", item.id).catch(() => null);
         } else {
           const entryId =
@@ -359,19 +361,6 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
       if (placing.area_id) details.push(`Put in ${before.areas.find((x) => x.area_id === areaId)?.name ?? areaId}.`);
     }
 
-    // A timer that was already there with another duration gets the one asked for.
-    if (a.helper === "timer" && held && uniqueId && durationOf(before, canonical) !== a.duration) {
-      try {
-        await io.ha.write("timer/update", { timer_id: uniqueId, duration: formatDuration(a.duration!) });
-        details.push(`Duration set to ${a.duration! / 60} min.`);
-      } catch (e) {
-        return {
-          ok: false,
-          message: `The timer is ready as ${canonical}, but Home Assistant refused to set its duration (${(e as Error).message}). Apply again to finish.`,
-        };
-      }
-    }
-
     if (areaId && a.set_area_sensor) {
       const field = a.set_area_sensor === "temperature" ? "temperature_entity_id" : "humidity_entity_id";
       const area = before.areas.find((x) => x.area_id === areaId);
@@ -398,7 +387,10 @@ export async function applyHelperChanges(all: Change[], io: HelperIO): Promise<O
     if (!item) return { ok: false, message: "It's no longer in Home Assistant." };
     if (item.platform !== "timer" || !item.unique_id)
       return { ok: false, message: "It isn't a timer set up in the Home Assistant UI, so its duration can't be changed here." };
-    if (durationOf(before, target) === seconds) return { ok: true, message: "Applied (the duration was already this)." };
+    const now = durationOf(before, target);
+    if (now === seconds) return { ok: true, message: "Applied (the duration was already this)." };
+    if (typeof c.before.duration !== "number" || now === null || now !== c.before.duration)
+      return { ok: false, message: "The timer duration changed or could not be verified after review. Remove this change and plan again." };
     try {
       await io.ha.write("timer/update", { timer_id: item.unique_id, duration: formatDuration(seconds) });
     } catch (e) {

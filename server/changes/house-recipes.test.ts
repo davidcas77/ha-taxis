@@ -13,6 +13,7 @@ import { helperChangeInputs, planHelpers } from "../../shared/helpers.ts";
 import { EMPTY_INVENTORY } from "../../shared/inventory.ts";
 import { DEFAULT_NAMING } from "../../shared/naming.ts";
 import { EMPTY_PARAMETERS, setParameter, type ParameterSettings } from "../../shared/parameters.ts";
+import { spaceIds } from "../../shared/spaces.ts";
 import { areaThermostats, canonicalLightGroups, planRecipes, recipeChangeInputs, type RecipeCell } from "../../shared/recipes.ts";
 import { planHouseRecipes } from "../../shared/recipes-house.ts";
 import type { Change, ChangeInput } from "../../shared/types.ts";
@@ -72,6 +73,19 @@ const noServiceCalls = (t: ReturnType<typeof setup>) => {
 };
 
 describe("installing low batteries", () => {
+  it("reads scoped scripts only for native Space labels", async () => {
+    const t = setup();
+    t.fake.home.labels.push({ label_id: "studio", name: "Space: Studio" });
+    const id = spaceIds("studio").goodbye;
+    const other = spaceIds("unknown").goodbye;
+    for (const script of [id, other]) {
+      t.fake.home.states.push({ entity_id: `script.${script}`, state: "off", attributes: {} });
+      t.fake.home.scripts[script] = { alias: "Goodbye", use_blueprint: { path: GOODBYE_PATH, input: {} } };
+    }
+    const found = await t.installed();
+    expect(found.scripts[id]).toMatchObject({ path: GOODBYE_PATH });
+    expect(found.scripts[other]).toBeUndefined();
+  });
   it("reports an unavailable house automation instead of treating it as installed", async () => {
     const t = setup();
     t.add(recipeChangeInputs([of(await t.houseCells(), "battery_low")]));
