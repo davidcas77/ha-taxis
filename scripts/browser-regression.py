@@ -1117,6 +1117,14 @@ class DesktopRegression(unittest.TestCase):
         if os.environ.get("TAXIS_ALLOW_QUEUE_TEST") != "1":
             self.skipTest("requires an isolated mock and TAXIS_ALLOW_QUEUE_TEST=1")
         self.page.unroute("**/api/hierarchy*")
+        unexpected_writes = []
+        def guard_writes(route):
+            if route.request.method not in ("GET", "HEAD", "OPTIONS") and not route.request.url.endswith("/api/changes"):
+                unexpected_writes.append((route.request.method, route.request.url))
+                route.abort()
+            else:
+                route.continue_()
+        self.page.route("**/api/**", guard_writes)
         with urllib.request.urlopen(BASE + "/api/changes") as response:
             self.assertEqual(json.load(response)["changes"], [])
         self.page.goto(BASE + "/#area/study", wait_until="networkidle")
@@ -1133,10 +1141,16 @@ class DesktopRegression(unittest.TestCase):
         area.get_by_role("alert").filter(has_text="Labels were queued, but the area assignment failed").wait_for()
         expect(area.get_by_role("checkbox", name="Bedroom", exact=True)).not_to_be_checked()
         self.page.unroute("**/api/changes", reject_assignment)
-        area.get_by_role("checkbox", name="Bedroom", exact=True).click()
+        def queue_type(region, name):
+            checkbox = region.get_by_role("checkbox", name=name, exact=True)
+            with self.page.expect_response(lambda response: response.url.endswith("/api/changes") and response.request.method == "POST" and response.request.post_data_json.get("kind") == "area") as result:
+                checkbox.click()
+            self.assertTrue(result.value.ok)
+            expect(checkbox).to_be_enabled()
+        queue_type(area, "Bedroom")
         expect(area.get_by_role("checkbox", name="Bedroom", exact=True)).to_be_checked()
         expect(area.get_by_text("Area labels queued in", exact=False)).to_be_visible()
-        area.get_by_role("checkbox", name="Bathroom", exact=True).click()
+        queue_type(area, "Bathroom")
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).to_be_checked()
         self.page.reload(wait_until="networkidle")
         expect(area.get_by_role("checkbox", name="Bedroom", exact=True)).to_be_checked()
@@ -1158,7 +1172,7 @@ class DesktopRegression(unittest.TestCase):
         labels = preview["areas"]["study"]["labels"] + [office]
         response = self.page.request.post(BASE + "/api/changes", headers=headers, data={"kind": "area", "op": "update", "targetId": "study", "fields": {"labels": labels}})
         self.assertTrue(response.ok)
-        area.get_by_role("checkbox", name="Garden", exact=True).click()
+        queue_type(area, "Garden")
         expect(area.get_by_role("checkbox", name="Garden", exact=True)).to_be_checked()
         expect(area.get_by_role("checkbox", name="Office / study", exact=True)).to_be_checked()
         self.page.screenshot(path=str(screenshot_dir() / "area-types-native-queued.png"))
@@ -1166,14 +1180,14 @@ class DesktopRegression(unittest.TestCase):
         area = self.page.get_by_role("region", name="Area classification")
         expect(area.get_by_text("Suggested from existing settings/name")).to_be_visible()
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).not_to_be_checked()
-        area.get_by_role("checkbox", name="Bathroom", exact=True).click()
+        queue_type(area, "Bathroom")
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).to_be_checked()
-        area.get_by_role("checkbox", name="Bathroom", exact=True).click()
+        queue_type(area, "Bathroom")
         expect(area.get_by_role("checkbox", name="Other", exact=True)).to_be_checked()
         expect(area.get_by_text("Suggested from existing settings/name")).to_have_count(0)
         self.page.goto(BASE + "/#area/loft", wait_until="networkidle")
         area = self.page.get_by_role("region", name="Area classification")
-        area.get_by_role("checkbox", name="Bedroom", exact=True).click()
+        queue_type(area, "Bedroom")
         expect(area.get_by_role("checkbox", name="Bedroom", exact=True)).to_be_checked()
         with urllib.request.urlopen(BASE + "/api/changes") as response:
             changes = json.load(response)["changes"]
@@ -1199,6 +1213,7 @@ class DesktopRegression(unittest.TestCase):
         expect(area.get_by_text("Suggested from existing settings/name", exact=False)).to_be_visible()
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).not_to_be_checked()
         check_humidity("Bathroom", True)
+        self.assertEqual(unexpected_writes, [])
 
     def test_recipe_area_sources_share_inventory_and_report_failure(self):
         def fixture(h):
