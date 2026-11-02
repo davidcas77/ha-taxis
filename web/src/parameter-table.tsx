@@ -9,6 +9,7 @@ import { areaInventory } from "../../shared/inventory.ts";
 import {
   PARAM_TAB_LABEL,
   PARAM_DEF,
+  SPACE_CONTROL_PARAMETERS,
   checkValue,
   entryLights,
   ownValue,
@@ -26,6 +27,7 @@ import {
 } from "../../shared/parameters.ts";
 import { canonicalPeriods, describePeriods } from "../../shared/periods.ts";
 import type { Hierarchy } from "../../shared/types.ts";
+import { areaSpace, resolveSpaces, type Space } from "../../shared/spaces.ts";
 import { useTaxis } from "./state.tsx";
 import { HelpDisclosure, HelpTopic } from "./help.tsx";
 import { DataTable, useSortState, type Column } from "./data-table.tsx";
@@ -33,7 +35,7 @@ import { Chip, EmptyState, Toolbar } from "./ui.tsx";
 import { TooltipButton } from "./tooltip.tsx";
 import { ParameterPopover } from "./parameter-popover.tsx";
 
-// The House, Occupancy, Lighting, Media, Climate, Bathroom fan, Exterior and Safety
+// The House, Occupancy, Lighting, Media, Climate, Ventilation, Exterior and Safety
 // tabs of the Parameters page: one table per tab, a row for the house, for interior
 // and exterior areas, for each
 // floor and for each area, and a column per parameter. A cell shows the value set
@@ -61,7 +63,7 @@ const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> 
       ["Hold times", "Normal is the usual timeout. Extended applies after prolonged occupancy. Sleep applies in bedrooms while a bed sensor detects someone."],
       [
         "Shower detection",
-        "A humidity rise can hold an already-occupied room. Set the rate in % per second; 0 disables it. Requires the rate sensor made by Bathroom fan.",
+        "A humidity rise can hold an already-occupied room. Set the rate in % per second; 0 disables it. Requires the rate sensor made by Ventilation.",
       ],
     ],
   },
@@ -71,8 +73,8 @@ const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> 
       ["Brightness and colour", "Choose day and night levels, the darkness threshold and transition times."],
       ["Manual override", "After someone changes a light, automation waits this long. Set 0 to wait until the room next clears."],
       [
-        "Entry lights",
-        "Choose which lights come on when the room becomes occupied by day. This is per room, not inherited. Blank uses the room's only light or its main lights.",
+        "Motion lights",
+        "Choose which lights come on when the room becomes occupied by day, and at night when no Night lights are selected. Defaults use the only light or inventory Main role.",
       ],
     ],
   },
@@ -101,7 +103,7 @@ const GUIDES: Record<ParamTab, { summary: string; topics: [string, string][] }> 
     ],
   },
   fan: {
-    summary: "Set when humidity starts the bathroom fan and when it stops.",
+    summary: "Set when humidity starts the fan and when it stops.",
     topics: [
       ["Start", "Triggered by a rapid humidity rise, a difference above a reference sensor, or the absolute humidity level. Rates use % per second."],
       ["Stop", "Stops when humidity returns near the reference, the rise stays flat for the configured time, or the maximum run time is reached."],
@@ -338,7 +340,9 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
     if (!areaId) return null;
     const rows = areaInventory(h, inventory, areaId, helperExclusions(h, naming)(areaId)).lights;
     const resolved =
-      def.key === "ambient_lights" || def.key === "night_lights" ? roleLights(parameters, areaId, rows, def.key) : entryLights(parameters, areaId, rows);
+      def.key === "entry_lights"
+        ? entryLights(parameters, areaId, rows)
+        : roleLights(parameters, areaId, rows, def.key as "main_lights" | "strong_lights" | "ambient_lights" | "night_lights");
     return { rows: rows.filter((r) => r.counts), resolved };
   }, [h, inventory, naming, parameters, areaId, def.key]);
   if (!areaId || !entry)
@@ -413,7 +417,7 @@ function EntryLightsCell({ h, row, def, editing, onEdit }: { h: Hierarchy; row: 
                 <input
                   type="checkbox"
                   aria-label={
-                    def.key === "entry_lights" ? `${r.name} is an entry light of ${row.label}` : `${r.name} is ${def.label.toLowerCase()} for ${row.label}`
+                    def.key === "entry_lights" ? `${r.name} is a motion light of ${row.label}` : `${r.name} is ${def.label.toLowerCase()} for ${row.label}`
                   }
                   checked={resolved.lights.includes(r.entityId)}
                   disabled={parametersSaving}
@@ -475,6 +479,8 @@ const COLUMN_ORDER: Partial<Record<ParamTab, ParamKey[]>> = {
     "dim_level",
     "override_duration",
     "entry_lights",
+    "main_lights",
+    "strong_lights",
     "ambient_lights",
     "night_lights",
     "guest_pause_lighting",
@@ -493,6 +499,8 @@ const GROUP: Partial<Record<ParamTab, Partial<Record<ParamKey, string>>>> = {
     dim_level: "Fading",
     override_duration: "Manual and entry",
     entry_lights: "Manual and entry",
+    main_lights: "Manual and entry",
+    strong_lights: "Manual and entry",
     ambient_lights: "Manual and entry",
     night_lights: "Manual and entry",
     guest_pause_lighting: "Manual and entry",
@@ -593,61 +601,75 @@ export function AreaRecipeParameters({ h, areaId, keys }: { h: Hierarchy; areaId
 }
 
 function AreaRecipeParameterRows({ h, areaId, keys }: { h: Hierarchy; areaId: string; keys: readonly ParamKey[] }) {
-  const { inventory, inventoryLoaded, parameters, parametersLoaded } = useTaxis();
+  const { inventory, inventoryLoaded, parameters, parametersLoaded, changes } = useTaxis();
   const [editing, setEditing] = useState<ParamKey | null>(null);
   const row = useMemo(() => paramRows(h, inventory).rest.find((item) => item.scope.level === "area" && item.scope.id === areaId), [h, inventory, areaId]);
   if (!inventoryLoaded || !parametersLoaded) return <p className="text-[13px] text-muted">Loading the settings…</p>;
   if (!row) return <p className="text-[13px] text-muted">This area is no longer available.</p>;
+  const areaScope = areaSpace(h, areaId, changes);
   return (
-    <table aria-label="Area parameters" className="w-full table-fixed border-collapse text-left text-[13px]">
-      <colgroup>
-        <col style={{ width: "min(40%, 16rem)" }} />
-        <col style={{ width: "min(28%, 9rem)" }} />
-        <col />
-      </colgroup>
-      <thead>
-        <tr className="border-b border-line text-xs text-muted">
-          <th scope="col" className="py-2 pr-2 font-medium">
-            Parameter
-          </th>
-          <th scope="col" className="py-2 pr-2 font-medium">
-            Value
-          </th>
-          <th scope="col" className="py-2 font-medium">
-            Source
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {keys.map((key) => {
-          const def = PARAM_DEF[key];
-          if (def.houseOnly || def.kind === "entities") return null;
-          const own = ownValue(parameters, row.scope, key);
-          const shown = resolveIn(parameters, row.chain, key);
-          return (
-            <tr key={key} className="border-b border-line align-top last:border-0">
-              <th scope="row" className="break-words py-2 pr-2 font-normal">
-                {header(def)}
-              </th>
-              <td className="min-w-0 break-words py-2 pr-2">
-                <Cell h={h} row={row} def={def} editing={editing === key} onEdit={(on) => setEditing(on ? key : null)} />
-              </td>
-              <td className="break-words py-2 text-xs text-muted">{own === undefined ? `From ${sourceName(h, shown.source)}` : "Set for this area"}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <>
+      <p className="mb-1 text-xs text-muted">
+        {areaScope.kind === "space"
+          ? `Space: ${areaScope.space.name}. Mode bindings use this Space, not the legacy House.`
+          : areaScope.kind === "conflict"
+            ? `Space assignment needs attention: ${areaScope.error}`
+            : "Unassigned to a Space; legacy House mode bindings apply."}
+      </p>
+      <table aria-label="Area parameters" className="w-full table-fixed border-collapse text-left text-[13px]">
+        <colgroup>
+          <col style={{ width: "min(40%, 16rem)" }} />
+          <col style={{ width: "min(28%, 9rem)" }} />
+          <col />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-line text-xs text-muted">
+            <th scope="col" className="py-2 pr-2 font-medium">
+              Parameter
+            </th>
+            <th scope="col" className="py-2 pr-2 font-medium">
+              Value
+            </th>
+            <th scope="col" className="py-2 font-medium">
+              Source
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {keys.map((key) => {
+            const def = PARAM_DEF[key];
+            if (def.houseOnly || def.kind === "entities") return null;
+            const own = ownValue(parameters, row.scope, key);
+            const shown = resolveIn(parameters, row.chain, key);
+            return (
+              <tr key={key} className="border-b border-line align-top last:border-0">
+                <th scope="row" className="break-words py-2 pr-2 font-normal">
+                  {header(def)}
+                </th>
+                <td className="min-w-0 break-words py-2 pr-2">
+                  <Cell h={h} row={row} def={def} editing={editing === key} onEdit={(on) => setEditing(on ? key : null)} />
+                </td>
+                <td className="break-words py-2 text-xs text-muted">{own === undefined ? `From ${sourceName(h, shown.source)}` : "Set for this area"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
   );
 }
 
-export function HouseRecipeParameters({ h, keys }: { h: Hierarchy; keys: readonly ParamKey[] }) {
+export function HouseRecipeParameters({ h, keys, space }: { h: Hierarchy; keys: readonly ParamKey[]; space?: Space }) {
   const { inventory, inventoryLoaded, parameters, parametersLoaded } = useTaxis();
   const [editing, setEditing] = useState<ParamKey | null>(null);
-  const row = useMemo(() => paramRows(h, inventory).fixed[0], [h, inventory]);
+  const row = useMemo<ParamRow>(() => {
+    if (!space) return paramRows(h, inventory).fixed[0];
+    const scope = { level: "space", id: space.id } as const;
+    return { scope, label: space.name, chain: [scope, { level: "house" }], floorId: null, floorName: null, order: 0 };
+  }, [h, inventory, space]);
   if (!inventoryLoaded || !parametersLoaded) return <p className="text-[13px] text-muted">Loading the settings…</p>;
   return (
-    <table aria-label="House parameters" className="w-full table-fixed border-collapse text-left text-[13px]">
+    <table aria-label={space ? "Space parameters" : "House parameters"} className="w-full table-fixed border-collapse text-left text-[13px]">
       <colgroup>
         <col style={{ width: "min(40%, 16rem)" }} />
         <col style={{ width: "min(28%, 9rem)" }} />
@@ -680,7 +702,9 @@ export function HouseRecipeParameters({ h, keys }: { h: Hierarchy; keys: readonl
               <td className="min-w-0 break-words py-2 pr-2">
                 <Cell h={h} row={row} def={def} editing={editing === key} onEdit={(on) => setEditing(on ? key : null)} />
               </td>
-              <td className="break-words py-2 text-xs text-muted">{own === undefined ? `From ${sourceName(h, shown.source)}` : "Set for the house"}</td>
+              <td className="break-words py-2 text-xs text-muted">
+                {own === undefined ? `From ${sourceName(h, shown.source)}` : space ? "Set for this Space" : "Set for the house"}
+              </td>
             </tr>
           );
         })}
@@ -690,7 +714,7 @@ export function HouseRecipeParameters({ h, keys }: { h: Hierarchy; keys: readonl
 }
 
 export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
-  const { inventory, inventoryLoaded, parameters, parametersLoaded, naming } = useTaxis();
+  const { inventory, inventoryLoaded, parameters, parametersLoaded, naming, changes } = useTaxis();
   const [showAllFanAreas, setShowAllFanAreas] = useStoredFlag("taxis:parameters:fan:show-all-areas", false);
   const [climateGroup, setClimateGroup] = useStoredChoice(
     "taxis:parameters:climate-group",
@@ -705,7 +729,15 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
   }, [tab, group]);
   const [editing, setEditing] = useState<string | null>(null);
   const ready = inventoryLoaded && parametersLoaded;
-  const { fixed, rest, floors } = useMemo(() => paramRows(h, inventory), [h, inventory]);
+  const { fixed, rest, floors } = useMemo(() => {
+    const rows = paramRows(h, inventory);
+    const blocked = new Set(
+      resolveSpaces(h, changes)
+        .filter((space) => !!space.blocked)
+        .map((space) => space.id),
+    );
+    return { ...rows, fixed: rows.fixed.filter((row) => row.scope.level !== "space" || !blocked.has(row.scope.id)) };
+  }, [h, inventory, changes]);
   const relevant = useMemo(() => {
     if (tab !== "fan" || showAllFanAreas) return rest;
     const exclude = helperExclusions(h, naming);
@@ -749,7 +781,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       {
         id: "name",
         header: "Level",
-        help: "Choose a house default, area-type default or room override.",
+        help: "Choose installation, area-type, Space or area settings.",
         priority: 1,
         sticky: true,
         width: 190,
@@ -780,7 +812,12 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
           },
           cell: (r) => {
             const here = `${rowKey(r)}|${d.key}`;
-            if (d.houseOnly && r.scope.level !== "house") {
+            if (
+              d.houseOnly &&
+              r.scope.level !== "house" &&
+              r.scope.level !== "space" &&
+              !(r.scope.level === "area" && r.chain.some((scope) => scope.level === "space") && SPACE_CONTROL_PARAMETERS.has(d.key))
+            ) {
               return (
                 <span className="px-1.5 text-muted" title="Set for the house only: it is not set for a floor, an area or the interior or exterior areas">
                   —
@@ -805,7 +842,8 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
     <div className="flex min-w-0 flex-col gap-3">
       <HelpDisclosure key={tab} summary={`${GUIDES[tab].summary} Click a value to edit.`}>
         <HelpTopic title="Inheritance">
-          Set a house default, an interior/exterior default, or a room override. Clear a value to inherit. Floors only group rooms.
+          Set installation, interior/exterior, Space or area values. Clear a value to inherit. Space control bindings never inherit from the legacy House;
+          floors only group areas.
         </HelpTopic>
         <HelpTopic title="Saving">Saved in Taxis immediately. Install or update a recipe through Changes to apply these settings to Home Assistant.</HelpTopic>
         {GUIDES[tab].topics.map(([title, body]) => (
@@ -833,7 +871,7 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
       {tab === "fan" && (
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
           <p className="flex-1">
-            Used only where Bathroom fan is installed. Bathroom areas and areas with an included fan and humidity sensor are shown. The recipe still needs
+            Used only where Ventilation is installed. Bathroom areas and areas with an included fan and humidity sensor are shown. The recipe still needs
             suitable hardware.
           </p>
           <label className="flex items-center gap-2">
@@ -850,6 +888,9 @@ export function ParameterTable({ h, tab }: { h: Hierarchy; tab: ParamTab }) {
           </a>{" "}
           or enable Show all areas to inspect other areas' saved settings.
         </EmptyState>
+      )}
+      {resolveSpaces(h, changes).some((space) => !!space.blocked) && (
+        <p className="text-xs text-warn">Spaces with pending or conflicting labels are not editable here until resolved.</p>
       )}
       <DataTable
         key={tab === "climate" ? climateGroup : tab}

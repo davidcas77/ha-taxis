@@ -29,7 +29,7 @@ const haAutomation = (id: string) => `/config/automation/edit/${encodeURICompone
 // The Buttons tab of the Automations page: the controls on the left, and for the
 // one picked, its buttons by press types. Content only; the page supplies the header.
 export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: string | null; go: (r: Route) => void }) {
-  const { changes, reload, notify } = useTaxis();
+  const { changes, reload, reviewChanges } = useTaxis();
   const [data, setData] = useState<{ inventory: ButtonInventory; fingerprint: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -79,7 +79,7 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
   );
   const added = async () => {
     await reload(false);
-    notify({ tone: "ok", text: "Button mapping added to changes. Review Changes, then Apply to enable it in Home Assistant." });
+    if (!reviewChanges) setRefresh((v) => v + 1);
   };
   const selectControl = (id: string | null) => go({ page: "automations", tab: "buttons", controlId: id });
   return (
@@ -87,7 +87,7 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
       <Toolbar label="Buttons actions">
         <p className="min-w-[16rem] flex-1 text-[13px] text-muted">
           Every remote, wall control and HA button input. One automation per light, group or other output combines its assigned buttons; each press type can run
-          its own action. Nothing changes in HA until Apply.
+          its own action. {reviewChanges ? "Nothing changes in HA until Apply." : "Assignments apply to Home Assistant immediately."}
         </p>
         <Button disabled={loading || submitting} onClick={() => setRefresh((v) => v + 1)}>
           {loading ? "Reading buttons…" : "Refresh buttons and automations"}
@@ -562,7 +562,7 @@ function AssignmentEditor({
   onQueued: () => Promise<void>;
   onBusy: (value: boolean) => void;
 }) {
-  const { version } = useTaxis();
+  const { version, assignButton, busy: editsBusy, reviewChanges } = useTaxis();
   const [reviewedFingerprint] = useState(fingerprint);
   const [reviewedChangesVersion] = useState(version);
   const [entity, setEntity] = useState(initial?.entityId ?? "");
@@ -592,6 +592,10 @@ function AssignmentEditor({
       className="mt-3 grid gap-3 rounded-lg border border-accent/30 bg-surface p-3 sm:grid-cols-2"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (editsBusy) {
+          setError("Wait for the current operation to finish.");
+          return;
+        }
         let action: ButtonAction;
         try {
           action = { entityId: entity || null, service, data: JSON.parse(json) };
@@ -604,7 +608,7 @@ function AssignmentEditor({
         onBusy(true);
         setError(null);
         try {
-          const r = await api.assignButton({
+          const ok = await assignButton({
             controlId: control.id,
             gestureKey: gesture.key,
             action,
@@ -613,10 +617,10 @@ function AssignmentEditor({
             fingerprint: reviewedFingerprint,
             changesVersion: reviewedChangesVersion,
           });
-          if (r.ok) {
+          if (ok) {
             setDirty(false);
             await onQueued();
-          } else setError(r.error);
+          } else setError("The button assignment could not be saved. See the message above.");
         } finally {
           setBusy(false);
           onBusy(false);
@@ -668,7 +672,8 @@ function AssignmentEditor({
       </label>
       {initial && (
         <p className="text-xs text-muted sm:col-span-2">
-          This edit keeps the same output. To replace it, disable this assignment and add the new output; review both changes together.
+          This edit keeps the same output. To replace it, disable this assignment and add the new output.{" "}
+          {reviewChanges ? "Review both changes together." : "Each edit applies immediately."}
         </p>
       )}
       <details className="sm:col-span-2">
@@ -688,7 +693,7 @@ function AssignmentEditor({
       </details>
       <label className="flex items-center gap-2 text-xs">
         <input type="checkbox" checked={enabled} disabled={busy} onChange={(e) => act(() => setEnabled(e.target.checked))} />
-        Enable this assignment after Apply
+        {reviewChanges ? "Enable this assignment after Apply" : "Enable this assignment"}
       </label>
       <label className="flex items-start gap-2 text-xs">
         <input className="mt-0.5" type="checkbox" checked={coexist} disabled={busy} onChange={(e) => act(() => setCoexist(e.target.checked))} />I reviewed
@@ -700,8 +705,8 @@ function AssignmentEditor({
         </p>
       )}
       <div className="flex gap-2 sm:col-span-2">
-        <Button type="submit" tone="primary" disabled={busy || !service}>
-          {busy ? "Adding…" : "Add to changes"}
+        <Button type="submit" tone="primary" disabled={busy || editsBusy || !service}>
+          {busy ? (reviewChanges ? "Adding…" : "Applying…") : reviewChanges ? "Add to changes" : "Apply assignment"}
         </Button>
         <Button
           disabled={busy}

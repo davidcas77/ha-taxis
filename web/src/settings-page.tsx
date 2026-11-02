@@ -4,7 +4,7 @@ import type { Hierarchy } from "../../shared/types.ts";
 import { AiAdminPanel } from "./ai-admin.tsx";
 import { AiSection } from "./ai.tsx";
 import { JevSection } from "./jev.tsx";
-import { GeneralSettings } from "./naming.tsx";
+import { ChangeModeSettings, GeneralSettings } from "./naming.tsx";
 import { AI_SETTINGS, SETTINGS, type Route, type SettingsTab } from "./route.ts";
 import { EmptyState, Page, PageHeader, Tabs, tabPanelId, type TabItem } from "./ui.tsx";
 
@@ -24,11 +24,14 @@ export function SettingsPage({ h, tab, go }: { h: Hierarchy | null; tab: Setting
       <Tabs tabs={TABS} value={tab} onChange={(key) => go(key === "ai" ? AI_SETTINGS : SETTINGS)} label="Settings" />
       <div role="tabpanel" id={tabPanelId("Settings")} className="flex min-w-0 flex-col gap-8 pb-16">
         {tab === "general" ? (
-          h ? (
-            <GeneralSettings h={h} go={go} />
-          ) : (
-            <EmptyState>The naming settings need Home Assistant's areas. Fix the problem above, then refresh. The AI tab works without it.</EmptyState>
-          )
+          <>
+            <ChangeModeSettings />
+            {h ? (
+              <GeneralSettings h={h} go={go} />
+            ) : (
+              <EmptyState>The naming settings need Home Assistant's areas. Fix the problem above, then refresh.</EmptyState>
+            )}
+          </>
         ) : (
           <>
             <AiAdminPanel />

@@ -5,7 +5,10 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { KEYED_KINDS, planMerge, refsOf, stripRef, tempId } from "../../shared/changes.ts";
+import { spaceFloorDescription, spaceFloorFromDescription } from "../../shared/spaces.ts";
 import type { CategoryScope, Change, ChangeInput, ChangeKind, ChangeOp, Hierarchy } from "../../shared/types.ts";
+import { spaceBaseline, spaceChangeGuard, type SpaceGuardContext } from "./space-safety.ts";
+import { areaLabelConflict, areaMoveLabels, areaSpaceSnapshot, areaSpaceSnapshotError, type AreaSpaceSnapshot } from "./area-label-safety.ts";
 
 // The change list, kept in SQLite so it survives restarts and updates of the
 // app. Nothing here talks to Home Assistant.
@@ -36,7 +39,13 @@ export type ChangeStore = ReturnType<typeof changeStore>;
 
 // Internal config baselines are needed for conflict checks, but are not UI data.
 export function publicChange(change: Change): Change {
-  const { configSnapshot: _configSnapshot, ...before } = change.before;
+  const {
+    configSnapshot: _configSnapshot,
+    preserveConfig: _preserveConfig,
+    spaceSnapshot: _spaceSnapshot,
+    areaSpaceSnapshot: _areaSpaceSnapshot,
+    ...before
+  } = change.before;
   return { ...change, before };
 }
 
@@ -45,6 +54,7 @@ function swapRef(after: Record<string, unknown>, temp: string, real: string): Re
   const out = { ...after };
   if (out.area_id === temp) out.area_id = real;
   if (out.floor_id === temp) out.floor_id = real;
+  if (spaceFloorFromDescription(out.description) === temp) out.description = spaceFloorDescription(real);
   if (Array.isArray(out.labels)) out.labels = out.labels.map((l) => (l === temp ? real : l));
   if (out.categories && typeof out.categories === "object") {
     out.categories = Object.fromEntries(Object.entries(out.categories).map(([s, c]) => [s, c === temp ? real : c]));
@@ -105,6 +115,15 @@ export function changeStore(db: DatabaseSync) {
           for (const [temp, real] of outcome.realIds) {
             if (target === temp) target = real;
             after = swapRef(after, temp, real);
+            const snapshot = before.areaSpaceSnapshot as AreaSpaceSnapshot | undefined;
+            if (snapshot && (snapshot.assigned.includes(temp) || Object.hasOwn(snapshot.names, temp))) {
+              const names = { ...snapshot.names };
+              if (Object.hasOwn(names, temp)) {
+                names[real] = names[temp];
+                delete names[temp];
+              }
+              before = { ...before, areaSpaceSnapshot: { assigned: snapshot.assigned.map((id) => (id === temp ? real : id)).sort(), names } };
+            }
           }
           const current = (id: string) => outcome.renamed.get(id) ?? id;
           if (c.kind === "entity" || (c.kind === "helper" && c.op === "update")) target = current(target);
@@ -133,11 +152,57 @@ export function changeStore(db: DatabaseSync) {
     },
 
     /** Folds an edit into the list. Returns an error message, or null when stored. */
-    add(input: ChangeInput, h: Hierarchy, configBefore?: unknown): string | null {
-      const plan = planMerge(list(), input, h);
+    add(input: ChangeInput, h: Hierarchy, configBefore?: unknown, preserveConfig = false, context?: SpaceGuardContext): string | null {
+      const existing = list();
+      if (input.areaMove && input.kind === "area" && input.targetId) {
+        const labels = areaMoveLabels(h, existing, input.targetId, input.areaMove.spaceLabelId, input.areaMove.sourceSpaces);
+        if (typeof labels === "string") return labels;
+        input = { ...input, fields: { ...input.fields, labels } };
+      }
+      const previous = existing.find((change) => change.kind === "area" && change.targetId === input.targetId && change.op === "update");
+      const oldAreaSnapshot = previous?.before.areaSpaceSnapshot as AreaSpaceSnapshot | undefined;
+      if (input.kind === "area" && oldAreaSnapshot && input.targetId) {
+        const error = areaSpaceSnapshotError(h, existing, input.targetId, oldAreaSnapshot);
+        if (error) return error;
+      }
+      if (input.kind === "area" && Array.isArray(input.fields?.labels)) {
+        const conflict = areaLabelConflict(h, existing, input.fields.labels as string[]);
+        if (conflict) return conflict;
+      }
+      if (!input.space && ["area", "device", "entity", "label"].includes(input.kind) && existing.some((change) => change.before.spaceSnapshot))
+        return "Apply or discard pending Space changes before changing areas, devices, entities or labels.";
+      const spaceError = spaceChangeGuard(input, h, existing, context);
+      if (spaceError) return spaceError;
+      const plan = planMerge(existing, input, h);
+      if (input.kind === "helper" && input.op === "update" && input.fields && "duration" in input.fields && input.targetId) {
+        const previousTimer = existing.find(
+          (change) => change.kind === "helper" && change.op === "update" && change.targetId === input.targetId && "duration" in change.after,
+        );
+        // Keep the original baseline when another edit is folded into a queued
+        // change. Old entries without one must be removed and reviewed again.
+        const duration = previousTimer ? previousTimer.before.duration : h.entities[input.targetId]?.timerDuration;
+        if (plan.action === "insert") plan.change.before = { ...plan.change.before, ...(typeof duration === "number" ? { duration } : {}) };
+        else if (plan.action === "replace") plan.before = { ...plan.before, ...(typeof duration === "number" ? { duration } : {}) };
+      }
+      if (input.kind === "area" && input.op === "update" && input.targetId) {
+        const after = plan.action === "insert" ? plan.change.after : plan.action === "replace" ? plan.after : null;
+        const before = plan.action === "insert" ? plan.change.before : plan.action === "replace" ? plan.before : null;
+        const desired = input.areaMove && Array.isArray(input.fields?.labels) ? input.fields.labels : after?.labels;
+        if (before && after && Array.isArray(desired)) {
+          const snapshot = areaSpaceSnapshot(h, existing, input.targetId, desired as string[], !!input.areaMove);
+          if (snapshot || oldAreaSnapshot) before.areaSpaceSnapshot = snapshot ?? oldAreaSnapshot;
+        } else if (before && oldAreaSnapshot) before.areaSpaceSnapshot = oldAreaSnapshot;
+      }
+      if (input.space) {
+        const baseline = spaceBaseline(input.space, h, existing, context);
+        if (typeof baseline === "string") return baseline;
+        if (plan.action === "insert") plan.change.before = { ...plan.change.before, spaceSnapshot: baseline };
+        else if (plan.action === "replace") plan.before = { ...plan.before, spaceSnapshot: baseline };
+      }
       if (configBefore !== undefined && (input.kind === "automation" || input.kind === "script") && !input.fields?.button_map) {
-        if (plan.action === "insert") plan.change.before = { configSnapshot: configBefore };
-        else if (plan.action === "replace") plan.before = { configSnapshot: configBefore };
+        const baseline = { configSnapshot: configBefore, ...(preserveConfig ? { preserveConfig: true } : {}) };
+        if (plan.action === "insert") plan.change.before = { ...plan.change.before, ...baseline };
+        else if (plan.action === "replace") plan.before = { ...plan.before, ...baseline };
       }
       const now = new Date().toISOString();
       const insertChange = (c: Omit<Change, "id" | "createdAt">) => {
@@ -173,16 +238,24 @@ export function changeStore(db: DatabaseSync) {
      * if they had been added one by one. Returns null when all are stored, or
      * the position (0-based) and message of the one that was refused.
      */
-    addMany(inputs: ChangeInput[], h: Hierarchy, configs?: Map<number, unknown>): { index: number; error: string } | null {
+    addMany(
+      inputs: ChangeInput[],
+      h: Hierarchy,
+      configs?: Map<number, unknown>,
+      beforeCommit?: () => void,
+      preserveConfig = false,
+      context?: SpaceGuardContext,
+    ): { index: number; error: string } | null {
       db.exec("BEGIN IMMEDIATE");
       try {
         for (const [index, input] of inputs.entries()) {
-          const refused = this.add(input, h, configs?.get(index));
+          const refused = this.add(input, h, configs?.get(index), preserveConfig, context);
           if (refused !== null) {
             db.exec("ROLLBACK");
             return { index, error: refused };
           }
         }
+        beforeCommit?.();
         db.exec("COMMIT");
         return null;
       } catch (error) {

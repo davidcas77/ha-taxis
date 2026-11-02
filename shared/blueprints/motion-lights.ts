@@ -6,10 +6,9 @@ import type { BlueprintInfo } from "./types.ts";
 // Which lights, and how bright, depends on the profile, worked out when the
 // automation is triggered:
 //   sleep  a bed sensor is on         -> night lights only, at the night brightness
-//   night  inside the night window    -> night lights, or the main lights at the
+//   night  inside the night window    -> night lights, or the motion lights at the
 //                                        night brightness when the area has none
-//   day    otherwise                  -> entry lights (the main lights when none
-//                                        are given); accent lights too once the
+//   day    otherwise                  -> motion lights; accent lights too once the
 //                                        area has been occupied for the extended time
 // Turning off still uses the canonical light group, so every light of the area
 // goes off, whatever its role.
@@ -30,7 +29,7 @@ const YAML = `blueprint:
   author: Taxis
   homeassistant:
     min_version: 2024.10.0
-  description: "Turns an area's lights on when it becomes occupied and off when it clears. By day the entry lights go on (the main lights when there are none), and the accent lights once the area has been occupied for the extended time. Inside the night window the night lights go on, or the main lights at the night brightness when there are none. While a bed sensor is on, only the night lights go on, never the main ones. Lights go on only when they are off and, with a light level sensor, only when it reads below the threshold (read while the lights are off, so the lights do not feed back). When the area clears, the lights dim for a while and go off, unless it is occupied again first; coming back brings lights that were left at or below the dim level back to the profile. Turning off uses the whole light group. A light changed by hand stops this automation for the area until the override ends: when the area clears, when the override timer runs out, or when the area becomes occupied after having been clear. Does nothing while the pause switch is on. Guest mode pauses automatic lighting by default. Away suppresses automatic turn-on unless guests remain. Sleep uses night lighting; bedrooms use only Night-role lights. Toggling modes does not force lights on or off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 5."
+  description: "Turns an area's lights on when it becomes occupied and off when it clears. By day the motion lights go on, and the accent lights once the area has been occupied for the extended time. Inside the night window the night lights go on, or the motion lights at the night brightness when there are none. While a bed sensor is on, only the night lights go on, never the motion fallback. Lights go on only when they are off and, with a light level sensor, only when it reads below the threshold (read while the lights are off, so the lights do not feed back). When the area clears, the lights dim for a while and go off, unless it is occupied again first; coming back brings lights that were left at or below the dim level back to the profile. Turning off uses the whole light group. A light changed by hand stops this automation for the area until the override ends: when the area clears, when the override timer runs out, or when the area becomes occupied after having been clear. Does nothing while the pause switch is on. Guest mode pauses automatic lighting by default. Away suppresses automatic turn-on unless guests remain. Sleep uses night lighting; bedrooms use only Night-role lights. Toggling modes does not force lights on or off. Written by Taxis: changes made here are overwritten when Taxis updates it. Taxis blueprint version 6."
   input:
     occupied_entity:
       name: Occupied sensor
@@ -47,8 +46,8 @@ const YAML = `blueprint:
           filter:
             - domain: light
     entry_lights:
-      name: Entry lights
-      description: Turned on by day when the area becomes occupied. Leave empty to turn on the main lights.
+      name: Motion lights
+      description: Turned on by day, and at night when no night lights are selected.
       default: []
       selector:
         entity:
@@ -57,7 +56,7 @@ const YAML = `blueprint:
           multiple: true
     main_lights:
       name: Main lights
-      description: Turned on by day when there are no entry lights, and at night when there are no night lights.
+      description: Legacy fallback for automations without a Motion lights input; new Main role selections do not change this input.
       default: []
       selector:
         entity:
@@ -282,7 +281,8 @@ variables:
   asleep: "{{ (bed_entities | select('is_state', 'on') | list | count) > 0 or (is_bedroom and is_state(sleep_entity, 'on')) }}"
   in_night: "{% set t = now().strftime('%H:%M:%S') %}{{ is_state(sleep_entity, 'on') or ((t >= night_start or t < night_end) if night_start > night_end else (night_start <= t < night_end)) }}"
   profile: "{{ 'sleep' if asleep else ('night' if in_night else 'day') }}"
-  profile_lights: "{{ night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else (entry_lights if (profile == 'day' and (entry_lights | count) > 0) else main_lights) }}"
+  motion_lights: "{{ entry_lights if (entry_lights | count) > 0 else main_lights }}"
+  profile_lights: "{{ night_lights if (profile == 'sleep' or (profile == 'night' and (night_lights | count) > 0)) else motion_lights }}"
   brightness: "{{ day_brightness if profile == 'day' else night_brightness }}"
   kelvin: "{{ day_kelvin if profile == 'day' else night_kelvin }}"
 triggers:
@@ -501,7 +501,7 @@ export const motionLightsBlueprint: BlueprintInfo = {
   path: "taxis/motion_lights.yaml",
   recipe: "motion_lights",
   domain: "automation",
-  version: 5,
+  version: 6,
   yaml: YAML,
   inputs: {
     occupied_entity: { kind: "entity", required: true, domain: "binary_sensor" },

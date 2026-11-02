@@ -863,15 +863,16 @@ describe("7: the recipes after Area climate", () => {
   });
 
   it("reports a bathroom fan whose humidity rate sensor is gone, and offers to make it again", () => {
-    const r = check([hygro, humidity, extractor, paused, fanEntity], { installed: fanInstalled(fanInput) });
+    const inventory = setRecipeWanted(EMPTY_INVENTORY, "living_room", "bathroom_fan", true);
+    const r = check([hygro, humidity, extractor, paused, fanEntity], { installed: fanInstalled(fanInput), inventory });
     const f = one(r, "setup:recipe:living_room:bathroom_fan");
-    expect(f).toMatchObject({ severity: "warning", area: "living_room", title: "Living room: Bathroom fan is out of date" });
+    expect(f).toMatchObject({ severity: "warning", area: "living_room", title: "Living room: Ventilation is out of date" });
     expect(f.detail).toBe("sensor.living_humidity_rate is missing.");
     if (f.fix?.kind !== "changes") throw new Error("no fix");
     expect(f.fix.inputs.map((i) => `${i.kind}:${i.fields?.helper ?? ""}`)).toEqual(["helper:derivative", "automation:"]);
     for (const input of f.fix.inputs) expect(validateInput(input)).toBeNull();
     // With the sensor there, or the list making it, nothing is reported.
-    expect(ids(check([hygro, humidity, extractor, paused, rate, fanEntity], { installed: fanInstalled(fanInput) }), "setup")).toEqual([]);
+    expect(ids(check([hygro, humidity, extractor, paused, rate, fanEntity], { installed: fanInstalled(fanInput), inventory }), "setup")).toEqual([]);
     const pending = {
       id: 1,
       kind: "helper",
@@ -882,7 +883,9 @@ describe("7: the recipes after Area climate", () => {
       after: { helper: "derivative", entity_id: "sensor.living_humidity_rate" },
       createdAt: "",
     } as Change;
-    expect(ids(check([hygro, humidity, extractor, paused, fanEntity], { installed: fanInstalled(fanInput), changes: [pending] }), "setup")).toEqual([]);
+    expect(ids(check([hygro, humidity, extractor, paused, fanEntity], { installed: fanInstalled(fanInput), changes: [pending], inventory }), "setup")).toEqual(
+      [],
+    );
   });
 
   describe("the notify services", () => {
@@ -1065,7 +1068,7 @@ describe("7: Taxis setup", () => {
     expect(f.fix.inputs.map((i) => i.kind)).toEqual(["blueprint", "helper", "helper", "helper", "automation"]);
     for (const input of f.fix.inputs) expect(validateInput(input)).toBeNull();
 
-    const missing = check([light("living_spots")]);
+    const missing = check([light("living_spots")], { inventory: setRecipeWanted(EMPTY_INVENTORY, "living_room", "occupancy", true) });
     const m = one(missing, "setup:occupancy:living_room");
     expect(m.detail).toMatch(/Missing: One or more motion or presence sensors, or TVs, selected to start occupancy/);
     expect(m.fix).toEqual({ kind: "link", label: "Open the area's Capabilities", to: { page: "area", areaId: "living_room", tab: "capabilities" } });

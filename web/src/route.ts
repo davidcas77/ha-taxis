@@ -70,7 +70,8 @@ export type Route =
   | { page: "changes" }
   | { page: "settings"; tab: SettingsTab };
 
-export type Selection = { kind: "home" } | { kind: "floor"; id: string } | { kind: "area"; id: string } | { kind: "unassigned" } | { kind: "loose" };
+export type Selection =
+  { kind: "home" } | { kind: "floor"; id: string } | { kind: "area"; id: string } | { kind: "space"; id: string } | { kind: "unassigned" } | { kind: "loose" };
 
 // Shortcuts for the links the pages make to each other.
 export const GUIDE: Route = { page: "guide", areaId: null };
@@ -117,6 +118,8 @@ export function parseHash(hash: string): Route {
     }
     case "floor":
       return a ? { page: "areas", sel: { kind: "floor", id: a }, tab: "overview" } : AREAS_HOME;
+    case "space":
+      return a ? { page: "areas", sel: { kind: "space", id: a }, tab: "overview" } : AREAS_HOME;
     case "area":
       return a ? { page: "areas", sel: { kind: "area", id: a }, tab: tab(b) } : AREAS_HOME;
     case "home":
@@ -151,6 +154,7 @@ export function toHash(r: Route): string {
       const s = r.sel;
       if (s.kind === "area") return r.tab === "overview" ? `#area/${enc(s.id)}` : `#area/${enc(s.id)}/${r.tab}`;
       if (s.kind === "floor") return `#floor/${enc(s.id)}`;
+      if (s.kind === "space") return `#space/${enc(s.id)}`;
       return `#${s.kind}`;
     }
   }

@@ -1,4 +1,6 @@
+import type { ConfirmedAreaField, ConfirmedReferences } from "./direct-references.ts";
 import { applyLabelDiff, currentValues, isRegistryKind, isTempId, labelDiff, sameValue } from "../../shared/changes.ts";
+import { spaceFloorDescription, spaceFloorFromDescription } from "../../shared/spaces.ts";
 import type { ApplyStatus, Change, ChangeKind, Hierarchy } from "../../shared/types.ts";
 import { READS, type FreshRead } from "../ha/registry.ts";
 import type { RestApi } from "../ha/rest.ts";
@@ -6,6 +8,7 @@ import { buildHierarchy, type RawRegistry } from "../model/hierarchy.ts";
 import { findReferences, searchRelated, type Related } from "../references/find.ts";
 import { mapLimit, snapshot, type ReferenceIO, type Snapshot } from "../references/snapshot.ts";
 import { updateReferences, type RenamePair } from "../references/update.ts";
+import { areaLabelConflict, areaSpaceSnapshotError, type AreaSpaceSnapshot } from "./area-label-safety.ts";
 
 // Applying the change list to Home Assistant.
 //
@@ -73,6 +76,7 @@ export type RenameIO = {
   // its configs between steps; defaults to `rest`. Rewrites always go through
   // `rest`, after a last read of it.
   reads?: Pick<RestApi, "get">;
+  confirmedReferences?: ConfirmedReferences;
 };
 
 // A change that has to stay in the list, now as an update of `targetId`.
@@ -214,6 +218,11 @@ export async function applyChanges(
       return `It's no longer in Home Assistant.`;
     }
     const now = c.op === "update" ? (currentValues(before, c.kind, c.targetId, c.scope) ?? {}) : {};
+    const areaSnapshot = c.before.areaSpaceSnapshot as AreaSpaceSnapshot | undefined;
+    if (c.kind === "area" && areaSnapshot) {
+      const error = areaSpaceSnapshotError(before, changes, c.targetId, areaSnapshot);
+      if (error) return error;
+    }
     const payload: Record<string, unknown> = {};
     for (const [key, wanted] of Object.entries(c.after)) {
       if (c.op === "create" && (wanted === null || wanted === undefined)) continue;
@@ -225,6 +234,10 @@ export async function applyChanges(
         const gone = d.added.find((l) => !isTempId(l) && !before.labels[l]);
         if (gone) return `The label “${gone}” it adds is no longer in Home Assistant.`;
         payload.labels = applyLabelDiff(c.op === "update" ? ((now.labels as string[]) ?? []) : [], d);
+        if (c.kind === "area") {
+          const conflict = areaLabelConflict(before, changes, payload.labels as string[]);
+          if (conflict) return conflict;
+        }
         continue;
       }
       if (key === "categories") {
@@ -257,6 +270,13 @@ export async function applyChanges(
 
   const finish = (c: Change, base: Record<string, unknown>): Record<string, unknown> | string => {
     const payload = { ...base };
+    const spaceFloor = c.kind === "label" ? spaceFloorFromDescription(payload.description) : null;
+    if (spaceFloor) {
+      const r = resolveId(spaceFloor);
+      if (!r.ok) return "It depends on a new floor, which wasn't created.";
+      if (!isTempId(spaceFloor) && !exists(before, "floor", spaceFloor, null)) return "The floor it points at is no longer in Home Assistant.";
+      payload.description = spaceFloorDescription(String(r.value));
+    }
     for (const key of ["area_id", "floor_id"]) {
       if (!(key in payload)) continue;
       const r = resolveId(payload[key]);
@@ -312,9 +332,10 @@ export async function applyChanges(
   const related = new Map<number, Related>();
   if (rename && renames.length > 0) {
     try {
-      snap = await snapshot({ ha: rename.ha, rest: rename.reads ?? rename.rest }, beforeRaw.states, beforeRaw.entities);
+      snap =
+        rename.confirmedReferences?.snapshot ?? (await snapshot({ ha: rename.ha, rest: rename.reads ?? rename.rest }, beforeRaw.states, beforeRaw.entities));
       await mapLimit(renames, 6, async (c) => {
-        related.set(c.id, await searchRelated(rename.ha, c.targetId));
+        related.set(c.id, rename.confirmedReferences?.relatedByOld.get(c.targetId) ?? (await searchRelated(rename.ha, c.targetId)));
       });
     } catch (e) {
       snap = null;
@@ -436,7 +457,7 @@ export async function applyChanges(
         snap,
         pairs,
       );
-      const areaLines = await repointAreas(ha, after ?? beforeRaw, pairs);
+      const areaLines = await repointAreas(ha, after ?? beforeRaw, pairs, rename.confirmedReferences?.areaFields);
       pairs.forEach((r, i) => {
         const details = [...(lines.get(r.changeId) ?? []), ...(areaLines.get(r.changeId) ?? [])];
         const found = findReferences(snap!, related.get(r.changeId) ?? {}, r.oldId);
@@ -519,7 +540,7 @@ function renamedInRegistry(c: Change, payload: Record<string, unknown>, fresh: R
 
 // Home Assistant leaves an area's temperature and humidity sensor on the old id
 // when the entity is renamed: point them at the new one.
-async function repointAreas(ha: Writer, fresh: RawRegistry, pairs: RenamePair[]): Promise<Map<number, string[]>> {
+async function repointAreas(ha: Writer, fresh: RawRegistry, pairs: RenamePair[], approved?: readonly ConfirmedAreaField[]): Promise<Map<number, string[]>> {
   const lines = new Map<number, string[]>(pairs.map((r) => [r.changeId, []]));
   const byOld = new Map(pairs.map((r) => [r.oldId, r]));
   const fields = [
@@ -529,7 +550,12 @@ async function repointAreas(ha: Writer, fresh: RawRegistry, pairs: RenamePair[])
   for (const area of fresh.areas) {
     const hits = fields.flatMap(([field, label]) => {
       const r = byOld.get(area[field] ?? "");
-      return r ? [{ field, label, r }] : [];
+      if (!r) return [];
+      if (approved && !approved.some((item) => item.areaId === area.area_id && item.field === field && item.oldId === r.oldId && item.newId === r.newId)) {
+        lines.get(r.changeId)!.push(`Not updated: area “${area.name}” (${label}) changed after the preview. Review it by hand.`);
+        return [];
+      }
+      return [{ field, label, r }];
     });
     if (hits.length === 0) continue;
     const payload: Record<string, unknown> = { area_id: area.area_id };

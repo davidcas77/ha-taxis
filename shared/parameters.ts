@@ -1,3 +1,4 @@
+import { areaSpace, resolveSpaces } from "./spaces.ts";
 import { areaChoice, AREA_TYPES, INVENTORY_AREA_ID, INVENTORY_ENTITY_ID, type AreaType, type InventoryRow, type InventorySettings } from "./inventory.ts";
 import { checkPeriods, DEFAULT_COMFORT_PERIODS } from "./periods.ts";
 import type { Hierarchy } from "./types.ts";
@@ -18,7 +19,7 @@ export const PARAM_TAB_LABEL: Record<ParamTab, string> = {
   lighting: "Lighting",
   media: "Media",
   climate: "Climate",
-  fan: "Bathroom fan",
+  fan: "Ventilation",
   exterior: "Exterior",
   covers: "Covers",
   safety: "Safety",
@@ -88,6 +89,8 @@ export const PARAM_KEYS = [
   "dim_level",
   "override_duration",
   "entry_lights",
+  "main_lights",
+  "strong_lights",
   "ambient_lights",
   "night_lights",
   "media_off_after",
@@ -211,7 +214,19 @@ export const PARAMS: readonly ParamDef[] = [
   { key: "override_duration", tab: "lighting", label: "Manual override lasts", unit: "min", kind: "number", min: 0, max: 240, step: 1, default: 0 },
   // The lights that come on by day when the area becomes occupied. Unset: the only
   // light of the area, else its main lights (entryLights below). Area level only.
-  { key: "entry_lights", tab: "lighting", label: "Entry lights", unit: null, kind: "entities", domain: "light", areaOnly: true, default: [] },
+  { key: "entry_lights", tab: "lighting", label: "Motion lights", unit: null, kind: "entities", domain: "light", areaOnly: true, default: [] },
+  { key: "main_lights", tab: "lighting", label: "Main lights", unit: null, kind: "entities", domain: "light", areaOnly: true, allowEmpty: true, default: [] },
+  {
+    key: "strong_lights",
+    tab: "lighting",
+    label: "Strong lights",
+    unit: null,
+    kind: "entities",
+    domain: "light",
+    areaOnly: true,
+    allowEmpty: true,
+    default: [],
+  },
   {
     key: "ambient_lights",
     tab: "lighting",
@@ -401,6 +416,7 @@ export type ParameterSettings = {
   house: ParamValues;
   types: Partial<Record<AreaType, ParamValues>>;
   areas: Record<string, ParamValues>;
+  spaces?: Record<string, ParamValues>;
 };
 
 export const EMPTY_PARAMETERS: ParameterSettings = { house: {}, types: {}, areas: {} };
@@ -411,7 +427,7 @@ export const PARAMETER_AREA_ID = INVENTORY_AREA_ID;
 // A floor has no values of its own: an area inherits from its type, then the house.
 // Settings saved by an older version may hold some for floors; they are ignored on
 // the way in and gone with the next save (server/settings.ts).
-export type ParamScope = { level: "house" } | { level: "type"; id: AreaType } | { level: "area"; id: string };
+export type ParamScope = { level: "house" } | { level: "type"; id: AreaType } | { level: "area"; id: string } | { level: "space"; id: string };
 
 // Own keys only: an area called "constructor" mustn't find Object's.
 function valuesOf(p: ParameterSettings, scope: ParamScope): ParamValues | undefined {
@@ -422,6 +438,8 @@ function valuesOf(p: ParameterSettings, scope: ParamScope): ParamValues | undefi
       return Object.hasOwn(p.types, scope.id) ? p.types[scope.id] : undefined;
     case "area":
       return Object.hasOwn(p.areas, scope.id) ? p.areas[scope.id] : undefined;
+    case "space":
+      return p.spaces && Object.hasOwn(p.spaces, scope.id) ? p.spaces[scope.id] : undefined;
   }
 }
 
@@ -432,21 +450,34 @@ export const ownValue = (p: ParameterSettings, scope: ParamScope, key: ParamKey)
 // Inheritance: house default → interior / exterior → area.
 // ---------------------------------------------------------------------------
 
-export type ParamSource = { level: "area" | "type" | "house"; id: string | null } | { level: "default"; id: null };
+export type ParamSource = { level: "area" | "type" | "house" | "space"; id: string | null } | { level: "default"; id: null };
 
 export type Resolved = { value: ParamValue; source: ParamSource };
 
 const sourceOf = (s: ParamScope): ParamSource => ({ level: s.level, id: s.level === "house" ? null : s.id }) as ParamSource;
 
+// Bindings can control or notify another Space; they never inherit from House
+// or area-type defaults for a scoped area.
+export const SPACE_CONTROL_PARAMETERS: ReadonlySet<ParamKey> = new Set([
+  "away_mode_entity",
+  "sleep_mode_entity",
+  "guest_mode_entity",
+  "notify_targets",
+  "tts_entity",
+  "leak_valve_entity",
+]);
+
 // The first scope that sets `key`, else the built-in default.
 export function resolveIn(p: ParameterSettings, scopes: readonly ParamScope[], key: ParamKey): Resolved {
   const areaOnly = PARAM_DEF[key].areaOnly === true;
   const houseOnly = PARAM_DEF[key].houseOnly === true;
+  const scoped = scopes.some((scope) => scope.level === "space");
   for (const s of scopes) {
     // A parameter of one area is not inherited.
     if (areaOnly && s.level !== "area") continue;
     // A parameter of the house is read from the house, wherever it is asked.
-    if (houseOnly && s.level !== "house") continue;
+    if (scoped && SPACE_CONTROL_PARAMETERS.has(key) && s.level !== "space" && s.level !== "area") continue;
+    if (houseOnly && s.level !== "house" && s.level !== "space" && !(scoped && SPACE_CONTROL_PARAMETERS.has(key) && s.level === "area")) continue;
     const v = valuesOf(p, s)?.[key];
     if (v !== undefined) return { value: v, source: sourceOf(s) };
   }
@@ -454,8 +485,10 @@ export function resolveIn(p: ParameterSettings, scopes: readonly ParamScope[], k
 }
 
 // Most specific first: the area, its type, the house.
-export function scopesForArea(_h: Hierarchy, inventory: InventorySettings, areaId: string): ParamScope[] {
-  return [{ level: "area", id: areaId }, { level: "type", id: areaChoice(inventory, areaId).type }, { level: "house" }];
+export function scopesForArea(h: Hierarchy, inventory: InventorySettings, areaId: string): ParamScope[] {
+  const scope = areaSpace(h, areaId);
+  const space: ParamScope[] = scope.kind === "space" ? [{ level: "space", id: scope.space.id }] : scope.kind === "conflict" ? [{ level: "space", id: "" }] : [];
+  return [{ level: "area", id: areaId }, ...space, { level: "type", id: areaChoice(inventory, areaId, h).type }, { level: "house" }];
 }
 
 export const resolve = (p: ParameterSettings, h: Hierarchy, inventory: InventorySettings, areaId: string, key: ParamKey): Resolved =>
@@ -477,6 +510,8 @@ export function sourceName(h: Hierarchy, s: ParamSource): string {
       return s.id === "exterior" ? "exterior areas" : "interior areas";
     case "area":
       return h.areas[s.id!]?.name ?? s.id!;
+    case "space":
+      return h.labels[s.id!]?.name ?? s.id!;
   }
 }
 
@@ -494,7 +529,8 @@ const sameParam = (a: ParamValue | null, b: ParamValue | null): boolean =>
 export function setParameter(p: ParameterSettings, scope: ParamScope, key: ParamKey, value: ParamValue | null): ParameterSettings {
   // Only an area has a parameter of one area, and only the house one of the house.
   if (PARAM_DEF[key].areaOnly && scope.level !== "area") return p;
-  if (PARAM_DEF[key].houseOnly && scope.level !== "house") return p;
+  if (PARAM_DEF[key].houseOnly && scope.level !== "house" && scope.level !== "space" && !(scope.level === "area" && SPACE_CONTROL_PARAMETERS.has(key)))
+    return p;
   // An empty list is no value.
   if (Array.isArray(value) && value.length === 0 && !PARAM_DEF[key].allowEmpty) value = null;
   const cur = valuesOf(p, scope);
@@ -511,6 +547,12 @@ export function setParameter(p: ParameterSettings, scope: ParamScope, key: Param
       if (empty) delete types[scope.id];
       else types[scope.id] = next;
       return { ...p, types };
+    }
+    case "space": {
+      const spaces = { ...p.spaces };
+      if (empty) delete spaces[scope.id];
+      else spaces[scope.id] = next;
+      return { ...p, spaces };
     }
     case "area": {
       const areas = { ...p.areas };
@@ -551,6 +593,11 @@ export function paramRows(h: Hierarchy, inventory: InventorySettings): { fixed: 
       return { scope, label: t === "interior" ? "Interior" : "Exterior", chain: [scope, house], floorId: null, floorName: null, order: i + 1 };
     }),
   ];
+  for (const space of resolveSpaces(h)) {
+    if (space.blocked) continue;
+    const scope: ParamScope = { level: "space", id: space.id };
+    fixed.push({ scope, label: `Space · ${space.name}`, chain: [scope, house], floorId: null, floorName: null, order: fixed.length });
+  }
   const rest: ParamRow[] = [];
   let order = 0;
   const addAreas = (ids: readonly string[], floorId: string | null, floorName: string | null) => {
@@ -617,10 +664,10 @@ export function roleLights(
   p: ParameterSettings,
   areaId: string,
   rows: readonly Pick<InventoryRow, "entityId" | "counts" | "light">[],
-  key: "ambient_lights" | "night_lights",
+  key: "main_lights" | "strong_lights" | "ambient_lights" | "night_lights",
 ): { lights: string[]; set: string[] | null; suggested: string[]; source: "set" | "suggested" | "none" } {
   const counted = rows.filter((r) => r.counts);
-  const role = key === "ambient_lights" ? "accent" : "night";
+  const role = key === "main_lights" ? "main" : key === "ambient_lights" ? "accent" : key === "night_lights" ? "night" : null;
   const suggested = counted
     .filter((r) => r.light === role)
     .map((r) => r.entityId)

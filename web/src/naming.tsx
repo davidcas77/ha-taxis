@@ -62,10 +62,50 @@ const TYPE_WORD_FIELDS = ROLE_ORDER.flatMap<{ role: keyof NamingSettings["typeWo
 );
 
 // The General tab of Settings: the naming patterns, type words and helper names.
+export function ChangeModeSettings() {
+  const { reviewChanges, generalLoaded, directEditingAvailable, generalLoadError, generalSaving, saveReviewChanges, busy, reload } = useTaxis();
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  return (
+    <section className="rounded-lg border border-line bg-surface p-4">
+      <label className="flex items-center gap-2 text-sm font-semibold">
+        <input
+          type="checkbox"
+          checked={reviewChanges}
+          disabled={!generalLoaded || !directEditingAvailable || generalSaving || busy}
+          onChange={(event) => {
+            setGeneralError(null);
+            void saveReviewChanges(event.target.checked).then(setGeneralError);
+          }}
+        />
+        Review changes before applying
+      </label>
+      <p className="mt-2 text-xs text-muted">
+        {!generalLoaded
+          ? "Loading edit settings…"
+          : reviewChanges
+            ? "Edits wait in Changes for review and application."
+            : "Direct mode: edits apply to Home Assistant immediately."}
+      </p>
+      {generalLoaded && !directEditingAvailable && <p className="mt-2 text-xs text-muted">Direct editing is unavailable in this local preview.</p>}
+      {generalLoadError && (
+        <p role="alert" className="mt-2 text-xs text-danger">
+          {generalLoadError}{" "}
+          <button type="button" className="underline" onClick={() => void reload(true)}>
+            Retry
+          </button>
+        </p>
+      )}
+      {generalError && (
+        <p role="alert" className="mt-2 text-xs text-danger">
+          {generalError}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function GeneralSettings({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
   const { naming, namingLoaded } = useTaxis();
-  // The form starts from the saved settings; before they arrive, saving would
-  // write the defaults over them.
   if (!namingLoaded) return <p className="text-[13px] text-muted">Loading the naming settings…</p>;
   return <SettingsForm h={h} go={go} naming={naming} />;
 }
@@ -363,7 +403,7 @@ function SuggestionField({
 }
 
 export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; go: (r: Route) => void }) {
-  const { naming, propose, busy, namingIgnores, namingIgnoresLoaded, namingIgnoresSaving, saveNamingIgnores, notify } = useTaxis();
+  const { naming, propose, busy, namingIgnores, namingIgnoresLoaded, namingIgnoresSaving, saveNamingIgnores, notify, reviewChanges } = useTaxis();
   const analysis = useMemo(() => analyzeArea(area, h, naming), [area, h, naming]);
   const [filter, setFilter] = useState<NamingStatus | "all" | "suggested" | "ignored">("all");
   const [names, setNames] = useState<Record<string, string>>({});
@@ -668,7 +708,7 @@ export function AreaNamingTab({ h, area, go }: { h: Hierarchy; area: AreaNode; g
             </Button>
             {pendingCount > 0 && (
               <Button tone="primary" disabled={busy} onClick={() => void add()}>
-                Add {pendingCount} to changes
+                {reviewChanges ? `Add ${pendingCount} to changes` : `Apply ${pendingCount} changes`}
               </Button>
             )}
           </>

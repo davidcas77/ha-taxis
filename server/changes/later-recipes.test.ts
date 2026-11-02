@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 import { buildMockRegistry, withRecipeDemo, withSmartDemo, type MockHome } from "../../scripts/mock-ha-core.ts";
+import { setAreaRoomTypes } from "../../shared/area-room-types.ts";
 import { ANNOUNCE_PATH, blueprintForRecipe } from "../../shared/blueprints.ts";
 import { validateInput } from "../../shared/changes.ts";
 import { helperChangeInputs, planHelpers } from "../../shared/helpers.ts";
@@ -66,8 +67,9 @@ const ok = (results: { ok: boolean; message: string }[]) => {
 };
 
 describe("installing the bathroom fan", () => {
+  const bathroomSettings = setAreaRoomTypes(EMPTY_INVENTORY, "bathroom", ["bathroom"]);
   it("makes the humidity helper, the rate sensor, the switch and the automation in one Apply, and the rate follows the helper", async () => {
-    const t = setup();
+    const t = setup(house(), bathroomSettings);
     const humidity = planHelpers(t.live(), EMPTY_INVENTORY, DEFAULT_NAMING).find((r) => r.canonicalId === "sensor.bathroom_humidity")!;
     expect(humidity.status).toBe("create");
     t.add(helperChangeInputs(humidity));
@@ -133,7 +135,7 @@ describe("installing the bathroom fan", () => {
   });
 
   it("makes the rate sensor again when it is gone, and Occupancy follows it once the rise is set", async () => {
-    const t = setup();
+    const t = setup(house(), bathroomSettings);
     t.add(helperChangeInputs(planHelpers(t.live(), EMPTY_INVENTORY, DEFAULT_NAMING).find((r) => r.canonicalId === "sensor.bathroom_humidity")!));
     t.add(recipeChangeInputs([t.cell(await t.plan(), "bathroom_fan", "bathroom")]));
     ok((await t.apply()).results);
@@ -165,7 +167,7 @@ describe("installing the bathroom fan", () => {
     const home = house();
     home.entities.push({ entity_id: "sensor.old_bathroom_rate", platform: "derivative", config_entry_id: "OLDRATE", original_name: "Bathroom humidity rate" });
     home.states.push({ entity_id: "sensor.old_bathroom_rate", state: "0", attributes: { friendly_name: "Bathroom humidity rate" } });
-    const t = setup(home);
+    const t = setup(home, bathroomSettings);
     t.add(helperChangeInputs(planHelpers(t.live(), EMPTY_INVENTORY, DEFAULT_NAMING).find((r) => r.canonicalId === "sensor.bathroom_humidity")!));
     t.add(recipeChangeInputs([t.cell(await t.plan(), "bathroom_fan", "bathroom")]));
     const { results } = await t.apply();

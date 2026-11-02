@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildMockRegistry, withHealthDemo, withRecipeDemo } from "../../scripts/mock-ha-core.ts";
 import { validateInput } from "../../shared/changes.ts";
 import { HEALTH_CHECKS, runHealth, type HealthReport } from "../../shared/health.ts";
-import { EMPTY_INVENTORY } from "../../shared/inventory.ts";
+import { EMPTY_INVENTORY, setRecipeWanted, type InventorySettings } from "../../shared/inventory.ts";
 import { DEFAULT_NAMING } from "../../shared/naming.ts";
 import { EMPTY_PARAMETERS } from "../../shared/parameters.ts";
 import { fakeHa } from "../references/fake-ha.ts";
@@ -15,7 +15,7 @@ import { healthSnapshot, healthStates, installedFrom, readBlueprints } from "./a
 // The whole path with the invented demo house: what the server reads, what it
 // assembles and what the checks make of it.
 
-async function run(tweak?: (t: ReturnType<typeof fakeHa>) => void) {
+async function run(tweak?: (t: ReturnType<typeof fakeHa>) => void, inventory: InventorySettings = EMPTY_INVENTORY) {
   const t = fakeHa(withHealthDemo(withRecipeDemo(buildMockRegistry())));
   tweak?.(t);
   const raw = t.home;
@@ -24,7 +24,7 @@ async function run(tweak?: (t: ReturnType<typeof fakeHa>) => void) {
   const hierarchy = buildHierarchy(raw, "now");
   const report = runHealth({
     snapshot: healthSnapshot(raw, hierarchy, snap, blueprints),
-    inventory: EMPTY_INVENTORY,
+    inventory,
     naming: DEFAULT_NAMING,
     parameters: EMPTY_PARAMETERS,
     changes: [],
@@ -45,7 +45,7 @@ describe("the demo house", () => {
   });
 
   it("finds what the demo set up", async () => {
-    const { report } = await run();
+    const { report } = await run(undefined, setRecipeWanted(EMPTY_INVENTORY, "garage", "occupancy", true));
     const ids = idsOf(report);
     expect(ids).toEqual(
       expect.arrayContaining([

@@ -6,3 +6,5 @@ data
 .git
 .github
 coverage
+private/
+output/

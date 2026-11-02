@@ -217,7 +217,7 @@ export function AreaMultiSelect({
         <div
           role="group"
           aria-label="Areas"
-          className="absolute right-0 z-30 mt-1 flex max-h-72 w-60 flex-col gap-1 overflow-y-auto rounded-md border border-line bg-surface p-2 shadow-lg"
+          className="absolute left-0 z-30 mt-1 flex max-h-72 w-60 flex-col gap-1 overflow-y-auto rounded-md border border-line bg-surface p-2 shadow-lg"
         >
           <button type="button" className="text-left text-xs text-accent" onClick={() => onChange(new Set())}>
             All areas

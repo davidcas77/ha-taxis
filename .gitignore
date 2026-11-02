@@ -9,6 +9,7 @@ data/
 coverage/
 .vitest/
 __pycache__/
+output/
 
 # The owner's private notes about their own Home Assistant. Never commit.
 private/

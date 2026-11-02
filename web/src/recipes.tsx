@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { planHouseRecipes } from "../../shared/recipes-house.ts";
+import { resolveSpaces } from "../../shared/spaces.ts";
 import { planRecipes, type RecipeInstalled } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
@@ -29,7 +30,13 @@ export function RecipesTab({ h }: { h: Hierarchy }) {
   const cells = useMemo(
     () =>
       installed && ready
-        ? [...planRecipes(h, inventory, naming, parameters, installed, changes), ...planHouseRecipes(h, inventory, naming, parameters, installed, changes)]
+        ? [
+            ...planRecipes(h, inventory, naming, parameters, installed, changes),
+            ...planHouseRecipes(h, inventory, naming, parameters, installed, changes),
+            ...resolveSpaces(h, changes).flatMap((space) =>
+              planHouseRecipes(h, inventory, naming, parameters, installed, changes, false, { kind: "space", space }),
+            ),
+          ]
         : [],
     [h, inventory, naming, parameters, installed, changes, ready],
   );

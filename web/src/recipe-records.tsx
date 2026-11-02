@@ -10,6 +10,7 @@ import { RecordsSplit } from "./records.tsx";
 import { RECIPE_GUIDE } from "./recipe-guide.ts";
 import { MotionLightsAvailability } from "./motion-lights-availability.tsx";
 import { countRelatedChanges } from "./recipe-queue-count.ts";
+import { resolveSpaces, spaceIds } from "../../shared/spaces.ts";
 import { recipeHelperSpecs } from "./recipe-availability-spec.ts";
 import { RecipeAvailability } from "./recipe-availability.tsx";
 import { useTaxis } from "./state.tsx";
@@ -28,16 +29,19 @@ export function RecipeRecords({
   error: string | null;
   loading: boolean;
 }) {
-  const { naming, inventory, inventorySaving, parameters, parametersSaving, changes, propose, busy } = useTaxis();
+  const { naming, inventory, inventorySaving, parameters, parametersSaving, changes, propose, busy, reviewChanges } = useTaxis();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<RecipeCell["recipe"]>("occupancy");
   const [chosenArea, setChosenArea] = useState<string | null>(null);
+  const [chosenScope, setChosenScope] = useState<string | null>(null);
+  const spaces = resolveSpaces(h, changes);
   const [showingDetails, setShowingDetails] = useState(false);
   const [detailTab, setDetailTab] = useState<"description" | "availability">("description");
   const tabRefs = useRef<Record<"description" | "availability", HTMLButtonElement | null>>({ description: null, availability: null });
   const selectRecipe = (key: RecipeCell["recipe"]) => {
     setSelected(key);
     setChosenArea(null);
+    setChosenScope(null);
     setShowingDetails(true);
     setDetailTab("description");
   };
@@ -46,16 +50,36 @@ export function RecipeRecords({
   const recipe = RECIPE_GUIDE[selected];
   const areas = Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const areaId = chosenArea && h.areas[chosenArea] ? chosenArea : areas[0]?.id;
-  const selectedCell = cells.find((cell) => cell.recipe === selected && (isHouseRecipe(selected) || cell.areaId === areaId));
+  const selectedCell = cells.find(
+    (cell) =>
+      cell.recipe === selected &&
+      (isHouseRecipe(selected)
+        ? chosenScope !== null &&
+          (chosenScope === "legacy"
+            ? !cell.scope || cell.scope.kind === "legacy"
+            : cell.scope?.kind === "space" && `space:${cell.scope.space.id}` === chosenScope)
+        : cell.areaId === areaId),
+  );
   const inputs = selectedCell ? recipeChangeInputs([selectedCell]) : [];
   const helperIds = new Set(
-    recipeHelperSpecs({ recipe: selected, h, areaId: isHouseRecipe(selected) ? null : areaId, inventory, naming, parameters, changes }).map(
-      (helper) => helper.id,
-    ),
+    isHouseRecipe(selected) && chosenScope !== "legacy"
+      ? []
+      : recipeHelperSpecs({ recipe: selected, h, areaId: isHouseRecipe(selected) ? null : areaId, inventory, naming, parameters, changes }).map(
+          (helper) => helper.id,
+        ),
   );
+  if (selectedCell?.scope?.kind === "space" && !selectedCell.scope.space.blocked && selected === "goodbye")
+    helperIds.add(spaceIds(selectedCell.scope.space.id).lights);
+  for (const input of selectedCell?.inputs ?? [])
+    if (input.kind === "helper") {
+      const id = input.targetId ?? input.fields?.entity_id;
+      if (typeof id === "string") helperIds.add(id);
+    }
   const code = isHouseRecipe(selected) ? HOUSE_AUTOMATION_CODE : areaId ? areaCodes(h, naming)[areaId]?.code : undefined;
   const script = selected === "announce" || selected === "goodbye";
-  const configId = script ? `taxis_${selected}` : code ? automationIdFor(selected, code) : null;
+  const configId =
+    selectedCell?.targetId ??
+    (isHouseRecipe(selected) && chosenScope !== "legacy" ? null : script ? `taxis_${selected}` : code ? automationIdFor(selected, code) : null);
   const relatedQueued = countRelatedChanges(changes, helperIds, configId, script);
   const actionDisabled =
     busy ||
@@ -149,19 +173,15 @@ export function RecipeRecords({
                   </button>
                 ))}
               </div>
-              <span id="recipe-action-scope" className="ml-auto mb-2 text-xs text-muted">
-                {isHouseRecipe(selected) ? "House" : areaId ? h.areas[areaId].name : "No area selected"}
-              </span>
               <Button
-                className="mb-1 disabled:!bg-sunken disabled:!text-muted disabled:!opacity-100"
+                className="ml-auto mb-1 disabled:!bg-sunken disabled:!text-muted disabled:!opacity-100"
                 tone="primary"
-                aria-describedby="recipe-action-scope"
                 disabled={actionDisabled}
                 onClick={() => {
                   if (!actionDisabled) void propose(inputs);
                 }}
               >
-                {busy ? "Adding…" : `Add to Changes (${inputs.length})`}
+                {busy ? (reviewChanges ? "Adding…" : "Applying…") : reviewChanges ? `Add to Changes (${inputs.length})` : `Apply (${inputs.length})`}
               </Button>
               {relatedQueued > 0 && (
                 <a className="mb-2 text-xs text-accent underline" href="#changes">
@@ -219,7 +239,7 @@ export function RecipeRecords({
               tabIndex={0}
               className="flex min-h-0 min-w-0 flex-1 flex-col px-4 pb-4 pt-4"
             >
-              <h3 className="text-sm font-semibold">{isHouseRecipe(selected) ? "House availability" : "Availability by area"}</h3>
+              <h3 className="text-sm font-semibold">{isHouseRecipe(selected) ? "Availability by scope" : "Availability by area"}</h3>
               {selected === "motion_lights" ? (
                 <div className="mt-2 flex min-h-0 min-w-0 flex-1 flex-col">
                   <MotionLightsAvailability
@@ -238,6 +258,9 @@ export function RecipeRecords({
                   recipe={selected}
                   chosen={chosenArea}
                   onChoose={setChosenArea}
+                  chosenScope={chosenScope}
+                  onChooseScope={setChosenScope}
+                  spaces={spaces}
                   h={h}
                   cells={cells}
                   error={error}
@@ -256,7 +279,7 @@ export function RecipeRecords({
 function RecipeDetail({ cell, h, installed, naming }: { cell: RecipeCell; h: Hierarchy; installed: RecipeInstalled; naming: Parameters<typeof areaCodes>[1] }) {
   const code = isHouseRecipe(cell.recipe) ? HOUSE_AUTOMATION_CODE : (areaCodes(h, naming)[cell.areaId]?.code ?? cell.areaId);
   const isScript = cell.recipe === "announce" || cell.recipe === "goodbye";
-  const id = isScript ? `taxis_${cell.recipe}` : automationIdFor(cell.recipe, code);
+  const id = cell.targetId ?? (cell.scope?.kind === "space" ? "" : isScript ? `taxis_${cell.recipe}` : automationIdFor(cell.recipe, code));
   const actual = isScript ? installed.scripts[id] : installed.automations[id];
   return (
     <article aria-label="Installation details" className="flex flex-col gap-5">
@@ -315,7 +338,7 @@ function RecipeDetail({ cell, h, installed, naming }: { cell: RecipeCell; h: Hie
       <details className="text-xs text-muted">
         <summary className="cursor-pointer text-accent">Technical details</summary>
         <p className="mt-2">
-          {isScript ? "Script" : "Automation"}: <code className="break-all">{id}</code>
+          {isScript ? "Script" : "Automation"}: <code className="break-all">{id || "Not available"}</code>
         </p>
         {actual?.path && (
           <p>

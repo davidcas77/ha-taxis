@@ -1,3 +1,4 @@
+import { areaSpace, scopeProblem, spaceIds, type Space } from "./spaces.ts";
 import { ENTITY_ID_RE } from "./changes.ts";
 import { isSilentGroup } from "./entity-diagnosis.ts";
 import { defaultAggregationMarker, sharedHelperSuffix, areaCodes, duplicateCodes, floorCodes, houseGroupId, type NamingSettings } from "./naming.ts";
@@ -39,7 +40,16 @@ export type HelperSpec = {
 export const HELPERS: readonly HelperSpec[] = [
   { key: "lights", label: "Lights", nameWord: "lights", domain: "light", helper: "group", groupType: "light", suffix: "all", min: 1 },
   { key: "motion", label: "Motion", nameWord: "motions", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "motion_all", min: 1 },
-  { key: "presence", label: "Presence", nameWord: "presences", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "presences", min: 1 },
+  {
+    key: "presence",
+    label: "Presence",
+    nameWord: "presences",
+    domain: "binary_sensor",
+    helper: "group",
+    groupType: "binary_sensor",
+    suffix: "presences",
+    min: 1,
+  },
   { key: "door", label: "Doors", nameWord: "doors", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "doors", min: 1 },
   { key: "window", label: "Windows", nameWord: "windows", domain: "binary_sensor", helper: "group", groupType: "binary_sensor", suffix: "windows", min: 1 },
   { key: "temperature", label: "Temperature", nameWord: "temperature", domain: "sensor", helper: "min_max", suffix: "temperature", min: 1 },
@@ -92,7 +102,7 @@ type HelperNaming = Pick<NamingSettings, "helperNames" | "typeWords" | "aggregat
 
 export function helperSuffixes(naming: HelperNaming): Record<HelperKey, string> {
   if (naming.aggregationMarkers === undefined) return effectiveSuffixes(naming.helperNames);
-  return Object.fromEntries(HELPERS.map(spec => [spec.key, sharedHelperSuffix(naming, spec.key)])) as Record<HelperKey, string>;
+  return Object.fromEntries(HELPERS.map((spec) => [spec.key, sharedHelperSuffix(naming, spec.key)])) as Record<HelperKey, string>;
 }
 
 // The Settings form presents shared words and markers. Reading the old settings
@@ -103,7 +113,13 @@ export function sharedHelperNaming(naming: NamingSettings): NamingSettings {
     if (!Object.hasOwn(typeWords, "door")) typeWords.door = typeWords.opening;
     if (!Object.hasOwn(typeWords, "window")) typeWords.window = typeWords.opening;
   }
-  return { ...naming, typeWords, aggregationMarkers: naming.aggregationMarkers ?? Object.fromEntries(HELPERS.map(spec => [spec.key, helperNameParts(naming.helperNames, spec.key).aggregation || defaultAggregationMarker(spec.key)])) };
+  return {
+    ...naming,
+    typeWords,
+    aggregationMarkers:
+      naming.aggregationMarkers ??
+      Object.fromEntries(HELPERS.map((spec) => [spec.key, helperNameParts(naming.helperNames, spec.key).aggregation || defaultAggregationMarker(spec.key)])),
+  };
 }
 
 export function helperNamingErrors(naming: HelperNaming): Partial<Record<HelperKey, string>> {
@@ -123,11 +139,14 @@ export function helperNameErrors(names: HelperNames | undefined): Partial<Record
   const eff = effectiveSuffixes(names);
   for (const s of HELPERS) {
     const parts = helperNameParts(names, s.key);
-    if (Object.values(parts).some(part => part !== "" && !HELPER_SUFFIX_RE.test(part)) || !HELPER_SUFFIX_RE.test(eff[s.key])) out[s.key] = "Use a–z, 0–9 and _. The combined word and marker must fit in 30 characters, with no leading, trailing or doubled _.";
+    if (Object.values(parts).some((part) => part !== "" && !HELPER_SUFFIX_RE.test(part)) || !HELPER_SUFFIX_RE.test(eff[s.key]))
+      out[s.key] = "Use a–z, 0–9 and _. The combined word and marker must fit in 30 characters, with no leading, trailing or doubled _.";
     // The occupied sensor of the recipes sits on this id.
-    else if (s.domain === "binary_sensor" && eff[s.key] === RECIPE_HELPER_SUFFIX.occupied) out[s.key] = "Taxis uses this name for the occupied sensor of the recipes.";
+    else if (s.domain === "binary_sensor" && eff[s.key] === RECIPE_HELPER_SUFFIX.occupied)
+      out[s.key] = "Taxis uses this name for the occupied sensor of the recipes.";
     // The humidity rate sensor of the Bathroom fan recipe sits on this id.
-    else if (s.domain === "sensor" && eff[s.key] === RECIPE_HELPER_SUFFIX.humidityRate) out[s.key] = "Taxis uses this name for the humidity rate sensor of the recipes.";
+    else if (s.domain === "sensor" && eff[s.key] === RECIPE_HELPER_SUFFIX.humidityRate)
+      out[s.key] = "Taxis uses this name for the humidity rate sensor of the recipes.";
   }
   for (const s of HELPERS) {
     if (out[s.key]) continue;
@@ -143,7 +162,14 @@ export const canonicalId = (domain: HelperDomain, code: string, suffix: string) 
 // the occupied sensor, the pause switch, the manual override timer, the climate
 // schedule and the humidity rate sensor. Their ids end like this and, unlike the
 // helpers above, the ends are not settings.
-export const RECIPE_HELPER_SUFFIX = { hold: "hold", occupied: "occupied", switch: "paused", override: "override", climate: "climate", humidityRate: "humidity_rate" } as const;
+export const RECIPE_HELPER_SUFFIX = {
+  hold: "hold",
+  occupied: "occupied",
+  switch: "paused",
+  override: "override",
+  climate: "climate",
+  humidityRate: "humidity_rate",
+} as const;
 
 export const helperName = (areaName: string, spec: HelperSpec) => `${areaName} ${spec.nameWord}`;
 
@@ -233,6 +259,9 @@ export type HelperRow = {
   // temperature and humidity: the area's own setting doesn't point at the
   // canonical sensor yet, and the plan sets it.
   areaSensor?: { field: "temperature_entity_id" | "humidity_entity_id"; current: string | null };
+  // Space ownership is attached to every area helper action.
+  space?: { labelId: string; areaIds: string[] };
+  scopeBlocked?: string;
   // True when the row proposes something.
   actionable: boolean;
 };
@@ -242,7 +271,10 @@ const missingFrom = (a: readonly string[], b: readonly string[]) => a.filter((x)
 
 function sourcesOf(inv: AreaInventory, key: HelperKey): string[] {
   const rows = key === "media" ? [...inv.speaker, ...inv.tv] : inv[key];
-  return rows.filter((r) => r.counts).map((r) => r.entityId).sort();
+  return rows
+    .filter((r) => r.counts)
+    .map((r) => r.entityId)
+    .sort();
 }
 
 const AREA_SENSOR = { temperature: "temperature_entity_id", humidity: "humidity_entity_id" } as const;
@@ -264,7 +296,7 @@ export const HOUSE_GROUP_NAME = "All lights";
 export function areaCodeConflicts(h: Hierarchy, naming: NamingSettings): Map<string, string> {
   const conflicts = new Map<string, string>();
   for (const [code, ids] of duplicateCodes(areaCodes(h, naming))) {
-    const message = `Area code “${code}” is shared by ${ids.map(id => h.areas[id].name).join(" and ")}. Choose unique area codes in Parameters → Area codes.`;
+    const message = `Area code “${code}” is shared by ${ids.map((id) => h.areas[id].name).join(" and ")}. Choose unique area codes in Parameters → Area codes.`;
     for (const id of ids) conflicts.set(id, message);
   }
   return conflicts;
@@ -323,7 +355,8 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
         const removed = missingFrom(held.members, sources);
         if (added.length === 0 && removed.length === 0) Object.assign(row, { status: "in-place", actionable: false });
         // Members can only be changed on a helper set up in the UI.
-        else if (!held.configEntryId) Object.assign(row, { status: "conflict", conflict: "not-editable", heldBy: id, heldByName: held.name, actionable: false });
+        else if (!held.configEntryId)
+          Object.assign(row, { status: "conflict", conflict: "not-editable", heldBy: id, heldByName: held.name, actionable: false });
         else Object.assign(row, { status: "update-members", added, removed, missing: held.members.filter((m) => !h.entities[m]) });
       }
     } else if (spec.helper === "group") {
@@ -406,11 +439,20 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
   // doesn't exist can't be nested, and adding it to the list makes the next plan
   // include it.
   const isGroup = (id: string) => h.entities[id]?.domain === "light" && h.entities[id]?.platform === "group";
-  const incoming = (id: string) => changes.some((c) => (c.kind === "helper" && c.op === "create" && c.after.entity_id === id) || (c.kind === "entity" && c.after.new_entity_id === id));
+  const incoming = (id: string) =>
+    changes.some((c) => (c.kind === "helper" && c.op === "create" && c.after.entity_id === id) || (c.kind === "entity" && c.after.new_entity_id === id));
   const willExist = (id: string) => isGroup(id) || incoming(id);
   const areaGroup = (areaId: string) => canonicalId("light", codes[areaId].code, suffix.lights);
 
-  const groupRow = (level: "floor" | "house", id: string, name: string, scopeName: string, floorId: string | null, members: readonly string[], codeConflict?: string): HelperRow | null => {
+  const groupRow = (
+    level: "floor" | "house",
+    id: string,
+    name: string,
+    scopeName: string,
+    floorId: string | null,
+    members: readonly string[],
+    codeConflict?: string,
+  ): HelperRow | null => {
     if (members.length === 0 || !ENTITY_ID_RE.test(id)) return null;
     const row: HelperRow = {
       level,
@@ -447,8 +489,19 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
   for (const floor of h.floors) {
     const id = floorIds.get(floor.id)!;
     const free = !reserved.has(id);
-    const members = floor.areaIds.filter((a) => h.areas[a]).map(areaGroup).filter(willExist);
-    const row = groupRow("floor", id, `${floor.name} ${lightSpec.nameWord}`, floor.name, floor.id, members, floor.areaIds.map(a => conflicts.get(a)).find(Boolean));
+    const members = floor.areaIds
+      .filter((a) => h.areas[a])
+      .map(areaGroup)
+      .filter(willExist);
+    const row = groupRow(
+      "floor",
+      id,
+      `${floor.name} ${lightSpec.nameWord}`,
+      floor.name,
+      floor.id,
+      members,
+      floor.areaIds.map((a) => conflicts.get(a)).find(Boolean),
+    );
     if (row) {
       rows.push(row);
       if (row.status !== "conflict") floorMembers.push(id);
@@ -457,15 +510,140 @@ export function planHelpers(h: Hierarchy, inventory: InventorySettings, naming: 
       reserved.set(id, `${floor.name} ${lightSpec.nameWord}`);
     }
   }
-  const looseMembers = h.looseAreaIds.filter((a) => h.areas[a]).map(areaGroup).filter(willExist);
-  const house = groupRow("house", houseId, HOUSE_GROUP_NAME, "House", null, [...floorMembers.filter(willExist), ...looseMembers], conflicts.values().next().value);
+  const looseMembers = h.looseAreaIds
+    .filter((a) => h.areas[a])
+    .map(areaGroup)
+    .filter(willExist);
+  const house = groupRow(
+    "house",
+    houseId,
+    HOUSE_GROUP_NAME,
+    "House",
+    null,
+    [...floorMembers.filter(willExist), ...looseMembers],
+    conflicts.values().next().value,
+  );
   if (house) rows.push(house);
-  return rows;
+  return rows.map((row) => {
+    if (row.level !== "area" || !row.areaId) return row;
+    const scope = areaSpace(h, row.areaId, changes);
+    const sensor = h.entities[row.canonicalId];
+    const provenSensor = Boolean(
+      sensor && sensor.members.length > 0 && sameSet(sensor.members, row.sources) && sensor.members.every((id) => h.entities[id]?.areaId === row.areaId),
+    );
+    const unsupported =
+      scope.kind === "space" && row.areaSensor && row.status === "in-place" && row.actionable && !provenSensor
+        ? "The existing helper's sources cannot be verified in this area. Review it in Home Assistant before assigning it."
+        : null;
+    const blocked = (scope.kind === "conflict" ? scope.error : scope.kind === "space" ? scope.space.blocked : null) ?? unsupported;
+    if (blocked)
+      return {
+        ...row,
+        status: "conflict" as const,
+        conflict: "taken" as const,
+        heldBy: row.canonicalId,
+        heldByName: blocked,
+        scopeBlocked: blocked,
+        actionable: false,
+      };
+    return scope.kind === "space" ? { ...row, space: { labelId: scope.space.id, areaIds: [...scope.space.areaIds] } } : row;
+  });
+}
+
+export type SpaceLightGroupPlan = {
+  space: Space;
+  id: string;
+  members: string[];
+  status: "ready" | "create" | "update" | "blocked";
+  reason: string | null;
+  inputs: ChangeInput[];
+};
+
+/** Direct area groups only: floor groups may contain areas in other Spaces. */
+export function planSpaceLightGroup(
+  h: Hierarchy,
+  inventory: InventorySettings,
+  naming: NamingSettings,
+  changes: readonly Change[],
+  space: Space,
+): SpaceLightGroupPlan {
+  const blocked = scopeProblem(h, changes, { kind: "space", space });
+  const id = !space.id.startsWith("new:") && space.id ? spaceIds(space.id).lights : "";
+  const result = (status: SpaceLightGroupPlan["status"], reason: string | null, members: string[] = [], inputs: ChangeInput[] = []): SpaceLightGroupPlan => ({
+    space,
+    id,
+    members,
+    status,
+    reason,
+    inputs,
+  });
+  if (blocked) return result("blocked", blocked);
+  const rows = planHelpers(h, inventory, naming, changes).filter(
+    (row) => row.level === "area" && row.key === "lights" && row.areaId && space.areaIds.includes(row.areaId),
+  );
+  if (!rows.length) return result("blocked", "This Space has no selected lights.");
+  const members: string[] = [];
+  for (const row of rows) {
+    if (row.scopeBlocked) return result("blocked", row.scopeBlocked);
+    const group = h.entities[row.canonicalId];
+    if (
+      !group ||
+      group.domain !== "light" ||
+      group.platform !== "group" ||
+      group.areaId !== row.areaId ||
+      group.disabled ||
+      group.state === "unavailable" ||
+      group.state === "unknown"
+    )
+      return result("blocked", `Create or repair the area light group ${row.canonicalId} first.`);
+    // Only exact known physical sources are accepted; no nested or foreign group
+    // can hide a cross-Space light behind a compatible-looking group ID.
+    if (!sameSet(group.members, row.sources)) return result("blocked", `Review members of ${row.canonicalId} before using it in this Space.`);
+    members.push(row.canonicalId);
+  }
+  members.sort();
+  const protectedIds = new Set([id, ...members]);
+  if (
+    changes.some(
+      (change) =>
+        (change.kind === "helper" && (protectedIds.has(change.targetId) || protectedIds.has(String(change.after.entity_id ?? "")))) ||
+        (change.kind === "entity" && (protectedIds.has(change.targetId) || protectedIds.has(String(change.after.new_entity_id ?? "")))),
+    )
+  )
+    return result("blocked", "Apply pending light-group changes before using this Space group.", members);
+  const metadata = { labelId: space.id, areaIds: [...space.areaIds] };
+  const existing = h.entities[id];
+  if (!existing)
+    return result("create", null, members, [
+      {
+        kind: "helper",
+        op: "create",
+        space: metadata,
+        fields: { helper: "group", group_type: "light", name: `Taxis ${space.name} Space lights`, entity_id: id, entities: members },
+      },
+    ]);
+  if (
+    existing.domain !== "light" ||
+    existing.platform !== "group" ||
+    existing.areaId !== null ||
+    existing.disabled ||
+    existing.state === "unavailable" ||
+    existing.state === "unknown"
+  )
+    return result("blocked", `${id} is unavailable or is not a light group.`, members);
+  if (!sameSet(existing.members, members) && !existing.configEntryId)
+    return result("blocked", `${id} is not an editable Home Assistant group. Review it in Home Assistant.`, members);
+  if (!sameSet(existing.members, members))
+    return result("update", `Review ${id} membership before using this Space group.`, members, [
+      { kind: "helper", op: "update", targetId: id, space: metadata, fields: { entities: members } },
+    ]);
+  return result("ready", null, members);
 }
 
 // The row an area has for a helper, or undefined when the area doesn't get one
 // (nothing counted for it, or too few players for a media group).
-export const areaHelperRow = (rows: readonly HelperRow[], areaId: string, key: HelperKey): HelperRow | undefined => rows.find((r) => r.level === "area" && r.areaId === areaId && r.key === key);
+export const areaHelperRow = (rows: readonly HelperRow[], areaId: string, key: HelperKey): HelperRow | undefined =>
+  rows.find((r) => r.level === "area" && r.areaId === areaId && r.key === key);
 
 // ---------------------------------------------------------------------------
 // Rows and the change list.
@@ -476,9 +654,12 @@ export const areaHelperRow = (rows: readonly HelperRow[], areaId: string, key: H
 // area's sensor being pointed at it.
 export function hasPendingChange(row: HelperRow, changes: readonly Change[]): boolean {
   return changes.some((c) => {
-    if (c.kind === "helper") return c.targetId === row.canonicalId || c.after.entity_id === row.canonicalId || (row.adoptFrom !== undefined && c.targetId === row.adoptFrom);
-    if (c.kind === "entity") return c.after.new_entity_id === row.canonicalId || (row.adoptFrom !== undefined && c.targetId === row.adoptFrom && c.after.new_entity_id !== undefined);
-    if (c.kind === "area") return Boolean(row.areaSensor) && row.areaId !== null && c.targetId === row.areaId && c.after[row.areaSensor!.field] === row.canonicalId;
+    if (c.kind === "helper")
+      return c.targetId === row.canonicalId || c.after.entity_id === row.canonicalId || (row.adoptFrom !== undefined && c.targetId === row.adoptFrom);
+    if (c.kind === "entity")
+      return c.after.new_entity_id === row.canonicalId || (row.adoptFrom !== undefined && c.targetId === row.adoptFrom && c.after.new_entity_id !== undefined);
+    if (c.kind === "area")
+      return Boolean(row.areaSensor) && row.areaId !== null && c.targetId === row.areaId && c.after[row.areaSensor!.field] === row.canonicalId;
     return false;
   });
 }
@@ -487,7 +668,7 @@ export function hasPendingChange(row: HelperRow, changes: readonly Change[]): bo
 // Adopting renames the group (Apply rewrites what uses the old id); when its
 // members differ, a members update follows, aimed at the id the group has now.
 // An area setting alone is a small area update.
-export function helperChangeInputs(row: HelperRow): ChangeInput[] {
+function rawHelperChangeInputs(row: HelperRow): ChangeInput[] {
   switch (row.status) {
     case "adopt": {
       const out: ChangeInput[] = [{ kind: "entity", op: "update", targetId: row.adoptFrom!, fields: { new_entity_id: row.canonicalId } }];
@@ -514,8 +695,14 @@ export function helperChangeInputs(row: HelperRow): ChangeInput[] {
         },
       ];
     case "in-place":
-      return row.areaSensor && row.areaId !== null ? [{ kind: "area", op: "update", targetId: row.areaId, fields: { [row.areaSensor.field]: row.canonicalId } }] : [];
+      return row.areaSensor && row.areaId !== null
+        ? [{ kind: "area", op: "update", targetId: row.areaId, fields: { [row.areaSensor.field]: row.canonicalId } }]
+        : [];
     case "conflict":
       return [];
   }
+}
+
+export function helperChangeInputs(row: HelperRow): ChangeInput[] {
+  return rawHelperChangeInputs(row).map((input) => (row.space ? { ...input, space: row.space } : input));
 }

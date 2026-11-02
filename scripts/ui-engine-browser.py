@@ -104,8 +104,8 @@ class UiEngine(unittest.TestCase):
         page.goto("about:blank")
         page.goto(BASE + "/" + route, wait_until="networkidle")
         page.get_by_role("navigation", name="Pages").wait_for()
-        # A page is drawn once the house is read: the line under the navigation counts its floors.
-        page.get_by_text(re.compile(r"\d+ floors?")).first.wait_for()
+        # Wait until the initial hierarchy read has finished before measuring.
+        page.get_by_text("Reading your floors, areas, devices and entities…").wait_for(state="hidden")
         self.settle(page)
 
     def problems(self, page):

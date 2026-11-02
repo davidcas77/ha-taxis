@@ -42,6 +42,182 @@ class DesktopRegression(unittest.TestCase):
     def tearDown(self):
         self.context.close()
 
+    def test_spaces_manager_assigns_independent_of_floor_with_mocked_changes(self):
+        blocked = []
+        def guard(route):
+            if route.request.method not in ("GET", "HEAD", "OPTIONS"):
+                blocked.append((route.request.method, route.request.url))
+                route.abort()
+            else:
+                route.continue_()
+        self.page.route("**/api/**", guard)
+        def fixture(h):
+            area = copy.deepcopy(next(iter(h["areas"].values())))
+            label = copy.deepcopy(next(iter(h["labels"].values())))
+            h["labels"] = {"space_office": {**label, "id": "space_office", "name": "Space: Office"}, "interior": {**label, "id": "interior", "name": "Interior"}}
+            h["areas"] = {key: {**area, "id": key, "name": name, "floorId": floor, "labels": ["interior"], "entityIds": [], "deviceIds": []} for key, name, floor in [("coffee", "Office Coffee", "first"), ("meeting", "Office Meeting", "second")]}
+            h["floors"] = [{"id": "first", "name": "First", "level": 0, "areaIds": ["coffee"]}, {"id": "second", "name": "Second", "level": 1, "areaIds": ["meeting"]}]
+            h["looseAreaIds"] = []
+            h["devices"] = {}; h["entities"] = {}; h["unassignedEntityIds"] = []
+        self.hierarchy_fixture(fixture)
+        pending = [{"id": 7, "kind": "entity", "op": "update", "targetId": "light.keep", "scope": None, "before": {}, "after": {"name": "Keep"}, "createdAt": ""}]
+        posted = []
+        def changes(route):
+            if route.request.method == "POST":
+                payload = route.request.post_data_json
+                inputs = payload.get("changes", [payload])
+                posted.extend(inputs)
+                for item in inputs:
+                    pending.append({"id": 100 + len(pending), "kind": item["kind"], "op": item["op"], "targetId": item.get("targetId", "new:label:fixture"), "scope": None, "before": {}, "after": item.get("fields", {}), "createdAt": ""})
+            route.fulfill(json={"ok": True, "changes": pending, "version": str(len(pending))})
+        self.page.route("**/api/changes", changes)
+        self.page.route("**/api/changes/batch", changes)
+        self.page.goto(BASE + "/#home", wait_until="networkidle")
+        self.page.get_by_role("heading", name="Spaces", exact=True).wait_for()
+        self.page.get_by_label("Space for Office Coffee").select_option("space_office")
+        self.page.get_by_label("Space for Office Meeting").select_option("space_office")
+        self.page.screenshot(path=str(screenshot_dir() / "spaces-manager.png"))
+        with self.page.expect_response(lambda response: response.url.endswith("/api/changes/batch") and response.request.method == "POST"):
+            self.page.get_by_role("button", name="Add assignments to Changes").click()
+        self.assertEqual({item["targetId"] for item in posted}, {"coffee", "meeting"})
+        for item in posted:
+            self.assertEqual(set(item["fields"]["labels"]), {"interior", "space_office"})
+        self.assertEqual(pending[0]["targetId"], "light.keep")
+        self.assertEqual(blocked, [])
+
+    def test_space_pending_label_can_be_assigned_and_displayed(self):
+        blocked = []
+        self.page.route("**/api/**", lambda route: (blocked.append(route.request.url), route.abort()) if route.request.method not in ("GET", "HEAD", "OPTIONS") else route.continue_())
+        body = copy.deepcopy(self.hierarchy_body); h = body["hierarchy"]
+        template = copy.deepcopy(next(iter(h["areas"].values()))); label = copy.deepcopy(next(iter(h["labels"].values())))
+        h["labels"] = {"interior": {**label, "id": "interior", "name": "Interior"}}
+        h["areas"] = {"office": {**template, "id": "office", "name": "Office", "floorId": None, "labels": ["interior"], "entityIds": [], "deviceIds": []}}
+        h["floors"] = []; h["looseAreaIds"] = ["office"]; h["devices"] = {}; h["entities"] = {}; h["unassignedEntityIds"] = []
+        self.page.route("**/api/hierarchy*", lambda route: route.fulfill(json=copy.deepcopy(body)))
+        queued = []; posted = []
+        def changes(route):
+            if route.request.method == "POST":
+                payload = route.request.post_data_json
+                for item in payload.get("changes", [payload]):
+                    posted.append(item)
+                    target = item.get("targetId", "new:label:space")
+                    before = {}
+                    if item["kind"] == "label": h["labels"][target] = {**label, "id": target, "name": item["fields"]["name"]}
+                    if item["kind"] == "area":
+                        before = {"labels": h["areas"][target]["labels"][:]}; h["areas"][target]["labels"] = item["fields"]["labels"][:]
+                    queued.append({"id": 100 + len(queued), "kind": item["kind"], "op": item["op"], "targetId": target, "scope": None, "before": before, "after": item.get("fields", {}), "createdAt": ""})
+            route.fulfill(json={"ok": True, "changes": queued, "version": str(len(queued))})
+        self.page.route("**/api/changes", changes); self.page.route("**/api/changes/batch", changes)
+        self.page.goto(BASE + "/#home", wait_until="networkidle")
+        self.page.get_by_label("New Space name").fill("Office")
+        with self.page.expect_response(lambda response: response.url.endswith("/api/changes") and response.request.method == "POST"):
+            self.page.get_by_role("button", name="Create Space").click()
+        picker = self.page.get_by_label("Space for Office")
+        expect(picker.locator('option[value="new:label:space"]')).to_be_enabled()
+        picker.select_option("new:label:space")
+        with self.page.expect_response(lambda response: response.url.endswith("/api/changes") and response.request.method == "POST"):
+            self.page.get_by_role("button", name="Add assignments to Changes").click()
+        expect(picker).to_have_value("new:label:space")
+        expect(self.page.get_by_text("Pending Space changes; apply before planning.")).to_be_visible()
+        self.assertEqual(self.page.get_by_text("Conflicting labels", exact=True).count(), 0)
+        self.assertEqual(set(posted[-1]["fields"]["labels"]), {"interior", "new:label:space"})
+        self.assertEqual(len(queued), 2); self.assertEqual(blocked, [])
+        # A real multi-Space conflict stays visible and can be resolved by choosing one.
+        h["labels"]["home"] = {**label, "id": "home", "name": "Space: Home"}
+        h["areas"]["office"]["labels"].append("home")
+        self.page.reload(wait_until="networkidle")
+        picker = self.page.get_by_label("Space for Office")
+        expect(picker).to_have_value("__conflict__")
+        picker.select_option("home")
+        with self.page.expect_response(lambda response: response.url.endswith("/api/changes") and response.request.method == "POST"):
+            self.page.get_by_role("button", name="Add assignments to Changes").click()
+        expect(picker).to_have_value("home")
+        self.assertEqual(set(posted[-1]["fields"]["labels"]), {"interior", "home"})
+        self.assertEqual(blocked, [])
+
+    def test_space_recipe_scope_never_falls_back_to_legacy(self):
+        blocked = []
+        def guard(route):
+            if route.request.method not in ("GET", "HEAD", "OPTIONS"):
+                blocked.append((route.request.method, route.request.url)); route.abort()
+            else:
+                route.continue_()
+        self.page.route("**/api/**", guard)
+        def fixture(h):
+            area = copy.deepcopy(next(iter(h["areas"].values())))
+            label = copy.deepcopy(next(iter(h["labels"].values())))
+            h["labels"] = {key: {**label, "id": key, "name": "Space: " + name} for key, name in [("office", "Office"), ("studio", "Studio")]}
+            h["areas"] = {key: {**area, "id": key, "name": name, "floorId": None, "labels": [scope], "entityIds": [], "deviceIds": []} for key, name, scope in [("coffee", "Office Coffee", "office"), ("meeting", "Office Meeting", "office"), ("studio_room", "Studio room", "studio")]}
+            h["floors"] = []; h["looseAreaIds"] = list(h["areas"]); h["devices"] = {}; h["entities"] = {}; h["unassignedEntityIds"] = []
+        self.hierarchy_fixture(fixture)
+        self.page.route("**/api/changes", lambda route: route.fulfill(json={"ok": True, "changes": [], "version": "fixture"}))
+        self.page.route("**/api/recipes/state", lambda route: route.fulfill(json={"ok": True, "installed": {"blueprints": {}, "automations": {}, "scripts": {"taxis_goodbye": {"alias": "Goodbye (Taxis)", "path": "taxis/goodbye.yaml", "input": {}}}, "timers": {}, "controllers": {}}}))
+        saved = {"house": {"away_mode_entity": "input_boolean.global_away"}, "types": {}, "areas": {}}
+        def parameters(route):
+            if route.request.method == "PUT":
+                saved.clear(); saved.update(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "parameters": saved})
+        self.page.route("**/api/settings/parameters", parameters)
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Goodbye", exact=True).click()
+        details = self.page.get_by_role("article", name="Recipe details").first
+        expect(details.get_by_role("button", name=re.compile(r"^Add to Changes"))).to_be_disabled()
+        details.get_by_role("tab", name="Availability").click()
+        nav = details.get_by_role("navigation", name="Recipe scopes")
+        nav.get_by_role("button", name="Office", exact=True).click()
+        details.get_by_text("Areas: Office Coffee, Office Meeting.", exact=False).wait_for()
+        expect(details.get_by_text("No configuration found in Home Assistant.", exact=True)).to_be_visible()
+        expect(details.get_by_text("Missing requirements", exact=True)).to_have_count(1)
+        self.assertEqual(details.get_by_text("Studio room", exact=False).count(), 0)
+        expect(details.get_by_role("heading", name="Space light group")).to_be_visible()
+        expect(details.get_by_role("button", name=re.compile(r"^Add to Changes"))).to_be_disabled()
+        details.get_by_role("table", name="Space parameters").wait_for()
+        details.get_by_role("button", name=re.compile(r"^Away mode switch for Office:")).click()
+        edit = details.get_by_label("Away mode switch for Office", exact=True)
+        edit.fill("input_boolean.office_away"); edit.press("Enter")
+        expect(details.get_by_role("button", name=re.compile(r"^Away mode switch for Office: input_boolean.office_away, set here"))).to_be_visible()
+        self.assertEqual(saved["house"]["away_mode_entity"], "input_boolean.global_away")
+        self.assertEqual(saved["spaces"]["office"]["away_mode_entity"], "input_boolean.office_away")
+        self.page.screenshot(path=str(screenshot_dir() / "space-recipe-scope.png"))
+        nav.get_by_role("button", name="All areas (legacy)").click()
+        details.get_by_role("heading", name="All areas (legacy)").wait_for()
+        expect(details.get_by_text("Configuration found in Home Assistant.", exact=True)).to_be_visible()
+        expect(details.get_by_text("Missing requirements", exact=True)).to_have_count(1)
+        self.page.goto(BASE + "/#parameters/house", wait_until="networkidle")
+        self.page.get_by_role("button", name="Columns of House").click()
+        self.page.get_by_role("group", name="Columns").get_by_label(re.compile(r"^Away mode switch")).check()
+        self.page.get_by_role("button", name="Columns of House").click()
+        expect(self.page.get_by_role("button", name=re.compile(r"^Away mode switch for Space · Office: input_boolean.office_away, set here"))).to_be_visible()
+        self.assertEqual(blocked, [])
+
+    def test_scoped_area_helper_action_sends_space_fence(self):
+        blocked = []
+        self.page.route("**/api/**", lambda route: (blocked.append(route.request.url), route.abort()) if route.request.method not in ("GET", "HEAD", "OPTIONS") else route.continue_())
+        def fixture(h):
+            area = copy.deepcopy(next(iter(h["areas"].values()))); label = copy.deepcopy(next(iter(h["labels"].values()))); entity = copy.deepcopy(next(iter(h["entities"].values())))
+            h["labels"] = {"office": {**label, "id": "office", "name": "Space: Office"}}
+            h["areas"] = {"coffee": {**area, "id": "coffee", "name": "Coffee", "floorId": None, "labels": ["office"], "entityIds": ["binary_sensor.coffee_motion"], "deviceIds": []}}
+            h["floors"] = []; h["looseAreaIds"] = ["coffee"]; h["devices"] = {}; h["unassignedEntityIds"] = []
+            h["entities"] = {"binary_sensor.coffee_motion": {**entity, "entityId": "binary_sensor.coffee_motion", "name": "Coffee motion", "domain": "binary_sensor", "deviceClass": "motion", "role": "motion", "platform": "demo", "members": [], "deviceId": None, "areaId": "coffee", "ownAreaId": "coffee", "disabled": False, "hidden": False, "maintenance": False}}
+        self.hierarchy_fixture(fixture)
+        posted = []
+        def changes(route):
+            if route.request.method == "POST":
+                payload = route.request.post_data_json; posted.extend(payload.get("changes", [payload]))
+            route.fulfill(json={"ok": True, "changes": [], "version": "fixture"})
+        self.page.route("**/api/changes", changes); self.page.route("**/api/changes/batch", changes)
+        self.page.route("**/api/recipes/state", lambda route: route.fulfill(json={"ok": True, "installed": {"blueprints": {}, "automations": {}, "scripts": {}, "timers": {}, "controllers": {}}}))
+        self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
+        self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Occupancy", exact=True).click()
+        details = self.page.get_by_role("article", name="Recipe details").first; details.get_by_role("tab", name="Availability").click()
+        details.get_by_role("navigation", name="Recipe areas").get_by_role("button", name="Coffee", exact=True).click()
+        with self.page.expect_response(lambda response: "/api/changes" in response.url and response.request.method == "POST"):
+            details.get_by_role("button", name="Create Coffee hold").click()
+        self.assertTrue(posted)
+        for item in posted:
+            if item["kind"] != "blueprint": self.assertEqual(item["space"], {"labelId": "office", "areaIds": ["coffee"]})
+        self.assertEqual(blocked, [])
+
     def test_failed_remove_reports_error_and_preserves_queue(self):
         change = {"id": 999999, "kind": "entity", "op": "update", "targetId": "light.kitchen_main", "scope": None,
                   "before": {"name": None}, "after": {"name": "Regression fixture"}, "createdAt": "2026-10-27T00:00:00Z"}
@@ -56,7 +232,9 @@ class DesktopRegression(unittest.TestCase):
         self.page.get_by_role("button", name=re.compile(r"^Discard:")).click()
         self.page.get_by_role("group", name="Confirm").get_by_role("button", name="Discard", exact=True).click()
         self.page.get_by_text("Simulated remove failure", exact=True).wait_for()
-        self.assertEqual(self.page.get_by_text("Regression fixture", exact=True).count(), 1)
+        self.page.get_by_text("Show planned details", exact=True).click()
+        expect(self.page.locator("dd").filter(has_text="Planned: Regression fixture")).to_be_visible()
+        self.assertEqual(self.page.get_by_role("button", name=re.compile(r"^Discard:")).count(), 1)
 
     def test_unsaved_naming_survives_cancelled_navigation(self):
         self.page.goto(BASE + "/#settings", wait_until="networkidle")
@@ -134,18 +312,22 @@ class DesktopRegression(unittest.TestCase):
         self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")
         self.page.get_by_label("Manufacturer", exact=True).select_option(label="Sonoff")
         self.page.get_by_role("button", name="Filter records by area").click()
+        self.page.screenshot(path=str(screenshot_dir() / "organize-area-filter.png"))
         self.page.get_by_role("group", name="Areas", exact=True).get_by_text("Bedroom", exact=True).click()
         self.page.keyboard.press("Escape")
         self.page.get_by_text("No matching devices or entities.", exact=False).wait_for()
         self.assertTrue(self.page.get_by_label("Manufacturer", exact=True).is_visible())
         self.page.get_by_role("button", name="Reset filters", exact=True).first.click()
-        self.assertGreater(self.page.locator("tbody tr").count(), 0)
+        self.assertGreater(self.page.get_by_role("table", name="Devices and entities").locator("tbody tr").count(), 1)
 
     def test_label_without_matches_does_not_keep_unrelated_devices(self):
         self.page.goto(BASE + "/#organize/devices", wait_until="networkidle")
         self.page.get_by_label("Label", exact=True).select_option(label="Kids")
         self.page.get_by_text("No matching devices or entities.", exact=False).wait_for()
-        self.assertEqual(self.page.locator("tbody tr").count(), 0)
+        table = self.page.get_by_role("table", name="Devices and entities")
+        self.assertEqual(table.locator("tbody tr").count(), 1)
+        self.assertEqual(table.locator("tbody tr td").count(), 1)
+        expect(table.get_by_text("No matching devices or entities.", exact=False)).to_be_visible()
 
     def test_record_sizes_persist_and_reset(self):
         # The list/properties divider and a table's Columns menu are both browser
@@ -373,7 +555,9 @@ class DesktopRegression(unittest.TestCase):
                     lines = card.evaluate("el => el.firstElementChild.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight)")
                     self.assertLessEqual(lines, 2.1, card.inner_text())
             tabs.get_by_role("tab", name="Availability").click()
-            details.get_by_role("heading", name="House availability" if name in house else "Availability by area").wait_for()
+            details.get_by_role("heading", name="Availability by scope" if name in house else "Availability by area").wait_for()
+            if name in house:
+                details.get_by_role("navigation", name="Recipe scopes").get_by_role("button", name="All areas (legacy)").click()
             self.assertNotRegex(details.get_by_role("tabpanel").inner_text(), r"(?i)\bcounted\b")
             self.assertEqual(details.get_by_role("heading", name="How it works").count(), 0)
             helper_tables = details.get_by_role("table", name="Recipe helpers")
@@ -389,22 +573,22 @@ class DesktopRegression(unittest.TestCase):
         add = details.get_by_role("button", name=re.compile(r"^Add to Changes \(\d+\)$"))
         expect(add).to_be_disabled()
         self.assertEqual(posted, [])
-        expect(details.locator("#recipe-action-scope")).to_have_text("Bathroom")
+        expect(details.locator("#recipe-action-scope")).to_have_count(0)
         details.get_by_role("tab", name="Availability").click()
         expect(add).to_be_enabled()
         areas = details.get_by_role("navigation", name="Recipe areas")
         areas.get_by_role("button", name="Hallway", exact=True).click()
-        expect(details.locator("#recipe-action-scope")).to_have_text("Hallway")
+        expect(details.locator("#recipe-action-scope")).to_have_count(0)
         details.get_by_role("tab", name="Description").click()
         expect(add).to_be_disabled()
-        expect(details.locator("#recipe-action-scope")).to_have_text("Hallway")
+        expect(details.locator("#recipe-action-scope")).to_have_count(0)
         details.get_by_role("tab", name="Availability").click()
         details.get_by_role("navigation", name="Recipe areas").get_by_role("button", name="Bathroom", exact=True).click()
-        expect(details.locator("#recipe-action-scope")).to_have_text("Bathroom")
+        expect(details.locator("#recipe-action-scope")).to_have_count(0)
         self.page.screenshot(path=str(screenshot_dir() / "recipe-action-area-scope.png"))
         bathroom = details
         bathroom.get_by_role("heading", name="Bathroom", exact=True).wait_for()
-        bathroom.get_by_role("checkbox", name="Wanted in this area").wait_for()
+        bathroom.get_by_role("checkbox", name="Active: Bathroom").wait_for()
         add = bathroom.get_by_role("button", name=re.compile(r"^Add to Changes \(\d+\)$"))
         expected = int(re.search(r"\((\d+)\)", add.inner_text()).group(1))
         self.assertGreater(expected, 0)
@@ -499,6 +683,14 @@ class DesktopRegression(unittest.TestCase):
         self.assertEqual(posts, [])
 
     def test_occupancy_tv_role_persists_and_reports_save_failure(self):
+        blocked = []
+        def guard(route):
+            if route.request.method not in ("GET", "HEAD", "OPTIONS"):
+                blocked.append((route.request.method, route.request.url))
+                route.abort()
+            else:
+                route.continue_()
+        self.page.route("**/api/**", guard)
         def fixture(h):
             area = next(a for a in h["areas"].values() if a["name"] == "Bathroom")
             base = next(iter(h["entities"].values()))
@@ -547,9 +739,7 @@ class DesktopRegression(unittest.TestCase):
             return details.get_by_role("combobox", name=re.compile("TV interaction: Fixture TV"))
         select = open_room()
         details = self.page.get_by_role("article", name="Recipe details").first
-        wanted = details.get_by_role("checkbox", name="Wanted in this area")
-        status = wanted.locator("xpath=../following-sibling::span")
-        self.assertAlmostEqual(wanted.bounding_box()["y"], status.bounding_box()["y"], delta=5)
+        wanted = details.get_by_role("checkbox", name="Active: Bathroom")
         expect(details.get_by_text(re.compile(r"^(?:No configuration found|Configuration found) in Home Assistant\.$"))).to_be_visible()
         heading = details.get_by_role("heading", name="TVs", exact=True)
         na = details.get_by_role("checkbox", name="Non applicable")
@@ -580,17 +770,54 @@ class DesktopRegression(unittest.TestCase):
         self.page.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
         expect(select).to_have_value("holds")
         self.assertEqual(saved["entities"]["media_player.fixture_tv"]["tvOccupancyRole"], "holds")
+        reject[0] = False
+        config = details.locator('fieldset[aria-label="Area configuration"]')
+        hold = details.get_by_role("button", name=re.compile(r"^Hold timeout for Bathroom:"))
+        hold.click()
+        expect(details.get_by_label("Hold timeout for Bathroom", exact=True)).to_be_visible()
+        wanted.uncheck()
+        expect(config).to_have_attribute("inert", "")
+        self.assertTrue(config.evaluate("el => el.disabled && getComputedStyle(el).opacity === '0.5'"))
+        expect(details.get_by_label("Hold timeout for Bathroom", exact=True)).to_have_count(0)
+        config.locator('a[href]').first.evaluate("el => el.focus()")
+        self.assertFalse(config.locator('a[href]').first.evaluate("el => document.activeElement === el"))
+        expect(details.get_by_role("button", name=re.compile(r"^Add to Changes"))).to_be_disabled()
+        wanted.check()
+        expect(config).not_to_have_attribute("inert", "")
+        expect(details.get_by_role("combobox", name=re.compile("TV interaction: Fixture TV"))).to_have_value("holds")
+        reject[0] = True
+        wanted.uncheck()
+        details.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
+        expect(wanted).to_be_checked()
+        expect(config).not_to_have_attribute("inert", "")
+        self.assertEqual(saved["entities"]["media_player.fixture_tv"]["tvOccupancyRole"], "holds")
+        self.assertEqual(blocked, [])
 
     def test_recipe_wanted_persists_and_rolls_back(self):
+        blocked = []
+        def guard(route):
+            if route.request.method not in ("GET", "HEAD", "OPTIONS"):
+                blocked.append((route.request.method, route.request.url))
+                route.abort()
+            else:
+                route.continue_()
+        self.page.route("**/api/**", guard)
         def fixture(h):
             template = copy.deepcopy(next(iter(h["areas"].values())))
             h["areas"] = {}
-            for area_id, name in [("garden_fixture", "Garden fixture"), ("room_fixture", "Room fixture")]:
-                h["areas"][area_id] = {**template, "id": area_id, "name": name, "floorId": None, "entityIds": [], "deviceIds": []}
-            h["floors"] = []
-            h["looseAreaIds"] = list(h["areas"])
+            for area_id, name, floor in [("garden_fixture", "Garden fixture", "garden_floor"), ("room_fixture", "Room fixture", "room_floor")]:
+                h["areas"][area_id] = {**template, "id": area_id, "name": name, "floorId": floor, "entityIds": [], "deviceIds": []}
+            h["floors"] = [{"id": "garden_floor", "name": "Garden floor", "level": 0, "areaIds": ["garden_fixture"]}, {"id": "room_floor", "name": "Room floor", "level": 1, "areaIds": ["room_fixture"]}]
+            h["looseAreaIds"] = []
+            base = copy.deepcopy(next(iter(h["entities"].values())))
+            entity = {**base, "entityId": "light.garden_fixture", "name": "Garden fixture light", "domain": "light", "deviceClass": None, "platform": "demo", "members": [], "categoryScope": None, "deviceId": None, "areaId": "garden_fixture", "ownAreaId": "garden_fixture", "disabled": False, "hidden": False, "maintenance": False}
+            h["entities"][entity["entityId"]] = entity
+            h["areas"]["garden_fixture"]["entityIds"].append(entity["entityId"])
         self.hierarchy_fixture(fixture)
-        saved = {"entities": {"light.fixture_keep": {"counts": False}}, "areas": {}}
+        saved = {"entities": {"light.fixture_keep": {"counts": False}}, "areas": {
+            "garden_fixture": {"recipePreferences": {"motion_lights": True, "occupancy": True}},
+            "room_fixture": {"recipePreferences": {"motion_lights": True}},
+        }}
         reject = [False]
         def inventory(route):
             if route.request.method == "PUT":
@@ -611,42 +838,89 @@ class DesktopRegression(unittest.TestCase):
             details.get_by_role("button", name=area, exact=True).click()
             return details
         details = open_recipe("Motion lights", "Garden fixture")
-        toggle = details.get_by_role("checkbox", name="Wanted in this area")
+        toggle = details.get_by_role("checkbox", name="Active: Garden fixture")
         expect(toggle).to_be_checked()
         toggle.uncheck()
         expect(toggle).not_to_be_checked()
+        expect(details.get_by_role("heading", name="Garden fixture", exact=True)).to_be_visible()
+        nav = details.get_by_role("navigation", name="Motion lights areas")
+        nav.get_by_role("checkbox", name="Hide inactive").check()
+        expect(nav.get_by_role("button", name="Garden fixture", exact=True)).to_have_count(0)
+        expect(nav.get_by_text("Garden floor", exact=True)).to_have_count(0)
+        expect(details.get_by_role("heading", name="Garden fixture", exact=True)).to_be_visible()
+        nav.get_by_role("checkbox", name="Active: Room fixture").click()
+        expect(nav.get_by_text("No active areas.", exact=False)).to_be_visible()
+        nav.get_by_role("checkbox", name="Hide inactive").uncheck()
+        nav.get_by_role("checkbox", name="Active: Room fixture").check()
+        expect(details.get_by_role("heading", name="Garden fixture", exact=True)).to_be_visible()
         expect(details.get_by_text("Not wanted here.", exact=False)).to_be_visible()
+        config = details.locator('fieldset[aria-label="Area configuration"]')
+        expect(config).to_have_attribute("inert", "")
+        self.assertTrue(config.evaluate("el => el.disabled && getComputedStyle(el).opacity === '0.5'"))
+        expect(config.locator('input[aria-label="Motion lights: Garden fixture light"]')).to_be_disabled()
+        self.page.screenshot(path=str(screenshot_dir() / "unwanted-area-configuration.png"))
+        toggle.focus()
+        self.page.keyboard.press("Tab")
+        self.assertFalse(config.evaluate("el => el.contains(document.activeElement)"))
+        self.assertTrue(details.get_by_role("tab", name="Description").is_enabled())
+        self.assertTrue(details.get_by_role("navigation", name="Motion lights areas").get_by_role("button", name="Room fixture").is_enabled())
+        config.locator('a[href]').first.evaluate("el => el.focus()")
+        self.assertFalse(config.locator('a[href]').first.evaluate("el => document.activeElement === el"))
         expect(details.get_by_role("heading", name="Missing requirements")).to_have_count(0)
         expect(details.get_by_role("button", name=re.compile(r"^Add to Changes \(\d+\)$"))).to_be_disabled()
         toggle.check()
+        expect(config).not_to_have_attribute("inert", "")
         details.get_by_role("heading", name="Missing requirements").wait_for()
         toggle.uncheck()
         expect(details.get_by_role("heading", name="Missing requirements")).to_have_count(0)
-        self.assertEqual(saved["areas"]["garden_fixture"]["recipePreferences"], {"motion_lights": False})
+        self.assertEqual(saved["areas"]["garden_fixture"]["recipePreferences"], {"motion_lights": False, "occupancy": True})
         self.assertEqual(saved["entities"]["light.fixture_keep"], {"counts": False})
         details = open_recipe("Motion lights", "Room fixture")
-        expect(details.get_by_role("checkbox", name="Wanted in this area")).to_be_checked()
+        expect(details.get_by_role("checkbox", name="Active: Room fixture")).to_be_checked()
         details = open_recipe("Motion lights", "Garden fixture")
-        toggle = details.get_by_role("checkbox", name="Wanted in this area")
+        toggle = details.get_by_role("checkbox", name="Active: Garden fixture")
         expect(toggle).not_to_be_checked()
         reject[0] = True
         toggle.check()
         details.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
         expect(toggle).not_to_be_checked()
         reject[0] = False
+        toggle.check()
+        nav.get_by_role("checkbox", name="Hide inactive").check()
+        toggle.click()
+        expect(nav.get_by_role("button", name="Garden fixture", exact=True)).to_have_count(0)
+        expect(details.get_by_role("heading", name="Garden fixture", exact=True)).to_be_visible()
+        expect(config).to_have_attribute("inert", "")
+        nav.get_by_role("checkbox", name="Hide inactive").uncheck()
+        toggle.check()
+        nav.get_by_role("checkbox", name="Hide inactive").check()
+        reject[0] = True
+        toggle.click()
+        nav.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
+        expect(toggle).to_be_checked()
+        reject[0] = False
         details = open_recipe("Occupancy", "Garden fixture")
-        expect(details.get_by_role("checkbox", name="Wanted in this area")).to_be_checked()
-        details.get_by_role("checkbox", name="Wanted in this area").uncheck()
-        self.assertEqual(saved["areas"]["garden_fixture"]["recipePreferences"], {"motion_lights": False, "occupancy": False})
+        expect(details.get_by_role("checkbox", name="Active: Garden fixture")).to_be_checked()
+        details.get_by_role("checkbox", name="Active: Garden fixture").uncheck()
+        self.assertEqual(saved["areas"]["garden_fixture"]["recipePreferences"], {"motion_lights": True, "occupancy": False})
+        self.assertEqual(blocked, [])
 
     def test_unwanted_installed_and_pending_recipe_warns_and_keeps_queue(self):
+        blocked = []
+        def guard(route):
+            if route.request.method not in ("GET", "HEAD", "OPTIONS"):
+                blocked.append((route.request.method, route.request.url))
+                route.abort()
+            else:
+                route.continue_()
+        self.page.route("**/api/**", guard)
         def fixture(h):
             template = copy.deepcopy(next(iter(h["areas"].values())))
             h["areas"] = {"garden_fixture": {**template, "id": "garden_fixture", "name": "Garden fixture", "floorId": None, "entityIds": [], "deviceIds": []}}
             h["floors"] = []
             h["looseAreaIds"] = ["garden_fixture"]
         self.hierarchy_fixture(fixture)
-        saved = {"entities": {}, "areas": {}}
+        saved = {"entities": {}, "areas": {"garden_fixture": {"recipePreferences": {"occupancy": True}}}}
         pending = {"id": 9001, "kind": "automation", "op": "create", "targetId": "taxis_occupancy_garden_fixture", "scope": None, "before": {}, "after": {}, "createdAt": ""}
         self.page.route("**/api/changes", lambda route: route.fulfill(json={"ok": True, "changes": [pending], "version": "fixture"}))
         self.page.route("**/api/recipes/state", lambda route: route.fulfill(json={"ok": True, "installed": {"blueprints": {}, "automations": {"taxis_occupancy_garden_fixture": {"alias": "Existing", "path": "taxis/occupancy.yaml", "input": {}}}, "scripts": {}, "timers": {}, "controllers": {}}}))
@@ -661,11 +935,13 @@ class DesktopRegression(unittest.TestCase):
         details = self.page.get_by_role("article", name="Recipe details").first
         details.get_by_role("tab", name="Availability").click()
         details.get_by_role("button", name="Garden fixture", exact=True).click()
-        details.get_by_role("checkbox", name="Wanted in this area").uncheck()
+        details.get_by_role("checkbox", name="Active: Garden fixture").uncheck()
         details.get_by_text("The automation remains installed until changed in Home Assistant", exact=False).wait_for()
         details.get_by_text("Previously queued changes remain in Changes until removed", exact=False).wait_for()
-        expect(details.get_by_role("button", name="Already in changes")).to_be_disabled()
+        expect(details.get_by_role("button", name=re.compile(r"^Add to Changes"))).to_be_disabled()
+        expect(details.get_by_role("link", name="Review related Changes (1)")).to_be_visible()
         self.assertEqual(saved["areas"]["garden_fixture"]["recipePreferences"], {"occupancy": False})
+        self.assertEqual(blocked, [])
 
     def test_motion_lights_areas_remain_available_when_install_read_fails(self):
         def fixture(h):
@@ -711,7 +987,7 @@ class DesktopRegression(unittest.TestCase):
         self.hierarchy_fixture(fixture)
         pending = {"id": 8001, "kind": "helper", "op": "create", "targetId": "timer.lighting_fixture_override", "scope": None, "before": {}, "after": {"entity_id": "timer.lighting_fixture_override"}, "createdAt": "2026-10-27T00:00:00Z"}
         self.page.route("**/api/changes", lambda route: route.fulfill(json={"ok": True, "changes": [pending], "version": "fixture"}))
-        inventory = {"entities": {"light.fixture_two": {"light": "accent"}, "light.fixture_excluded": {"counts": False}}, "areas": {}}
+        inventory = {"entities": {"light.fixture_two": {"light": "accent"}, "light.fixture_excluded": {"counts": False}}, "areas": {"lighting_fixture": {"recipePreferences": {"motion_lights": True}}}}
         self.page.route("**/api/settings/inventory", lambda route: route.fulfill(json={"ok": True, "inventory": inventory}))
         saved = {"house": {"day_brightness": 80}, "types": {}, "areas": {"other_room": {"day_brightness": 42}}}
         reject = [False]
@@ -774,6 +1050,17 @@ class DesktopRegression(unittest.TestCase):
         ambient = details.get_by_role("group", name="Ambient lights", exact=True)
         night = details.get_by_role("group", name="Night lights", exact=True)
         expect(details.get_by_role("checkbox", name="Motion lights: Fixture one", exact=True)).to_be_checked()
+        last_motion = details.get_by_role("checkbox", name="Motion lights: Fixture one", exact=True)
+        expect(last_motion).to_be_disabled()
+        info = details.get_by_role("button", name="Why one Motion light is required")
+        info.focus()
+        expect(self.page.get_by_role("tooltip")).to_contain_text("At least one Motion light must remain selected.")
+        self.page.screenshot(path=str(screenshot_dir() / "motion-light-roles-tooltip.png"))
+        info.press("Escape")
+        details.get_by_role("checkbox", name="Main lights: Fixture two", exact=True).check()
+        details.get_by_role("checkbox", name="Strong lights: Fixture one", exact=True).check()
+        self.assertEqual(sorted(saved["areas"]["lighting_fixture"]["main_lights"]), ["light.fixture_one", "light.fixture_two"])
+        self.assertEqual(saved["areas"]["lighting_fixture"]["strong_lights"], ["light.fixture_one"])
         expect(details.get_by_role("checkbox", name="Ambient lights: Fixture two", exact=True)).to_be_checked()
         for checkbox in details.get_by_role("checkbox", name=re.compile("Fixture excluded")).all():
             self.assertTrue(checkbox.is_disabled())
@@ -795,7 +1082,7 @@ class DesktopRegression(unittest.TestCase):
         self.page.get_by_role("button", name=re.compile(r"^Day brightness for Lighting fixture: 65 %.*, set here")).wait_for()
         self.page.get_by_role("button", name="Columns of Lighting").click()
         columns = self.page.get_by_role("group", name="Columns")
-        columns.get_by_label("Ambient lights", exact=True).check()
+        columns.get_by_label(re.compile(r"^Ambient lights")).check()
         self.page.get_by_role("button", name="Columns of Lighting").click()
         self.page.get_by_role("button", name="Ambient lights for Lighting fixture: 2 lights, set here", exact=True).click()
         dialog = self.page.get_by_role("dialog", name="Ambient lights for Lighting fixture")
@@ -830,11 +1117,18 @@ class DesktopRegression(unittest.TestCase):
         if os.environ.get("TAXIS_ALLOW_QUEUE_TEST") != "1":
             self.skipTest("requires an isolated mock and TAXIS_ALLOW_QUEUE_TEST=1")
         self.page.unroute("**/api/hierarchy*")
+        unexpected_writes = []
+        def guard_writes(route):
+            if route.request.method not in ("GET", "HEAD", "OPTIONS") and not route.request.url.endswith("/api/changes"):
+                unexpected_writes.append((route.request.method, route.request.url))
+                route.abort()
+            else:
+                route.continue_()
+        self.page.route("**/api/**", guard_writes)
         with urllib.request.urlopen(BASE + "/api/changes") as response:
             self.assertEqual(json.load(response)["changes"], [])
         self.page.goto(BASE + "/#area/study", wait_until="networkidle")
         area = self.page.get_by_role("region", name="Area classification")
-        area.locator("summary").click()
         # Fail the second stage once: the new label should remain available for retry.
         def reject_assignment(route):
             body = route.request.post_data_json
@@ -847,13 +1141,18 @@ class DesktopRegression(unittest.TestCase):
         area.get_by_role("alert").filter(has_text="Labels were queued, but the area assignment failed").wait_for()
         expect(area.get_by_role("checkbox", name="Bedroom", exact=True)).not_to_be_checked()
         self.page.unroute("**/api/changes", reject_assignment)
-        area.get_by_role("checkbox", name="Bedroom", exact=True).click()
+        def queue_type(region, name):
+            checkbox = region.get_by_role("checkbox", name=name, exact=True)
+            with self.page.expect_response(lambda response: response.url.endswith("/api/changes") and response.request.method == "POST" and response.request.post_data_json.get("kind") == "area") as result:
+                checkbox.click()
+            self.assertTrue(result.value.ok)
+            expect(checkbox).to_be_enabled()
+        queue_type(area, "Bedroom")
         expect(area.get_by_role("checkbox", name="Bedroom", exact=True)).to_be_checked()
         expect(area.get_by_text("Area labels queued in", exact=False)).to_be_visible()
-        area.get_by_role("checkbox", name="Bathroom", exact=True).click()
+        queue_type(area, "Bathroom")
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).to_be_checked()
         self.page.reload(wait_until="networkidle")
-        area.locator("summary").click()
         expect(area.get_by_role("checkbox", name="Bedroom", exact=True)).to_be_checked()
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).to_be_checked()
         with urllib.request.urlopen(BASE + "/api/changes") as response:
@@ -873,24 +1172,22 @@ class DesktopRegression(unittest.TestCase):
         labels = preview["areas"]["study"]["labels"] + [office]
         response = self.page.request.post(BASE + "/api/changes", headers=headers, data={"kind": "area", "op": "update", "targetId": "study", "fields": {"labels": labels}})
         self.assertTrue(response.ok)
-        area.get_by_role("checkbox", name="Garden", exact=True).click()
+        queue_type(area, "Garden")
         expect(area.get_by_role("checkbox", name="Garden", exact=True)).to_be_checked()
         expect(area.get_by_role("checkbox", name="Office / study", exact=True)).to_be_checked()
         self.page.screenshot(path=str(screenshot_dir() / "area-types-native-queued.png"))
         self.page.goto(BASE + "/#area/bathroom", wait_until="networkidle")
         area = self.page.get_by_role("region", name="Area classification")
         expect(area.get_by_text("Suggested from existing settings/name")).to_be_visible()
-        area.locator("summary").click()
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).not_to_be_checked()
-        area.get_by_role("checkbox", name="Bathroom", exact=True).click()
+        queue_type(area, "Bathroom")
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).to_be_checked()
-        area.get_by_role("checkbox", name="Bathroom", exact=True).click()
+        queue_type(area, "Bathroom")
         expect(area.get_by_role("checkbox", name="Other", exact=True)).to_be_checked()
         expect(area.get_by_text("Suggested from existing settings/name")).to_have_count(0)
         self.page.goto(BASE + "/#area/loft", wait_until="networkidle")
         area = self.page.get_by_role("region", name="Area classification")
-        area.locator("summary").click()
-        area.get_by_role("checkbox", name="Bedroom", exact=True).click()
+        queue_type(area, "Bedroom")
         expect(area.get_by_role("checkbox", name="Bedroom", exact=True)).to_be_checked()
         with urllib.request.urlopen(BASE + "/api/changes") as response:
             changes = json.load(response)["changes"]
@@ -901,7 +1198,7 @@ class DesktopRegression(unittest.TestCase):
             details = self.page.get_by_role("article", name="Recipe details").first
             details.get_by_role("tab", name="Availability").click()
             details.get_by_role("navigation", name="Recipe areas").get_by_role("button", name=room, exact=True).click()
-            item = details.get_by_text("Measures how quickly humidity rises for Bathroom fan (optional)", exact=True)
+            item = details.get_by_text("Measures how quickly humidity rises for Ventilation (optional)", exact=True)
             if visible: expect(item).to_be_visible()
             else: expect(item).to_have_count(0)
         check_humidity("Study", True)
@@ -914,9 +1211,9 @@ class DesktopRegression(unittest.TestCase):
         self.page.reload(wait_until="networkidle")
         area = self.page.get_by_role("region", name="Area classification")
         expect(area.get_by_text("Suggested from existing settings/name", exact=False)).to_be_visible()
-        area.locator("summary").click()
         expect(area.get_by_role("checkbox", name="Bathroom", exact=True)).not_to_be_checked()
         check_humidity("Bathroom", True)
+        self.assertEqual(unexpected_writes, [])
 
     def test_recipe_area_sources_share_inventory_and_report_failure(self):
         def fixture(h):
@@ -997,6 +1294,7 @@ class DesktopRegression(unittest.TestCase):
             self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="House presence", exact=True).click()
             details = self.page.get_by_role("article", name="Recipe details").first
             details.get_by_role("tab", name="Availability").click()
+            details.get_by_role("navigation", name="Recipe scopes").get_by_role("button", name="All areas (legacy)").click()
             return details
         details = show()
         details.get_by_text("Candidate area occupancy sensors", exact=False).first.wait_for()
@@ -1023,6 +1321,7 @@ class DesktopRegression(unittest.TestCase):
         self.page.get_by_role("table", name="Recipe types").get_by_role("button", name="Low batteries", exact=True).click()
         details = self.page.get_by_role("article", name="Recipe details").first
         details.get_by_role("tab", name="Availability").click()
+        details.get_by_role("navigation", name="Recipe scopes").get_by_role("button", name="All areas (legacy)").click()
         params_table = details.get_by_role("table", name="House parameters")
         self.assertEqual([header.inner_text() for header in params_table.get_by_role("columnheader").all()], ["Parameter", "Value", "Source"])
         details.get_by_role("button", name=re.compile(r"^Battery low below for House default:")).click()

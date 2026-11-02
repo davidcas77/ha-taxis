@@ -11,6 +11,7 @@ import {
   type LabelItem,
 } from "../../shared/types.ts";
 import { categoryScopeFor, entityRole } from "../../shared/roles.ts";
+import { parseDuration } from "../../shared/recipes.ts";
 
 // Raw shapes as Home Assistant's WebSocket registry commands return them. Only
 // the fields Taxis reads are typed; everything else is ignored.
@@ -61,7 +62,15 @@ export type RawEntity = {
   original_device_class?: string | null;
 };
 // An integration or helper as config_entries/get lists it. Only these fields are read.
-export type RawConfigEntry = { entry_id: string; domain?: string; title?: string; state?: string; reason?: string | null; error_reason_translation_key?: string | null; disabled_by?: string | null };
+export type RawConfigEntry = {
+  entry_id: string;
+  domain?: string;
+  title?: string;
+  state?: string;
+  reason?: string | null;
+  error_reason_translation_key?: string | null;
+  disabled_by?: string | null;
+};
 export type RawLabel = { label_id: string; name: string; color?: string | null; icon?: string | null; description?: string | null };
 export type RawCategory = { category_id: string; name: string; icon?: string | null };
 export type RawState = {
@@ -104,8 +113,7 @@ export type RawRegistry = {
   states: RawState[];
 };
 
-const byName = (a: { name: string }, b: { name: string }) =>
-  a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
 
 // Registry and state data come from integrations, so a "string" field can hold
 // anything. Only a non-empty string counts.
@@ -120,9 +128,7 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
   const categories = Object.fromEntries(
     CATEGORY_SCOPES.map((scope) => [
       scope,
-      (raw.categories?.[scope] ?? [])
-        .map((c): CategoryItem => ({ id: c.category_id, scope, name: c.name, icon: c.icon ?? null }))
-        .sort(byName),
+      (raw.categories?.[scope] ?? []).map((c): CategoryItem => ({ id: c.category_id, scope, name: c.name, icon: c.icon ?? null })).sort(byName),
     ]),
   ) as Record<CategoryScope, CategoryItem[]>;
 
@@ -186,6 +192,7 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
       deviceClass,
       deviceClassOverride: text(reg?.device_class),
       state: st ? String(st.state) : null,
+      ...(domain === "timer" ? { timerDuration: parseDuration(st?.attributes?.duration) } : {}),
       unit: text(st?.attributes?.unit_of_measurement),
       icon: text(reg?.icon),
       deviceId: device ? device.id : null,
@@ -209,8 +216,10 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
       inRegistry: Boolean(reg),
       platform,
       configEntryId: text(reg?.config_entry_id),
-      presetModes: domain === "climate" && Array.isArray(st?.attributes?.preset_modes) ? st.attributes.preset_modes.filter((m): m is string => typeof m === "string") : [],
-      hvacModes: domain === "climate" && Array.isArray(st?.attributes?.hvac_modes) ? st.attributes.hvac_modes.filter((m): m is string => typeof m === "string") : [],
+      presetModes:
+        domain === "climate" && Array.isArray(st?.attributes?.preset_modes) ? st.attributes.preset_modes.filter((m): m is string => typeof m === "string") : [],
+      hvacModes:
+        domain === "climate" && Array.isArray(st?.attributes?.hvac_modes) ? st.attributes.hvac_modes.filter((m): m is string => typeof m === "string") : [],
       restored: st?.attributes?.restored === true,
       lastChanged: text(st?.last_changed),
       lastReported: text(st?.last_reported),
@@ -224,8 +233,7 @@ export function buildHierarchy(raw: RawRegistry, fetchedAt: string): Hierarchy {
   // Entities without a registry entry (YAML without a unique_id) still exist.
   for (const s of raw.states) if (!entities[s.entity_id]) add(null, s.entity_id);
 
-  const sortIds = (ids: string[], lookup: Record<string, { name: string }>) =>
-    ids.sort((x, y) => byName(lookup[x], lookup[y]));
+  const sortIds = (ids: string[], lookup: Record<string, { name: string }>) => ids.sort((x, y) => byName(lookup[x], lookup[y]));
   for (const a of Object.values(areas)) {
     sortIds(a.deviceIds, devices);
     sortIds(a.entityIds, entities);

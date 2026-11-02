@@ -1,6 +1,8 @@
 import type { AreaRecipeKey } from "./blueprints.ts";
 import type { EntityItem, Hierarchy } from "./types.ts";
-import { areaHasRoomType, setAreaRoomTypes, type AreaRoomType } from "./area-room-types.ts";
+import { areaHasRoomType, nativeAreaRoomTypes, setAreaRoomTypes, type AreaRoomType } from "./area-room-types.ts";
+import { nativeAreaLocations, nativeAreaStaircase } from "./area-location.ts";
+import { recipeDefault } from "./recipe-defaults.ts";
 
 // The capability inventory: what each area has (lights, motion, doors,
 // temperature…), read from Home Assistant, and the choices the user makes on
@@ -311,7 +313,7 @@ export function areaInventory(h: Hierarchy, s: InventorySettings, areaId: string
 }
 
 export const areaChoice = (s: InventorySettings, areaId: string, h?: Hierarchy): { type: AreaType; bedroom: boolean } => ({
-  type: ownArea(s, areaId)?.type ?? "interior",
+  type: (h && nativeAreaLocations(h, areaId).length === 1 ? nativeAreaLocations(h, areaId)[0] : undefined) ?? ownArea(s, areaId)?.type ?? "interior",
   bedroom: h
     ? areaHasRoomType(h, s, areaId, "bedroom")
     : ownArea(s, areaId)?.roomTypes !== undefined
@@ -478,15 +480,58 @@ export const tvOccupancyNotApplicable = (s: InventorySettings, areaId: string): 
 export const setTvOccupancyNotApplicable = (s: InventorySettings, areaId: string, notApplicable: boolean): InventorySettings =>
   patchArea(s, areaId, "tvOccupancyNotApplicable", notApplicable ? true : undefined, undefined);
 
-// A missing preference preserves the original planning behavior.
-export const recipeWanted = (s: InventorySettings, areaId: string, recipe: AreaRecipeKey): boolean => ownArea(s, areaId)?.recipePreferences?.[recipe] !== false;
+// Candidate physical devices count even when not selected; helper sources only
+// count when explicitly included. No generated helper is required for a default.
+export function recipePreferenceInfo(
+  s: InventorySettings,
+  areaId: string,
+  recipe: AreaRecipeKey,
+  h?: Hierarchy | null,
+): { active: boolean; manual: boolean; reason: string } {
+  const preference = ownArea(s, areaId)?.recipePreferences?.[recipe];
+  if (!h) {
+    const fallback =
+      recipe === "area_climate"
+        ? areaChoice(s, areaId).type !== "exterior"
+        : recipe === "bathroom_fan"
+          ? ownArea(s, areaId)?.roomTypes?.includes("bathroom") === true
+          : true;
+    return { active: preference ?? fallback, manual: preference !== undefined, reason: "Equipment is unavailable for this default." };
+  }
+  const inv = areaInventory(h, s, areaId);
+  const available = (capability: Capability) => inv[capability].some((row) => !row.flags.includes("helper") || row.counts);
+  const native = nativeAreaRoomTypes(h, areaId);
+  const bathroom = native.length ? native.includes("bathroom") : ownArea(s, areaId)?.roomTypes?.includes("bathroom") === true;
+  const choice = areaChoice(s, areaId, h);
+  const result = recipeDefault(
+    {
+      location: choice.type,
+      staircase: nativeAreaStaircase(h, areaId),
+      bedroom: choice.bedroom,
+      bathroom,
+      motionOrPresence: available("motion") || available("presence"),
+      tvStarts: !tvOccupancyNotApplicable(s, areaId) && inv.tv.some((row) => row.tvOccupancyRole === "starts" && (!row.flags.includes("helper") || row.counts)),
+      light: available("lights"),
+      media: available("speaker") || available("tv"),
+      climate: available("thermostat"),
+      opening: available("door") || available("window"),
+      power: available("power"),
+      leak: available("leak"),
+      cover: available("cover"),
+    },
+    recipe,
+  );
+  return { active: preference ?? result.active, manual: preference !== undefined, reason: result.reason };
+}
 
-export function setRecipeWanted(s: InventorySettings, areaId: string, recipe: AreaRecipeKey, wanted: boolean): InventorySettings {
+export const recipeWanted = (s: InventorySettings, areaId: string, recipe: AreaRecipeKey, h?: Hierarchy | null): boolean =>
+  recipePreferenceInfo(s, areaId, recipe, h).active;
+
+export function setRecipeWanted(s: InventorySettings, areaId: string, recipe: AreaRecipeKey, wanted: boolean, _h?: Hierarchy | null): InventorySettings {
   const current = ownArea(s, areaId);
-  if (recipeWanted(s, areaId, recipe) === wanted) return s;
+  if (current?.recipePreferences?.[recipe] === wanted) return s;
   const preferences = { ...current?.recipePreferences };
-  if (wanted) delete preferences[recipe];
-  else preferences[recipe] = false;
+  preferences[recipe] = wanted;
   const choice = { ...current };
   if (Object.keys(preferences).length) choice.recipePreferences = preferences;
   else delete choice.recipePreferences;

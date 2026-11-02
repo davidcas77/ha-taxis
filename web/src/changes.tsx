@@ -10,6 +10,7 @@ import { ApplyHistory } from "./history.tsx";
 import { api } from "./api.ts";
 import { SCOPE_NAMES } from "./editors.tsx";
 import { useTaxis } from "./state.tsx";
+import { ChangeDetails } from "./change-description.tsx";
 import { Badge, Button, Card, ConfirmAction, ConfirmPanel, EmptyState, Page, PageHeader } from "./ui.tsx";
 
 // The list of changes, in words, and Apply.
@@ -86,6 +87,7 @@ function helperTitle(h: Hierarchy, c: Change): string {
   }
   if ("duration" in c.after) return `Set the duration of ${c.targetId} to ${minutes(c.after.duration)}`;
   if ("periods" in c.after) return `Set the comfort periods of ${c.targetId}: ${describePeriods(String(c.after.periods))}`;
+  if (!Array.isArray(c.before.entities)) return `Change group membership of ${c.targetId} (previous members unavailable)`;
   const { added, removed } = memberChange(c);
   return `Change group membership of ${c.targetId}: add ${added.length} and remove ${removed.length}`;
 }
@@ -102,10 +104,11 @@ function recipeTitle(h: Hierarchy, c: Change): string {
 }
 
 function title(h: Hierarchy, c: Change): string {
+  if (c.op === "delete") return `Delete ${KIND_NAMES[c.kind]} “${nameOf(h, c)}”`;
   if (c.kind === "helper") return helperTitle(h, c);
   if (c.kind === "blueprint" || c.kind === "automation" || c.kind === "script") return recipeTitle(h, c);
   const what = c.kind === "category" && c.scope ? `${SCOPE_NAMES[c.scope].toLowerCase().replace(/s$/, "")} category` : KIND_NAMES[c.kind];
-  const verb = c.op === "create" ? "New" : c.op === "delete" ? "Delete" : "Change";
+  const verb = c.op === "create" ? "New" : "Change";
   return `${verb} ${what} “${nameOf(h, c)}”`;
 }
 
@@ -271,10 +274,6 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
               const gate = gateFor(needed);
               const blocked = busy || step !== "list" || gate.waiting.length > 0 || gate.unacknowledged.length > 0;
               const mine = only !== null && only.length === needed.length && needed.every((x) => only.includes(x.id)) && only.includes(c.id);
-              const keys =
-                c.op === "delete" || c.kind === "helper" || c.kind === "blueprint" || c.kind === "automation" || c.kind === "script"
-                  ? []
-                  : Object.keys(c.after).filter((k) => c.op !== "create" || k !== "name");
               return (
                 <li key={c.id}>
                   <Card padded={false} className="flex flex-col gap-1.5 px-3.5 py-2.5">
@@ -308,26 +307,17 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                         <Trash2 className="size-3.5" aria-hidden /> Discard
                       </ConfirmAction>
                     </div>
-                    {keys.length > 0 && (
-                      <dl className="grid grid-cols-[minmax(5rem,auto)_1fr] gap-x-3 gap-y-0.5 text-xs">
-                        {keys.map((k) => {
-                          const d = describe(h, c, k);
-                          return (
-                            <div key={k} className="contents">
-                              <dt className="text-muted">{d.label}</dt>
-                              <dd className="min-w-0 break-words">
-                                {d.from && <span className="text-muted line-through decoration-muted/50">{d.from}</span>}
-                                {d.from && d.to && <span className="px-1 text-muted">→</span>}
-                                {d.to && <span>{d.to}</span>}
-                              </dd>
-                            </div>
-                          );
-                        })}
-                      </dl>
-                    )}
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-accent">Show planned details</summary>
+                      <div className="mt-2">
+                        <ChangeDetails change={c} hierarchy={h} />
+                      </div>
+                    </details>
                     {c.kind === "helper" && <HelperBody h={h} c={c} />}
                     {(c.kind === "blueprint" || c.kind === "automation" || c.kind === "script") && <RecipeBody h={h} c={c} />}
-                    {c.op === "delete" && <p className="text-xs text-muted">Home Assistant removes it from everything it's on.</p>}
+                    {c.op === "delete" && (c.kind === "label" || c.kind === "category") && (
+                      <p className="text-xs text-muted">Home Assistant removes it from everything it's on.</p>
+                    )}
                     {c.kind === "entity" && c.after.new_entity_id !== undefined && (
                       <RenameRefsView refs={refs} change={c} understood={understood.has(c.id)} onUnderstood={() => flip(c.id)} />
                     )}
@@ -455,7 +445,7 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
     return (
       <p className="text-xs text-muted">
         Named “{String(c.after.name)}”. How fast {((c.after.entities as string[]) ?? []).join(", ")} changes, in % per second, smoothed over two minutes. The
-        Bathroom fan recipe starts on it.
+        Ventilation recipe starts on it.
       </p>
     );
   }
@@ -484,6 +474,7 @@ function HelperBody({ h, c }: { h: Hierarchy; c: Change }) {
       </div>
     );
   }
+  if (!Array.isArray(c.before.entities)) return <p className="text-xs text-muted">Previous group members are unavailable.</p>;
   const { added, removed } = memberChange(c);
   return (
     <div className="flex flex-col gap-1 text-xs">

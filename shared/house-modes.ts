@@ -1,3 +1,4 @@
+import { areaSpace, resolveSpaces, scopeProblem, spaceIds, type RecipeScope } from "./spaces.ts";
 import { HOUSE_AWAY_ID, HOUSE_GUEST_ID, HOUSE_SLEEP_ID } from "./climate.ts";
 import { ENTITY_ID_RE } from "./changes.ts";
 import { resolve, resolveIn, type ParameterSettings } from "./parameters.ts";
@@ -11,8 +12,7 @@ export const HOUSE_MODES = [
     parameter: "away_mode_entity",
     id: HOUSE_AWAY_ID,
     icon: "mdi:home-export-outline",
-    purpose:
-      "Suppress automatic indoor light turn-on and use climate's away setting. Guest mode takes priority when visitors remain.",
+    purpose: "Suppress automatic indoor light turn-on and use climate's away setting. Guest mode takes priority when visitors remain.",
   },
   {
     key: "sleep",
@@ -46,9 +46,7 @@ export type HouseModePlan = {
 // Only a compatible, explicitly queued create counts as forthcoming. A rename,
 // delete or unrelated proposal must not make a required switch appear ready.
 const pendingSwitch = (changes: readonly Change[], id: string) =>
-  changes.some(
-    (c) => c.kind === "helper" && c.op === "create" && c.after.entity_id === id && c.after.helper === "input_boolean",
-  );
+  changes.some((c) => c.kind === "helper" && c.op === "create" && c.after.entity_id === id && c.after.helper === "input_boolean");
 
 export function planHouseModes(
   h: Hierarchy,
@@ -56,18 +54,53 @@ export function planHouseModes(
   inventory: InventorySettings,
   changes: readonly Change[],
   areaId: string | null = null,
+  explicitScope?: RecipeScope,
 ): HouseModePlan[] {
+  const scope = explicitScope ?? (areaId ? areaSpace(h, areaId, changes) : { kind: "legacy" as const });
   return HOUSE_MODES.map((mode) => {
+    const blocked = scope.kind === "conflict" ? scope.error : scopeProblem(h, changes, scope);
+    const scoped = scope.kind === "space" && !blocked ? scope.space : null;
     const value = areaId
       ? resolve(parameters, h, inventory, areaId, mode.parameter).value
-      : resolveIn(parameters, [{ level: "house" }], mode.parameter).value;
+      : scoped
+        ? resolveIn(parameters, [{ level: "space", id: scoped.id }, { level: "house" }], mode.parameter).value
+        : resolveIn(parameters, [{ level: "house" }], mode.parameter).value;
     const picked = typeof value === "string" ? value : "";
-    const id = picked || mode.id;
+    const id = picked || (scoped ? spaceIds(scoped.id)[mode.key] : mode.id);
     const entity = h.entities[id];
     const queued = pendingSwitch(changes, id);
     const base = { key: mode.key, label: mode.label, purpose: mode.purpose, id, inputs: [] as ChangeInput[] };
+    if (blocked) return { ...base, status: "review", detail: blocked };
+    if (scoped && picked) {
+      const assignedArea = h.entities[picked]?.areaId;
+      if (assignedArea) {
+        const owner = areaSpace(h, assignedArea, changes);
+        if (owner.kind === "conflict" || (owner.kind === "space" && owner.space.id !== scoped.id))
+          return { ...base, status: "review", detail: "This switch is assigned to an area in another Space or an unresolved Space. Choose a separate switch." };
+      }
+      const forbidden = new Set([HOUSE_AWAY_ID, HOUSE_SLEEP_ID, HOUSE_GUEST_ID]);
+      for (const field of ["away_mode_entity", "sleep_mode_entity", "guest_mode_entity"] as const) {
+        const global = parameters.house[field];
+        if (typeof global === "string" && global) forbidden.add(global);
+      }
+      for (const other of resolveSpaces(h, changes))
+        if (other.id !== scoped.id && !other.blocked) {
+          const ids = spaceIds(other.id);
+          for (const key of ["away", "sleep", "guest"] as const) forbidden.add(ids[key]);
+          for (const field of ["away_mode_entity", "sleep_mode_entity", "guest_mode_entity"] as const) {
+            const assigned = parameters.spaces?.[other.id]?.[field];
+            if (typeof assigned === "string" && assigned) forbidden.add(assigned);
+            for (const areaId of other.areaIds) {
+              const areaValue = parameters.areas[areaId]?.[field];
+              if (typeof areaValue === "string" && areaValue) forbidden.add(areaValue);
+            }
+          }
+        }
+      if (forbidden.has(picked))
+        return { ...base, status: "review", detail: "This switch belongs to another Space or the legacy house. Choose a separate switch." };
+    }
     if (!ENTITY_ID_RE.test(id) || !id.startsWith("input_boolean."))
-      return { ...base, status: "review", detail: "Choose an input boolean in Parameters → House." };
+      return { ...base, status: "review", detail: `Choose an input boolean in Parameters → ${scoped ? "Space" : "House"}.` };
     if (entity) {
       if (entity.domain !== "input_boolean" || entity.platform !== "input_boolean")
         return {
@@ -88,8 +121,7 @@ export function planHouseModes(
       return {
         ...base,
         status: "review",
-        detail:
-          "The chosen switch is missing. Select an existing switch, or clear the setting to propose the Taxis switch.",
+        detail: "The chosen switch is missing. Select an existing switch, or clear the setting to propose the Taxis switch.",
       };
     return {
       ...base,
@@ -99,7 +131,8 @@ export function planHouseModes(
         {
           kind: "helper",
           op: "create",
-          fields: { helper: "input_boolean", name: `Taxis ${mode.key} mode`, entity_id: id, icon: mode.icon },
+          ...(scoped ? { space: { labelId: scoped.id, areaIds: [...scoped.areaIds] } } : {}),
+          fields: { helper: "input_boolean", name: `Taxis ${scoped ? `${scoped.name} ` : ""}${mode.key} mode`, entity_id: id, icon: mode.icon },
         },
       ],
     };
@@ -110,7 +143,8 @@ export function planHouseModes(
 // switch exists, is deliberately queued, or is explicitly selected. Configured
 // but broken switches block installation, rather than silently dropping a mode.
 export function recipeHouseModes(rows: readonly HouseModePlan[]) {
-  return Object.fromEntries(
-    rows.map((row) => [row.key, row.status === "present" || row.status === "in-changes" ? row.id : ""]),
-  ) as Record<HouseModeKey, string>;
+  return Object.fromEntries(rows.map((row) => [row.key, row.status === "present" || row.status === "in-changes" ? row.id : ""])) as Record<
+    HouseModeKey,
+    string
+  >;
 }

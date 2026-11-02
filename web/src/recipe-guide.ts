@@ -164,7 +164,7 @@ export const RECIPE_GUIDE: Record<RecipeKey, RecipeGuide> = {
     devices: ["A configured text-to-speech entity and speakers in rooms with Occupancy.", "Optional: bed presence sensors for excluding sleeping rooms."],
     helpers: [
       "Requires Occupancy installed or in changes for eligible rooms: its area occupancy virtual sensor selects rooms and its pause switch excludes paused rooms. Plan Occupancy separately.",
-      "Creates or updates a house announcement script so other HA actions can call it with a message.",
+      "Creates or updates an announcement script for the chosen Space or the legacy all-areas scope.",
     ],
     behavior: [
       "When called with a message, the script speaks in rooms that are occupied, not paused and not asleep.",
@@ -211,43 +211,46 @@ export const RECIPE_GUIDE: Record<RecipeKey, RecipeGuide> = {
     example: "A south-facing blind closes on a hot sunny afternoon and opens the next morning.",
   },
   goodbye: {
-    summary: "Create a house-wide script for leaving home.",
-    devices: ["House lights; speakers and TVs are optional."],
+    summary: "Create a script for leaving a Space or the legacy all-areas scope.",
+    devices: ["Lights in the selected scope; speakers and TVs are optional."],
     helpers: [
-      "Requires the house light group from Helpers so the script can turn the house lights off together.",
+      "A Space needs its own light group. The legacy all-areas scope uses the house light group.",
       "Uses a selected existing away switch or creates or reuses the Taxis switch to signal away mode.",
       "Creates or updates a Goodbye script that a button or another HA action can call.",
     ],
     behavior: [
-      "When called, the script turns off the house light group and available media players, then turns on away mode.",
+      "When called, the script turns off the selected scope’s light group and media players, then turns on its away mode.",
       "It can be called by a button, NFC tag or voice command configured in Home Assistant.",
     ],
-    flow: ["An action calls the Goodbye script.", "The house light group turns off.", "Available media players turn off.", "Away mode turns on."],
+    flow: ["An action calls the Goodbye script.", "The selected scope’s light group turns off.", "Available media players turn off.", "Away mode turns on."],
     example: "Press a configured button by the door to turn off the lights and media and set away mode.",
   },
   house_presence: {
-    summary: "Set away mode after the house has been empty.",
-    devices: ["At least one room with Occupancy installed or in changes.", "Optional: Home Assistant person entities and a guest mode switch."],
+    summary: "Set away mode after the selected scope has been empty.",
+    devices: [
+      "At least one room with Occupancy installed or in changes.",
+      "Optional: a guest mode switch. Person entities are used only by the legacy all-areas scope.",
+    ],
     helpers: [
       "Requires Occupancy installed or in changes for at least one room; this recipe does not install it.",
-      "Creates or reuses an area-occupancy group and a house occupancy virtual sensor to combine room and person presence.",
+      "Creates or reuses an area-occupancy group. The legacy all-areas scope also combines room and person presence in a house sensor.",
       "Uses a selected existing away switch or creates or reuses the Taxis switch to signal away mode; a configured guest switch prevents away mode while guests remain.",
       "Creates or reuses the house pause switch so you can suspend the automation.",
     ],
     behavior: [
-      "The house is occupied while an included room is occupied or a person is home.",
+      "A Space is occupied while one of its areas is occupied. The legacy all-areas scope also includes people at home.",
       "After it has been empty for the selected time, away mode turns on unless guest mode is on; it can optionally end on return.",
     ],
     flow: [
-      "Rooms and people contribute to house occupancy.",
-      "The house stays unoccupied for the selected delay.",
+      "Areas contribute to occupancy; people also contribute in the legacy scope.",
+      "The selected scope stays unoccupied for the delay.",
       "Away mode starts unless guest mode prevents it.",
       "On return, away mode can optionally turn off.",
     ],
     example: "After everyone leaves and the house stays empty, away mode turns on.",
   },
   battery_low: {
-    summary: "Get a daily report of low batteries.",
+    summary: "Get a daily site-wide report of low batteries; this recipe is not available per Space.",
     devices: ["Battery sensors in Home Assistant; no particular room device is required.", "Optional: configured notification services."],
     helpers: ["Creates or reuses the house pause switch so you can suspend the daily report."],
     behavior: [

@@ -239,7 +239,9 @@ export function assessHouse(
         openings: "left_open",
         appliances: "appliance_done",
       };
-      const selected = new Set((choice?.goals ?? []).filter((goal) => recipeWanted(inventory, area.id, primary[goal])));
+      // A selected goal still needs equipment guidance when its recipe defaults
+      // inactive because that equipment is missing. Explicitly disabled goals stay hidden.
+      const selected = new Set((choice?.goals ?? []).filter((goal) => inventory.areas[area.id]?.recipePreferences?.[primary[goal]] !== false));
       const inv = areaInventory(h, inventory, area.id, exclusions(area.id));
       const actual = area.entityIds.map((id) => h.entities[id]).filter((entity) => Boolean(entity) && !exclusions(area.id).has(entity.entityId));
       const areaEntities = new Set(area.entityIds);
@@ -395,7 +397,7 @@ export function assessHouse(
         }));
       const recipeKeys = new Set<AreaRecipeKey>(definitions.flatMap((goal) => [...goal.recipes]));
       const neededRecipes = [...recipeKeys]
-        .filter((key) => recipeWanted(inventory, area.id, key))
+        .filter((key) => recipeWanted(inventory, area.id, key, h))
         .map((key) => ({
           key,
           cell: recipes.find((cell) => cell.areaId === area.id && cell.recipe === key) ?? null,
@@ -510,6 +512,6 @@ export const GUIDE_IDEAS = [
     title: "Humidity ventilation and appliance reminders",
     text: "Useful everyday outcomes include a fan responding to shower humidity and a notification when a learned appliance cycle finishes.",
     source: "https://www.reddit.com/r/homeassistant/comments/1i1q5eg/",
-    implementation: "Bathroom fan and Appliance done recipes",
+    implementation: "Ventilation and Appliance done recipes",
   },
 ] as const;

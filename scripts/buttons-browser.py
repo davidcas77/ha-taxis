@@ -81,7 +81,7 @@ class ButtonsRegression(fixture.GuideRegression):
 
     def open_control(self, id='demo_wall_buttons'):
         self.page.goto(fixture.BASE + '/#automations/buttons/' + 'device%3A' + id, wait_until='networkidle')
-        self.assertEqual(self.page.get_by_role('tab', name='Buttons', exact=True).get_attribute('aria-selected'), 'true')
+        self.page.get_by_role('heading', name='Buttons', exact=True).wait_for()
         c = next(c for c in self.inv['controls'] if c['deviceId'] == id)
         self.page.get_by_role('heading', name=c['name'], exact=True).wait_for()
 
@@ -106,6 +106,46 @@ class ButtonsRegression(fixture.GuideRegression):
         self.page.get_by_role('status').filter(has_text='Button mapping added to changes').first.wait_for()
         # An earlier notice can still be on screen; the form closing is what says this one went in.
         expect(form).to_have_count(0)
+
+    def test_buttons_direct_assignment_requires_backup_confirmation(self):
+        self.page.route('**/api/settings/general', lambda route: route.fulfill(json={'ok': True, 'general': {'reviewChangesBeforeApplying': False}, 'revision': 'direct-revision'}))
+        calls = []
+        preview = {'ok': True, 'previewVersion': 'button-preview', 'requiresNoBackupConfirmation': True, 'changes': [{'id': 1, 'kind': 'automation', 'op': 'create', 'targetId': 'taxis_buttons_fixture', 'scope': None, 'before': {}, 'after': {'action': 'light.toggle'}, 'createdAt': ''}]}
+        self.page.route('**/api/buttons/preview-assignment', lambda route: route.fulfill(json=preview))
+        def direct(route):
+            calls.append(route.request.post_data_json)
+            route.fulfill(json={'ok': True, 'backup': {'made': False}, 'results': [{'changeId': 1, 'ok': True, 'status': 'verified', 'message': 'Applied'}]})
+        self.page.route('**/api/buttons/assign', direct)
+        self.open_control()
+        form = self.editor(self.row())
+        form.get_by_role('button', name='Apply assignment').click()
+        dialog = self.page.get_by_role('dialog', name='Review before applying')
+        self.assertIn('taxis_buttons_fixture', dialog.inner_text())
+        self.assertEqual(calls, [])
+        dialog.get_by_role('checkbox').check()
+        dialog.get_by_role('button', name='Confirm and apply').click()
+        self.page.get_by_role('status').filter(has_text='Button mapping applied to Home Assistant').wait_for()
+        self.assertEqual(calls[0]['allowWithoutBackup'], True)
+        self.assertEqual(calls[0]['previewVersion'], 'button-preview')
+        self.assertEqual(calls[0]['settingsRevision'], 'direct-revision')
+        self.assertEqual(self.posts + self.puts, [])
+
+    def test_buttons_direct_assignment_partial_failure_stays_visible(self):
+        self.page.route('**/api/settings/general', lambda route: route.fulfill(json={'ok': True, 'general': {'reviewChangesBeforeApplying': False}, 'revision': 'direct-revision'}))
+        self.page.route('**/api/buttons/preview-assignment', lambda route: route.fulfill(json={'ok': True, 'previewVersion': 'button-preview', 'requiresNoBackupConfirmation': False, 'changes': []}))
+        calls = []
+        def direct(route):
+            calls.append(route.request.post_data_json)
+            route.fulfill(json={'ok': True, 'backup': {'made': True}, 'results': [{'changeId': 1, 'ok': True, 'status': 'partial', 'message': 'Assignment applied with a problem.', 'details': ['Manual repair required.']}]})
+        self.page.route('**/api/buttons/assign', direct)
+        self.open_control()
+        form = self.editor(self.row())
+        form.get_by_role('button', name='Apply assignment').click()
+        self.page.get_by_role('dialog', name='Review before applying').get_by_role('button', name='Confirm and apply').click()
+        self.page.get_by_role('alert').filter(has_text='Manual repair required.').wait_for()
+        self.assertTrue(form.is_visible())
+        self.assertEqual(calls[0]['settingsRevision'], 'direct-revision')
+        self.assertEqual(self.posts + self.puts, [])
 
     def test_buttons_across_integrations_and_combined_presses_are_visible_without_writes(self):
         self.open_control()

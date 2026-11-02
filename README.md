@@ -3,8 +3,7 @@
 Taxis shows your whole Home Assistant as one hierarchy: your home, its floors,
 the areas on each floor, and every device and entity in them, grouped by what
 they do. It lets you organise all of it, renaming, moving, labelling and
-categorising, and applies your changes to Home Assistant in one go, with a
-backup first.
+categorising, and lets you review changes before applying them to Home Assistant.
 
 It runs as a Home Assistant app and opens from the sidebar. It needs no token
 and no account. Out of the box it talks only to your own Home Assistant; the
@@ -15,8 +14,9 @@ ask (see [Privacy](#privacy)).
 > home, checks naming and configuration health, guides setup room by room, plans
 > native helpers and recipe automations, maps remote and wall-button gestures to
 > actions, and offers optional AI advice that cannot change anything. Every
-> proposed Home Assistant change goes through the change list, with a backup
-> before Apply and verification afterwards. Live remote hardware and real AI
+> edit can be reviewed in Changes or previewed and confirmed directly, according
+> to Settings. Both paths check for stale changes, attempt a backup and verify
+> results afterwards. Live remote hardware and real AI
 > provider calls are not yet verified end to end, so review each change before you
 > apply it.
 
@@ -47,9 +47,12 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   installed automations still need a real-room comfort test. Save your observations
   and notes in the Guide; relevant setup changes require a retest. Community ideas link
   to their original discussions. Open Guide in the navigation or Guide this area.
-- **Spaces:** home → floors → areas, plus areas on no floor and entities that
-  are in no area at all. **Not in any area** has Cards and searchable Table
-  views, with paged results and bulk area assignment through Changes.
+- **Spaces:** organize floors → spaces → areas, plus areas on no floor and
+  entities in no area. Spaces use Home Assistant area labels; an empty space's
+  floor placement is stored in a Taxis-owned marker in its label description.
+  Moving an area changes registry metadata only: review existing groups, scripts
+  and automations afterwards. **Not in any area** has Cards and searchable Table
+  views, with paged results and bulk area assignment.
 - **Each area:** an Overview table shows all capabilities, counted entities and
   current values, with entity names and IDs available from each count. Other tabs
   show its devices and entities, naming, labels and health, with reasons when
@@ -65,7 +68,7 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   patterns, shared type words and aggregation markers remain in Settings. Each area checks its entity
   IDs against the naming scheme and suggests display names. Area-wide motion
   groups use `motion_all`; window contacts retain their own type. Suggested
-  renames require review in Changes.
+  renames can be reviewed in Changes or previewed directly.
 - **Devices and Entities** (in Organize, as a table or as records): choose
   **Groups** for cards, **Devices** for collapsible device trees, or **Entities**
   for a flat entity table. They share search, filters, selection and page controls.
@@ -83,12 +86,14 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   list.
 - **Parameters:** detect what each area has, review canonical helpers, manage
   area codes, and set inherited values with short parameter explanations and
-  expandable guidance.
+  expandable guidance. Native area type and location labels inform recipe
+  defaults, including ventilation.
   Capability counts explain which named entities count and which are excluded.
 - **Recipes:** a tab of **Automations**, listing the recipes that fit each area (or all of them on request), with Table and Records views to inspect
   status, requirements and proposed native automations for occupancy, lighting,
-  media, climate, ventilation and notifications. The generated automations keep
-  working when Taxis is stopped.
+  media, climate, ventilation and notifications. Space-scoped recipes are
+  available alongside the legacy whole-home scope. The generated automations
+  keep working when Taxis is stopped.
 - **Buttons:** a tab of **Automations**: inspect remotes, wall controls and HA button inputs across
   integrations, as one table per control (buttons by press type). See existing automation
   matches and assign an action from a fixed, safe list: control lights, switches,
@@ -100,16 +105,17 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   with separate actions per gesture; edits and disabling reuse that automation.
   Existing handlers and unreadable configs block new mappings by default.
   Explicit coexistence preserves those handlers. Unknown gesture metadata stays
-  visible as unknown; nothing runs until Changes → Apply. See
+  visible as unknown; mappings are reviewed or previewed before applying. See
   [Button action maps](docs/design/button-map.md) for discovery limits.
-- **Changes:** proposed Home Assistant edits wait in a list, shown as before →
-  after. Apply backs up Home Assistant, applies the selected changes and their
-  dependencies, and reads Home Assistant back to check each change. Apply history
-  and unresolved repairs remain available across reloads and app restarts.
+- **Changes and direct editing:** Settings chooses whether proposed edits wait
+  in Changes or open a detailed preview for direct confirmation. Applying checks
+  for stale data, attempts a Home Assistant backup, applies changes and their
+  dependencies, and reads Home Assistant back to check each change. History and
+  unresolved repairs remain available across reloads and app restarts.
 
 Taxis never deletes a device or an entity and never calls a service itself. It
-deletes floors, areas, labels and categories only when you ask, through the
-change list. It can create its own recipe and button automations and the Announce
+deletes floors, areas, labels and categories only when you ask and confirm the
+change. It can create its own recipe and button automations and the Announce
 script; in other automations, scripts, scenes and dashboards it only replaces
 renamed entity IDs. The native automations run inside Home Assistant and call the
 services they need; a button can only be given the actions on a fixed safe list.
@@ -131,8 +137,8 @@ Every outside address Taxis can contact, and when:
 
 | Address                                                                                                      | Only when                                                                                         | What it receives                                                                                                                                       |
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Your Home Assistant, through the Supervisor (`ws://supervisor/core/websocket`, `http://supervisor/core/api`) | Always                                                                                            | Reads of the registries, states, services and automation configs; writes only when you Apply                                                           |
-| The Supervisor (`http://supervisor`)                                                                         | Before Apply                                                                                      | A request for a partial backup                                                                                                                         |
+| Your Home Assistant, through the Supervisor (`ws://supervisor/core/websocket`, `http://supervisor/core/api`) | Always                                                                                            | Reads of the registries, states, services and automation configs; writes when you apply or confirm an edit                                             |
+| The Supervisor (`http://supervisor`)                                                                         | Before applying changes                                                                           | A request for a partial backup                                                                                                                         |
 | Anthropic (`https://api.anthropic.com`)                                                                      | AI is on, provider Anthropic, and you press Send, Load models, a Test button or the button review | Your API key; the question, reviewed context and up to six earlier messages (Ask Taxis); the reviewed summary (button review); a fixed sentence (Test) |
 | The OpenAI-compatible service you set (its base URL)                                                         | AI is on, that provider, and the same actions                                                     | The same as above                                                                                                                                      |
 | TypeSafe (`https://api.typesafe.ai/v1/systemone`)                                                            | Jev is on with a key, and you press **Review notes with Jev** or Test                             | Your Jev key and model; the notes you typed (up to 2,000 characters) and the descriptions of the selected checklist items; a fixed sentence (Test)     |

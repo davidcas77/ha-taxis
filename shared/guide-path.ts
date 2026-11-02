@@ -414,7 +414,7 @@ function areaGoalFacts(h: Hierarchy, inventory: InventorySettings, naming: Namin
   const n: AreaGoalFacts = { areas: 0, installed: 0, outOfDate: 0, inChanges: 0 };
   const facts = new Map<string, ReturnType<typeof fitFacts>>();
   for (const cell of cells) {
-    if (cell.recipe !== recipe || !recipeWanted(inventory, cell.areaId, recipe)) continue;
+    if (cell.recipe !== recipe || !recipeWanted(inventory, cell.areaId, recipe, h)) continue;
     let f = facts.get(cell.areaId);
     if (!f) {
       f = fitFacts(h, inventory, naming, cell.areaId);

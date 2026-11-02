@@ -122,7 +122,8 @@ export function splitByFit(
       f = areaFacts(h, inventory, naming, cell.areaId);
       byArea.set(cell.areaId, f);
     }
-    (recipeWanted(inventory, cell.areaId, cell.recipe) && recipeFits(f, cell.recipe, cell.status) ? fits : hidden).push(cell);
+    const explicitlyEnabled = inventory.areas[cell.areaId]?.recipePreferences?.[cell.recipe] === true;
+    (recipeWanted(inventory, cell.areaId, cell.recipe, h) && (explicitlyEnabled || recipeFits(f, cell.recipe, cell.status)) ? fits : hidden).push(cell);
   }
   return { fits, hidden };
 }

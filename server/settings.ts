@@ -1,3 +1,4 @@
+import { DEFAULT_GENERAL, validateGeneral, type GeneralSettings } from "../shared/general-settings.ts";
 import { RECIPE_KEYS, isHouseRecipe, type AreaRecipeKey } from "../shared/blueprints.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { EMPTY_GUIDE, validateGuide, type GuideSettings } from "../shared/guide.ts";
@@ -44,6 +45,7 @@ import {
   EMPTY_PARAMETERS,
   MAX_PARAMETER_AREAS,
   PARAMETER_AREA_ID,
+  SPACE_CONTROL_PARAMETERS,
   PARAM_DEF,
   checkValue,
   isParamKey,
@@ -74,6 +76,21 @@ export function settingsStore(db: DatabaseSync) {
   const put = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
   const del = db.prepare("DELETE FROM settings WHERE key = ?");
   return {
+    general(): GeneralSettings {
+      const row = get.get("general") as { value: string } | undefined;
+      if (row) {
+        try {
+          const checked = validateGeneral(JSON.parse(row.value));
+          if (checked.ok) return checked.value;
+        } catch {
+          /* Use the safe default for damaged settings. */
+        }
+      }
+      return { ...DEFAULT_GENERAL };
+    },
+    saveGeneral(s: GeneralSettings): void {
+      put.run("general", JSON.stringify(s));
+    },
     naming(): NamingSettings {
       const row = get.get("naming") as { value: string } | undefined;
       if (!row) return structuredClone(DEFAULT_NAMING);
@@ -455,7 +472,7 @@ export function validateInventory(input: unknown): { ok: true; value: InventoryS
         for (const [recipe, wanted] of Object.entries(v)) {
           if (!(RECIPE_KEYS as readonly string[]).includes(recipe) || isHouseRecipe(recipe) || typeof wanted !== "boolean")
             return { ok: false, error: `Invalid recipe preference for area ${id}.` };
-          if (!wanted) preferences[recipe as AreaRecipeKey] = false;
+          preferences[recipe as AreaRecipeKey] = wanted;
         }
         if (Object.keys(preferences).length) choice.recipePreferences = preferences;
       } else {
@@ -482,23 +499,28 @@ export function validateNamingIgnores(input: unknown): { ok: true; value: Naming
 export function validateParameters(input: unknown): { ok: true; value: ParameterSettings } | { ok: false; error: string } {
   if (!isRecord(input)) return { ok: false, error: "The parameter settings weren't readable." };
   for (const key of Object.keys(input)) {
-    if (!["house", "types", "floors", "areas"].includes(key)) return { ok: false, error: `${key.slice(0, 40)} isn't part of the parameter settings.` };
+    if (!["house", "spaces", "types", "floors", "areas"].includes(key))
+      return { ok: false, error: `${key.slice(0, 40)} isn't part of the parameter settings.` };
   }
   const house = input.house ?? {};
+  const spaces = input.spaces ?? {};
   const types = input.types ?? {};
   const areas = input.areas ?? {};
   if (!isRecord(house)) return { ok: false, error: "The house parameters weren't readable." };
+  if (!isRecord(spaces)) return { ok: false, error: "The Space parameters weren't readable." };
+  if (Object.keys(spaces).length > MAX_PARAMETER_AREAS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_AREAS} Spaces.` };
   if (!isRecord(types)) return { ok: false, error: "The interior and exterior parameters weren't readable." };
   if (!isRecord(areas)) return { ok: false, error: "The area parameters weren't readable." };
   if (Object.keys(areas).length > MAX_PARAMETER_AREAS) return { ok: false, error: `There are parameters for more than ${MAX_PARAMETER_AREAS} areas.` };
 
-  const values = (raw: unknown, where: string, area = false, house = false): { ok: true; value: ParamValues } | { ok: false; error: string } => {
+  const values = (raw: unknown, where: string, area = false, house = false, space = false): { ok: true; value: ParamValues } | { ok: false; error: string } => {
     if (!isRecord(raw)) return { ok: false, error: `The parameters for ${where} weren't readable.` };
     const out: [string, ParamValue][] = [];
     for (const [key, v] of Object.entries(raw)) {
       if (!isParamKey(key)) return { ok: false, error: `${key.slice(0, 40)} isn't a parameter (${where}).` };
       if (PARAM_DEF[key].areaOnly && !area) return { ok: false, error: `${PARAM_DEF[key].label} can only be set for one area (${where}).` };
-      if (PARAM_DEF[key].houseOnly && !house) return { ok: false, error: `${PARAM_DEF[key].label} can only be set for the house (${where}).` };
+      if (PARAM_DEF[key].houseOnly && !house && !space && !(area && SPACE_CONTROL_PARAMETERS.has(key)))
+        return { ok: false, error: `${PARAM_DEF[key].label} can only be set for the house (${where}).` };
       const problem = checkValue(PARAM_DEF[key], v);
       if (problem) return { ok: false, error: `${problem.replace(/\.$/, "")} (${where}).` };
       out.push([key, v as ParamValue]);
@@ -509,6 +531,13 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   // Built from entries, not by assignment: an id is a key, and "__proto__" must stay one.
   const houseValues = values(house, "the house", false, true);
   if (!houseValues.ok) return houseValues;
+  const spaceEntries: [string, ParamValues][] = [];
+  for (const [id, raw] of Object.entries(spaces)) {
+    if (!PARAMETER_AREA_ID.test(id)) return { ok: false, error: `${id.slice(0, 60)} isn't a Space label id.` };
+    const v = values(raw, `Space ${id}`, false, false, true);
+    if (!v.ok) return v;
+    if (Object.keys(v.value).length > 0) spaceEntries.push([id, v.value]);
+  }
   const typeEntries: [string, ParamValues][] = [];
   for (const [id, raw] of Object.entries(types)) {
     if (!(AREA_TYPES as readonly string[]).includes(id)) return { ok: false, error: `${id.slice(0, 40)} isn't interior or exterior.` };
@@ -525,7 +554,12 @@ export function validateParameters(input: unknown): { ok: true; value: Parameter
   }
   return {
     ok: true,
-    value: { house: houseValues.value, types: Object.fromEntries(typeEntries), areas: Object.fromEntries(areaEntries) },
+    value: {
+      house: houseValues.value,
+      ...(input.spaces !== undefined ? { spaces: Object.fromEntries(spaceEntries) } : {}),
+      types: Object.fromEntries(typeEntries),
+      areas: Object.fromEntries(areaEntries),
+    },
   };
 }
 

@@ -32,6 +32,8 @@ import type {
 // /api/hassio_ingress/<token>/, so "/api/…" would miss it.
 
 const revisions = new Map<string, string>();
+export const getSettingRevision = (kind: "inventory" | "parameters") => revisions.get(`api/settings/${kind}`);
+export const setSettingRevision = (kind: "inventory" | "parameters", revision: string) => revisions.set(`api/settings/${kind}`, revision);
 
 async function call<T extends { ok: boolean }>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -60,10 +62,24 @@ async function call<T extends { ok: boolean }>(path: string, init?: RequestInit)
 
 export type { ApplyRun };
 export type Repair = RepairItem;
+export type DirectPreviewResponse =
+  | {
+      ok: true;
+      changes: import("../../shared/types.ts").Change[];
+      previewVersion: string;
+      requiresNoBackupConfirmation: boolean;
+      localOnly?: boolean;
+      notes?: string[];
+    }
+  | { ok: false; error: string };
 
 export const api = {
   buttons: (refresh = false) => call<ButtonInventoryResponse>(`api/buttons${refresh ? "?refresh=1" : ""}`),
   assignButton: (value: ButtonAssignment) => call<ChangesResponse>("api/buttons/assign", { method: "POST", body: JSON.stringify(value) }),
+  previewButtonDirect: (value: ButtonAssignment, settingsRevision: string) =>
+    call<DirectPreviewResponse>("api/buttons/preview-assignment", { method: "POST", body: JSON.stringify({ ...value, settingsRevision }) }),
+  assignButtonDirect: (value: ButtonAssignment, settingsRevision: string, previewVersion: string, allowWithoutBackup = false) =>
+    call<ApplyResponse>("api/buttons/assign", { method: "POST", body: JSON.stringify({ ...value, settingsRevision, previewVersion, allowWithoutBackup }) }),
   buttonAiPreview: (id: string) =>
     call<{ ok: true; preview: ButtonAiPreview } | { ok: false; error: string }>(`api/buttons/${encodeURIComponent(id)}/ai-preview`),
   buttonAiReview: (id: string, fingerprint: string) =>
@@ -82,6 +98,37 @@ export const api = {
   history: () => call<HistoryResponse>("api/history"),
   repairs: () => call<RepairsResponse>("api/repairs"),
   acknowledgeRepair: (id: number) => call<RepairsResponse>(`api/repairs/${id}/acknowledge`, { method: "POST" }),
+  general: () =>
+    call<{ ok: true; general: { reviewChangesBeforeApplying: boolean }; revision: string; directEditingAvailable?: boolean } | { ok: false; error: string }>(
+      "api/settings/general",
+    ),
+  saveGeneral: (reviewChangesBeforeApplying: boolean, revision: string) =>
+    call<{ ok: true; general: { reviewChangesBeforeApplying: boolean }; revision: string; directEditingAvailable?: boolean } | { ok: false; error: string }>(
+      "api/settings/general",
+      {
+        method: "PUT",
+        headers: { "If-Match": revision },
+        body: JSON.stringify({ reviewChangesBeforeApplying }),
+      },
+    ),
+  previewDirect: (changes: ChangeInput[], settingsRevision: string) =>
+    call<DirectPreviewResponse>("api/direct-preview", { method: "POST", body: JSON.stringify({ changes, settingsRevision }) }),
+  directChanges: (changes: ChangeInput[], settingsRevision: string, previewVersion: string, allowWithoutBackup = false) =>
+    call<ApplyResponse>("api/direct-changes", { method: "POST", body: JSON.stringify({ changes, settingsRevision, previewVersion, allowWithoutBackup }) }),
+  previewDirectSetting: (kind: "inventory" | "parameters", value: InventorySettings | ParameterSettings, revision: string, settingsRevision: string) =>
+    call<DirectPreviewResponse>("api/direct-settings-preview", { method: "POST", body: JSON.stringify({ kind, value, revision, settingsRevision }) }),
+  commitDirectSetting: (
+    kind: "inventory" | "parameters",
+    value: InventorySettings | ParameterSettings,
+    revision: string,
+    settingsRevision: string,
+    previewVersion: string,
+    allowWithoutBackup: boolean,
+  ) =>
+    call<
+      | { ok: true; saved: { kind: "inventory" | "parameters"; value: InventorySettings | ParameterSettings; revision: string }; apply: ApplyResponse | null }
+      | { ok: false; error: string }
+    >("api/direct-settings", { method: "POST", body: JSON.stringify({ kind, value, revision, settingsRevision, previewVersion, allowWithoutBackup }) }),
   naming: () => call<NamingResponse>("api/settings/naming"),
   saveNaming: (naming: NamingSettings) => call<NamingResponse>("api/settings/naming", { method: "PUT", body: JSON.stringify(naming) }),
   namingIgnores: () => call<NamingIgnoresResponse>("api/settings/naming-ignores"),

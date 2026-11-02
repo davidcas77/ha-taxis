@@ -6,7 +6,8 @@ import { entryLights, roleLights, setParameter, type ParameterSettings } from ".
 import { type RecipeCell } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { useTaxis } from "./state.tsx";
-import { RecipeWanted } from "./recipe-wanted.tsx";
+import { TooltipButton } from "./tooltip.tsx";
+import { AreaRecipeConfiguration, RecipeAreaNavigation, RecipeAreaStatus } from "./recipe-wanted.tsx";
 import { AreaRecipeParameters } from "./parameter-table.tsx";
 import { RecipeHelpers } from "./recipe-helpers.tsx";
 import { RECIPE_AVAILABILITY, recipeHelperSpecs } from "./recipe-availability-spec.ts";
@@ -32,10 +33,6 @@ export function MotionLightsAvailability({
   const areas = Object.values(h.areas).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const [showDetail, setShowDetail] = useState(false);
   const area = (chosen && h.areas[chosen]) || areas[0] || null;
-  const groups = h.floors.map((floor) => ({ id: floor.id, name: floor.name, areas: areas.filter((item) => item.floorId === floor.id) }));
-  const floorIds = new Set(h.floors.map((floor) => floor.id));
-  const ungrouped = areas.filter((item) => !item.floorId || !floorIds.has(item.floorId));
-  if (ungrouped.length) groups.push({ id: "__ungrouped__", name: "No floor", areas: ungrouped });
   const selectedCell = area ? cells.find((cell) => cell.recipe === "motion_lights" && cell.areaId === area.id) : undefined;
   const inv = area && inventoryLoaded && namingLoaded ? areaInventory(h, inventory, area.id, helperExclusions(h, naming)(area.id)) : null;
   const helperSpecs =
@@ -44,98 +41,85 @@ export function MotionLightsAvailability({
       : [];
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row">
-      <nav
-        aria-label="Motion lights areas"
+      <RecipeAreaNavigation
+        h={h}
+        recipe="motion_lights"
+        selectedId={area?.id ?? null}
+        label="Motion lights areas"
         className={`${showDetail ? "hidden" : "block"} min-h-0 min-w-0 flex-1 overflow-y-auto md:block md:w-52 md:flex-none`}
-      >
-        {groups.map((group) => (
-          <details key={group.id} open className="mb-2 rounded border border-line">
-            <summary className="cursor-pointer px-2 py-1 text-sm font-semibold">{group.name}</summary>
-            <ul className="pb-1">
-              {group.areas.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    aria-current={area?.id === item.id ? "true" : undefined}
-                    onClick={() => {
-                      onChoose(item.id);
-                      setShowDetail(true);
-                    }}
-                    className={`w-full break-words px-3 py-1 text-left text-sm ${area?.id === item.id ? "bg-accent-soft text-accent" : "hover:bg-sunken"}`}
-                  >
-                    {item.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </details>
-        ))}
-        {!areas.length && <p className="text-sm text-muted">No areas found.</p>}
-      </nav>
+        onChoose={(id) => {
+          onChoose(id);
+          setShowDetail(true);
+        }}
+      />
       {area && (
         <div className={`${showDetail ? "block" : "hidden"} min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto md:block`}>
           <button type="button" className="text-sm text-accent md:hidden" onClick={() => setShowDetail(false)}>
             ← Back to areas
           </button>
           <h3 className="text-base font-semibold">{area.name}</h3>
-          <RecipeWanted key={`wanted:${area.id}`} areaId={area.id} recipe="motion_lights" cell={selectedCell} />
-          {error ? (
-            <p role="alert" className="text-sm text-danger">
-              Taxis couldn't check installed recipes, so proposals are unavailable. {error}
-            </p>
-          ) : loading ? (
-            <p className="text-sm text-muted">Checking settings and installed recipes…</p>
-          ) : selectedCell ? (
-            renderDetail(selectedCell)
-          ) : (
-            <p className="text-sm text-muted">No availability is available for this area.</p>
-          )}
-          {!inv ? <p className="text-sm text-muted">Loading light settings…</p> : <LightSelections key={area.id} areaId={area.id} lights={inv.lights} />}
-          <section className="border-t-[2pt] border-line pt-4">
-            <div className="flex items-center gap-3">
-              <h4 className="text-sm font-semibold">Lighting parameters</h4>
-              <a className="text-xs text-accent underline" href="#parameters/lighting">
-                Parameters
-              </a>
-            </div>
-            <AreaRecipeParameters h={h} areaId={area.id} keys={RECIPE_AVAILABILITY.motion_lights.areaParams} />
-          </section>
-          <section className="border-t-[2pt] border-line pt-4">
-            <div className="flex items-center gap-3">
-              <h4 className="text-sm font-semibold">Helpers</h4>
-              <a className="text-xs text-accent underline" href="#parameters/helpers">
-                Helpers
-              </a>
-            </div>
-            <RecipeHelpers
-              h={h}
-              changes={changes}
-              helpers={helperSpecs}
-              cells={cells}
-              areaId={area.id}
-              enabled={!error && !loading}
-              loading={!inventoryLoaded || !namingLoaded || !parametersLoaded}
-            />
-          </section>
+          <RecipeAreaStatus areaId={area.id} recipe="motion_lights" cell={selectedCell} />
+          <AreaRecipeConfiguration areaId={area.id} recipe="motion_lights">
+            {error ? (
+              <p role="alert" className="text-sm text-danger">
+                Taxis couldn't check installed recipes, so proposals are unavailable. {error}
+              </p>
+            ) : loading ? (
+              <p className="text-sm text-muted">Checking settings and installed recipes…</p>
+            ) : selectedCell ? (
+              renderDetail(selectedCell)
+            ) : (
+              <p className="text-sm text-muted">No availability is available for this area.</p>
+            )}
+            {!inv ? <p className="text-sm text-muted">Loading light settings…</p> : <LightSelections key={area.id} areaId={area.id} lights={inv.lights} />}
+            <section className="border-t-[2pt] border-line pt-4">
+              <div className="flex items-center gap-3">
+                <h4 className="text-sm font-semibold">Lighting parameters</h4>
+                <a className="text-xs text-accent underline" href="#parameters/lighting">
+                  Parameters
+                </a>
+              </div>
+              <AreaRecipeParameters h={h} areaId={area.id} keys={RECIPE_AVAILABILITY.motion_lights.areaParams} />
+            </section>
+            <section className="border-t-[2pt] border-line pt-4">
+              <div className="flex items-center gap-3">
+                <h4 className="text-sm font-semibold">Helpers</h4>
+                <a className="text-xs text-accent underline" href="#parameters/helpers">
+                  Helpers
+                </a>
+              </div>
+              <RecipeHelpers
+                h={h}
+                changes={changes}
+                helpers={helperSpecs}
+                cells={cells}
+                areaId={area.id}
+                enabled={!error && !loading}
+                loading={!inventoryLoaded || !namingLoaded || !parametersLoaded}
+              />
+            </section>
+          </AreaRecipeConfiguration>
         </div>
       )}
     </div>
   );
 }
 
-type LightSelectionKey = "entry_lights" | "ambient_lights" | "night_lights";
+type LightSelectionKey = "entry_lights" | "main_lights" | "strong_lights" | "ambient_lights" | "night_lights";
 const LIGHT_GROUPS: readonly { key: LightSelectionKey; label: string; help: string }[] = [
-  { key: "entry_lights", label: "Motion lights", help: "Turn on by day when the area becomes occupied." },
+  { key: "entry_lights", label: "Motion lights", help: "Turn on when the area becomes occupied by day; also used at night if no Night lights are selected." },
+  { key: "main_lights", label: "Main lights", help: "A separate assigned role; it does not change Motion lights." },
+  { key: "strong_lights", label: "Strong lights", help: "A separate assigned role; no automatic boost is triggered by this selection." },
   { key: "ambient_lights", label: "Ambient lights", help: "Additional day lights after extended occupancy." },
   {
     key: "night_lights",
     label: "Night lights",
-    help: "Used at night; if none are selected, main lights are used. During bed presence, only night lights are used.",
+    help: "Used at night; if none are selected, Motion lights are used with night settings. During bed presence or bedroom sleep, only Night lights are used.",
   },
 ];
 
 function LightSelections({ areaId, lights }: { areaId: string; lights: readonly InventoryRow[] }) {
-  const { parameters, parametersLoaded, parametersSaving, saveParameters } = useTaxis();
+  const { parameters, parametersLoaded, parametersSaving, saveParameters, reviewChanges } = useTaxis();
   const [error, setError] = useState<string | null>(null);
   const included = lights.filter((light) => light.counts);
   const chosen = (p: ParameterSettings, key: LightSelectionKey) =>
@@ -160,7 +144,9 @@ function LightSelections({ areaId, lights }: { areaId: string; lights: readonly 
       ) : (
         <>
           <p className="mt-1 text-xs text-muted">
-            A light can be used in more than one group. Motion lights need at least one selection when available; use defaults to restore suggestions.
+            {reviewChanges
+              ? "These selections are saved in Taxis. Add the recipe changes to update Home Assistant."
+              : "Preview the affected helpers and automations before applying."}
           </p>
           <div className="mt-2 max-w-full overflow-x-auto">
             <table aria-label="Area light sources" className="w-full min-w-[440px] text-left text-xs">
@@ -189,17 +175,28 @@ function LightSelections({ areaId, lights }: { areaId: string; lights: readonly 
                           const checked = light.counts && selection.lights.includes(light.entityId);
                           const lastMotion = key === "entry_lights" && checked && selection.lights.length === 1;
                           return (
-                            <label key={key} className="flex items-center gap-1">
-                              <input
-                                type="checkbox"
-                                aria-label={`${label}: ${light.name}`}
-                                checked={checked}
-                                disabled={parametersSaving || !light.counts || lastMotion}
-                                onChange={(event) => void save(key, light.entityId, event.target.checked)}
-                              />
-                              {label}
-                              {lastMotion && <span className="text-muted">(at least one required)</span>}
-                            </label>
+                            <span key={key} className="flex items-center gap-1">
+                              <label className="flex items-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  aria-label={`${label}: ${light.name}`}
+                                  checked={checked}
+                                  disabled={parametersSaving || !light.counts || lastMotion}
+                                  onChange={(event) => void save(key, light.entityId, event.target.checked)}
+                                />
+                                {label}
+                              </label>
+                              {lastMotion && (
+                                <TooltipButton
+                                  label="Why one Motion light is required"
+                                  content="At least one Motion light must remain selected."
+                                  compact
+                                  className="rounded-full border border-line px-1 text-muted"
+                                >
+                                  i
+                                </TooltipButton>
+                              )}
+                            </span>
                           );
                         })}
                       </div>

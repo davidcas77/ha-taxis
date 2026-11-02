@@ -1,6 +1,7 @@
 import type { Change } from "../../shared/types.ts";
 import type { HaRest, RestApi } from "../ha/rest.ts";
 import type { FreshRead } from "../ha/registry.ts";
+import type { ConfirmedReferences } from "./direct-references.ts";
 import { applyChanges, type Outcome, type Retarget } from "./apply.ts";
 import { applyHelperChanges } from "./helpers.ts";
 import { applyAutomationChanges, applyBlueprintChanges, applyScriptChanges, type RecipeWs } from "./recipes.ts";
@@ -27,13 +28,19 @@ export type ApplyAllIO = {
   configReads?: Pick<RestApi, "get">;
   // Waiting for Home Assistant to catch up; tests make it instant.
   sleep?: (ms: number) => Promise<void>;
+  confirmedReferences?: ConfirmedReferences;
 };
 
 export async function applyAll(
   pending: Change[],
   io: ApplyAllIO,
 ): Promise<{ results: Outcome[]; realIds: Map<string, string>; retargets: Retarget[]; renamed: Map<string, string> }> {
-  const registry = await applyChanges(pending, io.ha, io.readFresh, { ha: io.ha, rest: io.rest, reads: io.configReads });
+  const registry = await applyChanges(pending, io.ha, io.readFresh, {
+    ha: io.ha,
+    rest: io.rest,
+    reads: io.configReads,
+    confirmedReferences: io.confirmedReferences,
+  });
   const renamed = registry.renamed;
   const blueprints = await applyBlueprintChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, sleep: io.sleep });
   const helpers = await applyHelperChanges(pending, { ha: io.ha, rest: io.rest, readFresh: io.readFresh, realIds: registry.realIds, renamed, sleep: io.sleep });

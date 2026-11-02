@@ -11,6 +11,7 @@ import { secretRedactor } from "./redact.ts";
 import { aiPageRoutes } from "./routes/ai.ts";
 import { applyRoutes } from "./routes/apply.ts";
 import { changeRoutes } from "./routes/changes.ts";
+import { directSettingsRoutes } from "./routes/direct-settings.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { hierarchyRoutes } from "./routes/hierarchy.ts";
 import { jevPageRoutes } from "./routes/jev.ts";
@@ -75,6 +76,7 @@ export function createApp(deps: AppDeps): Hono<{ Bindings: Bindings }> {
   app.route("/api", healthRoutes(ctx));
   app.route("/api", hierarchyRoutes(ctx));
   app.route("/api", changeRoutes(ctx));
+  app.route("/api", directSettingsRoutes(ctx));
   app.route("/api", settingsRoutes(ctx));
   app.route("/api", aiPageRoutes(ctx));
   app.route("/api", jevPageRoutes(ctx));

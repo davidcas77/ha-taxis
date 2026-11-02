@@ -88,6 +88,8 @@ describe("the definitions", () => {
       "dim_level",
       "override_duration",
       "entry_lights",
+      "main_lights",
+      "strong_lights",
       "ambient_lights",
       "night_lights",
     ]);
@@ -498,7 +500,7 @@ describe("entry lights", () => {
     expect(checkValue(def, ["light.kitchen_main"])).toBeNull();
     expect(checkValue(def, ["light.a", "light.b"])).toBeNull();
     for (const bad of [[], "light.a", ["switch.a"], ["light.a", "light.a"], [5], ["Light.A"], Array.from({ length: 21 }, (_, i) => `light.l${i}`)]) {
-      expect(checkValue(def, bad), JSON.stringify(bad)).toMatch(/Entry lights must be a list of 1 to 20 light entity ids/);
+      expect(checkValue(def, bad), JSON.stringify(bad)).toMatch(/Motion lights must be a list of 1 to 20 light entity ids/);
     }
   });
 
@@ -597,7 +599,8 @@ describe("parameters of the house only", () => {
     ] as const) {
       // An edit at another level changes nothing...
       expect(setParameter(p, scope, "announce_volume", 90)).toBe(p);
-      expect(setParameter(p, scope, "notify_targets", ["notify.a"])).toBe(p);
+      if (scope.level === "type") expect(setParameter(p, scope, "notify_targets", ["notify.a"])).toBe(p);
+      else expect(setParameter(p, scope, "notify_targets", ["notify.a"]).areas.kitchen.notify_targets).toEqual(["notify.a"]);
     }
     // ...and a value stored there by hand is not read.
     const stored: ParameterSettings = { ...p, areas: { kitchen: { announce_volume: 90, notify_targets: ["notify.other"] } } };

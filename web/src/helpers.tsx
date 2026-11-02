@@ -159,16 +159,17 @@ function StatusCell({ h, line, go }: { h: Hierarchy; line: Line; go: (r: Route) 
         tone = "text-warn";
         break;
       case "conflict":
-        main =
-          row.conflict === "not-editable" ? (
-            <>
-              Conflict: <code className="font-mono text-xs">{row.heldBy}</code> is a group written in YAML, so its members can't be changed here
-            </>
-          ) : (
-            <>
-              Conflict: held by <code className="font-mono text-xs">{row.heldBy}</code> ({row.heldByName}); {settings}
-            </>
-          );
+        main = row.scopeBlocked ? (
+          row.scopeBlocked
+        ) : row.conflict === "not-editable" ? (
+          <>
+            Conflict: <code className="font-mono text-xs">{row.heldBy}</code> is a group written in YAML, so its members can't be changed here
+          </>
+        ) : (
+          <>
+            Conflict: held by <code className="font-mono text-xs">{row.heldBy}</code> ({row.heldByName}); {settings}
+          </>
+        );
         tone = "text-danger";
         break;
     }
@@ -215,7 +216,7 @@ const levelText = (row: HelperRow) => (row.level === "house" ? "House" : `Floor 
 // to show; `showArea` adds the Area column (for the floors and the house, the
 // Level column). `tableId` keeps each table's column choices apart.
 function HelperTable({ h, lines, showArea, go, tableId }: { h: Hierarchy; lines: Line[]; showArea: boolean; go: (r: Route) => void; tableId: string }) {
-  const { propose, busy } = useTaxis();
+  const { propose, busy, reviewChanges } = useTaxis();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -345,7 +346,7 @@ function HelperTable({ h, lines, showArea, go, tableId }: { h: Hierarchy; lines:
         actions={
           chosen.length > 0 && (
             <Button tone="primary" disabled={busy} onClick={() => void add()}>
-              Add {chosen.length} to changes
+              {reviewChanges ? `Add ${chosen.length} to changes` : `Apply ${chosen.length} helpers`}
             </Button>
           )
         }
@@ -482,7 +483,7 @@ function HelpersOverview({
   filters: OverviewFilters;
   onFiltersChange: (filters: OverviewFilters) => void;
 }) {
-  const { inventory, naming, propose, busy } = useTaxis();
+  const { inventory, naming, propose, busy, reviewChanges } = useTaxis();
   const all = useMemo(() => inventoryMatrix(h, inventory, helperExclusions(h, naming)).sort((a, b) => a.name.localeCompare(b.name)), [h, inventory, naming]);
   // Empty means no actual entities, independent of the selected capability,
   // counting choices and canonical-helper exclusions used by the planner.
@@ -565,10 +566,10 @@ function HelpersOverview({
                   {line.selectable && (
                     <Button
                       disabled={busy}
-                      title="Add this helper to the changes for review. Home Assistant changes only when you Apply."
+                      title={reviewChanges ? "Add this helper to the changes for review." : "Apply this helper to Home Assistant."}
                       onClick={() => void propose(helperChangeInputs(line.row))}
                     >
-                      Add to changes
+                      {reviewChanges ? "Add to changes" : "Apply helper"}
                     </Button>
                   )}
                 </div>
@@ -593,8 +594,9 @@ function HelpersOverview({
   return (
     <section aria-label="Helper coverage" className="flex min-w-0 flex-col gap-3">
       <p className="text-xs text-muted">
-        Each cell shows the configured helper ID and its status. Create means the helper is missing. Expand a cell for sources and Add to changes; review and
-        Apply creates or updates it in Home Assistant. Speakers and TVs share one media helper.
+        Each cell shows the configured helper ID and its status. Create means the helper is missing.{" "}
+        {reviewChanges ? "Add helpers to Changes for review before applying." : "Apply creates or updates helpers in Home Assistant."} Speakers and TVs share
+        one media helper.
       </p>
       <Toolbar label="Helper overview filters" className="text-[13px]">
         <label className="flex cursor-pointer items-center gap-2">
@@ -675,7 +677,7 @@ export function CombinedHelperRow({
   counted: number;
   go: (r: Route) => void;
 }) {
-  const { propose, busy, naming } = useTaxis();
+  const { propose, busy, naming, reviewChanges } = useTaxis();
   const spec = HELPER_SPEC[helperKey];
   const name = spec.label.toLowerCase();
   const id = line?.row.canonicalId ?? canonicalId(spec.domain, cachedAreaCodes(h, naming)[area.id].code, helperSuffixes(naming)[helperKey]);
@@ -710,17 +712,18 @@ export function CombinedHelperRow({
         break;
       case "conflict":
         tone = "text-danger";
-        status =
-          row.conflict === "not-editable" ? (
-            `Conflict: ${row.heldBy} is a group written in YAML, so its members can't be changed here`
-          ) : (
-            <>
-              Conflict: held by {row.heldBy} ({row.heldByName});{" "}
-              <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "settings", tab: "general" })}>
-                change it in Settings → Type words and Aggregation markers
-              </button>
-            </>
-          );
+        status = row.scopeBlocked ? (
+          row.scopeBlocked
+        ) : row.conflict === "not-editable" ? (
+          `Conflict: ${row.heldBy} is a group written in YAML, so its members can't be changed here`
+        ) : (
+          <>
+            Conflict: held by {row.heldBy} ({row.heldByName});{" "}
+            <button type="button" className="text-accent hover:underline" onClick={() => go({ page: "settings", tab: "general" })}>
+              change it in Settings → Type words and Aggregation markers
+            </button>
+          </>
+        );
         break;
     }
   }
@@ -749,7 +752,7 @@ export function CombinedHelperRow({
       </div>
       {line?.selectable && (
         <Button tone="primary" disabled={busy} onClick={() => void add()}>
-          Add to changes
+          {reviewChanges ? "Add to changes" : "Apply helper"}
         </Button>
       )}
     </div>

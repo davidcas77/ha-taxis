@@ -12,7 +12,7 @@ from pathlib import Path
 import unittest
 import urllib.request
 from urllib.parse import urlsplit
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from browser_common import BASE, launch, screenshot_dir
 
 
@@ -365,9 +365,10 @@ class AreaCodesRegression(unittest.TestCase):
         self.page.get_by_label("Capability", exact=True).select_option("motion")
         self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).check()
         table = self.page.get_by_role("table", name="Area helper coverage", exact=True)
-        # With nothing to show the table gives way to a message that says how to get the areas back.
-        self.page.get_by_role("region", name="Helper coverage", exact=True).get_by_text("No areas have entities", exact=False).wait_for()
-        self.assertEqual(table.count(), 0)
+        # The empty table retains its headers and shows how to recover the rows.
+        expect(table.get_by_text("No areas have entities", exact=False)).to_be_visible()
+        self.assertEqual(table.locator("tbody tr").count(), 1)
+        self.assertEqual(table.locator("tbody tr td").count(), 1)
         self.page.get_by_role("checkbox", name="Hide empty areas", exact=True).uncheck()
         table.wait_for()
         self.assertEqual(table.locator("tbody tr").count(), len(h["areas"]))

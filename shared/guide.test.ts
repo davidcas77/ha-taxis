@@ -255,3 +255,16 @@ it("treats opted-out goal recipes as unplanned without changing saved goals", ()
   expect(row.equipment).toEqual([]);
   expect(choice.areas.living_room.goals).toEqual(["lighting"]);
 });
+
+it("keeps guidance for a chosen goal with no equipment unless manually disabled", () => {
+  const fixture = house();
+  fixture.raw.entities = [];
+  fixture.raw.states = [];
+  const h = fixture.get();
+  const assess = (inventory: typeof EMPTY_INVENTORY) => assessHouse(h, inventory, naming, EMPTY_PARAMETERS, guide(["lighting"]), NOTHING_INSTALLED, [])[0];
+  expect(assess(EMPTY_INVENTORY).equipment.find((item) => item.key === "lights")?.status).toBe("missing");
+  expect(assess(setRecipeWanted(EMPTY_INVENTORY, "living_room", "motion_lights", false)).stage).toBe("unplanned");
+  expect(assess(setRecipeWanted(EMPTY_INVENTORY, "living_room", "motion_lights", true)).equipment.find((item) => item.key === "lights")?.status).toBe(
+    "missing",
+  );
+});

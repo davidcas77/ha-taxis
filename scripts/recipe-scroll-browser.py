@@ -70,10 +70,11 @@ class RecipeScrollRegression(unittest.TestCase):
         self.page.screenshot(path=str(screenshot_dir() / 'recipe-scroll-desktop.png'))
 
     def test_motion_and_house_scrolling(self):
-        for name, nav_name in [('Motion lights', 'Motion lights areas'), ('House presence', 'House')]:
+        for name, nav_name in [('Motion lights', 'Motion lights areas'), ('House presence', 'Recipe scopes')]:
             details = self.open_recipe(name)
             details.get_by_role('tab', name='Availability').click()
             nav = details.get_by_role('navigation', name=nav_name, exact=True)
+            if name == 'House presence': nav.get_by_role('button', name='All areas (legacy)').click()
             content = nav.locator('xpath=following-sibling::div')
             fixed = [self.page.get_by_role('region', name='Records'), details.get_by_role('tablist'), nav]
             before = [element.bounding_box()['y'] for element in fixed]
