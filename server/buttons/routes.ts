@@ -51,8 +51,6 @@ export function buttonRoutes(deps: {
     const revision = deps.reviewRevision?.();
     if (direct && (!ctx || revision !== null)) return c.json({ ok: false, error: "The review setting changed. Reload before editing." }, 409);
     if (!direct && revision === null) return c.json({ ok: false, error: "The review setting changed. Reload before editing." }, 409);
-    if (direct && !isPreview && ctx?.mode === "dev" && allowWithoutBackup !== true)
-      return c.json({ ok: false, error: "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one." }, 409);
     if (direct && (!ctx?.ha || !ctx.rest || !ctx.target.ok))
       return c.json({ ok: false, error: ctx?.notConfigured ?? "Home Assistant is not configured." }, 503);
     if (deps.applying()) return c.json({ ok: false, error: "Changes are being applied. Try again afterward." }, 409);
@@ -96,7 +94,7 @@ export function buttonRoutes(deps: {
         if (isPreview) {
           const rows = planned.changes.map(visiblePreview);
           if (rows[0]) rows[0].before = { button_map: previous };
-          return c.json({ ok: true, changes: rows, previewVersion: token, requiresNoBackupConfirmation: ctx!.mode === "dev" });
+          return c.json({ ok: true, changes: rows, previewVersion: token, requiresNoBackupConfirmation: false });
         }
         if (previewVersion !== token) return c.json({ ok: false, error: "The button assignment changed. Review it again before applying." }, 409);
       }

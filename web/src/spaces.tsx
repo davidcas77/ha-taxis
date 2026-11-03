@@ -11,6 +11,7 @@ import {
   DoorOpen,
   Droplets,
   Gauge,
+  GripVertical,
   Home,
   Info,
   Layers,
@@ -180,7 +181,12 @@ function TreeRow({
   onToggle?: () => void;
   addArea?: { label: string; onClick: () => void };
   dragArea?: { start: (event: React.DragEvent) => void; end: () => void; disabled: boolean };
-  dropTarget?: { over: (event: React.DragEvent) => void; leave: () => void; drop: (event: React.DragEvent) => void; highlighted: boolean };
+  dropTarget?: {
+    over: (event: React.DragEvent) => void;
+    leave: (event: React.DragEvent) => void;
+    drop: (event: React.DragEvent) => void;
+    highlighted: boolean;
+  };
   moveArea?: { label: string; onClick: () => void; disabled: boolean };
 }) {
   const Chevron = expanded ? ChevronDown : ChevronRight;
@@ -214,7 +220,7 @@ function TreeRow({
         // Floors have an extra chevron before their icon. Account for its width
         // so an area's label sits 12px beyond the floor label, not before it.
         style={{ paddingLeft: onToggle ? 0 : 8 + depth * 14 + (expanded === undefined && depth > 0 ? 16 : 0) }}
-        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px] ${
+        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px] ${dragArea && !dragArea.disabled ? "cursor-grab active:cursor-grabbing" : ""} ${
           active ? "bg-accent-soft font-medium text-accent" : muted ? "text-muted hover:bg-sunken" : "hover:bg-sunken"
         }`}
       >
@@ -231,6 +237,11 @@ function TreeRow({
           />
         )}
         {count !== undefined && <span className="shrink-0 text-xs tabular-nums text-muted">{count}</span>}
+        {dragArea && (
+          <span title="Drag to a floor or Space" className="shrink-0 text-muted" aria-hidden>
+            <GripVertical className="size-4" />
+          </span>
+        )}
       </button>
       {moveArea && (
         <button
@@ -279,6 +290,7 @@ export function SpaceTree({
   const [moveError, setMoveError] = useState<string | null>(null);
   const [moveNotice, setMoveNotice] = useState<string | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
+  const [dragOpen, setDragOpen] = useState<Set<string>>(() => new Set());
   const dragRef = useRef<string | null>(null);
   const moveLock = useRef(false);
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -358,7 +370,7 @@ export function SpaceTree({
     });
   }, [sel, spaces, h, changeCollapsed]);
   // Searching reveals matching areas even when their groups are folded.
-  const isOpen = (group: string) => Boolean(q) || !collapsed.has(group);
+  const isOpen = (group: string) => Boolean(q) || !collapsed.has(group) || (Boolean(dragged) && dragOpen.has(group));
   const fold = (group: string) => changeCollapsed((s) => void (s.delete(group) || s.add(group)));
   const move = async (areaId: string, destination: AreaMoveDestination) => {
     if (busy || moveLock.current) return;
@@ -390,15 +402,19 @@ export function SpaceTree({
       setMoving(false);
     }
   };
-  const target = (key: string, destination: AreaMoveDestination) => ({
+  const target = (key: string, destination: AreaMoveDestination, openOnHover = false) => ({
     highlighted: highlight === key,
     over: (event: React.DragEvent) => {
       if (busy || moving || !dragRef.current || !event.dataTransfer.types.includes(AREA_DRAG_TYPE)) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
       setHighlight(key);
+      if (openOnHover) setDragOpen((open) => (open.has(key) ? open : new Set(open).add(key)));
     },
-    leave: () => setHighlight((value) => (value === key ? null : value)),
+    leave: (event: React.DragEvent) => {
+      if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+      setHighlight((value) => (value === key ? null : value));
+    },
     drop: (event: React.DragEvent) => {
       if (busy || moving || !dragRef.current || event.dataTransfer.getData(AREA_DRAG_TYPE) !== dragRef.current) return;
       event.preventDefault();
@@ -406,6 +422,7 @@ export function SpaceTree({
       const id = dragRef.current;
       dragRef.current = null;
       setDragged(null);
+      setDragOpen(new Set());
       setHighlight(null);
       void move(id, destination);
     },
@@ -431,6 +448,12 @@ export function SpaceTree({
       dragArea={{
         disabled: busy || moving,
         start: (event) => {
+          if (newItem && !confirmDraftNavigation()) {
+            event.preventDefault();
+            return;
+          }
+          setNewItem(null);
+          setDragOpen(new Set());
           dragRef.current = a.id;
           setDragged(a.id);
           event.dataTransfer.effectAllowed = "move";
@@ -439,6 +462,7 @@ export function SpaceTree({
         end: () => {
           dragRef.current = null;
           setDragged(null);
+          setDragOpen(new Set());
           setHighlight(null);
         },
       }}
@@ -564,6 +588,11 @@ export function SpaceTree({
   return (
     <nav ref={treeRef} aria-label="Floors and areas" className="min-h-0 flex-1 overflow-y-auto p-1.5">
       <TreeRow depth={0} icon={Home} label="Home Assistant" active={sel.kind === "home"} onClick={() => select({ kind: "home" })} />
+      {dragged && (
+        <p role="status" className="p-2 text-xs text-muted">
+          Drop on a floor to keep the Space, on a Space to assign it, or on No Space to clear it.
+        </p>
+      )}
       {moveError && (
         <p role="alert" className="p-2 text-xs text-danger">
           {moveError}
@@ -613,10 +642,11 @@ export function SpaceTree({
         const { ids, hidden } = listed(f.areaIds);
         const areas = ids.map((id) => h.areas[id]);
         const emptySpaceMatches = spaces.some((space) => space.declaredFloorIds.includes(f.id) && (!q || space.name.toLowerCase().includes(q)));
-        if (q && areas.length === 0 && !emptySpaceMatches) return null;
+        if (!dragged && q && areas.length === 0 && !emptySpaceMatches) return null;
         const selectedSpaceOnFloor =
           sel.kind === "space" && spaces.some((space) => space.id === sel.id && space.areaIds.some((id) => h.areas[id]?.floorId === f.id));
-        if (!emptySpaceMatches && !floorListed(f.areaIds.length, hidden, (sel.kind === "floor" && sel.id === f.id) || selectedSpaceOnFloor)) return null;
+        if (!dragged && !emptySpaceMatches && !floorListed(f.areaIds.length, hidden, (sel.kind === "floor" && sel.id === f.id) || selectedSpaceOnFloor))
+          return null;
         return (
           <div key={f.id}>
             <TreeRow
@@ -626,7 +656,7 @@ export function SpaceTree({
               expanded={isOpen(`floor:${f.id}`)}
               active={sel.kind === "floor" && sel.id === f.id}
               edited={edited.has(`floor:${f.id}`)}
-              dropTarget={target(`floor:${f.id}`, { floorId: f.id, space: { kind: "keep" } })}
+              dropTarget={target(`floor:${f.id}`, { floorId: f.id, space: { kind: "keep" } }, true)}
               addArea={{ label: `Add Space to ${f.name}`, onClick: () => openNewItem({ kind: "space", floorId: f.id, floorName: f.name }) }}
               onClick={() => {
                 if (newItem?.kind === "area" && newItem.floorId === f.id && isOpen(`floor:${f.id}`)) {
@@ -684,7 +714,7 @@ export function SpaceTree({
             muted
             expanded={isOpen("loose")}
             active={sel.kind === "loose"}
-            dropTarget={target("loose", { floorId: null, space: { kind: "keep" } })}
+            dropTarget={target("loose", { floorId: null, space: { kind: "keep" } }, true)}
             onClick={() => {
               fold("loose");
               select({ kind: "loose" });

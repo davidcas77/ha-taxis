@@ -107,10 +107,10 @@ class ButtonsRegression(fixture.GuideRegression):
         # An earlier notice can still be on screen; the form closing is what says this one went in.
         expect(form).to_have_count(0)
 
-    def test_buttons_direct_assignment_requires_backup_confirmation(self):
+    def test_buttons_direct_assignment_requires_exact_confirmation(self):
         self.page.route('**/api/settings/general', lambda route: route.fulfill(json={'ok': True, 'general': {'reviewChangesBeforeApplying': False}, 'revision': 'direct-revision'}))
         calls = []
-        preview = {'ok': True, 'previewVersion': 'button-preview', 'requiresNoBackupConfirmation': True, 'changes': [{'id': 1, 'kind': 'automation', 'op': 'create', 'targetId': 'taxis_buttons_fixture', 'scope': None, 'before': {}, 'after': {'action': 'light.toggle'}, 'createdAt': ''}]}
+        preview = {'ok': True, 'previewVersion': 'button-preview', 'requiresNoBackupConfirmation': False, 'changes': [{'id': 1, 'kind': 'automation', 'op': 'create', 'targetId': 'taxis_buttons_fixture', 'scope': None, 'before': {}, 'after': {'action': 'light.toggle'}, 'createdAt': ''}]}
         self.page.route('**/api/buttons/preview-assignment', lambda route: route.fulfill(json=preview))
         def direct(route):
             calls.append(route.request.post_data_json)
@@ -122,10 +122,10 @@ class ButtonsRegression(fixture.GuideRegression):
         dialog = self.page.get_by_role('dialog', name='Review before applying')
         self.assertIn('taxis_buttons_fixture', dialog.inner_text())
         self.assertEqual(calls, [])
-        dialog.get_by_role('checkbox').check()
+        self.assertEqual(dialog.get_by_role('checkbox').count(), 0)
         dialog.get_by_role('button', name='Confirm and apply').click()
         self.page.get_by_role('status').filter(has_text='Button mapping applied to Home Assistant').wait_for()
-        self.assertEqual(calls[0]['allowWithoutBackup'], True)
+        self.assertNotIn('allowWithoutBackup', calls[0])
         self.assertEqual(calls[0]['previewVersion'], 'button-preview')
         self.assertEqual(calls[0]['settingsRevision'], 'direct-revision')
         self.assertEqual(self.posts + self.puts, [])
@@ -136,7 +136,7 @@ class ButtonsRegression(fixture.GuideRegression):
         calls = []
         def direct(route):
             calls.append(route.request.post_data_json)
-            route.fulfill(json={'ok': True, 'backup': {'made': True}, 'results': [{'changeId': 1, 'ok': True, 'status': 'partial', 'message': 'Assignment applied with a problem.', 'details': ['Manual repair required.']}]})
+            route.fulfill(json={'ok': True, 'backup': {'made': False, 'reason': 'Taxis did not make a backup.'}, 'results': [{'changeId': 1, 'ok': True, 'status': 'partial', 'message': 'Assignment applied with a problem.', 'details': ['Manual repair required.']}]})
         self.page.route('**/api/buttons/assign', direct)
         self.open_control()
         form = self.editor(self.row())

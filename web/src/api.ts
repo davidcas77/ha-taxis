@@ -67,7 +67,6 @@ export type DirectPreviewResponse =
       ok: true;
       changes: import("../../shared/types.ts").Change[];
       previewVersion: string;
-      requiresNoBackupConfirmation: boolean;
       localOnly?: boolean;
       notes?: string[];
     }
@@ -78,8 +77,8 @@ export const api = {
   assignButton: (value: ButtonAssignment) => call<ChangesResponse>("api/buttons/assign", { method: "POST", body: JSON.stringify(value) }),
   previewButtonDirect: (value: ButtonAssignment, settingsRevision: string) =>
     call<DirectPreviewResponse>("api/buttons/preview-assignment", { method: "POST", body: JSON.stringify({ ...value, settingsRevision }) }),
-  assignButtonDirect: (value: ButtonAssignment, settingsRevision: string, previewVersion: string, allowWithoutBackup = false) =>
-    call<ApplyResponse>("api/buttons/assign", { method: "POST", body: JSON.stringify({ ...value, settingsRevision, previewVersion, allowWithoutBackup }) }),
+  assignButtonDirect: (value: ButtonAssignment, settingsRevision: string, previewVersion: string) =>
+    call<ApplyResponse>("api/buttons/assign", { method: "POST", body: JSON.stringify({ ...value, settingsRevision, previewVersion }) }),
   buttonAiPreview: (id: string) =>
     call<{ ok: true; preview: ButtonAiPreview } | { ok: false; error: string }>(`api/buttons/${encodeURIComponent(id)}/ai-preview`),
   buttonAiReview: (id: string, fingerprint: string) =>
@@ -113,8 +112,8 @@ export const api = {
     ),
   previewDirect: (changes: ChangeInput[], settingsRevision: string) =>
     call<DirectPreviewResponse>("api/direct-preview", { method: "POST", body: JSON.stringify({ changes, settingsRevision }) }),
-  directChanges: (changes: ChangeInput[], settingsRevision: string, previewVersion: string, allowWithoutBackup = false) =>
-    call<ApplyResponse>("api/direct-changes", { method: "POST", body: JSON.stringify({ changes, settingsRevision, previewVersion, allowWithoutBackup }) }),
+  directChanges: (changes: ChangeInput[], settingsRevision: string, previewVersion: string) =>
+    call<ApplyResponse>("api/direct-changes", { method: "POST", body: JSON.stringify({ changes, settingsRevision, previewVersion }) }),
   previewDirectSetting: (kind: "inventory" | "parameters", value: InventorySettings | ParameterSettings, revision: string, settingsRevision: string) =>
     call<DirectPreviewResponse>("api/direct-settings-preview", { method: "POST", body: JSON.stringify({ kind, value, revision, settingsRevision }) }),
   commitDirectSetting: (
@@ -123,12 +122,11 @@ export const api = {
     revision: string,
     settingsRevision: string,
     previewVersion: string,
-    allowWithoutBackup: boolean,
   ) =>
     call<
       | { ok: true; saved: { kind: "inventory" | "parameters"; value: InventorySettings | ParameterSettings; revision: string }; apply: ApplyResponse | null }
       | { ok: false; error: string }
-    >("api/direct-settings", { method: "POST", body: JSON.stringify({ kind, value, revision, settingsRevision, previewVersion, allowWithoutBackup }) }),
+    >("api/direct-settings", { method: "POST", body: JSON.stringify({ kind, value, revision, settingsRevision, previewVersion }) }),
   naming: () => call<NamingResponse>("api/settings/naming"),
   saveNaming: (naming: NamingSettings) => call<NamingResponse>("api/settings/naming", { method: "PUT", body: JSON.stringify(naming) }),
   namingIgnores: () => call<NamingIgnoresResponse>("api/settings/naming-ignores"),
@@ -169,6 +167,6 @@ export const api = {
   // The version of the list the user saw and confirmed: the server refuses if
   // the list has changed since.
   // `only`: the ids of the changes to apply; the server adds the ones they need.
-  apply: (version: string, allowWithoutBackup = false, only?: number[]) =>
-    call<ApplyResponse>("api/apply", { method: "POST", body: JSON.stringify({ version, allowWithoutBackup, ...(only ? { only } : {}) }) }),
+  apply: (version: string, only?: number[]) =>
+    call<ApplyResponse>("api/apply", { method: "POST", body: JSON.stringify({ version, ...(only ? { only } : {}) }) }),
 };

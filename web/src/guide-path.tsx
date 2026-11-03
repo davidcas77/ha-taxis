@@ -251,8 +251,8 @@ export function GuidePath({
       <Card>
         <h3 className="text-sm font-semibold">Review, build and verify</h3>
         <p className="mt-1 text-[13px] text-muted">
-          Open Changes to inspect the proposed objects and dependencies. Apply through the existing review and backup flow, then check Health and test the
-          result in Home Assistant. New automations can be active when installed.
+          Open Changes to inspect the proposed objects and dependencies. Apply through the existing review flow, then check Health and test the result in Home
+          Assistant. New automations can be active when installed.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <Button onClick={() => go({ page: "changes" })}>Review Changes</Button>

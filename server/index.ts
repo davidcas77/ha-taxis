@@ -8,7 +8,6 @@ import { dataDir, resolveHaTarget, runMode } from "./config.ts";
 import { openStore } from "./db.ts";
 import { HaRest } from "./ha/rest.ts";
 import { HaSocket } from "./ha/socket.ts";
-import { backupHomeAssistant } from "./ha/supervisor.ts";
 import { addLogSecret, log, setLogSecret } from "./log.ts";
 import { settingsStore } from "./settings.ts";
 
@@ -44,8 +43,6 @@ const app = createApp({
   target,
   ha,
   rest,
-  // The Supervisor's backup, made with the same token Home Assistant is called with.
-  backup: (name) => (token ? backupHomeAssistant(token, name) : Promise.resolve({ ok: false, reason: "No Supervisor token." })),
   db: store.db,
   settings,
   changes: changeStore(store.db),

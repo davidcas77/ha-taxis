@@ -15,7 +15,7 @@ ask (see [Privacy](#privacy)).
 > native helpers and recipe automations, maps remote and wall-button gestures to
 > actions, and offers optional AI advice that cannot change anything. Every
 > edit can be reviewed in Changes or previewed and confirmed directly, according
-> to Settings. Both paths check for stale changes, attempt a backup and verify
+> to Settings. Both paths check for stale changes, apply the confirmed changes and verify
 > results afterwards. Live remote hardware and real AI
 > provider calls are not yet verified end to end, so review each change before you
 > apply it.
@@ -109,7 +109,7 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   [Button action maps](docs/design/button-map.md) for discovery limits.
 - **Changes and direct editing:** Settings chooses whether proposed edits wait
   in Changes or open a detailed preview for direct confirmation. Applying checks
-  for stale data, attempts a Home Assistant backup, applies changes and their
+  for stale data, applies changes and their
   dependencies, and reads Home Assistant back to check each change. History and
   unresolved repairs remain available across reloads and app restarts.
 
@@ -138,7 +138,6 @@ Every outside address Taxis can contact, and when:
 | Address                                                                                                      | Only when                                                                                         | What it receives                                                                                                                                       |
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Your Home Assistant, through the Supervisor (`ws://supervisor/core/websocket`, `http://supervisor/core/api`) | Always                                                                                            | Reads of the registries, states, services and automation configs; writes when you apply or confirm an edit                                             |
-| The Supervisor (`http://supervisor`)                                                                         | Before applying changes                                                                           | A request for a partial backup                                                                                                                         |
 | Anthropic (`https://api.anthropic.com`)                                                                      | AI is on, provider Anthropic, and you press Send, Load models, a Test button or the button review | Your API key; the question, reviewed context and up to six earlier messages (Ask Taxis); the reviewed summary (button review); a fixed sentence (Test) |
 | The OpenAI-compatible service you set (its base URL)                                                         | AI is on, that provider, and the same actions                                                     | The same as above                                                                                                                                      |
 | TypeSafe (`https://api.typesafe.ai/v1/systemone`)                                                            | Jev is on with a key, and you press **Review notes with Jev** or Test                             | Your Jev key and model; the notes you typed (up to 2,000 characters) and the descriptions of the selected checklist items; a fixed sentence (Test)     |

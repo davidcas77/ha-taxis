@@ -103,7 +103,7 @@ triggers retain the integration's trigger definition.
 ## Review and Apply
 
 Assignment only queues a Change. The input inventory and Changes revisions must
-still match the reviewed form. Apply follows the existing backup/selection flow,
+still match the reviewed form. Apply follows the existing confirmation/selection flow,
 then rereads device triggers (only for the controls the change uses), services,
 targets and existing automation handlers.
 It refuses missing/disabled targets, changed gestures, unacknowledged conflicts,

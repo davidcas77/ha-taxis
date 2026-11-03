@@ -30,7 +30,6 @@ class DirectModeUI(unittest.TestCase):
         self.fail_save = False
         self.fail_direct = False
         self.stale_direct = False
-        self.require_backup_confirmation = False
         self.fail_hierarchy = False
         self.requests = []
         self.page.route('**/api/hierarchy*', lambda route: route.fulfill(json={'ok': False, 'error': 'Mock refresh failed'} if self.fail_hierarchy else self.h))
@@ -48,14 +47,12 @@ class DirectModeUI(unittest.TestCase):
             body = route.request.post_data_json
             self.requests.append(('preview', body))
             changes = [{'id': i + 1, 'kind': item['kind'], 'op': item['op'], 'targetId': item.get('targetId', 'new:label:1'), 'scope': None, 'before': {}, 'after': item.get('fields', {}), 'createdAt': ''} for i, item in enumerate(body['changes'])]
-            route.fulfill(json={'ok': True, 'changes': changes, 'previewVersion': 'exact-preview', 'requiresNoBackupConfirmation': self.require_backup_confirmation})
+            route.fulfill(json={'ok': True, 'changes': changes, 'previewVersion': 'exact-preview', 'requiresNoBackupConfirmation': False})
         def direct(route):
             body = route.request.post_data_json
             self.requests.append(('direct', body))
             if self.stale_direct:
                 return route.fulfill(status=409, json={'ok': False, 'error': 'Preview changed. Refresh and try again.'})
-            if self.require_backup_confirmation and not body.get('allowWithoutBackup'):
-                return route.fulfill(status=409, json={'ok': False, 'error': "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one."})
             if not self.fail_direct:
                 h = self.h['hierarchy']
                 for item in body['changes']:
@@ -64,7 +61,7 @@ class DirectModeUI(unittest.TestCase):
                     if item['kind'] == 'entity' and 'labels' in item['fields']:
                         h['entities'][item['targetId']]['labels'] = item['fields']['labels']
             results = [{'changeId': i + 1, 'ok': not self.fail_direct, 'message': 'Mock failure' if self.fail_direct else 'Applied', 'status': 'failed' if self.fail_direct else 'verified'} for i, _ in enumerate(body['changes'])]
-            route.fulfill(json={'ok': True, 'backup': {'made': True}, 'results': results})
+            route.fulfill(json={'ok': True, 'backup': {'made': False, 'reason': 'Taxis did not make a backup.'}, 'results': results})
         self.page.route('**/api/settings/general', general)
         self.page.route('**/api/changes', changes)
         self.page.route('**/api/changes/batch', changes)
@@ -176,22 +173,21 @@ class DirectModeUI(unittest.TestCase):
         self.page.get_by_role('button', name='Add', exact=True).wait_for(state='visible')
         self.page.wait_for_function("!document.querySelector('form button[type=submit]').disabled")
 
-    def test_no_backup_requires_confirmation_on_each_write(self):
+    def test_exact_preview_requires_confirmation_without_backup_ack(self):
         box = self.settings()
         box.click()
         self.page.get_by_text('Direct mode: edits apply to Home Assistant immediately.').wait_for()
-        self.require_backup_confirmation = True
         self.create('No backup first')
         dialog = self.page.get_by_role('dialog', name='Review before applying')
         self.assertIn('No backup first', dialog.inner_text())
         dialog.get_by_role('button', name='Cancel').click()
         self.assertEqual(len([1 for kind, _ in self.requests if kind == 'direct']), 0)
         self.page.get_by_role('button', name='Add', exact=True).click()
-        dialog.get_by_role('checkbox').check()
+        self.assertEqual(dialog.get_by_role('checkbox').count(), 0)
         dialog.get_by_role('button', name='Confirm and apply').click()
         self.page.get_by_text('Applied to Home Assistant').wait_for()
         direct = [body for kind, body in self.requests if kind == 'direct']
-        self.assertEqual([body['allowWithoutBackup'] for body in direct], [True])
+        self.assertNotIn('allowWithoutBackup', direct[0])
         self.assertEqual(direct[0]['previewVersion'], 'exact-preview')
 
     def test_direct_create_then_batch_uses_real_label_id(self):
@@ -237,7 +233,7 @@ class DirectModeUI(unittest.TestCase):
         def selection_commit(route):
             body = route.request.post_data_json
             calls.append(('commit', body))
-            route.fulfill(json={'ok': True, 'saved': {'kind': 'inventory', 'value': body['value'], 'revision': 'inventory-next'}, 'apply': {'ok': True, 'backup': {'made': True}, 'results': [{'changeId': 1, 'ok': True, 'status': 'partial', 'message': 'Some updates need attention', 'details': ['Sensor needs repair']}]}})
+            route.fulfill(json={'ok': True, 'saved': {'kind': 'inventory', 'value': body['value'], 'revision': 'inventory-next'}, 'apply': {'ok': True, 'backup': {'made': False, 'reason': 'Taxis did not make a backup.'}, 'results': [{'changeId': 1, 'ok': True, 'status': 'partial', 'message': 'Some updates need attention', 'details': ['Sensor needs repair']}]}})
         self.page.route('**/api/direct-settings-preview', selection_preview)
         self.page.route('**/api/direct-settings', selection_commit)
         box = self.settings()

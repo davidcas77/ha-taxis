@@ -9,7 +9,6 @@ import { createApp } from "./app.ts";
 import { applyHistory } from "./changes/history.ts";
 import { changeStore } from "./changes/store.ts";
 import type { AppDeps } from "./context.ts";
-import { backupHomeAssistant } from "./ha/supervisor.ts";
 import { testStore } from "./ai/test-store.ts";
 import { fakeHa } from "./references/fake-ha.ts";
 import { settingsStore } from "./settings.ts";
@@ -35,9 +34,9 @@ afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-type Backup = AppDeps["backup"];
+type Backup = NonNullable<AppDeps["backup"]>;
 
-function setup(options: { mode?: "app" | "dev"; backup?: Backup; configured?: boolean } = {}) {
+function setup(options: { mode?: "app" | "dev"; onApplyRead?: () => void | Promise<void>; backup?: Backup; configured?: boolean } = {}) {
   const mode = options.mode ?? "dev";
   const { store, close } = testStore();
   cleanups.push(close);
@@ -47,8 +46,23 @@ function setup(options: { mode?: "app" | "dev"; backup?: Backup; configured?: bo
   const history = applyHistory(store.db);
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const snapshots: unknown[] = [];
-  const backupNames: string[] = [];
+  const applyReads: string[] = [];
   const backup: Backup = options.backup ?? (async (name) => ({ ok: true, name, slug: "slug1" }));
+  let applyReadPending = false;
+  const begin = history.begin.bind(history);
+  history.begin = (pending) => {
+    applyReadPending = true;
+    return begin(pending);
+  };
+  const command = fake.ha.command;
+  fake.ha.command = async (type, payload) => {
+    if (applyReadPending && options.onApplyRead) {
+      applyReadPending = false;
+      applyReads.push("read");
+      await options.onApplyRead();
+    }
+    return command(type, payload);
+  };
   const configured = options.configured ?? true;
 
   const app = createApp({
@@ -59,10 +73,7 @@ function setup(options: { mode?: "app" | "dev"; backup?: Backup; configured?: bo
       : { ok: false, reason: "HA_URL and HA_TOKEN are not set." },
     ha: configured ? fake.ha : null,
     rest: configured ? fake.api : null,
-    backup: async (name) => {
-      backupNames.push(name);
-      return backup(name);
-    },
+    backup,
     db: store.db,
     settings,
     changes,
@@ -100,23 +111,22 @@ function setup(options: { mode?: "app" | "dev"; backup?: Backup; configured?: bo
   };
   const writeTypes = () => fake.writes().ws.map((w) => w.type);
 
-  return { app, fake, changes, history, settings, logger, snapshots, backupNames, call, get, post, queue, apply, version, writeTypes, env, store };
+  return { app, fake, changes, history, settings, logger, snapshots, applyReads, call, get, post, queue, apply, version, writeTypes, env, store };
 }
 
 const nothingWritten = (t: ReturnType<typeof setup>) => {
   expect(t.fake.writes()).toEqual({ ws: [], rest: [] });
 };
 
-describe("Apply in app mode (a backup comes first)", () => {
+describe("Apply in app mode", () => {
   for (const mode of ["queued", "direct"] as const) {
-    it(`does not place or overwrite a timer that appeared during backup in ${mode} mode`, async () => {
+    it(`does not place or overwrite a timer that appeared after review in ${mode} mode`, async () => {
       let t: ReturnType<typeof setup>;
       t = setup({
         mode: "app",
-        backup: async (name) => {
+        onApplyRead: async () => {
           t.fake.home.entities.push({ entity_id: "timer.kitchen_hold", platform: "timer", unique_id: "kitchen_hold", area_id: "study" });
           t.fake.home.states.push({ entity_id: "timer.kitchen_hold", state: "idle", attributes: { duration: "0:04:00" } });
-          return { ok: true, name, slug: "slug1" };
         },
       });
       const input: ChangeInput = {
@@ -139,13 +149,12 @@ describe("Apply in app mode (a backup comes first)", () => {
       expect(result.ok && result.results[0]).toMatchObject({ ok: false, message: expect.stringContaining("timer appeared or changed") });
       nothingWritten(t);
     });
-    it(`does not overwrite a timer changed during backup in ${mode} mode`, async () => {
+    it(`does not overwrite a timer changed after review in ${mode} mode`, async () => {
       let t: ReturnType<typeof setup>;
       t = setup({
         mode: "app",
-        backup: async (name) => {
+        onApplyRead: async () => {
           t.fake.home.states.find((state) => state.entity_id === "timer.kitchen_hold")!.attributes!.duration = "0:04:00";
-          return { ok: true, name, slug: "slug1" };
         },
       });
       t.fake.home.entities.push({ entity_id: "timer.kitchen_hold", platform: "timer", unique_id: "kitchen_hold", area_id: "kitchen" });
@@ -324,42 +333,45 @@ describe("Apply in app mode (a backup comes first)", () => {
     expect(result.status, JSON.stringify(result.body)).toBe(200);
     expect(result.body.ok && result.body.results.every((item) => item.ok)).toBe(true);
   });
-  it("updates a scoped occupancy timer through a reviewed direct setting", async () => {
-    const t = setup({ mode: "app" });
-    t.fake.home.labels.push({ label_id: "office", name: "Space: Office" });
-    t.fake.home.areas.find((area) => area.area_id === "study")!.labels = ["office"];
-    const h = buildHierarchy(structuredClone(t.fake.home), "");
-    const installed = await readInstalled({ ha: t.fake.ha, rest: t.fake.api }, t.fake.home, [], []);
-    const cell = planRecipes(h, t.settings.inventory(), t.settings.naming(), t.settings.parameters(), installed, []).find(
-      (item) => item.areaId === "study" && item.recipe === "occupancy",
-    )!;
-    expect(cell.status, cell.missing.join(", ")).toBe("ready");
-    const queued = await t.post("/api/changes/batch", { changes: cell.inputs });
-    expect(queued.status, JSON.stringify(await queued.clone().json())).toBe(200);
-    const first = await t.apply();
-    expect(first.body.ok && first.body.results.every((item) => item.ok), JSON.stringify(first.body)).toBe(true);
-    expect((await t.call("PUT", "/api/settings/general", { reviewChangesBeforeApplying: false }, { "If-Match": "0" })).status).toBe(200);
-    const after = setParameter(t.settings.parameters(), { level: "area", id: "study" }, "hold_timeout", 8);
-    const request = { kind: "parameters", value: after, revision: "0", settingsRevision: "1" };
-    const preview = await t.post("/api/direct-settings-preview", request);
-    expect(preview.status, JSON.stringify(await preview.clone().json())).toBe(200);
-    const token = ((await preview.json()) as { previewVersion: string }).previewVersion;
-    const response = await t.post("/api/direct-settings", { ...request, previewVersion: token });
-    const result = (await response.json()) as { ok: boolean; apply?: ApplyResponse };
-    expect(response.status, JSON.stringify(result)).toBe(200);
-    expect(result.apply?.ok && result.apply.results.every((item) => item.ok), JSON.stringify(result)).toBe(true);
-  });
-  it("does not overwrite a scoped timer changed during a direct setting backup", async () => {
+  for (const mode of ["app", "dev"] as const)
+    it(`updates a scoped occupancy timer through a reviewed direct setting in ${mode} without backup`, async () => {
+      const backup = vi.fn(async () => ({ ok: false as const, reason: "must not run" }));
+      const t = setup({ mode, backup });
+      t.fake.home.labels.push({ label_id: "office", name: "Space: Office" });
+      t.fake.home.areas.find((area) => area.area_id === "study")!.labels = ["office"];
+      const h = buildHierarchy(structuredClone(t.fake.home), "");
+      const installed = await readInstalled({ ha: t.fake.ha, rest: t.fake.api }, t.fake.home, [], []);
+      const cell = planRecipes(h, t.settings.inventory(), t.settings.naming(), t.settings.parameters(), installed, []).find(
+        (item) => item.areaId === "study" && item.recipe === "occupancy",
+      )!;
+      expect(cell.status, cell.missing.join(", ")).toBe("ready");
+      const queued = await t.post("/api/changes/batch", { changes: cell.inputs });
+      expect(queued.status, JSON.stringify(await queued.clone().json())).toBe(200);
+      const first = await t.apply();
+      expect(first.body.ok && first.body.results.every((item) => item.ok), JSON.stringify(first.body)).toBe(true);
+      expect((await t.call("PUT", "/api/settings/general", { reviewChangesBeforeApplying: false }, { "If-Match": "0" })).status).toBe(200);
+      const after = setParameter(t.settings.parameters(), { level: "area", id: "study" }, "hold_timeout", 8);
+      const request = { kind: "parameters", value: after, revision: "0", settingsRevision: "1" };
+      const preview = await t.post("/api/direct-settings-preview", request);
+      expect(preview.status, JSON.stringify(await preview.clone().json())).toBe(200);
+      const token = ((await preview.json()) as { previewVersion: string }).previewVersion;
+      const response = await t.post("/api/direct-settings", { ...request, previewVersion: token });
+      const result = (await response.json()) as { ok: boolean; apply?: ApplyResponse };
+      expect(response.status, JSON.stringify(result)).toBe(200);
+      expect(result.apply?.ok && result.apply.results.every((item) => item.ok), JSON.stringify(result)).toBe(true);
+      expect(result.apply?.ok && result.apply.backup.made).toBe(false);
+      expect(backup).not.toHaveBeenCalled();
+    });
+  it("does not overwrite a scoped timer changed after direct setting review", async () => {
     let t: ReturnType<typeof setup>;
     let changeTimer = false;
     t = setup({
       mode: "app",
-      backup: async (name) => {
+      onApplyRead: async () => {
         if (changeTimer) {
           const timer = t.fake.home.states.find((state) => state.entity_id.startsWith("timer.") && state.entity_id.includes("study"))!;
           timer.attributes!.duration = "0:11:00";
         }
-        return { ok: true, name, slug: "slug1" };
       },
     });
     t.fake.home.labels.push({ label_id: "office", name: "Space: Office" });
@@ -470,13 +482,12 @@ describe("Apply in app mode (a backup comes first)", () => {
     const result = await t.apply();
     expect(result.body.ok && result.body.results.every((item) => item.ok), JSON.stringify(result.body)).toBe(true);
   });
-  it("fences Space light-group ownership changes during backup", async () => {
+  it("fences Space light-group ownership changes after review", async () => {
     let t: ReturnType<typeof setup>;
     t = setup({
       mode: "app",
-      backup: async (name) => {
+      onApplyRead: async () => {
         t.fake.home.entities.find((entity) => entity.entity_id === "light.living_spots")!.area_id = "study";
-        return { ok: true, name, slug: "slug1" };
       },
     });
     withSmartDemo(t.fake.home);
@@ -491,14 +502,13 @@ describe("Apply in app mode (a backup comes first)", () => {
     expect(result.body).toMatchObject({ ok: false, error: expect.stringContaining("ownership changed") });
     nothingWritten(t);
   });
-  it("writes nothing if an area gains a Space label during backup", async () => {
+  it("writes nothing if an area gains a Space label after review", async () => {
     let t: ReturnType<typeof setup>;
     t = setup({
       mode: "app",
-      backup: async (name) => {
+      onApplyRead: async () => {
         t.fake.home.labels.push({ label_id: "studio", name: "Space: Studio" });
         t.fake.home.areas.find((area) => area.area_id === "kitchen")!.labels = ["studio"];
-        return { ok: true, name, slug: "slug1" };
       },
     });
     await t.queue({
@@ -511,7 +521,7 @@ describe("Apply in app mode (a backup comes first)", () => {
     expect(result.body).toMatchObject({ ok: false, error: expect.stringContaining("Space") });
     nothingWritten(t);
   });
-  it("backs up, applies, returns the results and clears what was done", async () => {
+  it("applies without backup, returns the results and clears what was done", async () => {
     const t = setup({ mode: "app" });
     await t.queue(AREA_RENAME);
 
@@ -520,90 +530,31 @@ describe("Apply in app mode (a backup comes first)", () => {
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     if (!body.ok) return;
-    expect(body.backup).toEqual({ made: true, name: "Taxis before applying 1 change", slug: "slug1" });
+    expect(body.backup).toEqual({ made: false, reason: "Taxis did not make a backup." });
     expect(body.results).toHaveLength(1);
     expect(body.results[0]).toMatchObject({ ok: true, status: "verified" });
-    expect(t.backupNames).toEqual(["Taxis before applying 1 change"]);
+    expect(t.applyReads).toEqual([]);
     expect(t.writeTypes()).toEqual(["config/area_registry/update"]);
     expect(t.fake.home.areas.find((a) => a.area_id === "kitchen")?.name).toBe("Cooking");
     // The done change left the list, and the run is on record.
     expect(t.changes.list()).toEqual([]);
-    expect(t.history.runs()[0]).toMatchObject({ status: "completed", backup: { made: true, slug: "slug1" } });
+    expect(t.history.runs()[0]).toMatchObject({ status: "completed", backup: { made: false } });
   });
 
-  it("does not write anything when the backup fails", async () => {
-    const t = setup({ mode: "app", backup: async () => ({ ok: false, reason: "The Supervisor didn't make the backup (HTTP 500)." }) });
-    await t.queue(AREA_RENAME);
-
-    const { status, body } = await t.apply();
-
-    expect(status).toBe(502);
-    expect(body).toEqual({ ok: false, error: "Nothing was changed. The Supervisor didn't make the backup (HTTP 500)." });
-    nothingWritten(t);
-    expect(t.changes.list()).toHaveLength(1);
-    expect(t.history.runs()[0]).toMatchObject({ status: "failed" });
-  });
-
-  it("does not write anything when the Supervisor can't be reached", async () => {
-    const down = (async () => {
-      throw new Error(`connect ECONNREFUSED (Authorization: Bearer ${TOKEN})`);
-    }) as unknown as typeof fetch;
-    const t = setup({ mode: "app", backup: (name) => backupHomeAssistant(TOKEN, name, down) });
-    await t.queue(AREA_RENAME);
-
-    const { status, body } = await t.apply();
-
-    expect(status).toBe(502);
-    expect(body.ok).toBe(false);
-    if (body.ok) return;
-    expect(body.error).toMatch(/Couldn't reach the Supervisor/);
-    // The token never reaches the browser, even when the failing call repeated it.
-    expect(JSON.stringify(body)).not.toContain(TOKEN);
-    nothingWritten(t);
-    expect(t.changes.list()).toHaveLength(1);
-  });
-
-  it("does not write anything when the backup times out", async () => {
-    const hang = (async (_input: string | URL | Request, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
-      })) as typeof fetch;
-    const t = setup({ mode: "app", backup: (name) => backupHomeAssistant(TOKEN, name, hang, 20) });
-    await t.queue(AREA_RENAME);
-
-    const { status, body } = await t.apply();
-
-    expect(status).toBe(502);
-    expect(body.ok).toBe(false);
-    nothingWritten(t);
-    expect(t.changes.list()).toHaveLength(1);
-  });
-
-  it("ignores allowWithoutBackup: the backup is required", async () => {
-    const t = setup({ mode: "app", backup: async () => ({ ok: false, reason: "no" }) });
-    await t.queue(AREA_RENAME);
-    const { status } = await t.apply({ allowWithoutBackup: true });
-    expect(status).toBe(502);
-    nothingWritten(t);
-  });
+  for (const mode of ["app", "dev"] as const) {
+    it(`applies in ${mode} mode without calling the backup callback`, async () => {
+      const backup = vi.fn(async () => ({ ok: false as const, reason: "must not run" }));
+      const t = setup({ mode, backup });
+      await t.queue(AREA_RENAME);
+      const result = await t.apply();
+      expect(result.status).toBe(200);
+      expect(result.body.ok && result.body.backup.made).toBe(false);
+      expect(backup).not.toHaveBeenCalled();
+    });
+  }
 });
 
-describe("Apply in dev mode (no Supervisor)", () => {
-  it("asks for explicit confirmation and writes nothing without it", async () => {
-    const t = setup({ mode: "dev" });
-    await t.queue(AREA_RENAME);
-
-    const { status, body } = await t.apply();
-
-    expect(status).toBe(409);
-    expect(body.ok).toBe(false);
-    if (body.ok) return;
-    expect(body.error).toMatch(/Confirm to apply without one/);
-    expect(t.backupNames).toEqual([]);
-    nothingWritten(t);
-    expect(t.changes.list()).toHaveLength(1);
-  });
-
+describe("Apply in dev mode", () => {
   it("applies when the user confirms, and says no backup was made", async () => {
     const t = setup({ mode: "dev" });
     await t.queue(AREA_RENAME);
@@ -612,7 +563,7 @@ describe("Apply in dev mode (no Supervisor)", () => {
 
     expect(status).toBe(200);
     expect(body.ok && body.backup).toMatchObject({ made: false });
-    expect(t.backupNames).toEqual([]);
+    expect(t.applyReads).toEqual([]);
     expect(t.writeTypes()).toEqual(["config/area_registry/update"]);
     expect(t.changes.list()).toEqual([]);
   });
@@ -682,7 +633,7 @@ describe("what Apply refuses before it writes", () => {
     });
   });
 
-  it("stops before the backup and before any write when the naming preflight fails", async () => {
+  it("stops before any write when the naming preflight fails", async () => {
     const t = setup({ mode: "app" });
     // A helper planned while the area codes were fine...
     await t.queue({
@@ -705,7 +656,7 @@ describe("what Apply refuses before it writes", () => {
 
     expect(status).toBe(409);
     expect(body.ok === false && body.error).toMatch(/duplicate area codes/);
-    expect(t.backupNames).toEqual([]);
+    expect(t.applyReads).toEqual([]);
     nothingWritten(t);
     expect(t.changes.list()).toHaveLength(1);
     expect(t.history.runs()[0]).toMatchObject({ status: "failed" });
@@ -773,21 +724,20 @@ describe("a mixed list, checked with partial reads", () => {
 
 describe("one Apply at a time", () => {
   it("refuses a second Apply, and edits to the list, while one is running", async () => {
-    // The first Apply waits in its backup until the test lets it go.
+    // The first Apply waits at an HA read until the test lets it go.
     let release!: () => void;
     const held = new Promise<void>((resolve) => (release = resolve));
     const t = setup({
       mode: "app",
-      backup: async (name) => {
+      onApplyRead: async () => {
         await held;
-        return { ok: true, name, slug: "late" };
       },
     });
     await t.queue(AREA_RENAME);
     const version = t.version();
 
     const first = t.post("/api/apply", { version });
-    await vi.waitFor(() => expect(t.backupNames).toHaveLength(1));
+    await vi.waitFor(() => expect(t.applyReads).toHaveLength(1));
 
     const second = await t.post("/api/apply", { version });
     expect(second.status).toBe(409);
@@ -811,9 +761,11 @@ describe("one Apply at a time", () => {
   });
 
   it("releases the lock after a failed Apply", async () => {
-    const t = setup({ mode: "app", backup: async () => ({ ok: false, reason: "no" }) });
+    const t = setup({ mode: "app" });
     await t.queue(AREA_RENAME);
+    t.fake.failRead.add("config/area_registry/list");
     expect((await t.apply()).status).toBe(502);
+    t.fake.failRead.clear();
     expect((await t.post("/api/changes", OTHER_RENAME)).status).toBe(200);
   });
 });
@@ -877,14 +829,13 @@ describe("adding several changes at once", () => {
     const held = new Promise<void>((resolve) => (release = resolve));
     const t = setup({
       mode: "app",
-      backup: async (name) => {
+      onApplyRead: async () => {
         await held;
-        return { ok: true, name, slug: "late" };
       },
     });
     await t.queue(AREA_RENAME);
     const first = t.post("/api/apply", { version: t.version() });
-    await vi.waitFor(() => expect(t.backupNames).toHaveLength(1));
+    await vi.waitFor(() => expect(t.applyReads).toHaveLength(1));
     const res = await batch(t, [OTHER_RENAME]);
     expect(res.status).toBe(409);
     expect(t.changes.list()).toHaveLength(1);
@@ -980,7 +931,7 @@ describe("how much of Home Assistant one Apply reads", () => {
         fields: { helper: "group", group_type: "light", name: "Study lights", entity_id: "light.study_all", entities: ["light.desk"], area_id: "study" },
       },
     ]);
-    // Preflight and post-backup Space membership checks each read the hierarchy
+    // Preflight and pre-write Space membership checks each read the hierarchy
     // (10 each), then helpers before (3), one poll (1), after (3), and full (12).
     expect(total(counts)).toBe(39);
   });
@@ -1034,11 +985,11 @@ describe("errors stay readable and secret-free", () => {
 describe("direct changes and general settings", () => {
   const save = (t: ReturnType<typeof setup>, review: boolean, revision = "0") =>
     t.call("PUT", "/api/settings/general", { reviewChangesBeforeApplying: review }, { "If-Match": revision });
-  const direct = async (t: ReturnType<typeof setup>, inputs: ChangeInput[], revision = "1", allowWithoutBackup = true) => {
+  const direct = async (t: ReturnType<typeof setup>, inputs: ChangeInput[], revision = "1") => {
     const response = await t.post("/api/direct-preview", { changes: inputs, settingsRevision: revision });
     if (!response.ok) return response;
     const preview = (await response.json()) as { previewVersion: string };
-    return t.post("/api/direct-changes", { changes: inputs, settingsRevision: revision, previewVersion: preview.previewVersion, allowWithoutBackup });
+    return t.post("/api/direct-changes", { changes: inputs, settingsRevision: revision, previewVersion: preview.previewVersion });
   };
 
   it("defaults to review, persists a strict revisioned setting, and never writes HA when saving", async () => {
@@ -1062,45 +1013,60 @@ describe("direct changes and general settings", () => {
     nothingWritten(t);
   });
 
-  it("requires the current setting revision and dev backup acknowledgment", async () => {
+  it("requires the current setting revision", async () => {
     const t = setup();
     await save(t, false);
     expect((await direct(t, [AREA_RENAME], "0")).status).toBe(409);
-    expect((await direct(t, [AREA_RENAME], "1", false)).status).toBe(409);
     expect((await t.post("/api/direct-changes", { changes: [AREA_RENAME], settingsRevision: "1", allowWithoutBackup: "yes" })).status).toBe(400);
     expect(t.changes.list()).toEqual([]);
     nothingWritten(t);
   });
 
-  it("applies through the existing runner and preserves batch dependencies", async () => {
-    const t = setup();
-    await save(t, false);
-    const res = await direct(t, [
-      {
-        kind: "helper",
-        op: "create",
-        fields: { helper: "group", group_type: "light", name: "Study lights", entity_id: "light.study_all", entities: ["light.desk"], area_id: "study" },
-      },
-      {
-        kind: "helper",
-        op: "create",
-        fields: { helper: "group", group_type: "light", name: "Study total", entity_id: "light.study_total", entities: ["light.study_all"], area_id: "study" },
-      },
-    ]);
-    expect(res.status).toBe(200);
-    expect((await res.json()) as ApplyResponse).toMatchObject({ ok: true, results: [{ ok: true }, { ok: true }] });
-    expect(t.fake.home.entities.some((e) => e.entity_id === "light.study_all")).toBe(true);
-    expect(t.changes.list()).toEqual([]);
-    expect(t.history.runs()[0]).toMatchObject({ status: "completed" });
-    expect(t.snapshots).toHaveLength(1);
-  });
+  for (const mode of ["app", "dev"] as const)
+    it(`applies direct changes in ${mode} without backup and preserves batch dependencies`, async () => {
+      const backup = vi.fn(async () => ({ ok: false as const, reason: "must not run" }));
+      const t = setup({ mode, backup });
+      await save(t, false);
+      const res = await direct(t, [
+        {
+          kind: "helper",
+          op: "create",
+          fields: { helper: "group", group_type: "light", name: "Study lights", entity_id: "light.study_all", entities: ["light.desk"], area_id: "study" },
+        },
+        {
+          kind: "helper",
+          op: "create",
+          fields: {
+            helper: "group",
+            group_type: "light",
+            name: "Study total",
+            entity_id: "light.study_total",
+            entities: ["light.study_all"],
+            area_id: "study",
+          },
+        },
+      ]);
+      expect(res.status).toBe(200);
+      expect((await res.json()) as ApplyResponse).toMatchObject({ ok: true, results: [{ ok: true }, { ok: true }] });
+      expect(t.fake.home.entities.some((e) => e.entity_id === "light.study_all")).toBe(true);
+      expect(t.changes.list()).toEqual([]);
+      expect(t.history.runs()[0]).toMatchObject({ status: "completed" });
+      expect(t.snapshots).toHaveLength(1);
+      expect(backup).not.toHaveBeenCalled();
+    });
 
-  it("keeps a recovery queue after backup failure and blocks future direct edits", async () => {
-    const t = setup({ mode: "app", backup: async () => ({ ok: false, reason: "no backup" }) });
+  it("keeps a recovery queue after an HA read failure and blocks future direct edits", async () => {
+    const t = setup({
+      mode: "app",
+      onApplyRead: async () => {
+        throw new Error("HA read failed");
+      },
+    });
     await save(t, false);
     expect((await direct(t, [AREA_RENAME])).status).toBe(502);
     expect(t.changes.list()).toHaveLength(1);
     expect(t.history.runs()[0]).toMatchObject({ status: "failed" });
+    t.fake.failRead.clear();
     expect((await direct(t, [OTHER_RENAME])).status).toBe(409);
     nothingWritten(t);
   });
@@ -1112,14 +1078,13 @@ describe("direct changes and general settings", () => {
     });
     const t = setup({
       mode: "app",
-      backup: async (name) => {
+      onApplyRead: async () => {
         await held;
-        return { ok: true, name, slug: "late" };
       },
     });
     await save(t, false);
     const first = direct(t, [AREA_RENAME]);
-    await vi.waitFor(() => expect(t.backupNames).toHaveLength(1));
+    await vi.waitFor(() => expect(t.applyReads).toHaveLength(1));
     expect((await direct(t, [OTHER_RENAME])).status).toBe(409);
     expect((await save(t, true, "1")).status).toBe(409);
     release();
@@ -1145,39 +1110,44 @@ describe("direct changes and general settings", () => {
   });
 });
 
-it("applies a direct button assignment through the guarded runner", async () => {
-  const t = setup();
-  withButtonDemo(t.fake.home);
-  const list = (await (await t.get("/api/buttons")).json()) as { inventory: { controls: { id: string; gestures: { key: string }[] }[] }; fingerprint: string };
-  const control = list.inventory.controls.find((c) => c.gestures.length > 0)!;
-  expect(control).toBeDefined();
-  const assignment = {
-    controlId: control.id,
-    gestureKey: control.gestures[0].key,
-    action: { service: "light.toggle", entityId: "light.desk", data: {} },
-    enabled: true,
-    allowExisting: true,
-    fingerprint: list.fingerprint,
-    changesVersion: t.version(),
-  };
-  expect((await t.call("PUT", "/api/settings/general", { reviewChangesBeforeApplying: false }, { "If-Match": "0" })).status).toBe(200);
-  expect((await t.post("/api/buttons/assign", assignment)).status).toBe(409);
-  const previewResponse = await t.post("/api/buttons/preview-assignment", { ...assignment, settingsRevision: "1" });
-  expect(previewResponse.status).toBe(200);
-  const preview = (await previewResponse.json()) as { previewVersion: string };
-  expect((await t.post("/api/buttons/assign", { ...assignment, settingsRevision: "1", previewVersion: preview.previewVersion })).status).toBe(409);
-  const response = await t.post("/api/buttons/assign", {
-    ...assignment,
-    settingsRevision: "1",
-    previewVersion: preview.previewVersion,
-    allowWithoutBackup: true,
+for (const mode of ["app", "dev"] as const)
+  it(`applies a direct button assignment in ${mode} without backup`, async () => {
+    const backup = vi.fn(async () => ({ ok: false as const, reason: "must not run" }));
+    const t = setup({ mode, backup });
+    withButtonDemo(t.fake.home);
+    const list = (await (await t.get("/api/buttons")).json()) as {
+      inventory: { controls: { id: string; gestures: { key: string }[] }[] };
+      fingerprint: string;
+    };
+    const control = list.inventory.controls.find((c) => c.gestures.length > 0)!;
+    expect(control).toBeDefined();
+    const assignment = {
+      controlId: control.id,
+      gestureKey: control.gestures[0].key,
+      action: { service: "light.toggle", entityId: "light.desk", data: {} },
+      enabled: true,
+      allowExisting: true,
+      fingerprint: list.fingerprint,
+      changesVersion: t.version(),
+    };
+    expect((await t.call("PUT", "/api/settings/general", { reviewChangesBeforeApplying: false }, { "If-Match": "0" })).status).toBe(200);
+    expect((await t.post("/api/buttons/assign", assignment)).status).toBe(409);
+    const previewResponse = await t.post("/api/buttons/preview-assignment", { ...assignment, settingsRevision: "1" });
+    expect(previewResponse.status).toBe(200);
+    const preview = (await previewResponse.json()) as { previewVersion: string };
+    const response = await t.post("/api/buttons/assign", {
+      ...assignment,
+      settingsRevision: "1",
+      previewVersion: preview.previewVersion,
+    });
+    const body = (await response.json()) as ApplyResponse;
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body.ok && body.results.every((r) => r.ok), JSON.stringify(body)).toBe(true);
+    expect(t.changes.list()).toEqual([]);
+    expect(t.history.runs()[0].status).toBe("completed");
+    expect(body.ok && body.backup.made).toBe(false);
+    expect(backup).not.toHaveBeenCalled();
   });
-  const body = (await response.json()) as ApplyResponse;
-  expect(response.status, JSON.stringify(body)).toBe(200);
-  expect(body.ok && body.results.every((r) => r.ok), JSON.stringify(body)).toBe(true);
-  expect(t.changes.list()).toEqual([]);
-  expect(t.history.runs()[0].status).toBe("completed");
-});
 
 it("fences stale direct clients across a mode round trip", async () => {
   const t = setup();
@@ -1221,7 +1191,7 @@ it("previews exact direct changes without saving or writing and refuses stale Ho
   };
   expect(response.status).toBe(200);
   expect(preview.changes[0]).toMatchObject({ targetId: "kitchen", after: { name: "Cooking" } });
-  expect(preview.requiresNoBackupConfirmation).toBe(true);
+  expect(preview.requiresNoBackupConfirmation).toBe(false);
   expect(t.changes.list()).toEqual([]);
   nothingWritten(t);
   t.fake.home.areas.find((a) => a.area_id === "kitchen")!.name = "Externally changed";
@@ -1251,8 +1221,13 @@ it("previews a local-only setting without saving it, then returns the authoritat
   nothingWritten(t);
 });
 
-it("saves confirmed setting and retains recovery queue if the HA backup fails", async () => {
-  const t = setup({ mode: "app", backup: async () => ({ ok: false, reason: "backup unavailable" }) });
+it("saves confirmed setting and retains recovery queue if an HA read fails", async () => {
+  const t = setup({
+    mode: "app",
+    onApplyRead: async () => {
+      throw new Error("HA read failed");
+    },
+  });
   for (const id of ["binary_sensor.study_motion_a", "binary_sensor.study_motion_b"]) {
     t.fake.home.entities.push({ entity_id: id, platform: "demo", area_id: "study", unique_id: id });
     t.fake.home.states.push({ entity_id: id, state: "off", attributes: { device_class: "motion" } });
@@ -1364,17 +1339,16 @@ it("commits an unchanged rename preview through the guarded runner", async () =>
   expect(t.fake.home.entities.some((e) => e.entity_id === "light.living_spots_new")).toBe(true);
 });
 
-it("refuses a rename if references change while its backup is made", async () => {
+it("refuses a rename if references change after review", async () => {
   let mutate = () => {};
   const t = setup({
     mode: "app",
-    backup: async (name) => {
+    onApplyRead: async () => {
       mutate();
-      return { ok: true, name, slug: "made" };
     },
   });
   mutate = () => {
-    (t.fake.home.automations["1700000000001"] as Record<string, unknown>).description = "changed during backup";
+    (t.fake.home.automations["1700000000001"] as Record<string, unknown>).description = "changed after review";
   };
   await t.call("PUT", "/api/settings/general", { reviewChangesBeforeApplying: false }, { "If-Match": "0" });
   const request = {
@@ -1411,9 +1385,8 @@ it("previews area sensor repointing and fences newly affected areas", async () =
   let mutate = () => {};
   const t = setup({
     mode: "app",
-    backup: async (name) => {
+    onApplyRead: async () => {
       mutate();
-      return { ok: true, name, slug: "made" };
     },
   });
   await t.call("PUT", "/api/settings/general", { reviewChangesBeforeApplying: false }, { "If-Match": "0" });
