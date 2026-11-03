@@ -1447,20 +1447,19 @@ settings, then review and reapply your intended edits.
 Apply:
 
 **Apply one change.** Each change on the page has its own **Apply** beside
-Remove. It does the same as Apply all, backup, apply, check, for that change only.
+Remove. It does the same as Apply all: confirm, apply, and check that change.
 If it needs another change in the list first (an area it moves something into, the
 helper a recipe uses, the blueprint of a recipe, a rename whose new id a group
 lists), the button says **Apply with N more** and the card lists them ("Also
 applies: …"): those are applied with it, in the same order Apply all uses, and
 nothing else. A change that others depend on can be applied alone.
 
-Apply all:
+Apply all does not make a backup of Home Assistant:
 
-1. makes a backup of Home Assistant (if the backup fails, nothing is changed);
-2. applies the changes: first the registries (names, ids, areas, floors,
+1. applies the confirmed changes: first the registries (names, ids, areas, floors,
    labels, categories), then the blueprints of recipes, then the helpers, then
    the automations of recipes, then the Announce script;
-3. reads Home Assistant back and checks each one. A change that didn't take
+2. reads Home Assistant back and checks each one. A change that didn't take
    stays in the list with the reason.
 
 ### Apply history and repairs
@@ -1707,9 +1706,6 @@ Every address Taxis can contact:
   reads the registries, states, services and the configuration of automations,
   scripts, scenes and dashboards. It writes only when you apply the change list.
   Outside Home Assistant (for development) it talks to the `HA_URL` you set.
-- **The Supervisor** (`http://supervisor`, inside Home Assistant only), to ask for
-  a partial backup of Home Assistant before Apply. It is the only thing Taxis asks
-  of the Supervisor.
 - **Anthropic** (`https://api.anthropic.com`), only when AI is on and the provider
   is Anthropic.
 - **The OpenAI-compatible service you chose** (the base URL you entered: OpenAI,

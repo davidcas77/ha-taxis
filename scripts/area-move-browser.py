@@ -1,5 +1,5 @@
 """Area moves against an intercepted hierarchy; no request writes reach the server."""
-import copy, json, os, unittest, urllib.request
+import copy, json, os, re, unittest, urllib.request
 from playwright.sync_api import sync_playwright, expect
 from browser_common import BASE, launch, screenshot_dir
 
@@ -40,19 +40,40 @@ class AreaMove(unittest.TestCase):
             nav = page.get_by_role('navigation', name='Floors and areas')
             page.screenshot(path=str(screenshot_dir() / 'area-move-initial.png'))
             coffee = nav.get_by_role('button', name='Coffee 0', exact=True)
+            def start_drag(source):
+                box = source.bounding_box(); page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2); page.mouse.down()
+                page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2 + 15, steps=5)
+                expect(nav.get_by_text('Drop on a floor to keep the Space', exact=False)).to_be_visible()
+            def hover(destination):
+                box = destination.bounding_box(); page.mouse.move(box['x'] + 20, box['y'] + 10, steps=8)
+                page.mouse.move(box['x'] + 21, box['y'] + 10)
+                expect(destination.locator('..')).to_have_class(re.compile('ring-2'))
             def drag(source, destination):
-                box = source.bounding_box(); page.mouse.move(box['x'] + 20, box['y'] + 10); page.mouse.down()
-                page.mouse.move(box['x'] + 40, box['y'] + 10, steps=5)
-                box = destination.bounding_box(); page.mouse.move(box['x'] + 20, box['y'] + 10, steps=8); page.mouse.up()
+                start_drag(source); hover(destination)
+                page.mouse.up()
             coffee.click()
-            drag(coffee, nav.get_by_role('button', name='Second', exact=True))
+            drag(coffee.get_by_title('Drag to a floor or Space'), nav.get_by_role('button', name='Second', exact=True))
             page.wait_for_timeout(500)
             self.assertEqual(submitted[-1], {'kind': 'area', 'op': 'update', 'targetId': 'coffee', 'fields': {'floor_id': 'second'}})
             expect(coffee).to_have_attribute('aria-current', 'true')
-            drag(coffee, nav.get_by_role('button', name='Studio', exact=True).nth(1))
+            second = nav.get_by_role('button', name='Second', exact=True)
+            second.click(); expect(second).to_have_attribute('aria-expanded', 'false'); coffee.click()
+            start_drag(coffee); hover(second)
+            expect(second).to_have_attribute('aria-expanded', 'true')
+            page.mouse.move(1, 1, steps=8); page.mouse.up()
+            expect(second).to_have_attribute('aria-expanded', 'false')
+            start_drag(coffee); hover(second)
+            hover(nav.get_by_role('button', name='Studio', exact=True).nth(1)); page.mouse.up()
             page.wait_for_timeout(500)
             self.assertEqual(submitted[-1]['fields'], {'floor_id': 'second', 'labels': ['other', 'studio']})
             self.assertEqual(submitted[-1]['areaMove']['spaceLabelId'], 'studio')
+            search = page.get_by_placeholder('Find an area or entity')
+            search.fill('Coffee')
+            expect(second).to_have_count(0)
+            start_drag(coffee)
+            expect(second).to_be_visible()
+            page.mouse.move(1, 1, steps=8); page.mouse.up()
+            search.fill('')
             drag(coffee, nav.get_by_role('button', name='Empty', exact=True).nth(1))
             page.wait_for_timeout(500)
             self.assertEqual(submitted[-1]['fields'], {'floor_id': 'second', 'labels': ['other', 'empty']})

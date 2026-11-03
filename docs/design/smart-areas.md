@@ -28,7 +28,7 @@ Home Assistant UI and keeps working if Taxis is stopped or uninstalled.
 4. **Adopt before create.** If the install already has a helper that does the
    job, Taxis recognises it and adopts it (rename to the canonical id through
    the existing rename-with-references flow) instead of creating a duplicate.
-5. **Everything goes through the change list.** Preview, backup, apply, verify,
+5. **Everything goes through the change list.** Preview, apply, verify,
    exactly like renames in 0.4. Nothing is written straight away.
 6. **Deterministic recipes.** Automations are created from Taxis-owned
    blueprints filled with the area's parameters. Same input, same output,
@@ -878,7 +878,7 @@ close match in the same area is adopted with a members update.
 
 ## What Taxis must be allowed to write
 
-New writes, all through the change list with backup and verify:
+New writes, all through the change list with confirmation and verification:
 
 - The light groups of the floors and the house add none: the same `group` config flow, the same options flow for their members and the same entity registry update, with no area.
 
@@ -1047,7 +1047,7 @@ long enough that they give nothing away). Every error message passes through
 **AI has no write path.** It returns text and tool calls to the caller; it can
 neither call a Home Assistant service nor write to the registries. When a
 feature lets it propose something, the proposal becomes a change in the change
-list (principle 5): the same preview, backup, apply and verify as any edit.
+list (principle 5): the same preview, apply and verify as any edit.
 
 ### Layers
 

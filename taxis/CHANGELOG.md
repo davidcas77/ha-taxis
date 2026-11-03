@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.95
+
+- **Applying changes.** Direct edits and Changes no longer create automatic
+  backups; backup acknowledgement prompts have been removed, along with the
+  add-on's backup privilege. Confirmation, readback, conflict checks and history remain.
+- **Moving areas.** A visible grip and highlighted destinations make area moves
+  easier to follow. Collapsed floors temporarily expand during a move, and
+  destinations are revealed while searching.
+- **Existing organization.** Native floor and Space label semantics are unchanged.
+  Installed groups and recipes are not migrated automatically after area moves.
+
 ## 0.7.94
 
 - **Editing and Changes.** Choose direct editing or review through Changes in

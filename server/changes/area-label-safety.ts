@@ -59,7 +59,7 @@ export function areaMoveLabels(
   return error ?? [...new Set(result)];
 }
 
-/** Server-captured evidence, kept private from Changes and checked again after backup. */
+/** Server-captured evidence, kept private from Changes and checked again before applying. */
 export function areaSpaceSnapshot(
   h: Hierarchy,
   changes: readonly Change[],

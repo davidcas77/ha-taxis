@@ -32,9 +32,8 @@ function validOnly(only: unknown): only is number[] {
 //   2. check the list is the one the user confirmed (`version`), and which part
 //      of it `only` asks for;
 //   3. preflight the naming, so nothing is written under ambiguous area codes;
-//   4. make a Supervisor backup (required in app mode, explicit in dev mode);
-//   5. apply, in the order changes/all.ts documents;
-//   6. let the finished changes leave the list, drop every cache, and read Home
+//   4. apply, in the order changes/all.ts documents;
+//   5. let the finished changes leave the list, drop every cache, and read Home
 //      Assistant once more, so the next view is current and a snapshot is kept.
 export function applyRoutes(ctx: AppContext): Hono {
   const { reader, changes, ha, rest, target } = ctx;
@@ -76,10 +75,10 @@ export async function runLockedApply(
   ctx: AppContext,
   c: Context,
   pending: Change[],
-  body: ApplyBody,
+  _body: ApplyBody,
   verifyReferences?: () => Promise<ConfirmedReferences | null>,
 ): Promise<Response> {
-  const { reader, changes, history, settings, logger, ha, rest, mode, clock } = ctx;
+  const { reader, changes, history, settings, logger, ha, rest, clock } = ctx;
   if (!ha || !rest) {
     reader.endApply();
     return c.json<ApplyResponse>({ ok: false, error: ctx.notConfigured }, 503);
@@ -97,29 +96,9 @@ export async function runLockedApply(
       }
     }
 
-    // Backup first. Inside Home Assistant it's required: no backup, no changes.
-    // In development there's no Supervisor, so applying needs an explicit OK.
-    let backup: ApplyResult["backup"];
-    if (mode === "app") {
-      const name = `Taxis before applying ${pending.length} change${pending.length === 1 ? "" : "s"}`;
-      logger.info(`Making a backup: ${name}`);
-      const made = await ctx.backup(name);
-      if (!made.ok) {
-        history.finish(runId, [], `Backup failed; nothing was changed. ${made.reason}`, false);
-        logger.error("Backup failed, nothing was applied", made.reason);
-        return c.json<ApplyResponse>({ ok: false, error: `Nothing was changed. ${made.reason}` }, 502);
-      }
-      backup = { made: true, name, slug: made.slug };
-    } else if (body.allowWithoutBackup) {
-      backup = { made: false, reason: "Running outside Home Assistant, so no backup was possible." };
-    } else {
-      history.finish(runId, [], "Development Apply requires explicit confirmation without a backup; nothing was changed.", false);
-      return c.json<ApplyResponse>({ ok: false, error: "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one." }, 409);
-    }
-
+    const backup: ApplyResult["backup"] = { made: false, reason: "Taxis did not make a backup." };
     history.backup(runId, backup);
-    // Membership can change during a backup. Recheck immediately before any
-    // write, including changes queued before Space labels were introduced.
+    // Recheck membership immediately before writing, including older queued changes.
     if (pending.some((change) => NEEDS_PREFLIGHT.has(change.kind) || change.before.spaceSnapshot)) {
       let raw = await reader.readParts(READS.hierarchy);
       let live = buildHierarchy(raw, "");

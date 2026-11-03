@@ -105,14 +105,12 @@ export function directSettingsRoutes(ctx: AppContext): Hono {
           ok: true,
           changes: enriched.map(visiblePreview),
           previewVersion: token,
-          requiresNoBackupConfirmation: !localOnly && ctx.mode === "dev",
+          requiresNoBackupConfirmation: false,
           localOnly,
           notes,
         });
       if (body.previewVersion !== token)
         return c.json({ ok: false, error: "The setting or Home Assistant changes changed. Review them again before applying." }, 409);
-      if (!localOnly && ctx.mode === "dev" && body.allowWithoutBackup !== true)
-        return c.json({ ok: false, error: "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one." }, 409);
       const refused = changes.addMany(
         effects.inputs as ChangeInput[],
         read.live,

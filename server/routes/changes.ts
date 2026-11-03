@@ -151,7 +151,7 @@ export function changeRoutes(ctx: AppContext): Hono {
         changes: enriched.map(visiblePreview),
         notes: references?.notes ?? [],
         previewVersion: previewVersion(body.settingsRevision as string, enriched, references?.evidence),
-        requiresNoBackupConfirmation: ctx.mode === "dev",
+        requiresNoBackupConfirmation: false,
       });
     } catch (e) {
       return c.json({ ok: false, error: ctx.errorText(e) }, 502);
@@ -183,8 +183,6 @@ export function changeRoutes(ctx: AppContext): Hono {
       const invalid = input && typeof input === "object" ? validateInput(input as ChangeInput) : "That change wasn't an object.";
       if (invalid) return c.json({ ok: false, error: `Change ${i + 1}: ${invalid} Nothing was added.` }, 400);
     }
-    if (ctx.mode === "dev" && body.allowWithoutBackup !== true)
-      return c.json({ ok: false, error: "Outside Home Assistant, Taxis can't make a backup. Confirm to apply without one." }, 409);
     if (!reader.tryBeginApply()) return c.json({ ok: false, error: BUSY }, 409);
     let handedOver = false;
     try {

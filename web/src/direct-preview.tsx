@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { Change, Hierarchy } from "../../shared/types.ts";
 import { ChangeDetails } from "./change-description.tsx";
 import { Button } from "./ui.tsx";
@@ -6,7 +5,6 @@ import { Button } from "./ui.tsx";
 export function DirectPreviewDialog({
   changes,
   hierarchy,
-  requiresNoBackup,
   localOnly = false,
   notes = [],
   onConfirm,
@@ -14,13 +12,11 @@ export function DirectPreviewDialog({
 }: {
   changes: Change[];
   hierarchy: Hierarchy | null;
-  requiresNoBackup: boolean;
   localOnly?: boolean;
   notes?: string[];
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const [acknowledged, setAcknowledged] = useState(false);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <section
@@ -59,14 +55,8 @@ export function DirectPreviewDialog({
             ))
           )}
         </div>
-        {requiresNoBackup && (
-          <label className="flex gap-2 text-sm">
-            <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} />
-            Taxis cannot make a Home Assistant backup here. Apply without a backup.
-          </label>
-        )}
         <div className="flex gap-2">
-          <Button tone="primary" disabled={requiresNoBackup && !acknowledged} onClick={onConfirm}>
+          <Button tone="primary" onClick={onConfirm}>
             {localOnly ? "Save in Taxis" : "Confirm and apply"}
           </Button>
           <Button tone="ghost" onClick={onCancel}>

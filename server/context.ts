@@ -24,7 +24,7 @@ export type SettingsStore = ReturnType<typeof settingsStore>;
 export type ApplyHistory = ReturnType<typeof applyHistory>;
 
 export type AppDeps = {
-  // "app": inside Home Assistant (Ingress only, a backup before every write).
+  // "app": inside Home Assistant (Ingress only).
   // "dev": anywhere else.
   mode: "app" | "dev";
   version: string;
@@ -34,8 +34,8 @@ export type AppDeps = {
   // Null when Home Assistant is not configured.
   ha: HaClient | null;
   rest: RestClient | null;
-  // The Supervisor's backup call. Only used in app mode.
-  backup: (name: string) => Promise<BackupResult>;
+  // Optional legacy injection, never called during Apply.
+  backup?: (name: string) => Promise<BackupResult>;
   // The local database, and the stores built on it.
   db: DatabaseSync;
   settings: SettingsStore;

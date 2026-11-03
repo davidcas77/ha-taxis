@@ -152,7 +152,6 @@ function DataProvider({
   const mode = useRef({ loaded: false, saving: false, review: true, revision: "", directAvailable: false });
   const [directPreview, setDirectPreview] = useState<{
     changes: Change[];
-    requiresNoBackup: boolean;
     localOnly?: boolean;
     notes?: string[];
     resolve: (confirmed: boolean) => void;
@@ -204,7 +203,7 @@ function DataProvider({
       return false;
     }
     const confirmed = await new Promise<boolean>((resolve) =>
-      setDirectPreview({ changes: plan.changes, requiresNoBackup: plan.requiresNoBackupConfirmation, localOnly: plan.localOnly, notes: plan.notes, resolve }),
+      setDirectPreview({ changes: plan.changes, localOnly: plan.localOnly, notes: plan.notes, resolve }),
     );
     setDirectPreview(null);
     return confirmed;
@@ -216,7 +215,7 @@ function DataProvider({
     return failures.length ? failures.map((result) => [result.message, ...(result.details ?? [])].join(" ")).join(" ") : null;
   };
   const runDirect = useCallback(
-    async (preview: () => Promise<DirectPreviewResponse>, send: (previewVersion: string, allowWithoutBackup: boolean) => Promise<ApplyResponse>) => {
+    async (preview: () => Promise<DirectPreviewResponse>, send: (previewVersion: string) => Promise<ApplyResponse>) => {
       setDirectError(null);
       const plan = await preview();
       if (!plan.ok) {
@@ -224,7 +223,7 @@ function DataProvider({
         return plan.error;
       }
       if (!(await confirmPreview(plan))) return "Changes were not applied.";
-      const failed = directResultError(await send(plan.previewVersion, plan.requiresNoBackupConfirmation));
+      const failed = directResultError(await send(plan.previewVersion));
       if (failed) setDirectError(failed);
       return failed;
     },
@@ -312,7 +311,7 @@ function DataProvider({
           return plan;
         }
         if (!(await confirmPreview(plan))) return { ok: false, error: "Selection was not saved." };
-        const result = await api.commitDirectSetting(kind, value, revision, mode.current.revision, plan.previewVersion, plan.requiresNoBackupConfirmation);
+        const result = await api.commitDirectSetting(kind, value, revision, mode.current.revision, plan.previewVersion);
         if (!result.ok) {
           setDirectError(result.error);
           return result;
@@ -373,7 +372,7 @@ function DataProvider({
         } else {
           failed = await runDirect(
             () => api.previewDirect(inputs, mode.current.revision),
-            (version, allow) => api.directChanges(inputs, mode.current.revision, version, allow),
+            (version) => api.directChanges(inputs, mode.current.revision, version),
           );
         }
         const refreshed = await reload(false);
@@ -426,7 +425,7 @@ function DataProvider({
         } else
           failed = await runDirect(
             () => api.previewButtonDirect(input, mode.current.revision),
-            (version, allow) => api.assignButtonDirect(input, mode.current.revision, version, allow),
+            (version) => api.assignButtonDirect(input, mode.current.revision, version),
           );
         const refreshed = await reload(false);
         if (!refreshed && !mode.current.review) {
@@ -543,7 +542,6 @@ function DataProvider({
         <DirectPreviewDialog
           changes={directPreview.changes}
           hierarchy={hierarchy}
-          requiresNoBackup={directPreview.requiresNoBackup}
           localOnly={directPreview.localOnly}
           notes={directPreview.notes}
           onConfirm={() => directPreview.resolve(true)}

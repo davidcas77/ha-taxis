@@ -197,7 +197,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
   const hasRecipe = changes.some((c) => (c.kind === "blueprint" || c.kind === "automation" || c.kind === "script") && !c.after.button_map);
   const hasButtons = changes.some((c) => validButtonMap(c.after.button_map));
   const refs = useReferences(hasRename, version);
-  const [step, setStep] = useState<"list" | "confirm" | "confirmNoBackup" | "applying">("list");
+  const [step, setStep] = useState<"list" | "confirm" | "applying">("list");
   // The change being applied on its own (the ids are the change and what it needs),
   // or null for the whole list.
   const [only, setOnly] = useState<number[] | null>(null);
@@ -220,18 +220,14 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
   const [result, setResult] = useState<{ outcome: ApplyResult; titles: Map<number, string> } | null>(null);
 
   const [historyVersion, setHistoryVersion] = useState(0);
-  const apply = async (allowWithoutBackup: boolean) => {
+  const apply = async () => {
     if (busy || step === "applying") return;
     const titles = new Map(changes.map((c) => [c.id, title(h, c)]));
     setStep("applying");
     setError(null);
-    const res = await api.apply(version, allowWithoutBackup, only ?? undefined);
+    const res = await api.apply(version, only ?? undefined);
     setHistoryVersion((v) => v + 1);
     if (!res.ok) {
-      if (/without one/.test(res.error)) {
-        setStep("confirmNoBackup");
-        return;
-      }
       setError(res.error);
       setStep("list");
       await reload(false);
@@ -288,7 +284,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                             ? "Taxis is still looking for what uses the old id."
                             : gate.unacknowledged.length > 0
                               ? "Tick I understand first: some places have to be updated by hand."
-                              : "Back up and apply just this change"
+                              : "Apply just this change"
                         }
                         onClick={() => {
                           setOnly(needed.map((x) => x.id));
@@ -323,15 +319,9 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
                     )}
                     {extra.length > 0 && <p className="text-xs text-muted">Also applies: {extra.map((x) => title(h, x)).join("; ")}.</p>}
                     {mine && step === "confirm" && (
-                      <ConfirmPanel onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
-                        Taxis first makes a backup of Home Assistant, then applies{" "}
-                        {extra.length > 0 ? `this change and the ${extra.length} it needs` : "this change"}, then reads Home Assistant back to check{" "}
-                        {extra.length > 0 ? "them" : "it"}. The rest of the list stays as it is. If the backup fails, nothing is changed.
-                      </ConfirmPanel>
-                    )}
-                    {mine && step === "confirmNoBackup" && (
-                      <ConfirmPanel onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
-                        Taxis is running outside Home Assistant (development), so it can not make a backup. Apply anyway?
+                      <ConfirmPanel onYes={() => void apply()} onNo={cancel} yes="Confirm and apply">
+                        Taxis applies {extra.length > 0 ? `this change and the ${extra.length} it needs` : "this change"}, then reads Home Assistant back to
+                        check {extra.length > 0 ? "them" : "it"}. The rest of the list stays as it is.
                       </ConfirmPanel>
                     )}
                   </Card>
@@ -369,9 +359,8 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
             </div>
           )}
           {step === "confirm" && only === null && (
-            <ConfirmPanel onYes={() => void apply(false)} onNo={cancel} yes="Back up and apply">
-              Taxis first makes a backup of Home Assistant, then applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home Assistant
-              back to check each one. If the backup fails, nothing is changed.
+            <ConfirmPanel onYes={() => void apply()} onNo={cancel} yes="Confirm and apply">
+              Taxis applies the {changes.length} change{changes.length === 1 ? "" : "s"}, then reads Home Assistant back to check each one.
               {hasHelper && (
                 <span className="mt-2 block">
                   Helpers: Taxis makes them the way Home Assistant's own helper dialogs do, then gives each its entity id and area. A helper is never deleted.
@@ -397,12 +386,7 @@ export function ChangesPage({ h }: { h: Hierarchy }) {
               )}
             </ConfirmPanel>
           )}
-          {step === "confirmNoBackup" && only === null && (
-            <ConfirmPanel onYes={() => void apply(true)} onNo={cancel} yes="Apply without a backup" danger>
-              Taxis is running outside Home Assistant (development), so it can't make a backup. Apply anyway?
-            </ConfirmPanel>
-          )}
-          {step === "applying" && <p className="text-[13px] text-muted">Backing up and applying{only ? " this change" : ""}… this can take a minute.</p>}
+          {step === "applying" && <p className="text-[13px] text-muted">Applying{only ? " this change" : ""}… this can take a minute.</p>}
         </>
       )}
       <ApplyHistory refreshKey={historyVersion} applying={step === "applying"} />
