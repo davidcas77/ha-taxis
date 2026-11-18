@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.96
+
+- **Home.** Choose a room, resume the last room, and open prioritized Health findings.
+- **Room setup.** Confirm equipment, choose an outcome, and review the Home Assistant changes before applying.
+- **Lighting.** Review detected light controllers and adjust the targets, brightness and duration for each room.
+- **Verification.** Refresh installation status from Home Assistant and record what you observe in the room.
+
 ## 0.7.95
 
 - **Applying changes.** Direct edits and Changes no longer create automatic
