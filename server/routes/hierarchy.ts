@@ -46,7 +46,7 @@ export function hierarchyRoutes(ctx: AppContext): Hono {
         canonicalLightGroups(read.live, settings.naming()),
         areaThermostats(read.live),
       );
-      return c.json<RecipesResponse>({ ok: true, installed });
+      return c.json<RecipesResponse>({ ok: true, installed, fetchedAt: read.live.fetchedAt });
     } catch (e) {
       const message = ctx.errorText(e);
       logger.error("Reading what the recipes installed failed", message);

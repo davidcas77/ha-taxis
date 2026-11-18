@@ -19,7 +19,8 @@ from browser_common import BASE, launch
 VIEWPORTS = [(1280, 800), (375, 800)]
 
 # The pages of the navigation, in order, and what each tab strip offers.
-NAV = ["Guide", "Areas", "Organize", "Recipes", "Buttons", "Parameters", "Health", "Changes", "Settings"]
+NAV = ["Home", "Rooms", "Changes", "Tools", "Settings"]
+TOOLS = ["Areas", "Organize", "Recipes", "Buttons", "Parameters", "Health"]
 ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers",
                   "zones", "automations", "blueprints", "devices", "entities", "helpers"]
 PARAMETER_TABS = ["capabilities", "helpers", "area-codes", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "covers", "safety"]
@@ -138,7 +139,7 @@ class UiEngine(unittest.TestCase):
     # ---- every page, at both widths ---------------------------------------
 
     def test_top_level_pages_do_not_scroll_sideways_and_tables_stay_in_their_card(self):
-        routes = ["#guide", "#home", "#floor/" + self.floor, "#unassigned", "#organize", "#automations/recipes", "#automations/buttons",
+        routes = ["#guide", "#rooms", "#guide/" + self.area, "#home", "#floor/" + self.floor, "#unassigned", "#organize", "#automations/recipes", "#automations/buttons",
                   "#automations/buttons/device%3Ademo_wall_buttons", "#health", "#changes", "#settings", "#settings/ai"]
         for width, height in VIEWPORTS:
             self.check_routes(routes, width, height)
@@ -206,8 +207,15 @@ class UiEngine(unittest.TestCase):
         page = self.new_page(1280, 800)
         self.open(page, "#guide")
         nav = page.get_by_role("navigation", name="Pages")
-        self.assertEqual([re.sub(r"\s+\d+$", "", re.sub(r"\s+", " ", text).strip()) for text in nav.get_by_role("button").all_inner_texts()], NAV)
-        nav.get_by_role("button", name="Recipes", exact=True).click()
+        button_names = "buttons => buttons.map(b => b.getAttribute('aria-label') || b.textContent.trim().replace(/\\s*[0-9]+$/, ''))"
+        self.assertEqual(nav.get_by_role("button").evaluate_all(button_names), NAV)
+        tools = nav.get_by_role("button", name="Tools", exact=True)
+        tool_pages = nav.get_by_role("group", name="Tools pages", exact=True)
+        recipes = tool_pages.get_by_role("button", name="Recipes", exact=True)
+        buttons = tool_pages.get_by_role("button", name="Buttons", exact=True)
+        tools.click()
+        self.assertEqual(tool_pages.get_by_role("button").evaluate_all(button_names), TOOLS)
+        recipes.click()
         page.wait_for_function("location.hash === '#automations/recipes'")
         page.get_by_role("table", name="Recipe types", exact=True).wait_for()
         self.assertEqual(page.get_by_role("heading", name="Recipes", exact=True).count(), 0)
@@ -216,22 +224,26 @@ class UiEngine(unittest.TestCase):
         self.assertEqual(details.get_by_role("tab", name="Description", exact=True).count(), 1)
         self.assertEqual(details.get_by_role("tab", name="Availability", exact=True).count(), 1)
         self.assertEqual(page.get_by_role("tablist", name="Automations").count(), 0)
-        expect(nav.get_by_role("button", name="Recipes", exact=True)).to_have_attribute("aria-current", "page")
-        nav.get_by_role("button", name="Buttons", exact=True).click()
+        tools.click()
+        expect(recipes).to_have_attribute("aria-current", "page")
+        buttons.click()
         page.wait_for_function("location.hash === '#automations/buttons'")
         page.get_by_role("heading", name="Buttons", exact=True).wait_for()
-        expect(nav.get_by_role("button", name="Buttons", exact=True)).to_have_attribute("aria-current", "page")
-        self.assertEqual(nav.get_by_role("button", name="Recipes", exact=True).get_attribute("aria-current"), None)
+        tools.click()
+        expect(buttons).to_have_attribute("aria-current", "page")
+        self.assertEqual(recipes.get_attribute("aria-current"), None)
         self.assertEqual(page.get_by_role("tablist", name="Automations").count(), 0)
         self.assertEqual(page.get_by_role("button", name="Refresh", exact=True).count(), 1)
         self.assertEqual(page.locator("header").get_by_text(re.compile(r"\d+ floors? · .*Read ")).count(), 0)
-        nav.get_by_role("button", name="Recipes", exact=True).click()
+        recipes.click()
         page.wait_for_function("location.hash === '#automations/recipes'")
-        expect(nav.get_by_role("button", name="Recipes", exact=True)).to_have_attribute("aria-current", "page")
+        tools.click()
+        expect(recipes).to_have_attribute("aria-current", "page")
         page.goto(BASE + "/#automations/buttons/device%3Ademo_wall_buttons", wait_until="networkidle")
         page.reload(wait_until="networkidle")
         page.wait_for_function("location.hash === '#automations/buttons/device%3Ademo_wall_buttons'")
-        expect(nav.get_by_role("button", name="Buttons", exact=True)).to_have_attribute("aria-current", "page")
+        tools.click()
+        expect(buttons).to_have_attribute("aria-current", "page")
         page.get_by_role("heading", name="Buttons", exact=True).wait_for()
         nav.get_by_role("button", name="Settings", exact=True).click()
         page.wait_for_function("location.hash === '#settings'")
@@ -241,13 +253,56 @@ class UiEngine(unittest.TestCase):
         tabs.get_by_role("tab", name="AI", exact=True).click()
         page.wait_for_function("location.hash === '#settings/ai'")
 
-    def test_the_phone_navigation_is_one_row_that_scrolls_by_itself(self):
+    def test_phone_navigation_opens_rooms_changes_and_tools(self):
         page = self.new_page(375, 800)
         self.open(page, "#guide")
         nav = page.get_by_role("navigation", name="Pages")
         tops = nav.get_by_role("button").evaluate_all("buttons => [...new Set(buttons.map(b => Math.round(b.getBoundingClientRect().top)))]")
         self.assertEqual(len(tops), 1, tops)
         self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"))
+        nav.get_by_role("button", name="Rooms", exact=True).click()
+        page.wait_for_url("**/#rooms")
+        page.get_by_role("heading", name="Rooms", exact=True).wait_for()
+        room = self.hierarchy["areas"]["living_room"]
+        page.get_by_label("Search rooms", exact=True).fill(room["name"])
+        page.get_by_role("main").get_by_role("button", name=re.compile(r"^" + re.escape(room["name"]))).click()
+        page.wait_for_url("**/#guide/living_room")
+        expect(nav.get_by_role("button", name="Rooms", exact=True)).to_have_attribute("aria-current", "page")
+
+        tools = nav.get_by_role("button", name="Tools", exact=True)
+        tools.focus()
+        tools.press("Enter")
+        group = nav.get_by_role("group", name="Tools pages", exact=True)
+        expect(group).to_be_visible()
+        expect(tools).to_have_attribute("aria-expanded", "true")
+        self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"))
+        group.get_by_role("button", name="Areas", exact=True).focus()
+        page.keyboard.press("Escape")
+        expect(tools).to_be_focused()
+        expect(group).to_be_hidden()
+        tools.click()
+        group.get_by_role("button", name="Areas", exact=True).click()
+        page.wait_for_url("**/#home")
+        go_back = page.get_by_role("button", name="Back to " + room["name"], exact=True)
+        go_back.click()
+        page.wait_for_url("**/#guide/living_room")
+
+        nav.get_by_role("button", name=re.compile(r"^Changes\b")).click()
+        page.wait_for_url("**/#changes")
+        go_back.click()
+        page.wait_for_url("**/#guide/living_room")
+        nav.get_by_role("button", name="Home", exact=True).click()
+        page.wait_for_url("**/#guide")
+
+    def test_health_link_opens_a_specific_check(self):
+        page = self.new_page(1280, 800)
+        self.open(page, "#health/references")
+        check = page.get_by_role("combobox", name="Check", exact=True)
+        expect(check).to_have_value("references")
+        nav = page.get_by_role("navigation", name="Pages")
+        nav.get_by_role("button", name="Tools", exact=True).click()
+        nav.get_by_role("button", name=re.compile(r"^Health\b")).click()
+        expect(check).to_have_value("all")
 
     def test_old_links_open_the_new_pages(self):
         page = self.new_page(1280, 800)
@@ -261,14 +316,15 @@ class UiEngine(unittest.TestCase):
         page.goto(BASE + f"/#area/{self.area}/devices", wait_until="networkidle")
         page.wait_for_function("(hash) => location.hash === hash", arg=f"#area/{self.area}/devices-entities")
 
-    def test_an_empty_or_unknown_link_opens_the_guide(self):
+    def test_an_empty_or_unknown_link_opens_home(self):
         page = self.new_page(1280, 800)
         for route in ["", "#", "#nowhere", "#guide"]:
             with self.subTest(route=route):
                 page.goto("about:blank")
                 page.goto(BASE + "/" + route, wait_until="networkidle")
-                page.get_by_role("heading", name="Guide", exact=True).wait_for()
-                page.get_by_role("heading", name="Your path", exact=True).wait_for()
+                nav = page.get_by_role("navigation", name="Pages")
+                expect(nav.get_by_role("button", name="Home", exact=True)).to_have_attribute("aria-current", "page")
+                expect(page.get_by_role("main").get_by_role("heading", level=1)).to_be_visible()
 
 
 if __name__ == "__main__":

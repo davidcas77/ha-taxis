@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 
 import { runHealth, type HealthReportResponse } from "../../shared/health.ts";
+import { roomLightControllers, type RoomLightControllersResponse } from "../../shared/health/lights.ts";
 import type { HealthResponse } from "../../shared/types.ts";
 import type { AppContext } from "../context.ts";
 import { healthSnapshot } from "../health/assemble.ts";
@@ -19,6 +20,33 @@ export function healthRoutes(ctx: AppContext): Hono {
       ha: target.ok ? { configured: true } : { configured: false, reason: target.reason },
     }),
   );
+
+  app.get("/health/room-light-controllers", async (c) => {
+    if (!ha || !rest) return c.json<RoomLightControllersResponse>({ ok: false, error: ctx.notConfigured }, 503);
+    const areaId = c.req.query("area") ?? "";
+    try {
+      const { read } = await reader.read(false);
+      if (!Object.hasOwn(read.live.areas, areaId)) return c.json<RoomLightControllersResponse>({ ok: false, error: "This room is no longer available." }, 404);
+      const snapshot = await reader.references(read, false);
+      return c.json<RoomLightControllersResponse>(
+        roomLightControllers(
+          {
+            snapshot: healthSnapshot(read.raw, read.live, snapshot, null),
+            inventory: settings.inventory(),
+            naming: settings.naming(),
+            parameters: settings.parameters(),
+            changes: [],
+            now: ctx.clock(),
+          },
+          areaId,
+        ),
+      );
+    } catch (e) {
+      const message = ctx.errorText(e);
+      ctx.logger.error("Reading room light controllers failed", message);
+      return c.json<RoomLightControllersResponse>({ ok: false, error: message }, 502);
+    }
+  });
 
   // Health: rule-based checks over the home as Home Assistant holds it (not the
   // preview): entities nothing answers for, references to what is gone, forgotten

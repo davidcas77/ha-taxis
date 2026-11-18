@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { normalizeLegacyHash } from "../../shared/route-hash.ts";
-import { AI_SETTINGS, AREAS_HOME, BUTTONS, GUIDE, RECIPES, SETTINGS, parseHash, toHash, type Route } from "./route.ts";
+import { AI_SETTINGS, AREAS_HOME, BUTTONS, GUIDE, RECIPES, ROOMS, SETTINGS, parseHash, toHash, type Route } from "./route.ts";
 
 // The address bar is the app's router: every page must come back from its own hash.
 const ROUTES: Route[] = [
   GUIDE,
   { page: "guide", areaId: "kitchen" },
+  ROOMS,
   AREAS_HOME,
   { page: "areas", sel: { kind: "floor", id: "ground" }, tab: "overview" },
   { page: "areas", sel: { kind: "space", id: "new:label/a b" }, tab: "overview" },
@@ -24,6 +25,7 @@ const ROUTES: Route[] = [
   { page: "parameters", tab: "capabilities" },
   { page: "parameters", tab: "safety" },
   { page: "health" },
+  { page: "health", check: "references" },
   { page: "changes" },
   SETTINGS,
   AI_SETTINGS,
@@ -40,6 +42,7 @@ describe("route hashes", () => {
   });
 
   it("names the new pages", () => {
+    expect(toHash(ROOMS)).toBe("#rooms");
     expect(toHash(RECIPES)).toBe("#automations/recipes");
     expect(toHash(BUTTONS)).toBe("#automations/buttons");
     expect(toHash(SETTINGS)).toBe("#settings");
@@ -94,5 +97,6 @@ describe("the home page", () => {
     expect(parseHash("#automations/bogus")).toEqual(RECIPES);
     expect(parseHash("#settings/bogus")).toEqual(SETTINGS);
     expect(parseHash("#area/kitchen/bogus")).toEqual({ page: "areas", sel: { kind: "area", id: "kitchen" }, tab: "overview" });
+    expect(parseHash("#health/bogus")).toEqual({ page: "health" });
   });
 });

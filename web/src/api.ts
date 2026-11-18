@@ -5,6 +5,7 @@ import type { GroupSettings } from "../../shared/groups.ts";
 import type { GuideResponse, GuideSettings } from "../../shared/guide.ts";
 import type { JevReviewInput, JevReviewResponse, JevSave, JevSettingsResponse, JevTestResponse, JevUsageResponse } from "../../shared/jev.ts";
 import type { HealthOptions, HealthReportResponse } from "../../shared/health.ts";
+import type { RoomLightControllersResponse } from "../../shared/health/lights.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
 import type { NamingSettings } from "../../shared/naming.ts";
 import type { NamingIgnores } from "../../shared/naming-ignores.ts";
@@ -146,6 +147,7 @@ export const api = {
   aiUsage: () => call<AiUsageResponse>("api/ai/usage"),
   // What Home Assistant holds that recipes need: blueprints, their automations, timers.
   recipesState: (refresh = false) => call<RecipesResponse>(`api/recipes/state${refresh ? "?refresh=1" : ""}`),
+  roomLightControllers: (areaId: string) => call<RoomLightControllersResponse>(`api/health/room-light-controllers?area=${encodeURIComponent(areaId)}`),
   // The health checks. Read-only; refresh reads Home Assistant again.
   healthReport: (refresh = false, options?: Partial<HealthOptions>) => {
     const q = new URLSearchParams();

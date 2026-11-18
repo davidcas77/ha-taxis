@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { HEALTH_CHECKS, type HealthCheck } from "../../shared/health/types.ts";
 import { DEVICES_ENTITIES, normalizeLegacyHash } from "../../shared/route-hash.ts";
 import { approveHash, confirmDraftNavigation, consumeApprovedHash } from "./draft-guard.ts";
 
@@ -7,8 +8,8 @@ import { approveHash, confirmDraftNavigation, consumeApprovedHash } from "./draf
 // Old links are rewritten first (shared/route-hash.ts), so this file only knows
 // the current pages:
 //
-//   Guide · Areas · Organize · Automations (Recipes, Buttons) · Parameters ·
-//   Health · Changes · Settings (General, AI)
+//   Home and guided rooms (Guide) · Rooms · Changes · Areas · Organize ·
+//   Automations (Recipes, Buttons) · Parameters · Health · Settings (General, AI)
 //
 // The Guide is the home page: an empty or unknown hash opens it.
 
@@ -66,7 +67,8 @@ export type Route =
   // `controlId` picks a control on the Buttons tab.
   | { page: "automations"; tab: AutomationTab; controlId: string | null }
   | { page: "guide"; areaId: string | null }
-  | { page: "health" }
+  | { page: "rooms" }
+  | { page: "health"; check?: HealthCheck }
   | { page: "changes" }
   | { page: "settings"; tab: SettingsTab };
 
@@ -75,6 +77,7 @@ export type Selection =
 
 // Shortcuts for the links the pages make to each other.
 export const GUIDE: Route = { page: "guide", areaId: null };
+export const ROOMS: Route = { page: "rooms" };
 export const AREAS_HOME: Route = { page: "areas", sel: { kind: "home" }, tab: "overview" };
 export const RECIPES: Route = { page: "automations", tab: "recipes", controlId: null };
 export const BUTTONS: Route = { page: "automations", tab: "buttons", controlId: null };
@@ -95,12 +98,16 @@ export function parseHash(hash: string): Route {
   switch (head) {
     case "guide":
       return { page: "guide", areaId: a || null };
+    case "rooms":
+      return ROOMS;
     case "automations":
       return a === "buttons" ? { page: "automations", tab: "buttons", controlId: b || null } : RECIPES;
     case "parameters":
       return { page: "parameters", tab: (PARAMETER_TABS as readonly string[]).includes(a ?? "") ? (a as ParameterTab) : PARAMETER_TABS[0] };
-    case "health":
-      return { page: "health" };
+    case "health": {
+      const check = HEALTH_CHECKS.find((entry) => entry.key === a)?.key;
+      return check ? { page: "health", check } : { page: "health" };
+    }
     case "changes":
       return { page: "changes" };
     case "settings":
@@ -142,6 +149,8 @@ export function toHash(r: Route): string {
     case "automations":
       return r.tab === "buttons" ? (r.controlId ? `#automations/buttons/${enc(r.controlId)}` : "#automations/buttons") : "#automations/recipes";
     case "health":
+      return r.check ? `#health/${r.check}` : "#health";
+    case "rooms":
     case "changes":
       return `#${r.page}`;
     case "settings":
@@ -166,13 +175,13 @@ export function useRoute(): [Route, (r: Route) => void] {
   useEffect(() => {
     const on = () => {
       if (window.location.hash !== previousHash.current && !consumeApprovedHash(window.location.hash) && !confirmDraftNavigation()) {
-        window.history.replaceState(null, "", previousHash.current || "#guide");
+        window.history.replaceState(null, "", previousHash.current || toHash(GUIDE));
         return;
       }
-      previousHash.current = window.location.hash;
       // An old link is shown as the new one in the address bar too.
       const fixed = normalizeLegacyHash(window.location.hash);
       if (fixed !== window.location.hash) window.history.replaceState(null, "", fixed);
+      previousHash.current = fixed;
       setRoute(parseHash(window.location.hash));
     };
     on();

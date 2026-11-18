@@ -33,20 +33,12 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 
 ## What it does
 
-- **Guide (the home page):** a seven-step setup guide to a complete, well-organised Home
-  Assistant (floors and areas, every entity in an area, naming, capabilities,
-  helpers, parameters, recipes, followed by review, Apply and Health), each step checked
-  against your house with a button to the exact place and instructions explaining what to do.
-  An overview explains blueprints, all recipes and their required equipment. Each step
-  links to the relevant editor; equipment, missing inputs and helper plans use your actual data.
-  Default parameters are valid and additional recipes are optional. Buttons are a later phase.
-  Expand the room-by-room guide to choose each room's purpose and automation goals, then work
-  through detected equipment, missing helpers, comfort settings and native recipe
-  prerequisites. Recommendations describe equipment types and placement, not
-  products. Pending proposals and failed reads never count as installed work;
-  installed automations still need a real-room comfort test. Save your observations
-  and notes in the Guide; relevant setup changes require a retest. Community ideas link
-  to their original discussions. Open Guide in the navigation or Guide this area.
+- **Home and Rooms.** Start with a room, or return to one you were working on.
+  Home highlights room suggestions and issues that deserve attention. Rooms lets
+  you find an area by name. You can organise its equipment, choose an outcome
+  such as gentle night lighting, and review what Taxis proposes to create in
+  Home Assistant. After installation, record how it works in the actual room.
+  Changes to the equipment or settings can make a new test necessary.
 - **Spaces:** organize floors → spaces → areas, plus areas on no floor and
   entities in no area. Spaces use Home Assistant area labels; an empty space's
   floor placement is stored in a Taxis-owned marker in its label description.

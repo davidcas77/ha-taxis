@@ -19,6 +19,7 @@ import { Button, inputClass } from "./ui.tsx";
 // and Buttons are two of them, and the AI administration is one too.
 function assistantPage(route: Route): AssistantScope["page"] {
   if (route.page === "automations") return route.tab;
+  if (route.page === "rooms") return "guide";
   if (route.page === "settings" && route.tab === "ai") return "ai-admin";
   return route.page;
 }
