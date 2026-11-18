@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { healthStates } from "../server/health/assemble.ts";
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { runHealth, type HealthFinding, type HealthItem, type HealthReport } from "./health.ts";
+import { roomLightControllers } from "./health/lights.ts";
 import { EMPTY_INVENTORY } from "./inventory.ts";
 import { DEFAULT_NAMING, type NamingSettings } from "./naming.ts";
 import { EMPTY_PARAMETERS } from "./parameters.ts";
@@ -19,7 +20,7 @@ const ago = (ms: number) => new Date(NOW - ms).toISOString();
 type E = { id: string; state?: string; area?: string | null; device?: string; members?: string[]; changed?: number; triggered?: number };
 type Dev = { id: string; name: string };
 
-function check(entities: E[], items: HealthItem[], devices: Dev[] = []): HealthReport {
+function testInput(entities: E[], items: HealthItem[], devices: Dev[] = []) {
   const reg: RawRegistry = {
     config: { location_name: "Test house" },
     floors: [{ floor_id: "ground", name: "Ground floor", level: 0 }],
@@ -44,15 +45,17 @@ function check(entities: E[], items: HealthItem[], devices: Dev[] = []): HealthR
     });
   }
   const naming: NamingSettings = { ...DEFAULT_NAMING, areaCodes: { living_room: "living", kitchen: "kitchen", hall: "hall" } };
-  return runHealth({
+  return {
     snapshot: { hierarchy: buildHierarchy(reg, "read-at"), states: healthStates(reg.states), items, installed: NOTHING_INSTALLED, notes: [] },
     inventory: EMPTY_INVENTORY,
     naming,
     parameters: EMPTY_PARAMETERS,
     changes: [],
     now: NOW,
-  });
+  };
 }
+
+const check = (entities: E[], items: HealthItem[], devices: Dev[] = []): HealthReport => runHealth(testInput(entities, items, devices));
 
 const by = (r: HealthReport, check: string): HealthFinding[] => r.findings.filter((f) => f.check === check);
 const one = (r: HealthReport, id: string): HealthFinding => {
@@ -71,6 +74,41 @@ const automation = (id: string, config: unknown, name = id): HealthItem => ({
 });
 const auto = (id: string, state = "on"): E => ({ id: `automation.${id}`, state, area: null, triggered: D });
 const light = (id: string, o: Partial<E> = {}): E => ({ id: `light.${id}`, ...o });
+
+describe("room lighting controllers", () => {
+  it("finds direct and grouped controllers for actual lights without treating triggers as actions", () => {
+    const entities = [
+      light("floor", { area: null, members: ["light.living_spots", "light.kitchen"] }),
+      light("living_spots"),
+      light("kitchen", { area: "kitchen" }),
+      auto("group"),
+      auto("direct"),
+      auto("disabled", "off"),
+      auto("unreadable"),
+      auto("sensor"),
+      auto("taxis_motion_lights_living"),
+    ];
+    const control = (id: string) => ({ actions: [{ action: "light.turn_on", target: { entity_id: id } }] });
+    const input = testInput(entities, [
+      automation("group", control("light.floor")),
+      automation("direct", control("light.living_spots")),
+      automation("disabled", control("light.living_spots")),
+      automation("unreadable", null),
+      automation("sensor", { triggers: [{ trigger: "state", entity_id: "light.living_spots" }] }),
+      automation("taxis_motion_lights_living", { use_blueprint: { path: "taxis/motion_lights.yaml", input: { night_lights: ["light.living_spots"] } } }),
+    ]);
+    const result = roomLightControllers(input, "living_room");
+    expect(result).toEqual({
+      ok: true,
+      unreadable: 1,
+      controllers: [
+        { id: "direct", entityId: "automation.direct", name: "direct", lights: ["light.living_spots"] },
+        { id: "group", entityId: "automation.group", name: "group", lights: ["light.living_spots"] },
+      ],
+    });
+    expect(roomLightControllers(input, "removed")).toMatchObject({ ok: false });
+  });
+});
 
 // ---------------------------------------------------------------------------
 

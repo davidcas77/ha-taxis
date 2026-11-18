@@ -134,7 +134,7 @@ export type RecipeInstalled = {
 
 export const NOTHING_INSTALLED: RecipeInstalled = { blueprints: {}, automations: {}, scripts: {}, timers: {}, controllers: {} };
 
-export type RecipesResponse = { ok: true; installed: RecipeInstalled } | { ok: false; error: string };
+export type RecipesResponse = { ok: true; installed: RecipeInstalled; fetchedAt?: string } | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
 // The plan.

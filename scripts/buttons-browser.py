@@ -229,7 +229,9 @@ class ButtonsRegression(fixture.GuideRegression):
         self.page.get_by_role('button', name='By output', exact=True).click()
         self.assertTrue(form.is_visible())
         self.page.once('dialog', lambda d: d.dismiss())
-        self.page.get_by_role('navigation', name='Pages').get_by_role('button', name='Areas', exact=True).click()
+        nav = self.page.get_by_role('navigation', name='Pages')
+        nav.get_by_role('button', name='Tools', exact=True).click()
+        nav.get_by_role('button', name='Areas', exact=True).click()
         self.assertTrue(form.is_visible())
 
     def test_buttons_missing_metadata_is_explicit_and_does_not_invent_clicks(self):

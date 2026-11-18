@@ -240,12 +240,17 @@ class DesktopRegression(unittest.TestCase):
         self.page.goto(BASE + "/#settings", wait_until="networkidle")
         original = self.page.locator("#id-pattern").input_value()
         self.page.locator("#id-pattern").fill(original + "_draft")
+        nav = self.page.get_by_role("navigation", name="Pages")
+        tools = nav.get_by_role("button", name="Tools", exact=True)
+        areas = nav.get_by_role("button", name="Areas", exact=True)
+        tools.click()
         self.page.once("dialog", lambda dialog: dialog.dismiss())
-        self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Areas", exact=True).click()
+        areas.click()
         self.assertTrue(self.page.url.endswith("#settings"))
         self.assertEqual(self.page.locator("#id-pattern").input_value(), original + "_draft")
+        tools.click()
         self.page.once("dialog", lambda dialog: dialog.accept())
-        self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Areas", exact=True).click()
+        areas.click()
         self.page.wait_for_url("**/#home")
 
     def test_history_and_repairs_survive_page_reload(self):
@@ -522,7 +527,11 @@ class DesktopRegression(unittest.TestCase):
         self.page.route("**/api/changes", changes)
         self.page.route("**/api/changes/batch", changes)
         self.page.goto(BASE + "/#automations/recipes", wait_until="networkidle")
-        self.assertEqual(self.page.get_by_role("navigation", name="Pages").get_by_role("button", name="Recipes", exact=True).get_attribute("aria-current"), "page")
+        nav = self.page.get_by_role("navigation", name="Pages")
+        tools = nav.get_by_role("button", name="Tools", exact=True)
+        tools.click()
+        expect(nav.get_by_role("button", name="Recipes", exact=True)).to_have_attribute("aria-current", "page")
+        tools.press("Escape")
         table = self.page.get_by_role("table", name="Recipe types", exact=True)
         table.wait_for()
         self.assertEqual(table.locator("tbody tr").count(), 15)
@@ -786,7 +795,7 @@ class DesktopRegression(unittest.TestCase):
         expect(config).not_to_have_attribute("inert", "")
         expect(details.get_by_role("combobox", name=re.compile("TV interaction: Fixture TV"))).to_have_value("holds")
         reject[0] = True
-        wanted.uncheck()
+        wanted.click()
         details.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
         expect(wanted).to_be_checked()
         expect(config).not_to_have_attribute("inert", "")
@@ -881,7 +890,7 @@ class DesktopRegression(unittest.TestCase):
         toggle = details.get_by_role("checkbox", name="Active: Garden fixture")
         expect(toggle).not_to_be_checked()
         reject[0] = True
-        toggle.check()
+        toggle.click()
         details.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
         expect(toggle).not_to_be_checked()
         reject[0] = False
@@ -1107,7 +1116,7 @@ class DesktopRegression(unittest.TestCase):
         expect(details.get_by_role("checkbox", name="Ambient lights: Fixture two", exact=True)).to_be_checked()
         self.assertNotIn("ambient_lights", saved["areas"]["lighting_fixture"])
         reject[0] = True
-        details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True).check()
+        details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True).click()
         details.get_by_role("alert").filter(has_text="Fixture save failed").wait_for()
         expect(details.get_by_role("checkbox", name="Ambient lights: Fixture one", exact=True)).not_to_be_checked()
         self.assertNotIn("ambient_lights", saved["areas"]["lighting_fixture"])
@@ -1269,7 +1278,7 @@ class DesktopRegression(unittest.TestCase):
         role = details.get_by_role("combobox", name="Occupancy role: Fixture motion")
         expect(role).to_have_value("holds")
         reject[0] = True
-        include.uncheck()
+        include.click()
         details.get_by_role("alert").filter(has_text="Fixture inventory failure").wait_for()
         expect(include).to_be_checked()
         self.assertEqual(saved["entities"]["binary_sensor.fixture_motion"]["role"], "holds")

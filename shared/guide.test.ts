@@ -3,7 +3,7 @@ import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { assessHouse, EMPTY_GUIDE, guideChoice, validateGuide, type GuideGoal } from "./guide.ts";
 import { EMPTY_INVENTORY, setCounts, setLightRole, setBedroom, setTvOccupancyRole, setRecipeWanted } from "./inventory.ts";
 import { DEFAULT_NAMING } from "./naming.ts";
-import { EMPTY_PARAMETERS } from "./parameters.ts";
+import { EMPTY_PARAMETERS, setParameter } from "./parameters.ts";
 import { NOTHING_INSTALLED, planRecipes } from "./recipes.ts";
 import { blueprintForRecipe } from "./blueprints.ts";
 import type { Change } from "./types.ts";
@@ -57,6 +57,20 @@ describe("guide preferences", () => {
       }),
     ).toMatchObject({ ok: false });
   });
+  it("persists only valid equipment confirmations and rechecks changed equipment", () => {
+    const fixture = house();
+    const read = (value = EMPTY_GUIDE) => assessHouse(fixture.get(), EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, value, NOTHING_INSTALLED, [])[0];
+    const before = read();
+    expect(before.equipmentConfirmed).toBe(false);
+    const saved = validateGuide({ ...EMPTY_GUIDE, equipment: { living_room: before.equipmentConfiguration } });
+    if (!saved.ok) throw new Error(saved.error);
+    expect(read(saved.value).equipmentConfirmed).toBe(true);
+    fixture.add("timer.living_hold", "timer", undefined, [], "idle");
+    expect(read(saved.value).equipmentConfirmed).toBe(true);
+    fixture.add("light.replacement", "demo");
+    expect(read(saved.value).equipmentConfirmed).toBe(false);
+    expect(validateGuide({ ...EMPTY_GUIDE, equipment: { living_room: "forged" } })).toMatchObject({ ok: false });
+  });
 });
 
 describe("house readiness", () => {
@@ -102,6 +116,17 @@ describe("house readiness", () => {
       assessHouse(h, inventory, naming, EMPTY_PARAMETERS, guide(["night"]), NOTHING_INSTALLED, [])[0].equipment.find((item) => item.key === "night-target")
         ?.status,
     ).toBe("ready");
+  });
+  it("reads the same explicit night target that the native lighting planner uses", () => {
+    const h = house().get();
+    const scope = { level: "area", id: "living_room" } as const;
+    const target = setParameter(EMPTY_PARAMETERS, scope, "night_lights", ["light.living_ceiling"]);
+    const assessment = assessHouse(h, EMPTY_INVENTORY, naming, target, guide(["night"]), NOTHING_INSTALLED, [])[0];
+    expect(assessment.equipment.find((item) => item.key === "night-target")).toMatchObject({ status: "ready", entityIds: ["light.living_ceiling"] });
+    const inventory = setLightRole(EMPTY_INVENTORY, "light.living_ceiling", "night");
+    const empty = setParameter(EMPTY_PARAMETERS, scope, "night_lights", []);
+    const cleared = assessHouse(h, inventory, naming, empty, guide(["night"]), NOTHING_INSTALLED, [])[0];
+    expect(cleared.equipment.find((item) => item.key === "night-target")?.status).toBe("review");
   });
   it("does not treat a helper in the preview queue as installed", () => {
     const h = house().get();

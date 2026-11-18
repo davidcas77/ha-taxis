@@ -311,10 +311,10 @@ function FindingDetail({ h, f, go }: { h: Hierarchy; f: HealthFinding; go: (r: R
 const NOTE =
   "Rule-based checks over what Taxis reads from Home Assistant: no AI, and nothing here changes anything. Some findings offer a fix, which only adds changes to the list for you to review and apply.";
 
-export function HealthPage({ h, go }: { h: Hierarchy; go: (r: Route) => void }) {
+export function HealthPage({ h, go, initialCheck = "all" }: { h: Hierarchy; go: (r: Route) => void; initialCheck?: HealthCheck | "all" }) {
   const { report, loading, error, options, setOptions, refresh } = useHealth();
   const [severity, setSeverity] = useState<Severity | "all">("all");
-  const [check, setCheck] = useState<HealthCheck | "all">("all");
+  const [check, setCheck] = useState(initialCheck);
   const [area, setArea] = useState<string>("all");
   const [query, setQuery] = useState("");
 

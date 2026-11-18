@@ -1,6 +1,23 @@
 import { entityIdsIn } from "../health-scan.ts";
-import { type HealthItem, type HealthFinding } from "./types.ts";
-import { isObject, itemKey, asItem, plural, names, type Ctx, isTaxisItem, enabled, areaOf, nameOf, reached, callCollector } from "./context.ts";
+import { type HealthItem, type HealthFinding, type HealthInput } from "./types.ts";
+import {
+  isObject,
+  itemKey,
+  asItem,
+  plural,
+  names,
+  type Ctx,
+  isTaxisItem,
+  enabled,
+  areaOf,
+  nameOf,
+  reached,
+  callCollector,
+  context,
+  inventoryOf,
+} from "./context.ts";
+import { automationIdFor } from "../recipes.ts";
+import { canonicalId } from "../helpers.ts";
 
 // ---------------------------------------------------------------------------
 // 6: several automations switching the same lights.
@@ -16,7 +33,7 @@ function lightsBehind(c: Ctx, id: string, seen = new Set<string>()): string[] {
   return [id, ...(e?.members ?? []).filter((m) => m.startsWith("light.")).flatMap((m) => lightsBehind(c, m, seen))];
 }
 
-export function lightChecks(c: Ctx): HealthFinding[] {
+function lightControllers(c: Ctx): Map<string, Set<string>> {
   const callsOf = callCollector(c);
 
   const controllers = new Map<string, Set<string>>();
@@ -40,6 +57,39 @@ export function lightChecks(c: Ctx): HealthFinding[] {
     }
     for (const l of lights) controllers.set(l, (controllers.get(l) ?? new Set<string>()).add(key));
   }
+  return controllers;
+}
+
+export type RoomLightControllersResponse =
+  { ok: true; controllers: { id: string; entityId: string | null; name: string; lights: string[] }[]; unreadable: number } | { ok: false; error: string };
+
+export function roomLightControllers(input: HealthInput, areaId: string): RoomLightControllersResponse {
+  const c = context(input);
+  const code = c.codes[areaId]?.code;
+  if (!code || !Object.hasOwn(c.h.areas, areaId)) return { ok: false, error: "This room is no longer available." };
+  const inventory = inventoryOf(c, areaId);
+  const group = canonicalId("light", code, c.suffix.lights);
+  const targets = new Set([group, ...inventory.lights.filter((row) => row.counts).map((row) => row.entityId)].flatMap((id) => lightsBehind(c, id)));
+  const own = `automation:${automationIdFor("motion_lights", code)}`;
+  const byItem = new Map<string, string[]>();
+  for (const [light, controllers] of lightControllers(c)) {
+    if (!targets.has(light)) continue;
+    for (const key of controllers) if (key !== own) byItem.set(key, [...(byItem.get(key) ?? []), light]);
+  }
+  return {
+    ok: true,
+    controllers: c.readable
+      .flatMap((item) => {
+        const lights = byItem.get(itemKey(item));
+        return lights ? [{ id: item.id, entityId: item.entityId, name: item.name, lights: lights.sort() }] : [];
+      })
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    unreadable: c.unreadable.filter((item) => item.kind === "automation" || item.kind === "script").length,
+  };
+}
+
+export function lightChecks(c: Ctx): HealthFinding[] {
+  const controllers = lightControllers(c);
 
   // Lights with the same controllers are one finding.
   const groups = new Map<string, { controllers: string[]; lights: string[] }>();

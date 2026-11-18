@@ -1,10 +1,12 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
-  Compass,
+  ChevronDown,
   FolderTree,
   GitPullRequestArrow,
   HeartPulse,
+  House,
   Layers,
   Loader2,
   MapPin,
@@ -13,6 +15,7 @@ import {
   Search,
   Settings,
   SlidersHorizontal,
+  Wrench,
   Workflow,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -22,14 +25,16 @@ import { AutomationsPage } from "./automations.tsx";
 import { ChangesPage } from "./changes.tsx";
 import { GuidePage } from "./guide.tsx";
 import { HealthPage, HealthProvider, useHealthCounts } from "./health.tsx";
+import { rememberHomeRoom } from "./home-room-memory.ts";
 import { OrganizePage } from "./organize.tsx";
 import { ParametersPage } from "./parameters.tsx";
-import { AREAS_HOME, BUTTONS, GUIDE, RECIPES, SETTINGS } from "./route.ts";
+import { RoomChooser } from "./room-chooser.tsx";
+import { AREAS_HOME, BUTTONS, GUIDE, RECIPES, ROOMS, SETTINGS } from "./route.ts";
 import { SettingsPage } from "./settings-page.tsx";
 import { SearchResults, SpaceTree, SpaceView, type Filters } from "./spaces.tsx";
 import { useStoredFlag } from "./storage.ts";
 import { TaxisProvider, useNotices, useRoute, useTaxis, type Route, type Selection } from "./state.tsx";
-import { pageMainClass } from "./ui.tsx";
+import { Page, PageHeader, pageMainClass } from "./ui.tsx";
 
 export function App() {
   return (
@@ -41,14 +46,10 @@ export function App() {
   );
 }
 
-// The page bar follows the guided path: Guide, then where the house is built
-// (Areas, Organize, Automations, Parameters), then what watches it (Health,
-// Changes); Settings sits at the right.
 const iconClass = "size-4 shrink-0";
 
 function Shell() {
   const { hierarchy, changes, loading, error, reload } = useTaxis();
-  const health = useHealthCounts();
   const [route, go] = useRoute();
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -57,6 +58,17 @@ function Shell() {
   const [disabled, setDisabled] = useStoredFlag("taxis:tree:show-disabled");
   const [showEmpty, setShowEmpty] = useStoredFlag("taxis:tree:show-empty", true);
   const filters = useMemo<Filters>(() => ({ maintenance, disabled }), [maintenance, disabled]);
+  const { page } = route;
+  const roomId = page === "guide" ? route.areaId : null;
+  const [roomContext, setRoomContext] = useState(roomId);
+  const roomExists = roomId !== null && Boolean(hierarchy?.areas[roomId]);
+  useEffect(() => {
+    if (page === "guide" || page === "rooms") setRoomContext(roomId);
+  }, [page, roomId]);
+  useEffect(() => {
+    if (roomId && roomExists) rememberHomeRoom(roomId);
+  }, [roomExists, roomId]);
+  const returnRoom = page !== "guide" && page !== "rooms" && roomContext ? hierarchy?.areas[roomContext] : undefined;
 
   // Picking a space ends a search, so the right pane shows what was picked.
   const select = useCallback(
@@ -67,65 +79,35 @@ function Shell() {
     [go],
   );
 
-  const page: Route["page"] = route.page;
-  const open = (r: Route) => () => go(r);
-
   return (
     <div className="flex h-full min-w-0 flex-col">
       <header className="shrink-0 border-b border-line bg-surface">
-        <div className="flex min-w-0 items-center gap-3 px-3 py-1.5 md:px-4">
-          <div className="flex shrink-0 items-center gap-1.5">
+        <div className="grid min-w-0 grid-cols-[1fr_auto] items-center gap-x-3 px-3 pt-1.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:py-1.5 md:px-4">
+          <div className="flex items-center gap-1.5">
             <Layers className="size-5 text-accent" aria-hidden />
             <span className="text-base font-semibold tracking-tight">Taxis</span>
           </div>
-          <nav aria-label="Pages" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-            <Tab active={page === "guide"} onClick={open(GUIDE)} icon={<Compass className={iconClass} aria-hidden />}>
-              Guide
-            </Tab>
-            <Tab active={page === "areas"} onClick={open(route.page === "areas" ? route : AREAS_HOME)} icon={<MapPin className={iconClass} aria-hidden />}>
-              Areas
-            </Tab>
-            <Tab
-              active={page === "organize"}
-              onClick={open(route.page === "organize" ? route : { page: "organize", type: "labels", id: null })}
-              icon={<FolderTree className={iconClass} aria-hidden />}
-            >
-              Organize
-            </Tab>
-            <Tab active={route.page === "automations" && route.tab === "recipes"} onClick={open(RECIPES)} icon={<Workflow className={iconClass} aria-hidden />}>
-              Recipes
-            </Tab>
-            <Tab
-              active={route.page === "automations" && route.tab === "buttons"}
-              onClick={open(route.page === "automations" && route.tab === "buttons" ? route : BUTTONS)}
-              icon={<MousePointerClick className={iconClass} aria-hidden />}
-            >
-              Buttons
-            </Tab>
-            <Tab
-              active={page === "parameters"}
-              onClick={open(route.page === "parameters" ? route : { page: "parameters", tab: "capabilities" })}
-              icon={<SlidersHorizontal className={iconClass} aria-hidden />}
-            >
-              Parameters
-            </Tab>
-            <Tab active={page === "health"} onClick={open({ page: "health" })} icon={<HeartPulse className={iconClass} aria-hidden />}>
-              Health
-              {health && health.error > 0 && <Count tone="danger">{health.error}</Count>}
-              {health && health.error === 0 && health.warning > 0 && <Count tone="warn">{health.warning}</Count>}
-            </Tab>
-            <Tab active={page === "changes"} onClick={open({ page: "changes" })} icon={<GitPullRequestArrow className={iconClass} aria-hidden />}>
+          <nav
+            aria-label="Pages"
+            className="col-span-2 col-start-1 row-start-2 flex min-w-0 items-center gap-0.5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:gap-1"
+          >
+            <NavButton active={page === "guide" && !roomId} onClick={() => go(GUIDE)}>
+              <House className={`${iconClass} hidden sm:block`} aria-hidden />
+              Home
+            </NavButton>
+            <NavButton active={page === "rooms" || Boolean(roomId)} onClick={() => go(ROOMS)}>
+              <MapPin className={`${iconClass} hidden sm:block`} aria-hidden />
+              Rooms
+            </NavButton>
+            <NavButton active={page === "changes"} onClick={() => go({ page: "changes" })}>
+              <GitPullRequestArrow className={`${iconClass} hidden sm:block`} aria-hidden />
               Changes
               {changes.length > 0 && <Count tone="warn">{changes.length}</Count>}
-            </Tab>
-            <span className="ml-auto" aria-hidden />
-            <Tab
-              active={page === "settings"}
-              onClick={open(route.page === "settings" ? route : SETTINGS)}
-              icon={<Settings className={iconClass} aria-hidden />}
-            >
-              Settings
-            </Tab>
+            </NavButton>
+            <ToolsNavigation route={route} go={go} />
+            <NavButton active={page === "settings"} onClick={() => go(page === "settings" ? route : SETTINGS)} label="Settings">
+              <Settings className={iconClass} aria-hidden />
+            </NavButton>
           </nav>
           <button
             type="button"
@@ -133,13 +115,26 @@ function Shell() {
             disabled={loading}
             aria-label="Refresh"
             title="Read Home Assistant again"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[13px] hover:bg-sunken disabled:opacity-60"
+            className="col-start-2 row-start-1 inline-flex shrink-0 items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[13px] hover:bg-sunken disabled:opacity-60 sm:col-start-3"
           >
             {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
       </header>
+
+      {returnRoom && (
+        <div className="shrink-0 border-b border-line bg-surface px-3 md:px-4">
+          <button
+            type="button"
+            className="inline-flex max-w-full items-center gap-1.5 rounded-md py-2 text-[13px] font-medium text-accent hover:underline"
+            onClick={() => go({ page: "guide", areaId: returnRoom.id })}
+          >
+            <ArrowLeft className={iconClass} aria-hidden />
+            <span className="truncate">Back to {returnRoom.name}</span>
+          </button>
+        </div>
+      )}
 
       {changes.length > 0 && route.page !== "changes" && (
         <div className="flex flex-wrap items-center gap-2 border-b border-line bg-warn-soft px-4 py-1.5 text-[13px] text-warn">
@@ -176,6 +171,11 @@ function Shell() {
         </div>
       ) : route.page === "guide" ? (
         <GuidePage h={hierarchy} areaId={route.areaId} go={go} />
+      ) : route.page === "rooms" ? (
+        <Page width="4xl">
+          <PageHeader title="Rooms" icon={<MapPin className="size-5 text-accent" aria-hidden />} />
+          <RoomChooser h={hierarchy} go={go} />
+        </Page>
       ) : route.page === "organize" ? (
         <OrganizePage h={hierarchy} type={route.type} id={route.id} go={go} />
       ) : route.page === "automations" ? (
@@ -183,7 +183,7 @@ function Shell() {
       ) : route.page === "parameters" ? (
         <ParametersPage h={hierarchy} tab={route.tab} go={go} />
       ) : route.page === "health" ? (
-        <HealthPage h={hierarchy} go={go} />
+        <HealthPage key={route.check} h={hierarchy} go={go} initialCheck={route.check} />
       ) : route.page === "changes" ? (
         <ChangesPage h={hierarchy} />
       ) : (
@@ -253,21 +253,113 @@ function Count({ tone, children }: { tone: "warn" | "danger"; children: ReactNod
   );
 }
 
-function Tab({ active, onClick, icon, children }: { active: boolean; onClick: () => void; icon: ReactNode; children: ReactNode }) {
-  // On a narrow screen the bar scrolls; keep the current page in view.
-  const ref = useRef<HTMLButtonElement>(null);
+const TOOLS = [
+  { label: "Areas", icon: MapPin, route: AREAS_HOME },
+  { label: "Organize", icon: FolderTree, route: { page: "organize", type: "labels", id: null } },
+  { label: "Recipes", icon: Workflow, route: RECIPES },
+  { label: "Buttons", icon: MousePointerClick, route: BUTTONS },
+  { label: "Parameters", icon: SlidersHorizontal, route: { page: "parameters", tab: "capabilities" } },
+  { label: "Health", icon: HeartPulse, route: { page: "health" } },
+] satisfies { label: string; icon: typeof MapPin; route: Route }[];
+
+const navButtonClass = "inline-flex min-h-10 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 text-[13px] sm:min-h-8 sm:gap-1.5 sm:px-2.5";
+
+function navButtonTone(active: boolean) {
+  return active ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-sunken hover:text-fg";
+}
+
+function ToolsNavigation({ route, go }: { route: Route; go: (route: Route) => void }) {
+  const [open, setOpen] = useState(false);
+  const disclosure = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const health = useHealthCounts();
+  const healthCount = health?.error || health?.warning || 0;
+  const healthTone = health?.error ? "danger" : "warn";
   useEffect(() => {
-    if (active) ref.current?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
-  }, [active]);
+    if (!open) return;
+    const dismiss = (event: Event) => {
+      if (!disclosure.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("focusin", dismiss);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("focusin", dismiss);
+    };
+  }, [open]);
+
+  const isActive = (target: Route) =>
+    route.page === target.page && (route.page !== "automations" || (target.page === "automations" && route.tab === target.tab));
+  const closeAndFocus = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+
+  return (
+    <div
+      ref={disclosure}
+      className="relative ml-auto"
+      onKeyDown={(event) => {
+        if (open && event.key === "Escape") {
+          event.stopPropagation();
+          closeAndFocus();
+        }
+      }}
+    >
+      <button
+        ref={trigger}
+        type="button"
+        aria-expanded={open}
+        aria-controls="tools-navigation"
+        onClick={() => setOpen(!open)}
+        className={`${navButtonClass} ${navButtonTone(open || TOOLS.some((tool) => isActive(tool.route)))}`}
+      >
+        <Wrench className={`${iconClass} hidden sm:block`} aria-hidden />
+        Tools
+        {healthCount > 0 && <span className={`size-1.5 rounded-full ${healthTone === "danger" ? "bg-danger" : "bg-warn"}`} aria-hidden />}
+        <ChevronDown className="size-3" aria-hidden />
+      </button>
+      <div
+        id="tools-navigation"
+        role="group"
+        aria-label="Tools pages"
+        hidden={!open}
+        className="absolute right-0 top-full z-30 mt-1 w-48 rounded-lg border border-line bg-surface p-1 shadow-lg"
+      >
+        {TOOLS.map(({ label, icon: Icon, route: target }) => {
+          const active = isActive(target);
+          return (
+            <button
+              key={label}
+              type="button"
+              aria-current={active ? "page" : undefined}
+              onClick={() => {
+                closeAndFocus();
+                go(active && target.page !== "health" ? route : target);
+              }}
+              className={`flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 text-left text-[13px] ${navButtonTone(active)}`}
+            >
+              <Icon className={iconClass} aria-hidden />
+              {label}
+              {target.page === "health" && healthCount > 0 && <Count tone={healthTone}>{healthCount}</Count>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function NavButton({ active, onClick, label, children }: { active: boolean; onClick: () => void; label?: string; children: ReactNode }) {
   return (
     <button
-      ref={ref}
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-[13px] ${active ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-sunken hover:text-fg"}`}
+      aria-label={label}
+      title={label}
+      className={`${navButtonClass} ${navButtonTone(active)}`}
     >
-      {icon}
       {children}
     </button>
   );

@@ -9,10 +9,12 @@ export function GuideRoomTest({
   area,
   onSave,
   openJevSettings,
+  adjustLighting,
 }: {
   area: AreaReadiness;
   onSave: (record: GuideTestRecord) => Promise<string | null>;
   openJevSettings: () => void;
+  adjustLighting?: () => void;
 }) {
   const initial = () => ({
     configuration: area.configuration,
@@ -25,7 +27,7 @@ export function GuideRoomTest({
   const [error, setError] = useState<string | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   const guard = useDraftGuard(dirty);
-  const canTest = area.stage === "test" || area.stage === "tested";
+  const canTest = area.equipmentConfirmed && (area.stage === "test" || area.stage === "tested");
   const changed = draft.configuration !== area.configuration;
   useEffect(() => {
     if (changed && !dirty) {
@@ -36,17 +38,12 @@ export function GuideRoomTest({
   }, [area.configuration, changed, dirty]);
   return (
     <section aria-label="Room test checklist" className="rounded-lg border border-line p-4 text-[13px]">
-      <h2 className="font-semibold">5. Test comfort in the room</h2>
+      <h3 className="font-semibold">Observe the room in use</h3>
       <p className="mt-2 text-muted">
-        After you review and Apply the setup, test in the actual room. Tick only behavior you have observed. These are
-        your observations, not an automatic verification. Check an HA automation trace when the result is unexpected.
+        Enter at the usual time and watch which lights or devices respond. Tick the behavior you have observed. If the result differs from the plan, check its
+        automation trace in Home Assistant.
       </p>
-      {!canTest && (
-        <p className="mt-3 text-warn">
-          Complete the equipment, helpers and recipe checks above before recording a room test. Stored configuration
-          alone does not prove that an automation is enabled.
-        </p>
-      )}
+      {!canTest && <p className="mt-3 text-warn">Finish reviewing the equipment and verify the installation before saving observations for this setup.</p>}
       {area.testRecord && (
         <div className="mt-3 rounded border border-line p-3">
           <p className={area.testCurrent ? "text-on" : "text-warn"}>
@@ -62,8 +59,7 @@ export function GuideRoomTest({
       )}
       {changed && (
         <p role="alert" className="mt-3 text-warn">
-          The room setup changed while this form was open. Your draft is kept. Start a new test for the current setup
-          before saving.
+          The room setup changed while this form was open. Your draft is kept. Start a new test for the current setup before saving.
         </p>
       )}
       <div role="group" aria-label="Observed room behavior" className="mt-4 grid gap-3 md:grid-cols-2">
@@ -77,9 +73,7 @@ export function GuideRoomTest({
               onChange={(event) =>
                 setDraft({
                   ...draft,
-                  checked: event.target.checked
-                    ? [...draft.checked, check.key]
-                    : draft.checked.filter((key) => key !== check.key),
+                  checked: event.target.checked ? [...draft.checked, check.key] : draft.checked.filter((key) => key !== check.key),
                 })
               }
             />
@@ -139,6 +133,11 @@ export function GuideRoomTest({
           {area.checks.filter((check) => draft.checked.includes(check.key)).length} of {area.checks.length} observed
         </span>
       </div>
+      {adjustLighting && (
+        <Button className="mt-3" onClick={adjustLighting}>
+          Adjust lights or duration
+        </Button>
+      )}
       {error && (
         <p role="alert" className="mt-3 text-danger">
           {error}

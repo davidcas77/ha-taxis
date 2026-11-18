@@ -5,14 +5,10 @@ the areas on each floor, and every device and entity in them, and lets you
 organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
-The pages along the top, in the order Taxis takes you through a house: **Guide**
-(the home page), **Areas**, **Organize**, **Automations** (the tabs **Recipes** and
-**Buttons**), **Parameters**, **Health** and **Changes**, with **Settings** (the tabs
-**General** and **AI**) at the right. The sparkle button at the bottom right of every
-page opens [Ask Taxis](#ask-taxis). Devices and entities are in Organize, and in a tab
-of each area. Old links keep working: `#devices`, `#entities` and `#entities/<id>` open
-the same section of Organize, `#recipes` and `#buttons` open the tabs of Automations,
-`#ai-admin` and `#ai` open Settings → AI, and an empty or unknown link opens the Guide.
+Open **Home** to pick up a room or find a place to start. **Rooms** opens the
+room chooser. **Changes** holds proposals waiting for review. Open **Tools** for
+Areas, Organize, Recipes, Buttons, Parameters and Health. **Settings** contains
+editing preferences and AI configuration. The sparkle button opens [Ask Taxis](#ask-taxis).
 
 **Tables.** Every table works the same way. It scrolls inside its own card, never
 the page, and its header stays in view. When the columns don't fit, the least
@@ -285,7 +281,7 @@ What Taxis knows about each area, and the choices later features build on. The
 page has a bar of tabs: **Capabilities**, **Helpers**, **Area codes**, **House**,
 **Occupancy**, **Lighting**, **Media**, **Climate**, **Bathroom fan**, **Exterior**,
 **Covers** and **Safety**.
-**Recipes** has its own page in the main navigation, immediately after Organize.
+Open **Tools → Recipes** for the recipe catalogue.
 
 **Capabilities** is a table of areas by capability: lights, motion, presence,
 doors, windows, temperature, humidity, light level, climate, speakers, TVs,
@@ -599,7 +595,7 @@ reporting; see _House recipes_ below):
 - **Bathroom fan**, **Exterior lights**, **Left open**, **Appliance done** and
   **Announce** are described below.
 
-Open **Recipes** from the main navigation after Organize. Its **Table** view
+Open **Tools → Recipes**. Its **Table** view
 shows areas by recipes, with a row for the house at the top for Announce. Switch
 to **Records** for a searchable list and a selected recipe's explanation, status,
 requirements and proposed changes. Selecting or inspecting a recipe does not
@@ -956,82 +952,30 @@ does.
 
 ## Guide
 
-**Guide** is the home page, and the path Taxis takes you along to a complete,
-well-organised Home Assistant. It changes nothing in Home Assistant itself; the
-steps it sends you to add proposals to [Changes](#changes-and-apply), for you to
-review and apply.
+Start on **Home**, or open **Rooms** to find a particular room. A room can be
+useful exactly as it is. If you came to organise equipment, review the devices
+and their assignments and finish there. You can also choose what you would
+like the room to do.
 
-**Your path** is a checklist of nine steps, each checked against what Taxis has read,
-with a short summary, a status (_Done_, _Needs attention_, _Not started_, or _Reading_
-or _Couldn't read_ while the data loads or fails; a step that couldn't be read is
-never counted as done) and a button that opens the exact place. A progress bar and a
-**Next step** card point at the first step that isn't done.
+For example, to set up gentle night lighting:
 
-1. **Floors and areas**: areas without a floor (opens them in Organize).
-2. **Every entity in an area**: entities in no area (opens _Not in any area_).
-3. **Naming**: entity ids that match their area's code, for example 38 of 46 (opens
-   the area with the most to fix, on its Naming tab).
-4. **Capabilities**: areas that have equipment but nothing counted (Parameters → Capabilities).
-5. **Helpers**: helpers to create or update, conflicts, and those in place (Parameters → Helpers).
-6. **Parameters**: whether any house, floor or room setting has been chosen yet.
-7. **Recipes**: rooms ready, installed, and changes waiting (Automations → Recipes).
-8. **Buttons**: controls found and press types still without an action (Automations → Buttons).
-9. **Health**: errors and warnings of the last check (Health).
+1. Open the room and review the light and motion or presence inputs. Correct
+   their room assignments or adjust which sources Taxis should count.
+2. Choose the lighting outcome. Check which equipment and settings Taxis would
+   use, and inspect existing automation relationships before adding another
+   controller for the same lights.
+3. Read the proposed behaviour and the native helpers and automations it needs.
+   Review and apply through **Changes**, or use the confirmation preview if you
+   enabled direct editing in Settings.
+4. Once the automation is installed and enabled, try it in the room. Check the
+   brightness and how long the light stays on. Adjust the room settings if
+   needed and record what you observed. Relevant changes to equipment or
+   configuration require another test.
 
-Under the nine steps, **Safety, the house and covers** lists goals that lead you to
-the recipes that look after the whole house. A goal is listed only when it applies,
-and is _Done_ when its recipes are installed or waiting in Changes (_Needs attention_
-when only some are, or one is out of date; _Not started_ when none is). Each one
-opens Automations → Recipes:
-
-- **Add a leak alert for every area with a leak sensor**: only when an area has one;
-  done when every such area has Leak alert installed or in Changes.
-- **Watch batteries and sensors that stop reporting**: Low batteries and Not
-  reporting, both.
-- **Know when everyone is away**: House presence.
-- **Say goodbye to the house in one go**: the Goodbye script.
-- **Close the covers against the sun in every area with covers**: only when an area
-  has a cover; done when every such area has Covers and sun installed or in Changes.
-
-Below the path, **Room by room** is the guide for each area: you say what a room is
-for, and Taxis shows what the room has and what is still missing. It shows:
-
-- four counts: areas with chosen goals, areas ready for a room test, areas tested
-  by you, and areas awaiting review and Apply;
-- **Guest, away and sleep**, the three house modes (below);
-- **Start with one room**, a card for every area with its floor, its room type and
-  goals, and where it stands (for example _Review equipment_, _Prepare helpers_,
-  _Ready for a room test_). Choose a card to open the area. **Guide this area** on
-  an area's page opens the same place;
-- **Ideas from real homes**, automation ideas with a link to the original
-  discussion (a link only: Taxis does not fetch it) and the recipes that implement
-  each one.
-
-Inside an area, work from the top:
-
-1. **Choose this area's purpose.** Pick a **room type** (bedroom, living or dining
-   room and so on). That selects suggested goals, such as comfortable automatic
-   lighting, gentle night lighting, reliable occupancy, room climate, switching
-   media off in empty rooms, humidity-controlled ventilation, outdoor evening
-   lighting, door and window reminders or appliance-finished notifications. Adjust
-   them before you save. The choice stays in Taxis.
-2. **Review equipment and controls.** For each goal, the equipment it needs
-   (_Detected and reporting_, _Review existing entities_, _Needed for this goal_ or
-   _Optional improvement_), with the entities found and advice on types and
-   placement. The advice never names brands. A detected entity is not proof of good
-   coverage. **Review this area's capabilities** opens the area's Capabilities tab.
-3. **Prepare helpers.** The canonical helpers the goals need, with their status.
-   Add them to Changes from here.
-4. **Review comfort settings.** The values from [Parameters](#parameters) the
-   generated automations will use for this area, with links to edit them.
-5. **Set up native automations.** The recipes the goals call for, in order
-   (occupancy first). A missing requirement explains the next step. A pending
-   proposal, or an automation Taxis could not read, never counts as installed.
-6. **Test comfort in the room.** After you apply the setup, tick the behaviour you
-   have actually observed, write notes and **Save room test record**. These are
-   your observations, not an automatic check. A change to the room's settings,
-   equipment, helper members or installed recipes means the room needs a retest;
-   routine sensor values do not.
+For house-wide maintenance, expand **Whole-house guide** at the bottom of Home.
+It includes the original checklist, explanations of helpers and recipes, house
+modes, and automation ideas. **Tools → Health** opens the full report. Selecting
+a Health priority on Home opens the report filtered to that check.
 
 **Guest, away and sleep.** Three manual toggles (`away`, `sleep`, `guest`) that
 the recipes respect. _Away_ stops automatic indoor lights from turning on. _Sleep_
