@@ -130,6 +130,7 @@ export function OrganizePage({ h, type, id, go }: { h: Hierarchy; type: Organize
   const [collapsed, setCollapsed] = useStoredValue("taxis:organize:sidebar-collapsed", false, (value): value is boolean => typeof value === "boolean");
   // On narrow screens only one pane shows; wide screens show all three.
   const [step, setStep] = useState<Step>(id ? "props" : "items");
+  useEffect(() => setStep(id ? "props" : "items"), [type, id]);
   const pick = (t: OrganizeType) => {
     go({ page: "organize", type: t, id: null });
     setStep("items");

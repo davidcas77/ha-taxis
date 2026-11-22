@@ -8,6 +8,9 @@ import { resolveAll, roleLights, type ParameterSettings } from "./parameters.ts"
 import type { Change, Hierarchy } from "./types.ts";
 import { GUIDE_CHECKS, currentRoomTest, guideConfiguration, roomChecks, type GuideTestRecord } from "./guide-checks.ts";
 import { planHouseModes } from "./house-modes.ts";
+import { assessRoomAutomations, ROOM_AUTOMATIONS, type AutomationTests, type RoomAutomation, type RoomAutomationKey } from "./guide-automations.ts";
+
+export type { AutomationEquipmentCheck, RoomAutomation, RoomAutomationKey } from "./guide-automations.ts";
 
 // The guide describes chosen outcomes. It does not replace inventory choices,
 // helper naming or recipe planning, and never controls a device.
@@ -112,11 +115,40 @@ export const ROOM_PROFILES = [
 ] as const satisfies readonly { key: string; label: string; goals: readonly GuideGoal[]; advice: string }[];
 export type RoomProfile = (typeof ROOM_PROFILES)[number]["key"];
 export type AreaGuideChoice = { profile: RoomProfile; goals: GuideGoal[] };
-export type GuideSettings = { areas: Record<string, AreaGuideChoice>; equipment?: Record<string, string>; tests?: Record<string, GuideTestRecord> };
+export type GuideSettings = {
+  areas: Record<string, AreaGuideChoice>;
+  equipment?: Record<string, string>;
+  tests?: Record<string, GuideTestRecord>;
+  automationTests?: AutomationTests;
+};
 export const EMPTY_GUIDE: GuideSettings = { areas: {} };
 export type GuideResponse = { ok: true; guide: GuideSettings; revision?: string } | { ok: false; error: string };
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const fingerprint = (value: unknown): value is string => typeof value === "string" && /^room-v1-[a-f0-9]{16}$/.test(value);
+
+function validatedTest(test: unknown): GuideTestRecord | null {
+  if (
+    !record(test) ||
+    !fingerprint(test.configuration) ||
+    !Array.isArray(test.checked) ||
+    test.checked.length > GUIDE_CHECKS.length ||
+    test.checked.some((key) => !GUIDE_CHECKS.some((check) => check.key === key)) ||
+    typeof test.notes !== "string" ||
+    test.notes.length > 2000 ||
+    typeof test.testedAt !== "string" ||
+    !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(test.testedAt) ||
+    !Number.isFinite(Date.parse(test.testedAt))
+  )
+    return null;
+  return {
+    configuration: test.configuration,
+    checked: [...new Set(test.checked)] as GuideTestRecord["checked"],
+    notes: test.notes,
+    testedAt: test.testedAt,
+  };
+}
+
 export function validateGuide(input: unknown): { ok: true; value: GuideSettings } | { ok: false; error: string } {
   if (!record(input) || !record(input.areas)) return { ok: false, error: "The area guide choices weren't readable." };
   const entries = Object.entries(input.areas);
@@ -133,10 +165,9 @@ export function validateGuide(input: unknown): { ok: true; value: GuideSettings 
   if (input.equipment !== undefined) {
     if (!record(input.equipment) || Object.keys(input.equipment).length > 500) return { ok: false, error: "Confirm equipment for up to 500 rooms." };
     const equipment: [string, string][] = [];
-    for (const [id, fingerprint] of Object.entries(input.equipment)) {
-      if (!INVENTORY_AREA_ID.test(id) || typeof fingerprint !== "string" || !/^room-v1-[a-f0-9]{16}$/.test(fingerprint))
-        return { ok: false, error: "The room equipment confirmation wasn't readable." };
-      equipment.push([id, fingerprint]);
+    for (const [id, confirmation] of Object.entries(input.equipment)) {
+      if (!INVENTORY_AREA_ID.test(id) || !fingerprint(confirmation)) return { ok: false, error: "The room equipment confirmation wasn't readable." };
+      equipment.push([id, confirmation]);
     }
     value.equipment = Object.fromEntries(equipment);
   }
@@ -144,32 +175,29 @@ export function validateGuide(input: unknown): { ok: true; value: GuideSettings 
     if (!record(input.tests) || Object.keys(input.tests).length > 500) return { ok: false, error: "Store room tests for up to 500 areas." };
     const tests: [string, GuideTestRecord][] = [];
     for (const [id, test] of Object.entries(input.tests)) {
-      if (
-        !INVENTORY_AREA_ID.test(id) ||
-        !record(test) ||
-        typeof test.configuration !== "string" ||
-        !/^room-v1-[a-f0-9]{16}$/.test(test.configuration) ||
-        !Array.isArray(test.checked) ||
-        test.checked.length > GUIDE_CHECKS.length ||
-        test.checked.some((key) => !GUIDE_CHECKS.some((check) => check.key === key)) ||
-        typeof test.notes !== "string" ||
-        test.notes.length > 2000 ||
-        typeof test.testedAt !== "string" ||
-        !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(test.testedAt) ||
-        !Number.isFinite(Date.parse(test.testedAt))
-      )
-        return { ok: false, error: "The room test record wasn't readable. Check its answers, date and notes." };
-      tests.push([
-        id,
-        {
-          configuration: test.configuration,
-          checked: [...new Set(test.checked)] as GuideTestRecord["checked"],
-          notes: test.notes,
-          testedAt: test.testedAt,
-        },
-      ]);
+      const checked = validatedTest(test);
+      if (!INVENTORY_AREA_ID.test(id) || !checked) return { ok: false, error: "The room test record wasn't readable. Check its answers, date and notes." };
+      tests.push([id, checked]);
     }
     value.tests = Object.fromEntries(tests);
+  }
+  if (input.automationTests !== undefined) {
+    if (!record(input.automationTests) || Object.keys(input.automationTests).length > 500)
+      return { ok: false, error: "Store automation tests for up to 500 rooms." };
+    const rooms: [string, AutomationTests[string]][] = [];
+    for (const [id, tests] of Object.entries(input.automationTests)) {
+      if (!INVENTORY_AREA_ID.test(id) || !record(tests) || Object.keys(tests).length > ROOM_AUTOMATIONS.length)
+        return { ok: false, error: "The automation tests for this room weren't readable." };
+      const saved: [RoomAutomationKey, GuideTestRecord][] = [];
+      for (const [name, test] of Object.entries(tests)) {
+        const key = ROOM_AUTOMATIONS.find((item) => item.key === name)?.key;
+        const checked = validatedTest(test);
+        if (!key || !checked) return { ok: false, error: "The automation test wasn't readable. Check its answers, date and notes." };
+        saved.push([key, checked]);
+      }
+      rooms.push([id, Object.fromEntries(saved)]);
+    }
+    value.automationTests = Object.fromEntries(rooms);
   }
   return { ok: true, value };
 }
@@ -209,6 +237,7 @@ export type AreaReadiness = {
   helpers: GuideHelper[];
   recipes: GuideRecipe[];
   inactiveRecipes: AreaRecipeKey[];
+  automations: RoomAutomation[];
   switches: string[];
   unavailable: string[];
   hasEntities: boolean;
@@ -240,6 +269,12 @@ export function assessHouse(
   const exclusions = helperExclusions(h, naming);
   const helpers = planHelpers(h, inventory, naming, changes);
   const recipes = installed ? planRecipes(h, inventory, naming, parameters, installed, changes) : [];
+  const recipeCells = new Map<string, Map<AreaRecipeKey, RecipeCell>>();
+  for (const cell of recipes) {
+    const list = recipeCells.get(cell.areaId) ?? new Map<AreaRecipeKey, RecipeCell>();
+    list.set(cell.recipe as AreaRecipeKey, cell);
+    recipeCells.set(cell.areaId, list);
+  }
   const codes = areaCodes(h, naming);
   const floorOrder = (areaId: string) => {
     const index = h.floors.findIndex((floor) => floor.id === h.areas[areaId].floorId);
@@ -248,6 +283,7 @@ export function assessHouse(
   return Object.values(h.areas)
     .map((area) => {
       const choice = guideChoice(guide, area.id);
+      const cells = recipeCells.get(area.id) ?? new Map();
       const primary: Record<GuideGoal, AreaRecipeKey> = {
         lighting: "motion_lights",
         night: "motion_lights",
@@ -414,20 +450,21 @@ export function assessHouse(
         );
       const definitions = GUIDE_GOALS.filter((goal) => selected.has(goal.key));
       const helperKeys = new Set<HelperKey>(definitions.flatMap((goal) => [...goal.helpers]));
-      const neededHelpers = helpers
-        .filter((row) => row.areaId === area.id && helperKeys.has(row.key))
+      const areaHelpers = helpers
+        .filter((row) => row.areaId === area.id)
         .map((row) => ({
           row,
           pending: row.status !== "conflict" && hasPendingChange(row, changes),
           available: known(h.entities[row.canonicalId]?.state) && !h.entities[row.canonicalId]?.disabled,
         }));
+      const neededHelpers = areaHelpers.filter((helper) => helperKeys.has(helper.row.key));
       const recipeKeys = new Set<AreaRecipeKey>(definitions.flatMap((goal) => [...goal.recipes]));
       const inactiveRecipes = [...recipeKeys].filter((key) => !recipeWanted(inventory, area.id, key, h));
       const neededRecipes = [...recipeKeys]
         .filter((key) => recipeWanted(inventory, area.id, key, h))
         .map((key) => ({
           key,
-          cell: recipes.find((cell) => cell.areaId === area.id && cell.recipe === key) ?? null,
+          cell: cells.get(key) ?? null,
           enabled:
             h.entities[`automation.${automationIdFor(key, codes[area.id].code)}`]?.state === "on" &&
             !h.entities[`automation.${automationIdFor(key, codes[area.id].code)}`]?.disabled,
@@ -462,10 +499,11 @@ export function assessHouse(
         };
       });
       const relevantIds = new Set([...area.entityIds, ...neededHelpers.map((helper) => helper.row.canonicalId)]);
+      const values = resolveAll(parameters, h, inventory, area.id);
       const configuration = guideConfiguration({
         choice: choice && { ...choice, goals: [...choice.goals].sort() },
         area: { id: area.id, floorId: area.floorId, choice: areaChoice(inventory, area.id, h), code: codes[area.id].code },
-        parameters: resolveAll(parameters, h, inventory, area.id),
+        parameters: values,
         inventory: [...relevantIds].sort().map((id) => [id, inventory.entities[id] ?? null]),
         entities: [...relevantIds].sort().map((id) => {
           const e = h.entities[id];
@@ -504,6 +542,23 @@ export function assessHouse(
         helpers: neededHelpers,
         recipes: neededRecipes,
         inactiveRecipes,
+        automations: assessRoomAutomations({
+          h,
+          area,
+          code: codes[area.id].code,
+          inventory,
+          inv,
+          actual,
+          parameters,
+          values,
+          choice,
+          installed,
+          changes,
+          helperRows: areaHelpers,
+          cells,
+          tests: guide.automationTests && Object.hasOwn(guide.automationTests, area.id) ? guide.automationTests[area.id] : undefined,
+          legacyTest: testCurrent ? testRecord : null,
+        }),
         switches: actual.filter((entity) => entity.domain === "switch" || entity.domain === "button").map((entity) => entity.entityId),
         unavailable: actual.filter((entity) => !known(entity.state) && !entity.disabled && !entity.maintenance).map((entity) => entity.entityId),
         hasEntities: area.entityIds.some((id) => Boolean(h.entities[id])),

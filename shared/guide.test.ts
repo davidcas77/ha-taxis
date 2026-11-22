@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { buildHierarchy, type RawRegistry } from "../server/model/hierarchy.ts";
 import { assessHouse, EMPTY_GUIDE, guideChoice, validateGuide, type GuideGoal } from "./guide.ts";
-import { EMPTY_INVENTORY, setCounts, setLightRole, setBedroom, setTvOccupancyRole, setRecipeWanted } from "./inventory.ts";
+import {
+  EMPTY_INVENTORY,
+  setAppliance,
+  setAreaType,
+  setCounts,
+  setLightRole,
+  setBedroom,
+  setRole,
+  setTvOccupancyNotApplicable,
+  setTvOccupancyRole,
+  setRecipeWanted,
+} from "./inventory.ts";
+import type { RoomAutomationKey } from "./guide-automations.ts";
 import { DEFAULT_NAMING } from "./naming.ts";
 import { EMPTY_PARAMETERS, setParameter } from "./parameters.ts";
 import { NOTHING_INSTALLED, planRecipes } from "./recipes.ts";
@@ -292,4 +304,184 @@ it("keeps guidance for a chosen goal with no equipment unless manually disabled"
   expect(assess(setRecipeWanted(EMPTY_INVENTORY, "living_room", "motion_lights", true)).equipment.find((item) => item.key === "lights")?.status).toBe(
     "missing",
   );
+});
+
+describe("independent room automation records", () => {
+  const room = (
+    h: ReturnType<ReturnType<typeof house>["get"]>,
+    inventory = EMPTY_INVENTORY,
+    saved: import("./guide.ts").GuideSettings = guide(["lighting", "night", "ventilation"]),
+    installed: import("./recipes.ts").RecipeInstalled | null = NOTHING_INSTALLED,
+    changes: Change[] = [],
+  ) => assessHouse(h, inventory, naming, EMPTY_PARAMETERS, saved, installed, changes)[0];
+  const record = (area: ReturnType<typeof room>, key: RoomAutomationKey) => area.automations.find((item) => item.key === key)!;
+  const check = (area: ReturnType<typeof room>, key: RoomAutomationKey, name: string) => {
+    const automation = record(area, key);
+    return [...automation.required, ...automation.optional].find((item) => item.key === name);
+  };
+  it("groups day and night as one native record with Occupancy dependency and reports only its own required readiness", () => {
+    const fixture = house();
+    fixture.add("sensor.living_lux", "demo", "illuminance", undefined, "250");
+    fixture.add("binary_sensor.living_presence", "demo", "presence");
+    fixture.add("binary_sensor.living_door", "demo", "door");
+    const area = room(fixture.get());
+    expect(area.automations.filter((item) => item.selected).map((item) => item.key)).toEqual(["motion_lights", "bathroom_fan"]);
+    expect(record(area, "motion_lights")).toMatchObject({ selected: true, goals: ["lighting", "night"], totalRequired: 2, readyRequired: 2, stage: "recipes" });
+    expect(record(area, "motion_lights").recipes.map(({ key }) => key)).toEqual(["occupancy", "motion_lights"]);
+    expect(record(area, "motion_lights").optional.map(({ key, status }) => [key, status])).toEqual([
+      ["holds", "ready"],
+      ["lux", "ready"],
+    ]);
+    expect(record(area, "bathroom_fan")).toMatchObject({ readyRequired: 0, totalRequired: 2, stage: "equipment" });
+  });
+
+  it("counts only a live motion or presence start source or a counted opted-in TV", () => {
+    const fixture = house();
+    fixture.raw.entities = [];
+    fixture.raw.states = [];
+    fixture.add("binary_sensor.living_presence", "demo", "presence");
+    fixture.add("media_player.living_tv", "demo", "tv", undefined, "playing");
+    const h = fixture.get();
+    const activity = (inventory = EMPTY_INVENTORY) => check(room(h, inventory), "occupancy", "activity");
+    expect(activity()).toMatchObject({ status: "ready", usableEntityIds: ["binary_sensor.living_presence"] });
+    const hold = setRole(h, EMPTY_INVENTORY, "binary_sensor.living_presence", "holds");
+    expect(activity(hold)).toMatchObject({ status: "review", usableEntityIds: [] });
+    const optedIn = setTvOccupancyRole(h, hold, "media_player.living_tv", "starts");
+    expect(activity(optedIn)).toMatchObject({ status: "ready", usableEntityIds: ["media_player.living_tv"] });
+    expect(activity(setTvOccupancyNotApplicable(optedIn, "living_room", true))).toMatchObject({ status: "review", usableEntityIds: [] });
+    h.entities["media_player.living_tv"].state = "unavailable";
+    expect(activity(optedIn)).toMatchObject({ status: "unavailable", usableEntityIds: [] });
+  });
+
+  it("separates a queued room assignment from a live candidate and ignores unrelated queued automations", () => {
+    const h = house().get();
+    const queuedMove: Change = {
+      id: 1,
+      kind: "entity",
+      op: "update",
+      targetId: "binary_sensor.living_pir",
+      scope: null,
+      before: { area_id: null },
+      after: { area_id: "living_room" },
+      createdAt: "now",
+    };
+    const otherRecipe: Change = {
+      id: 2,
+      kind: "automation",
+      op: "create",
+      targetId: "taxis_bathroom_fan_living",
+      scope: null,
+      before: {},
+      after: { area_id: "living_room", recipe: "bathroom_fan" },
+      createdAt: "now",
+    };
+    const read = (changes: Change[]) => room(h, EMPTY_INVENTORY, guide(["lighting", "ventilation"]), NOTHING_INSTALLED, changes);
+    expect(record(read([otherRecipe]), "motion_lights").stage).toBe("recipes");
+    const pending = read([queuedMove, otherRecipe]);
+    expect(record(pending, "motion_lights")).toMatchObject({ readyRequired: 1, totalRequired: 2, stage: "changes" });
+    expect(check(pending, "motion_lights", "activity")).toMatchObject({
+      status: "queued",
+      usableEntityIds: [],
+      queuedEntityIds: ["binary_sensor.living_pir"],
+    });
+  });
+
+  it("only counts an appliance-marked power sensor and uses doors for climate when requested", () => {
+    const fixture = house();
+    fixture.add("sensor.washer_power", "demo", "power", undefined, "90");
+    fixture.add("climate.living", "demo", undefined, undefined, "heat");
+    fixture.add("binary_sensor.living_door", "demo", "door");
+    const h = fixture.get();
+    const saved = guide(["climate", "appliances"]);
+    const area = room(h, EMPTY_INVENTORY, saved);
+    expect(check(area, "appliance_done", "power")).toMatchObject({ status: "review", candidateRole: "appliance", usableEntityIds: [] });
+    expect(record(area, "area_climate")).toMatchObject({ readyRequired: 1, totalRequired: 1 });
+    expect(check(area, "area_climate", "doors")).toBeUndefined();
+    const marked = setAppliance(EMPTY_INVENTORY, "sensor.washer_power", true);
+    expect(check(room(h, marked, saved), "appliance_done", "power")?.usableEntityIds).toEqual(["sensor.washer_power"]);
+    const doors = setParameter(EMPTY_PARAMETERS, { level: "area", id: "living_room" }, "doors_open_count", true);
+    const withDoors = assessHouse(h, EMPTY_INVENTORY, naming, doors, saved, NOTHING_INSTALLED, [])[0];
+    expect(check(withDoors, "area_climate", "doors")).toMatchObject({ status: "ready", usableEntityIds: ["binary_sensor.living_door"] });
+  });
+
+  it("lets a reporting thermostat reach Parameters before the native planner validates the season", () => {
+    const fixture = house();
+    fixture.add("climate.living_heater", "demo", undefined, undefined, "heat");
+    const h = fixture.get();
+    const cooling = setParameter(EMPTY_PARAMETERS, { level: "house" }, "season", "cooling");
+    const saved = guide(["climate"]);
+    const read = (parameters: typeof EMPTY_PARAMETERS) =>
+      record(assessHouse(h, EMPTY_INVENTORY, naming, parameters, saved, NOTHING_INSTALLED, [])[0], "area_climate");
+    const mismatched = read(cooling);
+    expect(mismatched).toMatchObject({ totalRequired: 1, readyRequired: 1, stage: "recipes" });
+    expect(mismatched.recipes[0].cell).toMatchObject({ status: "missing", actionable: false, missing: [expect.stringContaining("cooling season")] });
+    expect(read(EMPTY_PARAMETERS).recipes[0].cell).toMatchObject({ status: "ready", actionable: true });
+    h.entities["climate.living_heater"].state = "unavailable";
+    expect(read(cooling)).toMatchObject({ totalRequired: 1, readyRequired: 0, stage: "equipment" });
+  });
+
+  it("offers outdoor lighting for exterior areas and preserves existing indoor work", () => {
+    const h = house().get();
+    expect(room(h, EMPTY_INVENTORY, EMPTY_GUIDE).automations.some(({ key }) => key === "exterior_lights")).toBe(false);
+    const exterior = setAreaType(EMPTY_INVENTORY, "living_room", "exterior");
+    expect(record(room(h, exterior, EMPTY_GUIDE), "exterior_lights")).toMatchObject({ readyRequired: 1, totalRequired: 1 });
+
+    const selected = record(room(h, EMPTY_INVENTORY, guide(["exterior"])), "exterior_lights");
+    expect(selected.recipes[0].cell).toMatchObject({ status: "missing", actionable: false, missing: [expect.stringContaining("exterior area")] });
+    const queued: Change = {
+      id: 1,
+      kind: "automation",
+      op: "create",
+      targetId: "taxis_exterior_lights_living",
+      scope: null,
+      before: {},
+      after: { area_id: "living_room", recipe: "exterior_lights" },
+      createdAt: "now",
+    };
+    const pending = record(room(h, EMPTY_INVENTORY, EMPTY_GUIDE, NOTHING_INSTALLED, [queued]), "exterior_lights");
+    expect(pending.recipes[0].cell?.status).toBe("in-changes");
+    const installed = {
+      ...NOTHING_INSTALLED,
+      automations: {
+        [queued.targetId]: { alias: "Living exterior", path: blueprintForRecipe("exterior_lights").path, input: {} },
+      },
+    };
+    expect(record(room(h, EMPTY_INVENTORY, EMPTY_GUIDE, installed), "exterior_lights")).toMatchObject({ installed: true });
+  });
+
+  it("retains a current test when unrelated choices change and preserves stale observations when a used source changes", () => {
+    const fixture = house();
+    fixture.add("timer.living_hold", "timer", undefined, undefined, "idle");
+    fixture.add("input_boolean.living_paused", "input_boolean");
+    fixture.add("binary_sensor.living_occupied", "template", "occupancy");
+    fixture.add("automation.taxis_occupancy_living", "automation");
+    const h = fixture.get();
+    const initial = planRecipes(h, EMPTY_INVENTORY, naming, EMPTY_PARAMETERS, NOTHING_INSTALLED, []).find((cell) => cell.recipe === "occupancy")!;
+    const fields = initial.inputs.find((input) => input.kind === "automation")!.fields!;
+    const bp = fields.use_blueprint as { path: string; input: Record<string, unknown> };
+    const installed = {
+      ...NOTHING_INSTALLED,
+      blueprints: { [bp.path]: blueprintForRecipe("occupancy").version },
+      automations: { taxis_occupancy_living: { alias: fields.alias as string, path: bp.path, input: bp.input } },
+    };
+    const off = record(room(h, EMPTY_INVENTORY, guide(["occupancy", "ventilation"]), installed), "occupancy");
+    expect(off).toMatchObject({ configured: true, installed: true, runtime: "disabled", stage: "check", testCurrent: false });
+    expect(record(room(h, EMPTY_INVENTORY, guide(["occupancy"]), null), "occupancy")).toMatchObject({ configured: null, installed: null, stage: "unread" });
+    h.entities["automation.taxis_occupancy_living"].state = "on";
+    const ready = record(room(h, EMPTY_INVENTORY, guide(["occupancy", "ventilation"]), installed), "occupancy");
+    expect(ready).toMatchObject({ configured: true, installed: true, runtime: "enabled", stage: "test", testCurrent: false });
+    const test = {
+      configuration: ready.configuration,
+      checked: ready.checks.map(({ key }) => key),
+      notes: "Observed here.",
+      testedAt: "2026-10-28T00:00:00.000Z",
+    };
+    const saved = { ...guide(["occupancy", "openings"]), automationTests: { living_room: { occupancy: test } } };
+    expect(validateGuide(saved)).toEqual({ ok: true, value: saved });
+    expect(validateGuide({ ...saved, automationTests: { living_room: { arbitrary: test } } })).toMatchObject({ ok: false });
+    expect(record(room(h, EMPTY_INVENTORY, saved, installed), "occupancy")).toMatchObject({ stage: "tested", testCurrent: true, testRecord: test });
+    expect(record(room(h, EMPTY_INVENTORY, saved, installed), "left_open").testRecord).toBeNull();
+    h.entities["binary_sensor.living_pir"].deviceId = "replacement";
+    expect(record(room(h, EMPTY_INVENTORY, saved, installed), "occupancy")).toMatchObject({ stage: "test", testCurrent: false, testRecord: test });
+  });
 });

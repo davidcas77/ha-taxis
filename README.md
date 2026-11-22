@@ -33,12 +33,11 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 
 ## What it does
 
-- **Home and Rooms.** Start with a room, or return to one you were working on.
-  Home highlights room suggestions and issues that deserve attention. Rooms lets
-  you find an area by name. You can organise its equipment, choose an outcome
-  such as gentle night lighting, and review what Taxis proposes to create in
-  Home Assistant. After installation, record how it works in the actual room.
-  Changes to the equipment or settings can make a new test necessary.
+- **Home and Rooms.** Find a room or resume your last one. Select an automation
+  to see its equipment requirements, detected sources and readiness. Match
+  missing equipment, then set the automation's parameters and review its
+  proposed Home Assistant changes. **Devices** and **Entities** open the
+  corresponding inventory screens from the main menu.
 - **Spaces:** organize floors → spaces → areas, plus areas on no floor and
   entities in no area. Spaces use Home Assistant area labels; an empty space's
   floor placement is stored in a Taxis-owned marker in its label description.

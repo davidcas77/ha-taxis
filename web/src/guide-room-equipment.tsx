@@ -12,13 +12,11 @@ export function RoomEquipment({
   area,
   go,
   onConfirm,
-  onNext,
 }: {
   h: Hierarchy;
   area: AreaReadiness;
   go: (route: Route) => void;
   onConfirm: () => Promise<string | null>;
-  onNext: () => void;
 }) {
   const { naming, busy, reviewChanges, changes } = useTaxis();
   const [saving, setSaving] = useState(false);
@@ -54,27 +52,24 @@ export function RoomEquipment({
             Review assignment in Changes
           </Button>
         ) : (
-          <Button
-            tone="primary"
-            disabled={busy || saving}
-            onClick={async () => {
-              if (area.equipmentConfirmed) {
-                onNext();
-                return;
-              }
-              setSaving(true);
-              setError(null);
-              try {
-                const problem = await onConfirm();
-                setError(problem);
-                if (!problem) onNext();
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            {area.equipmentConfirmed ? "Continue to outcomes" : "Confirm room equipment"}
-          </Button>
+          !area.equipmentConfirmed && (
+            <Button
+              tone="primary"
+              disabled={busy || saving}
+              onClick={async () => {
+                setSaving(true);
+                setError(null);
+                try {
+                  const problem = await onConfirm();
+                  setError(problem);
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              Confirm room equipment
+            </Button>
+          )
         )}
         <Button onClick={() => go({ page: "areas", sel: { kind: "area", id: area.areaId }, tab: "devices-entities" })}>Manage devices and entities</Button>
         {pending && reviewChanges && <span className="text-sm text-warn">Apply the assignment, then confirm the live equipment.</span>}

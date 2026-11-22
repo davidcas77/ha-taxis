@@ -6,9 +6,10 @@ organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
 Open **Home** to pick up a room or find a place to start. **Rooms** opens the
-room chooser. **Changes** holds proposals waiting for review. Open **Tools** for
-Areas, Organize, Recipes, Buttons, Parameters and Health. **Settings** contains
-editing preferences and AI configuration. The sparkle button opens [Ask Taxis](#ask-taxis).
+room chooser. **Devices** and **Entities** open their inventory views.
+**Changes** holds proposals waiting for review. **Tools** contains Areas,
+Organize, Recipes, Buttons, Parameters and Health. **Settings** contains editing
+preferences and AI configuration. The sparkle button opens [Ask Taxis](#ask-taxis).
 
 **Tables.** Every table works the same way. It scrolls inside its own card, never
 the page, and its header stays in view. When the columns don't fit, the least
@@ -952,25 +953,24 @@ does.
 
 ## Guide
 
-Start on **Home**, or open **Rooms** to find a particular room. A room can be
-useful exactly as it is. If you came to organise equipment, review the devices
-and their assignments and finish there. You can also choose what you would
-like the room to do.
+Open a room from **Rooms** or continue from **Home**. The room lists its
+automation options on the left in Records view. On a phone, choose an option
+from the list to open its details.
 
-For example, to set up gentle night lighting:
-
-1. Open the room and review the light and motion or presence inputs. Correct
-   their room assignments or adjust which sources Taxis should count.
-2. Choose the lighting outcome. Check which equipment and settings Taxis would
-   use, and inspect existing automation relationships before adding another
-   controller for the same lights.
-3. Read the proposed behaviour and the native helpers and automations it needs.
-   Review and apply through **Changes**, or use the confirmation preview if you
-   enabled direct editing in Settings.
-4. Once the automation is installed and enabled, try it in the room. Check the
-   brightness and how long the light stays on. Adjust the room settings if
-   needed and record what you observed. Relevant changes to equipment or
-   configuration require another test.
+1. Choose the automation. The equipment step shows the required sources and
+   the optional sources that can improve how it works. For example, lighting
+   needs a controllable light and an entry source. A light level sensor can
+   help avoid turning the lights on when the room is already bright.
+2. Check the matched equipment and the readiness count. Assign a suitable
+   existing entity when something is missing. If the assignment goes to
+   **Changes**, apply it before relying on it. Each automation has its own
+   readiness count, based on its required equipment.
+3. Continue to the parameters for this automation. For lighting, choose
+   the levels and how long the room stays occupied. Review the native
+   Home Assistant changes and confirm them through your selected editing mode.
+4. Once the automation is installed and enabled, try it in the room and
+   record what you observe. If you adjust the settings or replace equipment,
+   check the new behavior again.
 
 For house-wide maintenance, expand **Whole-house guide** at the bottom of Home.
 It includes the original checklist, explanations of helpers and recipes, house

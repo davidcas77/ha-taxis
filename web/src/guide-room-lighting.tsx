@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { AreaReadiness } from "../../shared/guide.ts";
 import { areaInventory } from "../../shared/inventory.ts";
 import { helperExclusions } from "../../shared/helpers.ts";
-import { entryLights, PARAM_DEF, resolve, roleLights, setParameter } from "../../shared/parameters.ts";
+import { checkValue, entryLights, PARAM_DEF, resolve, roleLights, setParameter } from "../../shared/parameters.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import type { RecipeCell } from "../../shared/recipes.ts";
 import type { RoomLightControllersResponse } from "../../shared/health/lights.ts";
@@ -122,46 +122,31 @@ const quickKeys = [
   { key: "night_brightness", label: "Night brightness (%)" },
   { key: "day_brightness", label: "Day brightness (%)" },
   { key: "hold_timeout", label: "How long to keep occupancy (min)" },
+  { key: "night_start", label: "Night starts" },
+  { key: "night_end", label: "Night ends" },
 ] as const;
 type QuickKey = (typeof quickKeys)[number]["key"];
 
-export function RoomLightSettings({
-  h,
-  area,
-  go,
-  onDirty,
-}: {
-  h: Hierarchy;
-  area: AreaReadiness;
-  go: (route: Route) => void;
-  onDirty: (changed: boolean) => void;
-}) {
-  const { inventory, naming, parameters, saveParameters, parametersSaving, busy, reviewChanges, changes, notify } = useTaxis();
+export function RoomLightSettings({ h, area, onContinue }: { h: Hierarchy; area: AreaReadiness; onContinue: () => void }) {
+  const { inventory, naming, parameters, saveParameters, parametersSaving, busy, reviewChanges, notify } = useTaxis();
   const scope = { level: "area", id: area.areaId } as const;
   const rows = areaInventory(h, inventory, area.areaId, helperExclusions(h, naming)(area.areaId)).lights.filter((row) => row.counts);
   const targets = roleLights(parameters, area.areaId, rows, "night_lights").lights;
   const [draft, setDraft] = useState<Partial<Record<QuickKey, string>>>({});
   const [draftTargets, setDraftTargets] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const effective = (key: QuickKey) => String(resolve(parameters, h, inventory, area.areaId, key).value);
   const selected = draftTargets ?? targets;
-  const roomSetupPending = changes.some(
-    (change) => change.after.area_id === area.areaId && ["occupancy", "motion_lights"].includes(String(change.after.recipe)),
-  );
-  const valid = quickKeys.every(({ key }) => {
-    const raw = draft[key] ?? effective(key);
-    const n = Number(raw);
+  const fields = quickKeys.map(({ key, label }) => {
     const def = PARAM_DEF[key];
-    return def.kind === "number" && raw.trim() !== "" && Number.isInteger(n) && n >= (def.min ?? -Infinity) && n <= (def.max ?? Infinity);
+    const current = resolve(parameters, h, inventory, area.areaId, key).value;
+    const raw = draft[key] ?? String(current);
+    const value = def.kind === "number" ? (raw.trim() ? Number(raw) : NaN) : raw;
+    return { key, label, def, raw, value, current, problem: checkValue(def, value) };
   });
-  const changed =
-    quickKeys.some(({ key }) => draft[key] !== undefined && Number(draft[key]) !== Number(effective(key))) ||
-    Boolean(draftTargets && (draftTargets.length !== targets.length || draftTargets.some((id) => !targets.includes(id))));
+  const changedFields = fields.filter(({ key, value, current }) => draft[key] !== undefined && value !== current);
+  const changedTargets = Boolean(draftTargets && (draftTargets.length !== targets.length || draftTargets.some((id) => !targets.includes(id))));
+  const changed = changedFields.length > 0 || changedTargets;
   const guard = useDraftGuard(changed);
-  useLayoutEffect(() => {
-    onDirty(changed);
-    return () => onDirty(false);
-  }, [changed, onDirty]);
   const discard = () => {
     setDraft({});
     setDraftTargets(null);
@@ -171,13 +156,7 @@ export function RoomLightSettings({
   return (
     <section aria-label="Adjust room lighting" className="rounded-lg border border-line p-4">
       <h3 className="font-semibold">Adjust this room’s lighting</h3>
-      {roomSetupPending && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-warn">
-          <p>Review the existing lighting or occupancy proposal before changing these settings.</p>
-          <Button onClick={() => go({ page: "changes" })}>Open Changes</Button>
-        </div>
-      )}
-      <fieldset disabled={roomSetupPending || busy || parametersSaving} className="mt-3 grid gap-4">
+      <div className="mt-3 grid gap-4">
         {rows.length > 0 && (
           <div role="group" aria-label="Night light targets" className="grid gap-2">
             <h4 className="text-sm font-medium">Which lights should come on gently at night?</h4>
@@ -195,50 +174,48 @@ export function RoomLightSettings({
           </div>
         )}
         <div className="grid gap-3 sm:grid-cols-3">
-          {quickKeys.map(({ key, label }) => {
-            const def = PARAM_DEF[key];
-            return (
-              def.kind === "number" && (
-                <label key={key} className="flex min-w-0 flex-col gap-1 text-sm">
-                  {label}
-                  <input
-                    className={inputClass}
-                    type="number"
-                    min={def.min}
-                    max={def.max}
-                    step={1}
-                    inputMode="numeric"
-                    value={draft[key] ?? effective(key)}
-                    onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
-                  />
-                </label>
-              )
-            );
-          })}
+          {fields.map(({ key, label, def, raw, problem }) => (
+            <label key={key} className="flex min-w-0 flex-col gap-1 text-sm">
+              {label}
+              <input
+                className={inputClass}
+                type={def.kind === "time" ? "time" : "number"}
+                min={def.min}
+                max={def.max}
+                step={def.kind === "number" ? def.step : undefined}
+                value={raw}
+                aria-invalid={Boolean(problem)}
+                onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
+              />
+              {problem && <span className="text-xs text-danger">{problem}</span>}
+            </label>
+          ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             tone="primary"
-            disabled={!changed || !valid || parametersSaving || busy}
+            disabled={fields.some(({ problem }) => Boolean(problem)) || parametersSaving || busy}
             onClick={async () => {
+              if (!changed) {
+                onContinue();
+                return;
+              }
               setError(null);
               const problem = await saveParameters((settings) => {
                 let next = settings;
-                for (const { key } of quickKeys)
-                  if (draft[key] !== undefined && Number(draft[key]) !== Number(effective(key))) {
-                    next = setParameter(next, scope, key, Number(draft[key]));
-                  }
-                if (draftTargets) next = setParameter(next, scope, "night_lights", [...draftTargets].sort());
+                for (const { key, value } of changedFields) next = setParameter(next, scope, key, value);
+                if (changedTargets && draftTargets) next = setParameter(next, scope, "night_lights", [...draftTargets].sort());
                 return next;
               });
               if (problem) setError(problem);
               else {
                 discard();
                 if (reviewChanges) notify({ tone: "ok", text: "Room lighting settings saved. Review the updated native plan." });
+                onContinue();
               }
             }}
           >
-            {reviewChanges ? "Save room lighting settings" : "Preview room lighting settings"}
+            {!changed ? "Review automation" : reviewChanges ? "Save room lighting settings" : "Preview room lighting settings"}
           </Button>
           {changed && (
             <Button tone="ghost" onClick={discard}>
@@ -246,7 +223,7 @@ export function RoomLightSettings({
             </Button>
           )}
         </div>
-      </fieldset>
+      </div>
       {error && (
         <p role="alert" className="mt-2 text-sm text-danger">
           {error}

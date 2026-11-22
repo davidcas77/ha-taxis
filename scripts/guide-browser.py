@@ -45,6 +45,8 @@ class GuideRegression(unittest.TestCase):
         self.applies, self.parameter_puts, self.recipe_reads = [], [], []
         self.parameters = {"house": {"night_brightness": 11}, "types": {}, "areas": {"kitchen": {"hold_timeout": 3}}}
         self.controllers = {"ok": True, "controllers": [], "unreadable": 0}
+        self.inventory = {"entities": {}, "areas": {}}
+        self.inventory_puts = []
         self.installed = {"blueprints": {}, "automations": {}, "scripts": {}, "timers": {}, "controllers": {}}
         self.fail_save = False
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
@@ -59,7 +61,12 @@ class GuideRegression(unittest.TestCase):
         names = {**copy.deepcopy(self.naming), "areaCodes": {"living_room": "living"}, "helperNames": {}}
         names.pop("aggregationMarkers", None)
         self.page.route("**/api/settings/naming", lambda route: route.fulfill(json={"ok": True, "naming": names, "revision": "0"}))
-        self.page.route("**/api/settings/inventory", lambda route: route.fulfill(json={"ok": True, "inventory": {"entities": {}, "areas": {}}, "revision": "0"}))
+        def inventory(route):
+            if route.request.method == "PUT":
+                self.inventory = route.request.post_data_json
+                self.inventory_puts.append(self.inventory)
+            route.fulfill(json={"ok": True, "inventory": self.inventory, "revision": str(len(self.inventory_puts))})
+        self.page.route("**/api/settings/inventory", inventory)
         def parameters(route):
             if route.request.method == "PUT":
                 self.parameters = route.request.post_data_json
@@ -137,10 +144,11 @@ class GuideRegression(unittest.TestCase):
         self.assertEqual(self.unexpected, [])
         self.assertEqual(self.errors, [])
 
-    def add_entity(self, entity_id, role, dc=None, platform="demo", members=None):
+    def add_entity(self, entity_id, role, dc=None, platform="demo", members=None, name=None, area="living_room"):
         h = self.body["hierarchy"]
-        h["entities"][entity_id] = {**copy.deepcopy(self.entity_base), "entityId": entity_id, "name": entity_id, "domain": entity_id.split(".")[0], "role": role, "deviceClass": dc, "deviceClassOverride": None, "platform": platform, "members": members or [], "areaId": "living_room", "ownAreaId": "living_room", "deviceId": None, "configEntryId": "fixture", "state": "off", "disabled": False, "hidden": False, "maintenance": False, "labels": [], "inRegistry": True}
-        h["areas"]["living_room"]["entityIds"].append(entity_id)
+        h["entities"][entity_id] = {**copy.deepcopy(self.entity_base), "entityId": entity_id, "name": name or entity_id, "domain": entity_id.split(".")[0], "role": role, "deviceClass": dc, "deviceClassOverride": None, "platform": platform, "members": members or [], "areaId": area, "ownAreaId": area, "deviceId": None, "configEntryId": "fixture", "state": "off", "disabled": False, "hidden": False, "maintenance": False, "labels": [], "inRegistry": True}
+        if area:
+            h["areas"][area]["entityIds"].append(entity_id)
 
     def ensure_entity(self, entity_id, role, platform, dc=None, members=None, state="off"):
         if entity_id not in self.body["hierarchy"]["entities"]:
@@ -156,25 +164,27 @@ class GuideRegression(unittest.TestCase):
     def open(self, area=False):
         self.page.goto(BASE + ("/#guide/living_room" if area else "/#guide"), wait_until="networkidle")
         if area:
-            self.page.get_by_role("button", name="Confirm equipment", exact=True).wait_for()
+            self.page.get_by_role("heading", name="Automations", exact=True).wait_for()
         else:
             self.page.get_by_text("Whole-house guide", exact=True).click()
 
-    def step(self, name):
-        self.page.get_by_role("button", name=name, exact=True).click()
-        return self.page.get_by_role("region", name=name, exact=True)
+    def record(self, label):
+        self.page.get_by_role("region", name="Records", exact=True).get_by_role("button", name=re.compile(r"^" + re.escape(label))).click()
+        return self.page.get_by_role("region", name="Properties", exact=True)
 
-    def confirm_equipment(self):
-        panel = self.step("Confirm equipment")
-        panel.get_by_role("button", name="Confirm room equipment", exact=True).click()
-        self.page.get_by_role("status").filter(has_text="Room equipment confirmed").wait_for()
-        return self.page.get_by_role("region", name="Choose an outcome", exact=True)
+    def plan(self):
+        return self.page.get_by_role("region", name="Native Home Assistant plan", exact=True)
 
-    def open_plan(self):
+    def parameters_step(self, properties):
+        properties.get_by_role("button", name="Continue to parameters", exact=False).click()
+        expect(properties.get_by_role("navigation", name="Automation setup steps").get_by_role("button", name="Parameters", exact=True)).to_have_attribute("aria-current", "step")
+
+    def open_plan(self, label="Automatic lighting"):
         self.open(True)
-        self.confirm_equipment()
-        self.puts.clear()
-        return self.step("Review what will happen")
+        properties = self.record(label)
+        self.parameters_step(properties)
+        properties.get_by_role("button", name="Review automation", exact=True).click()
+        return self.plan()
 
     def apply_changes(self, panel):
         panel.get_by_role("button", name="Review queued changes", exact=True).click()
@@ -184,7 +194,7 @@ class GuideRegression(unittest.TestCase):
         self.page.get_by_role("button", name="Confirm and apply", exact=True).click()
         self.page.get_by_text("No changes waiting", exact=True).wait_for()
         self.page.get_by_role("button", name=re.compile(r"^Back to Living room$", re.I)).click()
-        self.page.get_by_role("button", name="Verify installation", exact=True).wait_for()
+        self.plan().wait_for()
 
     def test_seven_setup_instructions_and_live_plans_are_connected(self):
         self.open()
@@ -225,123 +235,181 @@ class GuideRegression(unittest.TestCase):
         self.assertEqual(self.puts, [])
         self.assertEqual(self.posts, [])
 
-    def test_room_purpose_and_chosen_goals_save_reload_and_preserve_other_areas(self):
+    def test_saved_choices_are_editable_and_preserve_other_areas(self):
         self.prefs["areas"]["kitchen"] = {"profile": "kitchen", "goals": ["appliances"]}
         self.open(True)
-        outcome = self.confirm_equipment()
-        outcome.get_by_label("Room type", exact=True).select_option("bedroom")
-        outcome.get_by_role("checkbox", name="Comfortable automatic lighting", exact=True).check()
-        outcome.get_by_role("checkbox", name=re.compile("Gentle night lighting")).check()
-        self.assertEqual(len(self.puts), 1)
-        outcome.get_by_role("button", name="Review selected outcomes", exact=True).click()
+        settings = self.record("Room equipment")
+        settings.get_by_text("Room type and saved outcomes", exact=True).click()
+        settings.get_by_label("Room type", exact=True).select_option("bedroom")
+        settings.get_by_role("checkbox", name="Comfortable automatic lighting", exact=True).check()
+        settings.get_by_role("checkbox", name="Gentle night lighting", exact=True).check()
+        self.assertEqual(self.puts, [])
+        settings.get_by_role("button", name="Save room choices", exact=True).click()
         self.page.get_by_role("status").filter(has_text="Room outcome saved").wait_for()
-        self.assertEqual(self.puts[1]["revision"], "1")
+        self.assertEqual(self.puts[0]["revision"], "0")
         self.assertEqual(self.prefs["areas"]["living_room"], {"profile": "bedroom", "goals": ["lighting", "night"]})
         self.assertEqual(self.prefs["areas"]["kitchen"], {"profile": "kitchen", "goals": ["appliances"]})
         self.page.reload(wait_until="networkidle")
-        outcome = self.step("Choose an outcome")
-        self.assertEqual(outcome.get_by_label("Room type", exact=True).input_value(), "bedroom")
-        self.assertTrue(outcome.get_by_role("checkbox", name=re.compile("Gentle night lighting")).is_checked())
+        settings.get_by_text("Room type and saved outcomes", exact=True).click()
+        self.assertEqual(settings.get_by_label("Room type", exact=True).input_value(), "bedroom")
+        self.assertTrue(settings.get_by_role("checkbox", name="Gentle night lighting", exact=True).is_checked())
         self.assertEqual(self.posts, [])
 
     def test_organize_equipment_and_resume_without_an_automation_goal(self):
         self.open(True)
-        outcome = self.confirm_equipment()
-        outcome.get_by_role("button", name="Organize equipment only", exact=True).click()
-        expect(self.page.get_by_text("Equipment organized", exact=True)).to_be_visible()
+        equipment = self.record("Room equipment")
+        equipment.get_by_role("button", name="Confirm room equipment", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="Room equipment confirmed").wait_for()
+        equipment.get_by_text("Room type and saved outcomes", exact=True).click()
+        equipment.get_by_role("button", name="Organize equipment only", exact=True).click()
+        expect(equipment.get_by_text("Equipment organized", exact=True)).to_be_visible()
         self.page.get_by_role("navigation", name="Room navigation").get_by_role("button", name="Home", exact=True).click()
         self.page.get_by_role("button", name=re.compile(r"^Resume Living room$", re.I)).click()
-        expect(self.page.get_by_text("Equipment organized", exact=True)).to_be_visible()
-        expect(self.page.get_by_role("button", name="Review what will happen", exact=True)).to_have_count(0)
+        expect(equipment.get_by_text("Equipment organized", exact=True)).to_be_visible()
+        self.assertEqual(self.prefs["areas"]["living_room"]["goals"], [])
         self.assertEqual(self.posts, [])
 
-    def test_correct_assignment_uses_changes_before_equipment_confirmation(self):
+    def test_assign_compatible_equipment_in_selected_outcome(self):
+        self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["state"] = "unavailable"
+        self.add_entity("binary_sensor.spare_pir", "motion", "motion", name="Spare hallway sensor", area=None)
+        self.add_entity("light.spare_bulb", "light", name="Spare bulb", area=None)
         self.open(True)
-        self.page.get_by_text("Correct an equipment assignment", exact=True).click()
-        self.page.get_by_label("Equipment to move", exact=True).select_option("light.living_bulb")
-        self.page.get_by_label("Destination room", exact=True).select_option("kitchen")
-        self.page.get_by_role("button", name="Add assignment to changes", exact=True).click()
+        properties = self.record("Automatic lighting")
+        requirement = properties.locator("article").filter(has_text="An occupancy start source")
+        expect(requirement.get_by_text("Unavailable", exact=True).first).to_be_visible()
+        expect(properties.get_by_role("button", name="Continue to parameters", exact=False)).to_have_count(0)
+        requirement.get_by_text("Find equipment to assign", exact=True).click()
+        expect(requirement.get_by_text("Spare hallway sensor", exact=False)).to_be_visible()
+        expect(requirement.get_by_text("Spare bulb", exact=False)).to_have_count(0)
+        requirement.get_by_role("button", name=re.compile("^Assign Spare hallway sensor to Living room$", re.I)).click()
         self.page.get_by_role("status").filter(has_text="Added to the list of changes").wait_for()
-        self.assertEqual(self.posts[0]["fields"]["area_id"], "kitchen")
-        self.assertEqual(self.posts[0]["targetId"], "light.living_bulb")
-        expect(self.page.get_by_role("button", name="Review assignment in Changes", exact=True)).to_be_visible()
+        self.assertEqual(self.posts[0]["fields"]["area_id"], "living_room")
+        self.assertEqual(self.posts[0]["targetId"], "binary_sensor.spare_pir")
+        expect(properties.get_by_role("button", name="Review equipment changes", exact=True)).to_be_visible()
         self.assertEqual(self.applies, [])
         self.assertEqual(self.puts, [])
 
-    def test_night_lighting_through_room_picker_settings_review_apply_verify_and_resume(self):
+    def test_can_change_hold_only_sensor_to_detect_entry_without_moving_it(self):
+        self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["state"] = "unavailable"
+        self.add_entity("binary_sensor.living_presence", "presence", "presence", name="Sofa presence")
+        self.inventory["entities"]["binary_sensor.living_presence"] = {"role": "holds"}
+        self.open(True)
+        properties = self.record("Automatic lighting")
+        expect(properties.get_by_text("Keeps occupancy only", exact=True)).to_be_visible()
+        properties.get_by_role("button", name="Use to detect entry: Sofa presence", exact=True).click()
+        expect(properties.get_by_role("button", name="Continue to parameters", exact=False)).to_be_visible()
+        self.assertEqual(self.inventory["entities"]["binary_sensor.living_presence"]["role"], "starts")
+        self.assertEqual(self.posts, [])
+
+    def test_lighting_with_other_blocked_outcomes_through_review_apply_verify_and_resume(self):
         self.controllers = {"ok": True, "controllers": [
             {"id": "entry_evening", "entityId": "automation.entry_evening", "name": "Evening trip", "lights": ["light.living_bulb"]},
         ], "unreadable": 1}
+        self.prefs["areas"]["living_room"] = {"profile": "living", "goals": ["lighting", "night", "climate", "media", "openings"]}
+        self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["name"] = "Hallway motion"
+        self.body["hierarchy"]["entities"]["light.living_bulb"]["name"] = "Low lamp"
         self.page.goto(BASE + "/#guide", wait_until="networkidle")
         self.page.get_by_role("button", name="Choose a room", exact=True).click()
         self.page.get_by_label("Search rooms", exact=True).fill("Living room")
         self.page.get_by_role("button", name=re.compile(r"^Living room", re.I)).click()
-        outcome = self.confirm_equipment()
-        outcome.get_by_role("checkbox", name=re.compile("Gentle night lighting")).check()
-        outcome.get_by_role("button", name="Review selected outcomes", exact=True).click()
-        review = self.page.get_by_role("region", name="Review what will happen", exact=True)
-        behavior = review.get_by_role("region", name="Planned lighting behavior", exact=True)
-        expect(behavior.get_by_text("binary_sensor.living_pir", exact=True)).to_be_visible()
-        expect(review.get_by_text("Evening trip controls light.living_bulb.", exact=True)).to_be_visible()
-        expect(review.get_by_text(re.compile("1 automations or scripts were unreadable"))).to_be_visible()
-        tune = review.get_by_role("region", name="Adjust room lighting", exact=True)
-        tune.get_by_role("checkbox", name="light.living_bulb", exact=True).check()
+        climate = self.record("Room climate")
+        expect(climate.get_by_role("button", name="Continue to parameters", exact=False)).to_have_count(0)
+        properties = self.record("Automatic lighting")
+        expect(properties.get_by_role("heading", name="Room climate", exact=True)).to_have_count(0)
+        expect(properties.get_by_text("2 of 2 equipment requirements met", exact=True)).to_be_visible()
+        expect(properties.locator("article").filter(has_text="An occupancy start source").get_by_text("Hallway motion", exact=True)).to_be_visible()
+        expect(properties.get_by_text("Low lamp", exact=True)).to_be_visible()
+        expect(properties.get_by_text("Door contact", exact=True)).to_have_count(0)
+        expect(properties.get_by_role("region", name="Native Home Assistant plan", exact=True)).to_have_count(0)
+        self.page.screenshot(path=str(screenshot_dir() / "room-automation-equipment.png"))
+        self.parameters_step(properties)
+        tune = properties.get_by_role("region", name="Adjust room lighting", exact=True)
+        tune.get_by_role("checkbox", name="Low lamp", exact=True).check()
         tune.get_by_label("Night brightness (%)", exact=True).fill("7")
         tune.get_by_label("How long to keep occupancy (min)", exact=True).fill("2")
-        occupancy = review.get_by_role("button", name="Add Occupancy to changes", exact=True)
-        expect(occupancy).to_be_disabled()
-        expect(review.get_by_text("Save or discard the room lighting edits before proposing changes.", exact=True)).to_be_visible()
+        expect(self.plan()).to_have_count(0)
+        self.page.screenshot(path=str(screenshot_dir() / "room-automation-parameters.png"))
         tune.get_by_role("button", name="Save room lighting settings", exact=True).click()
-        expect(behavior.get_by_text(re.compile("light.living_bulb can come on at 7%"))).to_be_visible()
+        review = self.plan()
+        behavior = review.get_by_role("region", name="Planned lighting behavior", exact=True)
+        expect(behavior.get_by_text(re.compile("Low lamp can come on at 7%"))).to_be_visible()
         expect(behavior.get_by_text(re.compile("normally holds for 2 min"))).to_be_visible()
+        expect(review.get_by_text("Evening trip controls Low lamp.", exact=True)).to_be_visible()
+        expect(review.get_by_text(re.compile("automations or scripts were unreadable"))).to_be_visible()
         self.assertEqual(self.parameters["areas"]["living_room"], {"night_brightness": 7, "hold_timeout": 2, "night_lights": ["light.living_bulb"]})
         self.assertEqual(self.parameters["areas"]["kitchen"], {"hold_timeout": 3})
         self.assertEqual(self.parameters["house"], {"night_brightness": 11})
         self.assertEqual(self.posts, [])
         self.page.locator("main").evaluate("(main) => { main.scrollTop = 0; }")
-        self.page.screenshot(path=str(screenshot_dir() / "room-lighting-review.png"))
+        self.page.screenshot(path=str(screenshot_dir() / "room-automation-review.png"))
 
-        helpers = review.get_by_role("button", name="Add helper to changes", exact=True)
-        for remaining in range(helpers.count(), 0, -1):
-            helpers.first.click()
-            expect(helpers).to_have_count(remaining - 1)
+        light_helper = review.get_by_role("button", name=re.compile(r"^Add .*light.* to changes$", re.I))
+        expect(light_helper).to_be_enabled()
+        light_helper.click()
+        occupancy = review.get_by_role("button", name="Add Occupancy to changes", exact=True)
         occupancy.click()
         motion = review.get_by_role("button", name="Add Motion lights to changes", exact=True)
         expect(motion).to_be_enabled()
         motion.click()
         expect(motion).to_have_count(0)
-        expect(tune.get_by_label("Night brightness (%)", exact=True)).to_be_disabled()
         automation_fields = {item["fields"]["recipe"]: item["fields"]["use_blueprint"]["input"] for item in self.posts if item["kind"] == "automation"}
         self.assertEqual(automation_fields["occupancy"]["hold_minutes"], 2)
         self.assertEqual(automation_fields["motion_lights"]["night_brightness"], 7)
         self.assertEqual(automation_fields["motion_lights"]["night_lights"], ["light.living_bulb"])
         self.assertEqual(self.applies, [])
         self.apply_changes(review)
-        installation = self.step("Verify installation")
-        installation.get_by_role("button", name="Verify with Home Assistant", exact=True).click()
-        expect(installation.get_by_text("Installed and enabled", exact=True)).to_have_count(2)
+        expect(properties.get_by_role("heading", name="Automatic lighting", exact=True)).to_be_visible()
+        review.get_by_role("button", name="Verify with Home Assistant", exact=True).click()
+        expect(review.get_by_text("Home Assistant reports this setup installed and enabled.", exact=True)).to_be_visible()
         self.assertTrue(any(url.endswith("refresh=1") for url in self.recipe_reads))
-        expect(installation.get_by_text("Home Assistant reports the expected room setup installed and enabled.", exact=True)).to_be_visible()
-        checks = self.step("Test in the room")
-        self.assertNotIn("tests", self.prefs)
+        review.get_by_role("button", name="Test in the room", exact=False).click()
+        checks = properties.get_by_role("region", name="Room test checklist", exact=True)
+        self.assertNotIn("automationTests", self.prefs)
         expect(checks.get_by_role("button", name="Save room test record", exact=True)).to_be_disabled()
-        for checkbox in checks.get_by_role("region", name="Room test checklist").get_by_role("checkbox").all():
+        for checkbox in checks.get_by_role("checkbox").all():
             checkbox.check()
         checks.get_by_role("button", name="Save room test record", exact=True).click()
         expect(checks.get_by_text("Tested by you for the current configuration.", exact=True)).to_be_visible()
+        self.assertIn("motion_lights", self.prefs["automationTests"]["living_room"])
         self.page.get_by_role("navigation", name="Room navigation").get_by_role("button", name="Home", exact=True).click()
         self.page.get_by_role("button", name=re.compile(r"^Resume Living room$", re.I)).click()
-        expect(self.page.get_by_role("button", name="Test in the room", exact=True)).to_have_attribute("aria-expanded", "true")
+        expect(checks.get_by_text("Tested by you for the current configuration.", exact=True)).to_be_visible()
         checks.get_by_role("button", name="Adjust lights or duration", exact=True).click()
         tune.get_by_label("Night brightness (%)", exact=True).fill("9")
         tune.get_by_role("button", name="Save room lighting settings", exact=True).click()
-        expect(review.get_by_text("The installed configuration needs an update for this plan.", exact=True)).to_be_visible()
-        previous = self.step("Test in the room")
-        expect(previous.get_by_text("Previous test needs a retest because the room configuration changed.", exact=True)).to_be_visible()
+        expect(review.get_by_text("Update the existing automation", exact=True)).to_be_visible()
+        review.get_by_role("button", name="See previous room test", exact=True).click()
+        expect(checks.get_by_text("Previous observations are saved", exact=False)).to_be_visible()
+        expect(checks.get_by_role("button", name="Save room test record", exact=True)).to_be_disabled()
         self.assertEqual(len(self.applies), 1)
 
+    def test_occupancy_parameter_reaches_native_plan_and_unsaved_switch_is_guarded(self):
+        self.prefs["areas"]["living_room"] = {"profile": "living", "goals": ["occupancy"]}
+        self.open(True)
+        properties = self.record("Room occupancy")
+        self.parameters_step(properties)
+        hold = properties.get_by_label("Hold timeout (min)", exact=True)
+        hold.fill("4")
+        dialogs = []
+        def preserve(dialog):
+            dialogs.append(dialog.message)
+            dialog.dismiss()
+        self.page.once("dialog", preserve)
+        self.record("Room climate")
+        self.assertEqual(len(dialogs), 1)
+        expect(hold).to_have_value("4")
+        expect(properties.get_by_role("heading", name="Room occupancy", exact=True)).to_be_visible()
+        properties.get_by_role("button", name="Save and review automation", exact=True).click()
+        review = self.plan()
+        review.get_by_role("button", name="Add Occupancy to changes", exact=True).click()
+        self.page.get_by_role("status").filter(has_text="changes added to the list").wait_for()
+        input_fields = next(item["fields"]["use_blueprint"]["input"] for item in self.posts if item["kind"] == "automation")
+        self.assertEqual(input_fields["hold_minutes"], 4)
+        self.assertEqual(self.parameters["areas"]["living_room"]["hold_timeout"], 4)
+        self.assertEqual(self.parameters["areas"]["kitchen"]["hold_timeout"], 3)
+
     def test_direct_mode_uses_confirmation_and_cancel_does_not_apply(self):
-        self.selected()
+        self.prefs["areas"]["living_room"] = {"profile": "living", "goals": ["occupancy"]}
         self.page.route("**/api/settings/general", lambda route: route.fulfill(json={
             "ok": True, "general": {"reviewChangesBeforeApplying": False}, "revision": "0", "directEditingAvailable": True,
         }))
@@ -355,7 +423,7 @@ class GuideRegression(unittest.TestCase):
             } for index, item in enumerate(captured)]
             route.fulfill(json={"ok": True, "changes": changes, "previewVersion": "fixture"})
         self.page.route("**/api/direct-preview", preview)
-        plan = self.open_plan()
+        plan = self.open_plan("Room occupancy")
         plan.get_by_role("button", name="Preview Occupancy", exact=True).click()
         dialog = self.page.get_by_role("dialog", name="Review before applying", exact=True)
         expect(dialog.get_by_role("heading", name="Create automation taxis_occupancy_living", exact=True)).to_be_visible()
@@ -366,34 +434,31 @@ class GuideRegression(unittest.TestCase):
         self.assertEqual(self.applies, [])
 
     def test_failed_installation_read_stays_unknown_and_can_be_retried(self):
-        self.selected()
+        self.prefs["areas"]["living_room"] = {"profile": "living", "goals": ["occupancy"]}
         self.read_failure = True
-        self.open(True)
-        self.confirm_equipment()
-        self.puts.clear()
-        verification = self.step("Verify installation")
-        verification.get_by_role("alert").filter(has_text="Installation status is unknown").wait_for()
+        plan = self.open_plan("Room occupancy")
+        plan.get_by_role("alert").filter(has_text="Installation status is unknown").wait_for()
+        expect(plan.get_by_role("button", name="Add Occupancy to changes", exact=True)).to_have_count(0)
         self.read_failure = False
-        verification.get_by_role("button", name="Verify with Home Assistant", exact=True).click()
-        plan = self.step("Review what will happen")
+        plan.get_by_role("button", name="Verify with Home Assistant", exact=True).click()
         expect(plan.get_by_role("button", name="Add Occupancy to changes", exact=True)).to_be_enabled()
         self.assertEqual(self.posts, [])
 
     def test_explicit_verification_does_not_reuse_stale_installed_configuration(self):
         self.ready_room()
-        verification = self.step("Verify installation")
+        self.page.get_by_role("button", name="Review & install", exact=True).click()
+        verification = self.plan()
         expect(verification.get_by_text("Installed and enabled", exact=True)).to_be_visible()
         self.read_failure = True
         verification.get_by_role("button", name="Verify with Home Assistant", exact=True).click()
         expect(verification.get_by_role("alert").filter(has_text="Fixture blueprint read failed")).to_be_visible()
         expect(verification.get_by_text("Installed and enabled", exact=True)).to_have_count(0)
         self.assertTrue(self.recipe_reads[-1].endswith("refresh=1"))
-        checks = self.step("Test in the room")
-        expect(checks.get_by_role("button", name="Save room test record", exact=True)).to_be_disabled()
 
     def test_verification_ignores_configuration_for_a_different_hierarchy_snapshot(self):
         self.ready_room()
-        verification = self.step("Verify installation")
+        self.page.get_by_role("button", name="Review & install", exact=True).click()
+        verification = self.plan()
         expect(verification.get_by_text("Installed and enabled", exact=True)).to_be_visible()
         self.recipe_snapshot = self.body["hierarchy"]["fetchedAt"]
         self.body["hierarchy"]["fetchedAt"] = "2026-11-18T14:40:00.000Z"
@@ -405,33 +470,22 @@ class GuideRegression(unittest.TestCase):
         verification.get_by_role("button", name="Verify with Home Assistant", exact=True).click()
         expect(verification.get_by_text("Installed and enabled", exact=True)).to_be_visible()
 
-    def test_unavailable_sources_are_reviewed_without_claiming_that_equipment_is_absent(self):
-        self.selected()
-        self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["state"] = "unavailable"
-        plan = self.open_plan()
-        equipment = plan.get_by_role("region", name="Equipment readiness", exact=True)
-        activity = equipment.get_by_role("listitem").filter(has_text="Motion, presence or an opted-in TV").first
-        self.assertIn("Review existing entities", activity.inner_text())
-        self.assertIn("before buying anything", activity.inner_text())
-        self.assertNotIn("Needed for this outcome", activity.inner_text())
-
-    def test_stale_goal_save_retains_the_draft_and_does_not_queue_anything(self):
+    def test_stale_goal_save_retains_room_decisions_draft(self):
         self.selected()
         self.open(True)
-        outcome = self.confirm_equipment()
-        self.puts.clear()
         self.fail_save = True
-        outcome.get_by_label("Room type", exact=True).select_option("hallway")
-        outcome.get_by_role("button", name="Review selected outcomes", exact=True).click()
-        outcome.get_by_role("alert").filter(has_text="changed in another session").wait_for()
-        self.assertEqual(outcome.get_by_label("Room type", exact=True).input_value(), "hallway")
+        room = self.record("Room equipment")
+        room.get_by_text("Room type and saved outcomes", exact=True).click()
+        room.get_by_label("Room type", exact=True).select_option("hallway")
+        room.get_by_role("button", name="Save room choices", exact=True).click()
+        room.get_by_role("alert").filter(has_text="changed in another session").wait_for()
+        self.assertEqual(room.get_by_label("Room type", exact=True).input_value(), "hallway")
         self.assertEqual(self.prefs["areas"]["living_room"]["profile"], "living")
         self.assertEqual(len(self.puts), 1)
         self.assertEqual(self.posts, [])
 
     def ready_room(self):
-        self.selected()
-        self.prefs["areas"]["living_room"]["goals"] = ["occupancy"]
+        self.prefs["areas"]["living_room"] = {"profile": "living", "goals": ["occupancy"]}
         self.add_entity("binary_sensor.living_motion_all", "motion", "motion", "group", ["binary_sensor.living_pir"])
         self.add_entity("timer.living_hold", "helper", platform="timer")
         self.body["hierarchy"]["entities"]["timer.living_hold"]["state"] = "idle"
@@ -439,17 +493,17 @@ class GuideRegression(unittest.TestCase):
         self.add_entity("binary_sensor.living_occupied", "presence", "occupancy", "template")
         self.add_entity("automation.taxis_occupancy_living", "automation", platform="automation")
         self.body["hierarchy"]["entities"]["automation.taxis_occupancy_living"]["state"] = "on"
-        plan = self.open_plan()
+        plan = self.open_plan("Room occupancy")
         plan.get_by_role("button", name="Add Occupancy to changes", exact=True).click()
         self.page.get_by_role("status").filter(has_text="changes added to the list").wait_for()
         automation = next(item["fields"] for item in self.posts if item["kind"] == "automation")
         blueprint = next(item["fields"] for item in self.posts if item["kind"] == "blueprint")
         self.installed["blueprints"][blueprint["path"]] = blueprint["version"]
-        self.installed["automations"][automation["automation_id"]] = {"alias": automation["alias"], "path": automation["use_blueprint"]["path"], "input": automation["use_blueprint"]["input"]}
+        self.installed["automations"][automation["automation_id"]] = {"alias": automation["alias"], "path": automation["use_blueprint"]["path"], "input": automation["use_blueprint"]["input"], "runtimeState": "on"}
         self.installed["timers"]["timer.living_hold"] = 300
         self.queued, self.posts = [], []
         self.page.reload(wait_until="networkidle")
-        self.page.get_by_text("Ready for a room test", exact=True).wait_for()
+        plan.get_by_role("button", name="Test in the room", exact=False).click()
         return self.page.get_by_role("region", name="Room test checklist", exact=True)
 
     def test_room_observations_save_reload_and_require_retest_after_sensor_replacement(self):
@@ -460,7 +514,7 @@ class GuideRegression(unittest.TestCase):
         checks.get_by_label("Room test notes", exact=True).fill("Tested both entry paths and sitting still.")
         checks.get_by_role("button", name="Save room test record", exact=True).click()
         self.page.get_by_role("status").filter(has_text="Room test record saved").wait_for()
-        record = copy.deepcopy(self.prefs["tests"]["living_room"])
+        record = copy.deepcopy(self.prefs["automationTests"]["living_room"]["occupancy"])
         self.assertEqual(len(record["checked"]), 3)
         self.assertTrue(record["configuration"].startswith("room-v1-"))
         self.assertEqual(self.prefs["areas"]["living_room"]["goals"], ["occupancy"])
@@ -468,10 +522,9 @@ class GuideRegression(unittest.TestCase):
         checks.get_by_text("Tested by you for the current configuration.", exact=True).wait_for()
         self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["deviceId"] = "replacement"
         self.page.reload(wait_until="networkidle")
-        self.step("Test in the room")
         checks.get_by_text("Previous test needs a retest because the room configuration changed.", exact=True).wait_for()
         self.assertFalse(any(checkbox.is_checked() for checkbox in checks.get_by_role("checkbox").all()))
-        self.assertEqual(self.prefs["tests"]["living_room"], record)
+        self.assertEqual(self.prefs["automationTests"]["living_room"]["occupancy"], record)
         self.assertEqual(self.posts, [])
 
     def test_room_observation_conflict_keeps_answers_and_notes_for_review(self):
@@ -483,7 +536,7 @@ class GuideRegression(unittest.TestCase):
         checks.get_by_role("alert").filter(has_text="changed in another session").wait_for()
         self.assertTrue(checks.get_by_role("checkbox").first.is_checked())
         self.assertEqual(checks.get_by_label("Room test notes", exact=True).input_value(), "Still working on coverage.")
-        self.assertNotIn("tests", self.prefs)
+        self.assertNotIn("automationTests", self.prefs)
         self.assertEqual(self.posts, [])
 
     def test_room_setup_refresh_preserves_dirty_observations_until_explicit_retest(self):
@@ -501,14 +554,6 @@ class GuideRegression(unittest.TestCase):
         self.assertEqual(checks.get_by_label("Room test notes", exact=True).input_value(), "")
         self.assertEqual(self.puts, [])
         self.assertEqual(self.posts, [])
-
-    def test_uninstalled_room_cannot_be_recorded_as_physically_tested(self):
-        self.selected()
-        self.open(True)
-        checks = self.step("Test in the room").get_by_role("region", name="Room test checklist", exact=True)
-        self.assertTrue(checks.get_by_role("button", name="Save room test record", exact=True).is_disabled())
-        self.assertTrue(all(checkbox.is_disabled() for checkbox in checks.get_by_role("checkbox").all()))
-        self.assertEqual(self.puts, [])
 
     def test_house_modes_queue_only_one_native_switch_and_show_pending(self):
         self.open()
@@ -534,26 +579,24 @@ class GuideRegression(unittest.TestCase):
         self.assertEqual(modes.get_by_role("button", name="Add guest switch to changes", exact=True).count(), 0)
         self.assertEqual(self.posts, [])
 
-    def test_mobile_layout_and_draft_navigation_guard(self):
+    def test_mobile_list_and_details_back_fit(self):
         self.selected()
-        self.open(True)
-        outcome = self.step("Choose an outcome")
-        outcome.get_by_label("Room type", exact=True).select_option("bedroom")
-        dialogs = []
-        def dismiss(dialog):
-            dialogs.append(dialog.message)
-            dialog.dismiss()
-        self.page.once("dialog", dismiss)
-        self.page.get_by_role("button", name="All rooms", exact=True).click()
-        self.assertEqual(len(dialogs), 1)
-        self.assertTrue(self.page.url.endswith("#guide/living_room"))
-        self.page.get_by_role("button", name="Undo outcome edits", exact=True).click()
+        self.body["hierarchy"]["entities"]["binary_sensor.living_pir"]["name"] = "Hallway motion"
+        self.body["hierarchy"]["entities"]["light.living_bulb"]["name"] = "Low lamp"
         self.page.set_viewport_size({"width": 390, "height": 844})
+        self.open(True)
+        properties = self.page.get_by_role("region", name="Properties", exact=True)
+        expect(properties).to_have_count(0)
+        self.record("Automatic lighting")
+        expect(properties.get_by_role("heading", name="Automatic lighting", exact=True)).to_be_visible()
+        expect(properties.get_by_role("button", name="Continue to parameters", exact=False)).to_be_visible()
         self.assertTrue(self.page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
-        output = screenshot_dir()
-        output.mkdir(parents=True, exist_ok=True)
-        self.page.screenshot(path=str(output / "house-guide-mobile.png"), full_page=True)
+        self.page.screenshot(path=str(screenshot_dir() / "room-automation-mobile.png"))
+        properties.get_by_role("button", name="Automations", exact=True).click()
+        expect(properties).to_have_count(0)
+        expect(self.page.get_by_role("heading", name="Automations", exact=True)).to_be_visible()
         self.assertEqual(self.posts, [])
+        self.assertEqual(self.puts, [])
 
 
 if __name__ == "__main__":

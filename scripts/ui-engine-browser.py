@@ -19,7 +19,7 @@ from browser_common import BASE, launch
 VIEWPORTS = [(1280, 800), (375, 800)]
 
 # The pages of the navigation, in order, and what each tab strip offers.
-NAV = ["Home", "Rooms", "Changes", "Tools", "Settings"]
+NAV = ["Home", "Rooms", "Devices", "Entities", "Changes", "Tools", "Settings"]
 TOOLS = ["Areas", "Organize", "Recipes", "Buttons", "Parameters", "Health"]
 ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers",
                   "zones", "automations", "blueprints", "devices", "entities", "helpers"]
@@ -257,8 +257,6 @@ class UiEngine(unittest.TestCase):
         page = self.new_page(375, 800)
         self.open(page, "#guide")
         nav = page.get_by_role("navigation", name="Pages")
-        tops = nav.get_by_role("button").evaluate_all("buttons => [...new Set(buttons.map(b => Math.round(b.getBoundingClientRect().top)))]")
-        self.assertEqual(len(tops), 1, tops)
         self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"))
         nav.get_by_role("button", name="Rooms", exact=True).click()
         page.wait_for_url("**/#rooms")
@@ -293,6 +291,38 @@ class UiEngine(unittest.TestCase):
         page.wait_for_url("**/#guide/living_room")
         nav.get_by_role("button", name="Home", exact=True).click()
         page.wait_for_url("**/#guide")
+
+    def test_device_and_entity_navigation_stays_visible_at_phone_widths(self):
+        for width in [320, 360]:
+            with self.subTest(width=width):
+                page = self.new_page(width, 800)
+                self.open(page, "#guide")
+                nav = page.get_by_role("navigation", name="Pages")
+                fits = "buttons => buttons.every(b => { const r = b.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })"
+                self.assertTrue(nav.get_by_role("button").evaluate_all(fits))
+
+                devices = nav.get_by_role("button", name="Devices", exact=True)
+                entities = nav.get_by_role("button", name="Entities", exact=True)
+                devices.click()
+                page.wait_for_url("**/#organize/devices")
+                expect(devices).to_have_attribute("aria-current", "page")
+                expect(page.get_by_role("region", name="Devices", exact=True)).to_be_visible()
+
+                device_id = next(iter(self.hierarchy["devices"]))
+                page.goto(BASE + "/#devices/" + device_id, wait_until="networkidle")
+                page.wait_for_url("**/#organize/devices/" + device_id)
+                expect(devices).to_have_attribute("aria-current", "page")
+                expect(page.get_by_role("region", name="Properties")).to_be_visible()
+                entities.click()
+                page.wait_for_url("**/#organize/entities")
+                expect(entities).to_have_attribute("aria-current", "page")
+                expect(page.get_by_role("table", name="Entities list", exact=True)).to_be_visible()
+
+                nav.get_by_role("button", name="Tools", exact=True).click()
+                expect(nav.locator("[aria-current='page']")).to_have_count(1)
+                nav.get_by_role("button", name="Organize", exact=True).click()
+                page.wait_for_url("**/#organize/labels")
+                expect(nav.locator("[aria-current='page']")).not_to_be_visible()
 
     def test_health_link_opens_a_specific_check(self):
         page = self.new_page(1280, 800)

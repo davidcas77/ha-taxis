@@ -1,11 +1,12 @@
 import { ArrowRight, ChevronRight, Cpu, DoorOpen, HeartPulse, House, Layers3, ListChecks, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
-import { GUIDE_IDEAS, type AreaReadiness } from "../../shared/guide.ts";
+import { GUIDE_IDEAS, GUIDE_STAGES, type AreaReadiness } from "../../shared/guide.ts";
 import { HEALTH_CHECK_LABEL } from "../../shared/health.ts";
 import type { RecipeInstalled } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { GuideOverview } from "./guide-instructions.tsx";
 import { GuidePath } from "./guide-path.tsx";
+import { readRoomAutomationSelection } from "./guide-room-selection.ts";
 import { useHealth } from "./health.tsx";
 import { activeHomeRooms, groupHomeHealth, roomWorkReason, suggestHomeRooms } from "./home-dashboard-data.ts";
 import { readHomeRoom } from "./home-room-memory.ts";
@@ -43,7 +44,20 @@ export function HomeDashboard({
   const resumeId = (lastRoomId && Object.hasOwn(h.areas, lastRoomId) ? lastRoomId : active[0]?.areaId) ?? null;
   const resumeRoom = resumeId ? h.areas[resumeId] : null;
   const resumeAssessment = areas.find(({ areaId }) => areaId === resumeId);
-  const workReason = resumeAssessment?.equipmentConfirmed && roomWorkReason(resumeAssessment);
+  const resumedRecord = resumeId ? readRoomAutomationSelection(resumeId)?.record : undefined;
+  const resumedAutomation = resumeAssessment?.automations.find((automation) => automation.key === resumedRecord);
+  const resumedTool =
+    resumedRecord === "equipment" ? "Room equipment" : resumedRecord === "legacy-test" && resumeAssessment?.testRecord ? "Previous room observations" : null;
+  const resumeStatus = resumedTool ?? resumedAutomation?.label ?? (resumeAssessment ? roomStage(resumeAssessment) : null);
+  const workReason = resumedTool
+    ? null
+    : resumedAutomation
+      ? resumedAutomation.stage === "choose"
+        ? "Review required equipment."
+        : GUIDE_STAGES[resumedAutomation.stage]
+      : resumeAssessment
+        ? roomWorkReason(resumeAssessment)
+        : null;
   const suggestions = useMemo(() => suggestHomeRooms(h, inventory, naming, areas, resumeId), [h, inventory, naming, areas, resumeId]);
 
   return (
@@ -83,7 +97,7 @@ export function HomeDashboard({
                     {resumeRoom.name}
                     {resumeAssessment && <span className="font-normal text-muted"> · {resumeAssessment.floor}</span>}
                   </p>
-                  {resumeAssessment && <p className="mt-1 text-[13px] text-accent">{roomStage(resumeAssessment)}</p>}
+                  {resumeStatus && <p className="mt-1 text-[13px] text-accent">{resumeStatus}</p>}
                   {workReason && <p className="mt-0.5 text-xs text-muted">{workReason}</p>}
                 </>
               ) : (
