@@ -24,6 +24,7 @@ import { api } from "./api.ts";
 import { ButtonReferences } from "./button-references.tsx";
 import { DataTable, type Column } from "./data-table.tsx";
 import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
+import { useStoredChoice } from "./storage.ts";
 import { confirmDraftNavigation, useDraftGuard } from "./draft-guard.ts";
 import { JevCheck } from "./jev-check.tsx";
 import { Badge, Button, Card, Chip, EmptyState, inputClass, Toolbar } from "./ui.tsx";
@@ -33,6 +34,7 @@ type Binding = ButtonMapping & { queued: boolean; output: string; automationId: 
 type Editing = { key: string; action: ButtonAction | null; enabled: boolean };
 
 const haAutomation = (id: string) => `/config/automation/edit/${encodeURIComponent(id)}`;
+const gestureSourceEntity = (gesture: ButtonGesture) => gesture.eventEntity ?? gesture.enumSensor;
 
 // The Buttons tab of the Automations page: the controls on the left, and for the
 // one picked, its buttons by press types. Content only; the page supplies the header.
@@ -233,12 +235,12 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
 
 // Until the Automations page carries it, Buttons is a page of its own.
 // One line, collapsed, about what discovery could and could not read.
-function Coverage({ data, summary }: { data: { inventory: ButtonInventory }; summary?: string }) {
+function Coverage({ data }: { data: { inventory: ButtonInventory } }) {
   const { coverage, notes } = data.inventory;
   return (
     <details className="text-xs text-muted">
       <summary className="cursor-pointer">
-        {summary ? `${summary} · ` : ""}Discovery coverage: {coverage.readable} of {coverage.automations} automation configs readable
+        Discovery coverage: {coverage.readable} of {coverage.automations} automation configs readable
       </summary>
       <ul className="mt-2 list-disc pl-4">
         {notes.map((n) => (
@@ -353,6 +355,7 @@ function ControlView({
   openJevSettings: () => void;
 }) {
   const matrix = buttonMatrix(control.gestures, bindings, control.existing);
+  const [layout, setLayout] = useStoredChoice("taxis:buttons:layout", ["tree", "table"] as const, "tree");
   const [attempt, setAttempt] = useState(0);
   const [evidence, setEvidence] = useState<{ request: string; result: Awaited<ReturnType<typeof api.buttonAiPreview>> } | null>(null);
   const request = JSON.stringify([control.id, data.fingerprint, revision, attempt]);
@@ -371,52 +374,49 @@ function ControlView({
   const preview = result?.ok ? result.preview : null;
   const pressEvidence = new Map(preview?.analysis?.gestures.map((item) => [item.key, item]));
   const relatedEvidence = new Map(preview?.analysis?.related.map((handler) => [handler.id, handler]));
-  // The form opens below the table; bring it into view.
+  // The form opens below the gestures; bring it into view.
   const editor = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (editing) editor.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [editing]);
-  type Row = (typeof matrix.rows)[number];
   const editingGesture = control.gestures.find((g) => control.id + g.key === editing?.key) ?? null;
   const blocked = bindings.filter((b) => b.blocked);
-  const columns: Column<Row>[] = [
-    {
-      id: "button",
-      header: "Button",
-      priority: 1,
-      sticky: true,
-      minWidth: 110,
-      sort: (r) => r.button,
-      text: (r) => r.button,
-      cell: (r) => <span className="font-medium">{r.button}</span>,
-    },
-    ...matrix.columns.map<Column<Row>>((press, i) => ({
-      id: `press:${press}`,
-      header: press,
-      label: press,
-      priority: i < 3 ? 2 : 3,
-      minWidth: 180,
-      cell: (r) => {
-        const cell = r.cells[press];
-        return cell ? (
-          <GestureCell
-            button={r.button}
-            cell={cell}
-            analysis={pressEvidence.get(cell.gesture.key)}
-            busy={busy}
-            onEdit={(action, enabled) => onEdit(cell.gesture, action, enabled)}
-          />
-        ) : (
-          <span className="text-muted/60" title="This button has no such press type">
-            –
-          </span>
+  const renderSources = (button: string, sources: readonly MatrixCell<Binding>[]) => (
+    <ul className="grid gap-2 divide-y divide-line">
+      {sources.map((cell, index) => {
+        const { gesture } = cell;
+        const sameIntegration = sources.filter((source) => source.gesture.source === gesture.source);
+        const sameLabel = sameIntegration.filter((source) => gestureSourceEntity(source.gesture) === gestureSourceEntity(gesture));
+        const ordinal =
+          sameLabel.length > 1
+            ? sameLabel
+                .map((source) => source.gesture.key)
+                .sort()
+                .indexOf(gesture.key) + 1
+            : null;
+        return (
+          <li key={gesture.key} className={index > 0 ? "pt-2" : undefined}>
+            <GestureCell
+              button={button}
+              cell={cell}
+              analysis={pressEvidence.get(gesture.key)}
+              qualifyActions={sources.length > 1}
+              qualifyGroup={sameIntegration.length > 1}
+              sourceOrdinal={ordinal}
+              busy={busy}
+              onEdit={(action, enabled) => onEdit(gesture, action, enabled)}
+            />
+          </li>
         );
-      },
-    })),
-  ];
+      })}
+    </ul>
+  );
+  // Integrations can expose combinations or a generic control without naming a physical button.
+  const buttonNoun = matrix.buttons.some(({ label }) => /^(both|button \/ control)$/i.test(label)) ? "button group" : "button";
+  const gestureCount = control.gestures.length;
   return (
-    <div className="flex flex-col gap-3">
-      <Coverage data={data} summary={`${control.gestures.length} press type${control.gestures.length === 1 ? "" : "s"}`} />
+    <div className="flex min-w-0 flex-col gap-3">
+      <Coverage data={data} />
       <div>
         <h2 className="text-lg font-semibold">{control.name}</h2>
         <p className="mt-1 text-sm text-muted">{[control.manufacturer, control.model, ...control.integrations].filter(Boolean).join(" · ")}</p>
@@ -460,9 +460,85 @@ function ControlView({
           />
         </div>
       )}
-      {matrix.rows.length > 0 && (
-        <>
-          <DataTable id="buttons-control" label={`Buttons of ${control.name}`} rows={matrix.rows} rowKey={(r) => r.button} columns={columns} maxHeight="none" />
+      {matrix.buttons.length > 0 && (
+        <section aria-label="Button gestures" className="grid min-w-0 gap-2">
+          <Toolbar label="Button layout">
+            <p className="mr-auto text-sm font-medium">
+              {matrix.buttons.length} {buttonNoun}
+              {matrix.buttons.length === 1 ? "" : "s"} · {gestureCount} {gestureCount === 1 ? "gesture" : "gestures"}
+            </p>
+            <Chip pressed={layout === "tree"} onClick={() => setLayout("tree")}>
+              Tree
+            </Chip>
+            <Chip pressed={layout === "table"} onClick={() => setLayout("table")}>
+              Table
+            </Chip>
+          </Toolbar>
+          {layout === "tree" ? (
+            <ul aria-label={`Button tree for ${control.name}`} className="grid min-w-0 gap-2">
+              {matrix.buttons.map(({ label, presses }) => (
+                <li key={label} className="min-w-0 rounded-lg border border-line bg-surface">
+                  <details open aria-label={label}>
+                    <summary className="cursor-pointer rounded-lg px-3 py-2 text-sm font-semibold hover:bg-sunken">{label}</summary>
+                    <ul className="divide-y divide-line border-t border-line px-3">
+                      {matrix.pressTypes.flatMap((press) => {
+                        const sources = presses.get(press);
+                        return sources
+                          ? [
+                              <li key={press} className="grid min-w-0 items-start gap-1 py-2.5 sm:grid-cols-[minmax(7rem,10rem)_minmax(0,1fr)] sm:gap-3">
+                                <h3 className="min-w-0 break-words text-[13px] font-medium">{press}</h3>
+                                {renderSources(label, sources)}
+                              </li>,
+                            ]
+                          : [];
+                      })}
+                    </ul>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div role="region" aria-label="Scrollable button table" tabIndex={0} className="min-w-0 overflow-x-auto rounded-lg border border-line bg-surface">
+              <table className="min-w-full border-separate border-spacing-0 text-left">
+                <caption className="sr-only">Buttons of {control.name}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" className="sticky left-0 z-10 min-w-28 border-r border-line bg-sunken px-2 py-2 text-xs font-semibold">
+                      Press type
+                    </th>
+                    {matrix.buttons.map(({ label }) => (
+                      <th scope="col" key={label} className="min-w-52 bg-sunken px-3 py-2 text-[13px] font-semibold">
+                        {label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {matrix.pressTypes.map((press) => (
+                    <tr key={press}>
+                      <th scope="row" className="sticky left-0 z-10 border-t border-r border-line bg-surface px-2 py-3 align-top text-[13px] font-medium">
+                        {press}
+                      </th>
+                      {matrix.buttons.map(({ label, presses }) => {
+                        const sources = presses.get(press);
+                        return (
+                          <td key={label} className="border-t border-line px-3 py-2 align-top">
+                            {sources ? (
+                              renderSources(label, sources)
+                            ) : (
+                              <span className="text-xs text-muted" aria-label="Press unavailable">
+                                –
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <p className="text-xs text-muted">
             A trigger match identifies a handler. Its conditions determine when it can run. Check discovery coverage for unreadable automations.
           </p>
@@ -471,7 +547,7 @@ function ControlView({
               {note}
             </p>
           ))}
-        </>
+        </section>
       )}
       {blocked.map((b) => (
         <Card key={b.key} tone="danger">
@@ -515,22 +591,52 @@ function GestureCell({
   button,
   cell,
   analysis,
+  qualifyActions,
+  qualifyGroup,
+  sourceOrdinal,
   busy,
   onEdit,
 }: {
   button: string;
   cell: MatrixCell<Binding>;
   analysis: ButtonGestureAnalysis | undefined;
+  qualifyActions: boolean;
+  qualifyGroup: boolean;
+  sourceOrdinal: number | null;
   busy: boolean;
   onEdit: (action: ButtonAction | null, enabled: boolean) => void;
 }) {
   const { gesture, bindings, external } = cell;
-  const label = `${button} · ${gesture.gesture}`;
+  const sourceEntity = gestureSourceEntity(gesture);
+  const sourceNumber = sourceOrdinal === null ? null : `Source ${sourceOrdinal}`;
+  const sourceName = [gesture.source, sourceEntity, sourceNumber].filter(Boolean).join(" · ");
+  const triggerDetail = sourceNumber
+    ? [gesture.trigger.type, gesture.trigger.subtype, gesture.eventType ?? gesture.trigger.to]
+        .filter((part): part is string => typeof part === "string" && Boolean(part))
+        .join(" / ")
+    : "";
+  const label = `${button} · ${gesture.gesture}${qualifyActions ? ` · ${sourceName}` : ""}`;
   const handlers = analysis?.handlers ?? [];
   const detailed = new Set(handlers.map((handler) => handler.id));
   const empty = bindings.length === 0 && external.length === 0 && handlers.length === 0;
   return (
-    <div role="group" aria-label={`${gesture.gesture} · ${gesture.source}`} className="flex flex-col gap-1">
+    <div role="group" aria-label={`${gesture.gesture} · ${qualifyGroup ? sourceName : gesture.source}`} className="flex flex-col gap-1">
+      <p className="break-words text-[11px] text-muted">
+        {gesture.source}
+        {sourceEntity && (
+          <>
+            {" "}
+            · <code className="break-all">{sourceEntity}</code>
+          </>
+        )}
+        {sourceNumber && <> · {sourceNumber}</>}
+        {triggerDetail && (
+          <>
+            {" "}
+            · <code className="break-all">{triggerDetail}</code>
+          </>
+        )}
+      </p>
       {bindings.map((b) => (
         <div key={`${b.key}:${buttonOutput(b.action)}`} className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <code className="break-all text-xs" title={`${b.action.service} → ${b.action.entityId ?? "Service action"}`}>

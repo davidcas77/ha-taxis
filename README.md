@@ -88,8 +88,9 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   keep working when Taxis is stopped.
 - **Buttons:** Open the button mapping page from the main menu to inspect remotes,
   wall controls and Home Assistant button inputs. Record your own mappings in
-  Taxis even when Home Assistant doesn't report the control's press types. For
-  detected presses, see existing automation matches and assign an action from a fixed, safe list: control lights, switches,
+  Taxis even when Home Assistant doesn't report the control's press types. Browse
+  detected presses grouped by button in Tree view, or compare button columns and
+  press rows in Table view. See existing automation matches and assign an action from a fixed, safe list: control lights, switches,
   fans, covers, media players, climate and similar entities, run scripts, scenes
   and automations, or send a persistent notification. Anything that reaches Home
   Assistant itself, the host, shell commands or integration administration, and

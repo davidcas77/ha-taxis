@@ -80,6 +80,11 @@ const readable = (s: string) => {
 function nativeLabels(trigger: Record<string, unknown>) {
   const type = String(trigger.type ?? "Press");
   const sub = String(trigger.subtype ?? "Button");
+  // HomeKit Device puts its numbered channel in type and the press in subtype.
+  if (trigger.domain === "homekit_controller" && /^(?:single|double|long)_press$/.test(sub)) {
+    const number = /^button([1-9]|10)$/.exec(type)?.[1];
+    if (number) return { button: `Button ${number}`, gesture: readable(sub) };
+  }
   const words = "single|double|triple|hold|release|long|short|press|quadruple";
   const suffixed = new RegExp(`^(.*?)[_ -](${words})(?:_press)?$`).exec(sub);
   const prefixed = new RegExp(`^(${words})[_ -](.+)$`).exec(sub);

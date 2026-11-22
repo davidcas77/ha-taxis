@@ -14,6 +14,7 @@ import type { Change } from "../../shared/types.ts";
 import { DEFAULT_AI } from "../../shared/ai.ts";
 import { buttonFixture } from "./fixture.ts";
 import { buttonAutomationId, discoverButtons } from "./discovery.ts";
+import { buttonHash } from "./identity.ts";
 import { buttonConfig, buttonInventoryFingerprint, planButtonAssignment } from "./mapping.ts";
 import { applyButtonChanges } from "./apply.ts";
 import { changeStore } from "../changes/store.ts";
@@ -209,6 +210,58 @@ const matches = (
   );
 
 describe("gesture labels", () => {
+  it("groups the six HomeKit device triggers by channel and keeps existing mapping identities", async () => {
+    const f = buttonFixture();
+    const remote = "homekit_remote";
+    const controlId = `device:${remote}`;
+    f.raw.devices.push({ id: remote, name: "Bedroom remote", area_id: "bedroom" });
+    const types = ["button1", "button2"];
+    const presses = ["single_press", "double_press", "long_press"];
+    const triggers = types.flatMap((type) =>
+      presses.map((subtype) => ({ platform: "device", domain: "homekit_controller", device_id: remote, type, subtype })),
+    );
+    f.triggers[remote] = triggers;
+    const first = await f.read();
+    const control = first.inventory.controls.find(({ id }) => id === controlId)!;
+    expect(control.gestures).toHaveLength(6);
+    const labels = ["Single press", "Double press", "Long press"];
+    const stableKey = (trigger: Record<string, unknown>) => buttonHash({ trigger, eventEntity: null, eventType: null }).slice(0, 24);
+    expect(control.gestures).toEqual(
+      expect.arrayContaining(
+        triggers.map((trigger, index) =>
+          expect.objectContaining({ trigger, button: `Button ${Math.floor(index / 3) + 1}`, gesture: labels[index % 3], key: stableKey(trigger) }),
+        ),
+      ),
+    );
+
+    const plan = (r: Awaited<ReturnType<typeof f.read>>) =>
+      planButtonAssignment(r.inventory, { ...assignment(r, remote), gestureKey: stableKey(triggers[0]) }, []);
+    const mapped = asChange(plan(first));
+    const old = mapped.after.button_map as ButtonMap;
+    const binding = old.bindings[0];
+    old.bindings[0] = { ...binding, button: "Single", gesture: "Press" };
+    f.addAutomation(mapped.targetId, buttonConfig(mapped.targetId, String(mapped.after.alias), old));
+    const external = triggers[5];
+    f.addAutomation("other_channel", {
+      trigger: [external],
+      action: [{ action: "light.turn_off", target: { entity_id: "light.bedroom_main" } }],
+    });
+
+    const saved = await f.read();
+    const current = saved.inventory.controls.find(({ id }) => id === controlId)!;
+    expect(current.existing[binding.gestureKey]).toMatchObject([{ id: mapped.targetId, managed: true, match: "exact" }]);
+    expect(current.existing[stableKey(external)]).toMatchObject([{ id: "other_channel", managed: false, match: "exact" }]);
+    const update = plan(saved);
+    expect(update).toMatchObject({ op: "update", fields: { automation_id: mapped.targetId } });
+    expect((update.fields?.button_map as ButtonMap).bindings).toEqual([{ ...binding, button: "Button 1", gesture: "Single press" }]);
+  });
+
+  it("keeps other integrations' device-trigger labels", async () => {
+    const f = buttonFixture();
+    const control = (await f.read()).inventory.controls.find(({ id }) => id === "device:remote2")!;
+    expect(control.gestures).toContainEqual(expect.objectContaining({ button: "Button 1", gesture: "Short press", source: "mqtt device trigger" }));
+  });
+
   it("keep the integration's own spelling, not a title-cased one", async () => {
     const f = buttonFixture();
     addEvent(f, "event.desk_remote_button_event_1", "remote3", "Desk remote button 1", { event_types: ["Double press", "long_press"] });

@@ -1,10 +1,7 @@
 import type { ButtonExisting, ButtonGesture } from "./buttons.ts";
 
-// A control's buttons by press types: one row per button, one column per press
-// type ("Single press", "Double press", "Long press"…), taken from the data of
-// that control, in the order the integration gave them and spelled as it
-// spells them. A cell holds the gesture, the Taxis assignments on it and the
-// automations that already handle it.
+// Both layouts use the same groups. A button can report several triggers for
+// one press type, and each trigger keeps its own assignments and handlers.
 
 export type MatrixCell<B> = {
   gesture: ButtonGesture;
@@ -15,10 +12,9 @@ export type MatrixCell<B> = {
 };
 
 export type ButtonMatrix<B> = {
-  // The press types, first seen first.
-  columns: string[];
-  rows: { button: string; cells: Record<string, MatrixCell<B>> }[];
-  // Cells with something assigned (by Taxis or already in Home Assistant) and cells with nothing.
+  pressTypes: string[];
+  buttons: { label: string; presses: ReadonlyMap<string, MatrixCell<B>[]> }[];
+  // Gestures with an assignment or Home Assistant handler and gestures without one.
   counts: { assigned: number; empty: number };
 };
 
@@ -35,31 +31,29 @@ export function buttonMatrix<B extends { gestureKey: string }>(
   bindings: readonly B[],
   existing: Record<string, ButtonExisting[]>,
 ): ButtonMatrix<B> {
-  const columns: string[] = [];
-  const rows = new Map<string, { button: string; cells: Record<string, MatrixCell<B>> }>();
+  const pressTypes = new Set<string>();
+  const buttons = new Map<string, Map<string, MatrixCell<B>[]>>();
   let assigned = 0;
   let empty = 0;
   for (const gesture of gestures) {
-    let row = rows.get(gesture.button);
-    if (!row) {
-      row = { button: gesture.button, cells: {} };
-      rows.set(gesture.button, row);
-    }
-    // Two gestures of one button with the same name (two sources) keep a column each.
-    let column = gesture.gesture;
-    if (row.cells[column]) column = `${gesture.gesture} · ${gesture.source}`;
-    if (row.cells[column]) column = `${gesture.gesture} · ${gesture.key.slice(0, 6)}`;
-    if (!columns.includes(column)) columns.push(column);
+    const presses = buttons.get(gesture.button) ?? new Map<string, MatrixCell<B>[]>();
+    buttons.set(gesture.button, presses);
+    pressTypes.add(gesture.gesture);
     const cell: MatrixCell<B> = {
       gesture,
       bindings: bindings.filter((b) => b.gestureKey === gesture.key),
       external: (existing[gesture.key] ?? []).filter((a) => !a.managed),
     };
-    row.cells[column] = cell;
+    const sources = presses.get(gesture.gesture) ?? [];
+    sources.push(cell);
+    presses.set(gesture.gesture, sources);
     if (cell.bindings.length || cell.external.length) assigned++;
     else empty++;
   }
   // Array.prototype.sort is stable, so equals stay in the order they came.
-  columns.sort((a, b) => pressRank(a) - pressRank(b));
-  return { columns, rows: [...rows.values()], counts: { assigned, empty } };
+  return {
+    pressTypes: [...pressTypes].sort((a, b) => pressRank(a) - pressRank(b)),
+    buttons: [...buttons].map(([label, presses]) => ({ label, presses })),
+    counts: { assigned, empty },
+  };
 }

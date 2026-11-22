@@ -1039,11 +1039,11 @@ includes readable conditions, branches and potential overlaps between handlers. 
 **Discovery coverage** you see how many automation configurations could be read.
 When configurations are unavailable, other handlers may still react to a press.
 
-**One table per control.** Opening a control shows a table: a row per button and a
-column per press type that the control offers (Single press, Double press, Long press,
-and so on, spelled as the integration spells them). Each cell shows the automations
-that already handle that press (Taxis's own, and existing ones as links to Home
-Assistant). Use the **+** to assign an action. The discovery coverage is above the table.
+**Tree and Table.** The Tree lists each button with its supported presses beneath
+it. Choose Table to compare physical buttons in columns and press types in rows.
+A button and press can have several reported trigger sources. Each source keeps
+its own existing automation evidence and action controls. Use the **+** to
+assign an action. Discovery coverage is above the layout.
 
 **Assigning an action.** Open a control, choose a gesture and **Assign action**.
 Choose the **Target**, an entity, and the **Action** to run on it, or an action
