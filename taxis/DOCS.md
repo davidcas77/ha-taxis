@@ -218,6 +218,11 @@ device's area. Area multi-selection is available in both Table and Records.
 Active filter chips show what is selected; clear individual choices or reset the
 filters to show everything again. Filters remain visible when the list is empty.
 
+In **Not in any area**, the device and entity views show a suggested existing
+area when the names or entity ID point to a single room. Review the displayed
+evidence, then accept the assignment to send it through your editing mode.
+Names that point to different rooms leave the assignment for you to choose.
+
 Long lists have **Previous page** and **Next page** controls and a shown-range
 count. Pagination makes every matching record reachable; use search and filters
 to narrow the results without losing the controls.
@@ -961,13 +966,19 @@ from the list to open its details.
    the optional sources that can improve how it works. For example, lighting
    needs a controllable light and an entry source. A light level sensor can
    help avoid turning the lights on when the room is already bright.
-2. Check the matched equipment and the readiness count. Assign a suitable
-   existing entity when something is missing. If the assignment goes to
-   **Changes**, apply it before relying on it. Each automation has its own
-   readiness count, based on its required equipment.
+2. Check the matched equipment and the readiness count. If something is
+   missing, Taxis suggests reporting, compatible unassigned equipment when
+   its entity name, entity ID or device name points to this room. Check each
+   candidate's location and role before accepting it. Use the equipment search
+   when names are unclear or the entity is assigned elsewhere. Apply queued
+   assignments in **Changes** before relying on them.
 3. Continue to the parameters for this automation. For lighting, choose
    the levels and how long the room stays occupied. Review the native
-   Home Assistant changes and confirm them through your selected editing mode.
+   Home Assistant changes, including group IDs and their named members.
+   For example, a light group controls the selected lights together and a new
+   motion group reports on when any member reports on. **Review & install**
+   shows which groups are required and which can be proposed separately.
+   Confirm through your selected editing mode.
 4. Once the automation is installed and enabled, try it in the room and
    record what you observe. If you adjust the settings or replace equipment,
    check the new behavior again.
@@ -1011,21 +1022,19 @@ like no button, and **Refresh buttons and automations** to read again.
 
 **Existing automations.** Taxis reads the automations it can read and matches them
 to each gesture. **Trigger match** means the automation's trigger, including the
-event type it filters on, is that gesture. **Possible match — inspect logic** means
+event type it filters on, is that gesture. **Possible match** means
 it only mentions the device, listens to every press of an entity, or is a blueprint
 whose inputs name the device. Each match shows whether it is on, the services it
-calls and what it targets, with a link that opens it in Home Assistant. Conditions,
-choose branches and blueprint inputs can change what a handler really does, so read
-it there. Under **Discovery coverage** you see how many automation configurations
-could be read. YAML-only and unavailable ones can't be, so no match is not proof
-that nothing else reacts to a button.
+calls and what it targets, with a link that opens it in Home Assistant. The evidence
+includes readable conditions, branches and potential overlaps between handlers. Under
+**Discovery coverage** you see how many automation configurations could be read.
+When configurations are unavailable, other handlers may still react to a press.
 
 **One table per control.** Opening a control shows a table: a row per button and a
 column per press type that the control offers (Single press, Double press, Long press,
 and so on, spelled as the integration spells them). Each cell shows the automations
 that already handle that press (Taxis's own, and existing ones as links to Home
-Assistant) or a faint **+** where nothing was found. Click a cell, or the **+**, to
-assign. The discovery coverage is one collapsible line above the table.
+Assistant). Use the **+** to assign an action. The discovery coverage is above the table.
 
 **Assigning an action.** Open a control, choose a gesture and **Assign action**.
 Choose the **Target**, an entity, and the **Action** to run on it, or an action
@@ -1080,12 +1089,11 @@ automation. Taxis won't write it again as it is, which also means you can't add 
 change other buttons in that same automation. Change or remove it in Home
 Assistant, or assign that button a new, allowed action to replace it.
 
-**AI review.** Under a control, **AI review of existing button automations** can
-explain the matches in plain language. **Prepare AI preview** shows exactly what
-would be sent: the control, its gestures, coverage notes, and the names, services
-and targets of matching automations, not raw YAML or action data. Only
-**Send this review to Medium AI** sends it. The reply is an explanation: it cannot
-assign an action or apply anything.
+**AI analysis.** **Analyze with AI** opens the exact preview for the selected
+control, including its discovered gestures, readable automation evidence and
+coverage limits. **Send this review to Medium AI** sends the preview and shows
+the explanation on Buttons. The local press evidence remains available if the
+AI request fails.
 
 ## Why an entity doesn't work
 
@@ -1610,12 +1618,26 @@ again.
 ## Jev decisions
 
 Jev is an optional decision service from TypeSafe, separate from your Low, Medium
-and Strong models. It has one job: in the Guide's room test, **Review notes with
-Jev** reads the notes you typed and says, for each checklist item you selected,
-whether they describe it **working**, **a problem**, or **not established**, with
-the probabilities it gave. It is a suggestion. It never ticks a box, saves an
-observation, changes readiness or touches Home Assistant, and editing the notes
-clears the review shown. Your own observations stay the evidence.
+and Strong models. You can use it in these parts of Taxis:
+
+- **Buttons.** Review the selected control's presses, conditions and actions for
+  duplicate, complementary or potentially conflicting behavior.
+- **Unassigned entities and devices.** Review the evidence for placement in an
+  existing area. Check the suggested room before choosing it yourself.
+- **Room automation equipment.** Review the sensors that could satisfy a selected
+  requirement. Check their physical location and behavior before assigning one.
+- **Room automation groups.** Review whether the members in a proposed group fit
+  one purpose or might serve separate zones.
+- **Room test.** Review whether the notes you typed report a check working, a
+  problem, or insufficient observation. Editing the notes clears the review.
+
+The four configuration checks show a preview before you send. Their decisions
+are advisory and cannot change area assignments, room readiness, group
+membership, checklist observations or Home Assistant settings.
+
+Taxis uses its standard checks without a Jev key. When you open a configuration
+check before setup, Taxis asks whether you have a Jev API key. Choose to enter
+the key in Settings or stay with the standard checks.
 
 Set it up in **Settings → Jev decisions**:
 
@@ -1666,9 +1688,9 @@ What each of the AI and Jev services receives, and when:
     you could review (page help, or house counts, or one area's names, ids, roles,
     availability flags, capability counts, helper plans and equipment assessment)
     and up to six earlier messages;
-  - when you press **Send this review to Medium AI** on Buttons: the summary you
-    could preview, with control and gesture names and the names, services and
-    targets of matching automations;
+  - when you press **Send this review to Medium AI** on Buttons, the evidence shown
+    in the preview for that control, including gestures, matching automation
+    evidence, and coverage limits;
   - when you press **Load models**: only the key and the request for the list;
   - when you press a **Test** button: one fixed sentence.
     It never receives your Home Assistant token, state values, attributes, the YAML
@@ -1676,6 +1698,9 @@ What each of the AI and Jev services receives, and when:
     token and the saved API keys are also removed from any text before it is sent.
 - **TypeSafe** receives your Jev API key as the login of the request, the Jev model
   name, and:
+  - when you send a Jev configuration check: the bounded evidence shown in the
+    preview for the selected control, unassigned item, sensor requirement, or
+    proposed room groups, with the questions and their allowed decisions;
   - when you press **Review notes with Jev** in the Guide: the notes you typed (up
     to 2,000 characters, with the Home Assistant token and saved keys removed) and the descriptions of the
     checklist items you selected. Not the area, entities, states or saved test

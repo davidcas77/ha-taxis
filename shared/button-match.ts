@@ -54,6 +54,18 @@ const asList = (value: unknown): unknown[] => (Array.isArray(value) ? value : va
 const asStrings = (value: unknown): string[] => asList(value).filter((v): v is string => typeof v === "string");
 const ENTITY_ID = /^[a-z_]+\.[a-z0-9_]+$/;
 
+// A purpose-specific event trigger names the event entity in target and types
+// in options. The caller may resolve broader targets from its registry view.
+export function matchEventReceivedTrigger(t: Record<string, unknown>, entityId: string, type: string, indirectTarget = false): MatchLevel | null {
+  if (t.platform !== "event.received" || !entityId.startsWith("event.") || !buttonRecord(t.target) || !buttonRecord(t.options)) return null;
+  const target = t.target;
+  const direct = asStrings(target.entity_id).includes(entityId);
+  if ((!direct && !indirectTarget) || (buttonRecord(target.exclude) && asStrings(target.exclude.entity_id).includes(entityId))) return null;
+  const configured = asStrings(t.options.event_type);
+  if (configured.includes(type)) return direct && !target.exclude ? "exact" : "possible";
+  return configured.some((value) => value.includes("{")) ? "possible" : null;
+}
+
 // A trigger as a plain record, with the new-style `trigger:` key folded into
 // `platform:`. Fields that do not change what it listens to are dropped.
 export function normalizeTrigger(value: unknown): Record<string, unknown> | null {
@@ -86,7 +98,7 @@ export function gestureSource(gesture: MatchableGesture): string | null {
   return sourceOf(gesture)?.entityId ?? null;
 }
 
-const better = (a: MatchLevel | null, b: MatchLevel | null): MatchLevel | null => (a === "exact" || b === "exact" ? "exact" : a ?? b);
+const better = (a: MatchLevel | null, b: MatchLevel | null): MatchLevel | null => (a === "exact" || b === "exact" ? "exact" : (a ?? b));
 
 // The match of one automation against one gesture. `siblingTypes` are all the
 // press types of the gesture's own entity: a template that quotes one of them
@@ -103,7 +115,8 @@ export function matchGesture(config: Record<string, unknown>, gesture: Matchable
 // adds discovery_id and metadata; the UI saves neither.
 function matchDeviceGesture(config: Record<string, unknown>, trigger: Record<string, unknown>): MatchLevel | null {
   const same = triggersOf(config).some(
-    (t) => t.platform === "device" && t.domain === trigger.domain && t.device_id === trigger.device_id && t.type === trigger.type && t.subtype === trigger.subtype,
+    (t) =>
+      t.platform === "device" && t.domain === trigger.domain && t.device_id === trigger.device_id && t.type === trigger.type && t.subtype === trigger.subtype,
   );
   if (same) return "exact";
   // A blueprint that takes the device itself handles its buttons, which one is
@@ -136,6 +149,9 @@ function matchTriggers(config: Record<string, unknown>, source: Source, siblingT
 }
 
 function matchTrigger(trigger: Record<string, unknown>, source: Source, siblingTypes: readonly string[], evidence: Evidence): MatchLevel | null {
+  if (source.kind === "event" && source.type && trigger.platform === "event.received") {
+    return matchEventReceivedTrigger(trigger, source.entityId, source.type);
+  }
   const templateTrigger = trigger.platform === "template" && typeof trigger.value_template === "string" && trigger.value_template.includes(source.entityId);
   const stateTrigger = trigger.platform === "state" && asStrings(trigger.entity_id).includes(source.entityId);
   if (!stateTrigger && !templateTrigger) return null;
@@ -229,7 +245,12 @@ function collectConditions(conditions: unknown[], negated: boolean, out: Evidenc
         collectConditions(asList(c.conditions), true, out, depth + 1);
         break;
       case "state":
-        out.states.push({ entityIds: asStrings(c.entity_id), attribute: typeof c.attribute === "string" ? c.attribute : undefined, states: asStrings(c.state), negated });
+        out.states.push({
+          entityIds: asStrings(c.entity_id),
+          attribute: typeof c.attribute === "string" ? c.attribute : undefined,
+          states: asStrings(c.state),
+          negated,
+        });
         break;
       case "template":
         if (typeof c.value_template === "string") out.templates.push({ text: c.value_template, negated });
@@ -287,7 +308,14 @@ function pressWord(text: string): PressWord | null {
   return word === undefined ? null : word === "hold" ? "long" : (word as PressWord);
 }
 
-const nonEmpty = (value: unknown): boolean => (Array.isArray(value) ? value.length > 0 : buttonRecord(value) ? Object.keys(value).length > 0 : typeof value === "string" ? value.trim() !== "" : value !== undefined && value !== null);
+const nonEmpty = (value: unknown): boolean =>
+  Array.isArray(value)
+    ? value.length > 0
+    : buttonRecord(value)
+      ? Object.keys(value).length > 0
+      : typeof value === "string"
+        ? value.trim() !== ""
+        : value !== undefined && value !== null;
 
 // A blueprint input that holds the entity is a possible match for its presses.
 // When the blueprint has one input per press for that button (b3_single,
@@ -327,7 +355,11 @@ function containsValue(value: unknown, ids: ReadonlySet<string>, depth = 0): boo
 //  - for a control with no gestures at all, any trigger or blueprint that does;
 //  - a blueprint taking the device itself or its hardware id.
 // They are listed under the control, never on a gesture.
-export function referencesDevice(config: Record<string, unknown>, refs: { all: ReadonlySet<string>; device: ReadonlySet<string> }, hasGestures: boolean): boolean {
+export function referencesDevice(
+  config: Record<string, unknown>,
+  refs: { all: ReadonlySet<string>; device: ReadonlySet<string> },
+  hasGestures: boolean,
+): boolean {
   if (!hasGestures) return containsValue([config.triggers ?? config.trigger, config.use_blueprint], refs.all);
   if (triggersOf(config).some((t) => t.platform === "event" && containsValue(t, refs.all))) return true;
   return containsValue(config.use_blueprint, refs.device);

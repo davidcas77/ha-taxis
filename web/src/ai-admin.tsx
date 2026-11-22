@@ -11,6 +11,33 @@ type Admin = Extract<AssistantAdminResponse, { ok: true }>;
 type FunctionRow = { key: string; name: string; engine: ReactNode; engineText: string; trigger: string; data: string; authority: string };
 type ActivityRow = Admin["activity"][number] & { key: string };
 
+const jevChecks = [
+  {
+    key: "jev-buttons",
+    name: "Button mapping check",
+    trigger: "Buttons → selected control → Check button mapping with Jev",
+    data: "Selected control, supported presses, handler evidence and coverage",
+  },
+  {
+    key: "jev-area",
+    name: "Area assignment check",
+    trigger: "Not in any area → select one device or entity → Check area with Jev",
+    data: "Selected device or entity names, area candidates and local placement evidence",
+  },
+  {
+    key: "jev-equipment",
+    name: "Room equipment check",
+    trigger: "Rooms → Equipment → Check equipment with Jev",
+    data: "Selected requirement, compatible sources, role and availability evidence",
+  },
+  {
+    key: "jev-groups",
+    name: "Room group plan check",
+    trigger: "Rooms → Review & install → Check group plan with Jev",
+    data: "Canonical Home Assistant groups, source members and planner status",
+  },
+];
+
 // The AI tab of Settings, overview part: where AI works, who triggers it and
 // what it receives. The models and keys are set in the sections under it.
 export function AiAdminPanel() {
@@ -34,6 +61,7 @@ export function AiAdminPanel() {
   const functions = useMemo<FunctionRow[]>(() => {
     if (!data) return [];
     const missing = (model: string | undefined) => model || "Model missing";
+    const jevEngine = `Jev · ${data.jev.enabled && data.jev.keySet ? "On demand" : "Needs setup"}`;
     return [
       ...Object.entries(ASSISTANT_ACTIONS).map(([key, a]) => {
         const status = data.ai.enabled ? "On demand" : "Off";
@@ -55,12 +83,13 @@ export function AiAdminPanel() {
       {
         key: "jev-notes",
         name: "Room-note review",
-        engine: `Jev · ${data.jev.enabled && data.jev.keySet ? "On demand" : "Needs setup"}`,
-        engineText: `Jev · ${data.jev.enabled && data.jev.keySet ? "On demand" : "Needs setup"}`,
+        engine: jevEngine,
+        engineText: jevEngine,
         trigger: "Guide → room test → Review notes with Jev",
         data: "Typed notes and public checklist criteria",
         authority: "Working / problem / not established; no saved observation or readiness change",
       },
+      ...jevChecks.map((check) => ({ ...check, engine: jevEngine, engineText: jevEngine, authority: "Advisory assessment of reviewed evidence" })),
       {
         key: "tests",
         name: "Connection tests",
@@ -157,7 +186,7 @@ export function AiAdminPanel() {
                 </Badge>
               </h3>
               <p className="mt-2 text-[13px] text-muted">
-                Separate from the three AI tiers: {data.jev.model}. Used only by its connection test and the Guide's room-note review button.
+                Standard checks work without an API key. Jev ({data.jev.model}) adds optional checks and room-note reviews when you choose to send them.
               </p>
               <p className="mt-2 text-[13px]">
                 {data.jevUsage.attempts} / {data.jevUsage.limit} monthly requests · {data.jevUsage.completed} completed · estimated $
@@ -189,7 +218,7 @@ export function AiAdminPanel() {
 
           <Section
             title="Recent assistant requests"
-            description="Latest 30 requests; at most 200 metadata records retained. Questions, replies and room identities are not saved here. Jev totals are shown above; its decisions appear in the room-test panel."
+            description="Latest 30 assistant requests. Up to 200 metadata records are retained. Jev totals are shown above, and its decisions appear where you request them."
           >
             <DataTable
               id="ai-requests"

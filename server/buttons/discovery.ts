@@ -21,7 +21,30 @@ export { BUTTON_MARKER, buttonHash, buttonAutomationId } from "./identity.ts";
 
 export type ButtonHa = { command<T>(type: string, payload?: Record<string, unknown>): Promise<T> };
 export type ButtonEvidence = { id: string; entityId: string; name: string; enabled: boolean | null; config: Record<string, unknown> | null };
-export type ButtonRead = { inventory: ButtonInventory; evidence: ButtonEvidence[] };
+export type ButtonReferenceReader = (kind: "script" | "scene", entityId: string) => Promise<Record<string, unknown> | null>;
+export type ButtonRead = { inventory: ButtonInventory; evidence: ButtonEvidence[]; readReference?: ButtonReferenceReader };
+
+export function buttonReferenceReader(raw: RawRegistry, rest: Pick<RestApi, "get">): ButtonReferenceReader {
+  let ids: Map<string, string> | undefined;
+  return async (kind, entityId) => {
+    if (!entityId.startsWith(`${kind}.`)) return null;
+    if (!ids) {
+      ids = new Map();
+      const scriptIds = new Map(raw.entities.filter((e) => e.entity_id.startsWith("script.")).map((e) => [e.entity_id, e.unique_id]));
+      for (const state of raw.states) {
+        if (state.entity_id.startsWith("script.")) ids.set(state.entity_id, scriptIds.get(state.entity_id) || state.entity_id.slice(7));
+        if (state.entity_id.startsWith("scene.") && typeof state.attributes?.id === "string") ids.set(state.entity_id, state.attributes.id);
+      }
+    }
+    const id = ids.get(entityId);
+    if (!id || !/^[A-Za-z0-9_-]{1,255}$/.test(id)) return null;
+    try {
+      return await rest.get(kind, id);
+    } catch {
+      return null;
+    }
+  };
+}
 
 type GestureInput = Omit<ButtonGesture, "key">;
 
@@ -435,5 +458,6 @@ export async function discoverButtons(
       fetchedAt: new Date().toISOString(),
     },
     evidence,
+    readReference: buttonReferenceReader(raw, rest),
   };
 }

@@ -7,17 +7,23 @@ import {
   validButtonAction,
   validButtonMap,
   type ButtonAction,
+  type ButtonAnalysisAction,
+  type ButtonAnalysisHandler,
   type ButtonControl,
+  type ButtonExisting,
   type ButtonGesture,
+  type ButtonGestureAnalysis,
   type ButtonInventory,
   type ButtonAiPreview,
+  type ButtonAiResponse,
   type ButtonMapping,
 } from "../../shared/buttons.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { DataTable, type Column } from "./data-table.tsx";
-import { useTaxis, type Route } from "./state.tsx";
+import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
 import { confirmDraftNavigation, useDraftGuard } from "./draft-guard.ts";
+import { JevCheck } from "./jev-check.tsx";
 import { Badge, Button, Card, Chip, EmptyState, inputClass, Toolbar } from "./ui.tsx";
 
 // What a Taxis assignment is, as the pages below hold it.
@@ -77,9 +83,13 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
       (all || potentials(c)) &&
       `${c.name} ${c.model} ${c.integrations.join(" ")} ${h.areas[c.areaId ?? ""]?.name ?? ""}`.toLowerCase().includes(query.toLowerCase()),
   );
+  const refreshButtons = () => {
+    setLoading(true);
+    setRefresh((v) => v + 1);
+  };
   const added = async () => {
     await reload(false);
-    if (!reviewChanges) setRefresh((v) => v + 1);
+    if (!reviewChanges) refreshButtons();
   };
   const selectControl = (id: string | null) => go({ page: "automations", tab: "buttons", controlId: id });
   return (
@@ -89,7 +99,7 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
           Every remote, wall control and HA button input. One automation per light, group or other output combines its assigned buttons; each press type can run
           its own action. {reviewChanges ? "Nothing changes in HA until Apply." : "Assignments apply to Home Assistant immediately."}
         </p>
-        <Button disabled={loading || submitting} onClick={() => setRefresh((v) => v + 1)}>
+        <Button disabled={loading || submitting} onClick={refreshButtons}>
           {loading ? "Reading buttons…" : "Refresh buttons and automations"}
         </Button>
         <Button onClick={() => go({ page: "changes" })}>Review changes</Button>
@@ -195,6 +205,8 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
               h={h}
               control={source}
               data={data}
+              refreshing={loading}
+              revision={refresh}
               bindings={bindings.filter((b) => b.controlId === source.id)}
               editing={editing}
               busy={submitting}
@@ -204,6 +216,7 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
               onClose={() => setEditing(null)}
               onBusy={setSubmitting}
               onAdded={added}
+              openJevSettings={() => go(JEV_SETTINGS)}
             />
           ) : (
             <EmptyState>
@@ -312,6 +325,8 @@ function ControlView({
   h,
   control,
   data,
+  refreshing,
+  revision,
   bindings,
   editing,
   busy,
@@ -319,10 +334,13 @@ function ControlView({
   onClose,
   onBusy,
   onAdded,
+  openJevSettings,
 }: {
   h: Hierarchy;
   control: ButtonControl;
   data: { inventory: ButtonInventory; fingerprint: string };
+  refreshing: boolean;
+  revision: number;
   bindings: Binding[];
   editing: Editing | null;
   busy: boolean;
@@ -330,8 +348,27 @@ function ControlView({
   onClose: () => void;
   onBusy: (value: boolean) => void;
   onAdded: () => Promise<void>;
+  openJevSettings: () => void;
 }) {
   const matrix = buttonMatrix(control.gestures, bindings, control.existing);
+  const [attempt, setAttempt] = useState(0);
+  const [evidence, setEvidence] = useState<{ request: string; result: Awaited<ReturnType<typeof api.buttonAiPreview>> } | null>(null);
+  const request = JSON.stringify([control.id, data.fingerprint, revision, attempt]);
+  const hasEvidence = control.gestures.length > 0 || Boolean(control.related?.length);
+  useEffect(() => {
+    if (refreshing || !hasEvidence) return;
+    let current = true;
+    void api.buttonAiPreview(control.id).then((result) => {
+      if (current) setEvidence({ request, result });
+    });
+    return () => {
+      current = false;
+    };
+  }, [control.id, hasEvidence, refreshing, request]);
+  const result = !refreshing && evidence?.request === request ? evidence.result : null;
+  const preview = result?.ok ? result.preview : null;
+  const pressEvidence = new Map(preview?.analysis?.gestures.map((item) => [item.key, item]));
+  const relatedEvidence = new Map(preview?.analysis?.related.map((handler) => [handler.id, handler]));
   // The form opens below the table; bring it into view.
   const editor = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -360,7 +397,13 @@ function ControlView({
       cell: (r) => {
         const cell = r.cells[press];
         return cell ? (
-          <GestureCell button={r.button} cell={cell} busy={busy} onEdit={(action, enabled) => onEdit(cell.gesture, action, enabled)} />
+          <GestureCell
+            button={r.button}
+            cell={cell}
+            analysis={pressEvidence.get(cell.gesture.key)}
+            busy={busy}
+            onEdit={(action, enabled) => onEdit(cell.gesture, action, enabled)}
+          />
         ) : (
           <span className="text-muted/60" title="This button has no such press type">
             –
@@ -371,10 +414,7 @@ function ControlView({
   ];
   return (
     <div className="flex flex-col gap-3">
-      <Coverage
-        data={data}
-        summary={`${control.gestures.length} press type${control.gestures.length === 1 ? "" : "s"}: ${matrix.counts.assigned} with a handler, ${matrix.counts.empty} free`}
-      />
+      <Coverage data={data} summary={`${control.gestures.length} press type${control.gestures.length === 1 ? "" : "s"}`} />
       <div>
         <h2 className="text-lg font-semibold">{control.name}</h2>
         <p className="mt-1 text-sm text-muted">{[control.manufacturer, control.model, ...control.integrations].filter(Boolean).join(" · ")}</p>
@@ -391,27 +431,43 @@ function ControlView({
         </p>
       )}
       {!!control.related?.length && (
-        <div className="text-sm">
+        <div className="flex flex-col gap-2 text-sm">
           <p className="text-muted">Other automations that may use this device (they reference it but not a specific gesture):</p>
-          {control.related.map((a) => (
-            <p key={a.id} className="mt-2">
-              <a className="text-accent" href={haAutomation(a.id)} target="_blank" rel="noreferrer">
-                {a.name}
-              </a>{" "}
-              · {a.enabled ? "On" : a.enabled === false ? "Off" : "State unknown"} · {a.services.join(", ")} · {a.targets.join(", ")}
-            </p>
-          ))}
+          {control.related.map((handler) => {
+            const analysis = relatedEvidence.get(handler.id);
+            return analysis ? <HandlerEvidence key={handler.id} handler={analysis} /> : <HandlerSummary key={handler.id} handler={handler} />;
+          })}
         </div>
       )}
-      <ButtonAiReview key={control.id + data.fingerprint} control={control} />
+      {hasEvidence && (
+        <div className="grid gap-2">
+          <JevCheck
+            subject={{ kind: "buttons", controlId: control.id }}
+            label="Check button mapping with Jev"
+            title={`Jev · ${control.name} button mapping`}
+            revision={`${data.fingerprint}:${revision}`}
+            disabled={refreshing}
+            openSettings={openJevSettings}
+          />
+          <ButtonAiReview
+            controlId={control.id}
+            preview={preview}
+            error={result?.ok === false ? result.error : null}
+            onRefresh={() => setAttempt((v) => v + 1)}
+          />
+        </div>
+      )}
       {matrix.rows.length > 0 && (
         <>
           <DataTable id="buttons-control" label={`Buttons of ${control.name}`} rows={matrix.rows} rowKey={(r) => r.button} columns={columns} maxHeight="none" />
           <p className="text-xs text-muted">
-            An existing handler is not changed by assigning a new Taxis action. Its conditions, choose branches and blueprint inputs can change what a press
-            does, so open it in HA before relying on it. A faint + means no readable automation matched that press type; see the discovery coverage line for
-            gaps.
+            A trigger match identifies a handler. Its conditions determine when it can run. Check discovery coverage for unreadable automations.
           </p>
+          {preview?.analysis?.notes.map((note) => (
+            <p key={note} className="text-xs text-muted">
+              {note}
+            </p>
+          ))}
         </>
       )}
       {blocked.map((b) => (
@@ -451,22 +507,25 @@ function ControlView({
   );
 }
 
-// One button, one press type: what is assigned, what already handles it, and a
-// "+" to assign. Nothing assigned is a faint "+" alone.
+// One press type combines queued assignments and evidence from the installed automations.
 function GestureCell({
   button,
   cell,
+  analysis,
   busy,
   onEdit,
 }: {
   button: string;
   cell: MatrixCell<Binding>;
+  analysis: ButtonGestureAnalysis | undefined;
   busy: boolean;
   onEdit: (action: ButtonAction | null, enabled: boolean) => void;
 }) {
   const { gesture, bindings, external } = cell;
   const label = `${button} · ${gesture.gesture}`;
-  const empty = bindings.length === 0 && external.length === 0;
+  const handlers = analysis?.handlers ?? [];
+  const detailed = new Set(handlers.map((handler) => handler.id));
+  const empty = bindings.length === 0 && external.length === 0 && handlers.length === 0;
   return (
     <div role="group" aria-label={`${gesture.gesture} · ${gesture.source}`} className="flex flex-col gap-1">
       {bindings.map((b) => (
@@ -492,20 +551,33 @@ function GestureCell({
           )}
         </div>
       ))}
-      {external.map((a) => (
-        <div
-          key={a.id}
-          className="text-xs"
-          title={`${a.services.join(", ") || "No service summary"} · ${a.targets.join(", ") || "No explicit target summary"}`}
-        >
-          <a className="text-accent hover:underline" href={haAutomation(a.id)} target="_blank" rel="noreferrer">
-            {a.name}
-          </a>{" "}
-          <span className="text-muted">
-            {a.enabled === true ? "On" : a.enabled === false ? "Off" : "State unknown"} · {a.match === "exact" ? "Trigger match" : "Possible match"}
-          </span>
-        </div>
+      {handlers.slice(0, 2).map((handler) => (
+        <HandlerEvidence key={handler.id} handler={handler} />
       ))}
+      {handlers.length > 2 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer font-medium text-accent">
+            {handlers.length - 2} more {handlers.length === 3 ? "handler" : "handlers"}
+          </summary>
+          <div className="mt-1 flex flex-col gap-1">
+            {handlers.slice(2).map((handler) => (
+              <HandlerEvidence key={handler.id} handler={handler} />
+            ))}
+          </div>
+        </details>
+      )}
+      {external
+        .filter((handler) => !detailed.has(handler.id))
+        .map((handler) => (
+          <HandlerSummary key={handler.id} handler={handler} />
+        ))}
+      {analysis?.overlaps.map((overlap) => (
+        <p key={`${overlap.kind}:${overlap.target.id}`} className="break-words text-xs font-medium text-warn" title={overlap.target.id}>
+          {overlap.kind === "opposing" ? (overlap.conditional ? "Possible opposing actions on " : "Opposing actions on ") : "Multiple handlers target "}
+          {overlap.target.name}
+        </p>
+      ))}
+      {empty && <p className="text-xs text-muted">No readable handler matched</p>}
       <button
         type="button"
         disabled={busy}
@@ -517,6 +589,88 @@ function GestureCell({
         <Plus className="size-3.5" aria-hidden />
         {!empty && "Add"}
       </button>
+    </div>
+  );
+}
+
+function HandlerSource({ handler }: { handler: Pick<ButtonAnalysisHandler, "id" | "name" | "enabled" | "match"> }) {
+  return (
+    <p>
+      <a className="font-medium text-accent hover:underline" href={haAutomation(handler.id)} target="_blank" rel="noreferrer">
+        {handler.name}
+      </a>{" "}
+      <span className="text-muted">
+        {handler.enabled === true ? "On" : handler.enabled === false ? "Off" : "State unknown"} ·{" "}
+        {handler.match === "exact" ? "Trigger match" : "Possible match"}
+      </span>
+    </p>
+  );
+}
+
+function HandlerSummary({ handler }: { handler: ButtonExisting }) {
+  const summary = [...handler.services, ...handler.targets].join(" · ");
+  return (
+    <div className="break-words text-xs">
+      <HandlerSource handler={handler} />
+      {summary && <p className="text-muted">{summary}</p>}
+    </div>
+  );
+}
+
+function HandlerEvidence({ handler }: { handler: ButtonAnalysisHandler }) {
+  return (
+    <div className="flex flex-col gap-1 break-words border-l border-line pl-2 text-xs">
+      <HandlerSource handler={handler} />
+      {handler.conditions.length > 0 && (
+        <p className="text-muted">
+          <span className="font-medium">Conditions</span> · {handler.conditions.join(" · ")}
+        </p>
+      )}
+      {handler.actions.length > 0 && <ActionList actions={handler.actions.slice(0, 2)} />}
+      {handler.actions.length > 2 && (
+        <details>
+          <summary className="cursor-pointer font-medium text-accent">
+            {handler.actions.length - 2} more {handler.actions.length === 3 ? "action" : "actions"}
+          </summary>
+          <ActionList actions={handler.actions.slice(2)} />
+        </details>
+      )}
+      {handler.notes.map((note) => (
+        <p key={note} className="text-muted">
+          {note}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function ActionList({ actions }: { actions: ButtonAnalysisAction[] }) {
+  return (
+    <ul className="flex flex-col gap-1">
+      {actions.map((action, i) => (
+        <li key={i}>
+          <ActionEvidence action={action} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ActionEvidence({ action }: { action: ButtonAnalysisAction }) {
+  const details = [...action.branches, ...action.conditions, ...action.via, ...(action.settings ?? [])];
+  return (
+    <div>
+      <p>
+        <span title={action.service}>{actionLabel(action.service, action.targets.length > 0)}</span>
+        {action.targets.map((target) => (
+          <span key={target.id} title={target.id}>
+            {" "}
+            · {target.name}
+          </span>
+        ))}
+        {action.uncertain && <span className="text-muted"> · Possible behavior</span>}
+      </p>
+      {details.length > 0 && <p className="text-muted">{details.join(" · ")}</p>}
     </div>
   );
 }
@@ -724,69 +878,89 @@ function AssignmentEditor({
   );
 }
 
-function ButtonAiReview({ control }: { control: ButtonControl }) {
-  const [preview, setPreview] = useState<ButtonAiPreview | null>(null),
-    [text, setText] = useState(""),
-    [error, setError] = useState<string | null>(null),
-    [busy, setBusy] = useState(false);
+function ButtonAiReview({
+  controlId,
+  preview,
+  error,
+  onRefresh,
+}: {
+  controlId: string;
+  preview: ButtonAiPreview | null;
+  error: string | null;
+  onRefresh: () => void;
+}) {
   return (
-    <details className="mt-4 rounded-lg border border-line p-3 text-xs">
-      <summary className="cursor-pointer text-accent">AI review of existing button automations</summary>
-      <p className="mt-2 text-muted">
-        The local scan reads all available automation configs. AI explains this control's exact/possible matches using service and target summaries, not raw
-        YAML or credentials. It cannot assign actions.
-      </p>
-      <Button
-        className="mt-2"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          setError(null);
-          setText("");
-          try {
-            const r = await api.buttonAiPreview(control.id);
-            if (r.ok) setPreview(r.preview);
-            else setError(r.error);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        Prepare AI preview
-      </Button>
-      {preview && (
-        <>
-          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words bg-surface p-2">{preview.content}</pre>
-          <Button
-            className="mt-2"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setError(null);
-              try {
-                const r = await api.buttonAiReview(control.id, preview.fingerprint);
-                if (r.ok) setText(`${r.model}\n${r.text}${r.truncated ? "\nIncomplete reply: the response reached its output limit." : ""}`);
-                else setError(r.error);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Send this review to Medium AI
-          </Button>
-        </>
-      )}
-      {busy && (
-        <p role="status" className="mt-2">
-          Reading…
-        </p>
-      )}
+    <>
       {error && (
-        <p role="alert" className="mt-2 text-danger">
-          {error}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <p role="alert" className="text-warn">
+            {error} The button table still shows the available match summaries.
+          </p>
+          <Button onClick={onRefresh}>Retry reading evidence</Button>
+        </div>
+      )}
+      <details className="rounded-lg border border-line bg-surface p-3 text-xs">
+        <summary className="cursor-pointer text-sm font-medium text-accent">Analyze with AI</summary>
+        {preview ? (
+          <>
+            <p className="mt-2 text-muted">
+              The data below is the exact request evidence for this control. Review it before sending it to the configured Medium AI model.
+            </p>
+            <pre tabIndex={0} aria-label="AI request evidence" className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-sunken p-2">
+              {preview.content}
+            </pre>
+            <ButtonAiRequest key={preview.fingerprint} controlId={controlId} fingerprint={preview.fingerprint} onRefresh={onRefresh} />
+          </>
+        ) : error ? (
+          <p className="mt-2 text-muted">Retry reading the evidence to prepare a preview.</p>
+        ) : (
+          <p role="status" className="mt-2 text-muted">
+            Reading automation evidence…
+          </p>
+        )}
+      </details>
+    </>
+  );
+}
+
+function ButtonAiRequest({ controlId, fingerprint, onRefresh }: { controlId: string; fingerprint: string; onRefresh: () => void }) {
+  const [result, setResult] = useState<ButtonAiResponse | null>(null);
+  const [sending, setSending] = useState(false);
+  const send = async () => {
+    setSending(true);
+    setResult(null);
+    setResult(await api.buttonAiReview(controlId, fingerprint));
+    setSending(false);
+  };
+  if (result?.ok) {
+    return (
+      <section aria-label="AI analysis" className="mt-3 flex flex-col gap-2 rounded-md border border-line p-3">
+        <h3 className="text-sm font-medium">AI analysis</h3>
+        <p className="whitespace-pre-wrap break-words text-sm">{result.text}</p>
+        <p className="text-muted">{result.model}</p>
+        {result.truncated && <p className="text-warn">This reply reached the model's response limit.</p>}
+      </section>
+    );
+  }
+  return (
+    <div className="mt-2 flex flex-col items-start gap-2">
+      {result?.ok === false && (
+        <p role="alert" className="text-danger">
+          {result.error}
         </p>
       )}
-      {text && <p className="mt-3 whitespace-pre-wrap">{text}</p>}
-    </details>
+      {result?.ok === false && result.code === "stale" ? (
+        <Button onClick={onRefresh}>Refresh preview</Button>
+      ) : (
+        <Button tone="primary" disabled={sending} onClick={() => void send()}>
+          {sending ? "Analyzing…" : "Send this review to Medium AI"}
+        </Button>
+      )}
+      {sending && (
+        <p role="status" className="text-muted">
+          Waiting for the AI analysis…
+        </p>
+      )}
+    </div>
   );
 }

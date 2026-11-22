@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { normalizeLegacyHash } from "../../shared/route-hash.ts";
-import { AI_SETTINGS, AREAS_HOME, BUTTONS, GUIDE, RECIPES, ROOMS, SETTINGS, parseHash, toHash, type Route } from "./route.ts";
+import { AI_SETTINGS, AREAS_HOME, BUTTONS, GUIDE, JEV_SETTINGS, RECIPES, ROOMS, SETTINGS, parseHash, toHash, type Route } from "./route.ts";
 
 // The address bar is the app's router: every page must come back from its own hash.
 const ROUTES: Route[] = [
@@ -29,6 +29,7 @@ const ROUTES: Route[] = [
   { page: "changes" },
   SETTINGS,
   AI_SETTINGS,
+  JEV_SETTINGS,
 ];
 
 describe("route hashes", () => {

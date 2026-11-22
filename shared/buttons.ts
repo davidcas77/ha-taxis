@@ -80,8 +80,49 @@ export type ButtonAssignment = {
   fingerprint: string;
   changesVersion: string;
 };
-export type ButtonAiPreview = { content: string; fingerprint: string; count: number };
-export type ButtonAiResponse = { ok: true; text: string; model: string; truncated: boolean } | { ok: false; error: string };
+export type ButtonAnalysisTarget = { id: string; name: string };
+export type ButtonAnalysisAction = {
+  service: string;
+  targets: ButtonAnalysisTarget[];
+  conditions: string[];
+  branches: string[];
+  via: string[];
+  uncertain: boolean;
+  settings?: string[];
+};
+export type ButtonAnalysisHandler = {
+  id: string;
+  name: string;
+  enabled: boolean | null;
+  match: ButtonExisting["match"];
+  managed: boolean;
+  conditions: string[];
+  actions: ButtonAnalysisAction[];
+  notes: string[];
+};
+export type ButtonAnalysisOverlap = {
+  target: ButtonAnalysisTarget;
+  handlers: string[];
+  kind: "opposing" | "shared";
+  conditional: boolean;
+};
+export type ButtonGestureAnalysis = {
+  key: string;
+  button: string;
+  gesture: string;
+  source: string;
+  handlers: ButtonAnalysisHandler[];
+  overlaps: ButtonAnalysisOverlap[];
+};
+export type ButtonAnalysis = {
+  control: { name: string; integrations: string[] };
+  coverage: ButtonInventory["coverage"];
+  gestures: ButtonGestureAnalysis[];
+  related: ButtonAnalysisHandler[];
+  notes: string[];
+};
+export type ButtonAiPreview = { content: string; fingerprint: string; count: number; analysis?: ButtonAnalysis };
+export type ButtonAiResponse = { ok: true; text: string; model: string; truncated: boolean } | { ok: false; error: string; code?: "stale" };
 
 export const BUTTON_AUTOMATION_ID = /^taxis_buttons_[a-f0-9]{20}$/;
 const ENTITY = /^[a-z0-9]+[a-z0-9_]*\.[a-z0-9_]+$/;

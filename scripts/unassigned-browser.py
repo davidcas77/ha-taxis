@@ -250,6 +250,7 @@ class UnassignedRegression(unittest.TestCase):
         self.section.get_by_role("textbox", name="Find unassigned entities").fill("Workshop")
         chosen = table.get_by_role("button", name="Use suggested area Workshop Annex for Workshop Annex lamp", exact=True)
         self.assertTrue(chosen.is_visible())
+        self.assertIn("Entity name", chosen.get_attribute("aria-description"))
         dropdown = table.get_by_role("combobox", name="Area for Workshop Annex lamp", exact=True).bounding_box()
         accept = chosen.bounding_box()
         self.assertGreaterEqual(accept["x"], dropdown["x"] + dropdown["width"])
@@ -400,10 +401,28 @@ class UnassignedRegression(unittest.TestCase):
         accept = region.get_by_role("button", name=f"Use suggested area {area_name} for device {area_name} fixture hub", exact=True)
         accept.wait_for()
         self.assertTrue(accept.is_visible())
+        self.assertIn("Device name", accept.get_attribute("aria-description"))
         self.assertEqual(self.posted, [])
         accept.click()
         self.page.get_by_role("status").filter(has_text="Added").wait_for()
         self.assertEqual(self.posted, [{"kind": "device", "op": "update", "targetId": "fixture_device", "fields": {"area_id": self.area}}])
+
+    def test_unassigned_entity_cards_suggest_room_from_device_name(self):
+        h = self.body["hierarchy"]
+        area_name = h["areas"][self.area]["name"]
+        h["devices"]["fixture_device"]["name"] = area_name + " fixture sensor"
+        self.page.reload(wait_until="domcontentloaded")
+        self.open_entities()
+        self.section.get_by_role("button", name="Cards", exact=True).click()
+        self.section.get_by_role("textbox", name="Find unassigned entities").fill("Unplaced 000")
+        suggestions = self.section.get_by_role("region", name="Suggested entity areas", exact=True)
+        accept = suggestions.get_by_role("button", name=f"Use suggested area {area_name} for Unplaced 000", exact=True)
+        accept.wait_for()
+        self.assertIn("Device name", accept.get_attribute("aria-description"))
+        self.assertEqual(self.posted, [])
+        accept.click()
+        self.page.get_by_role("status").filter(has_text="Added").wait_for()
+        self.assertEqual(self.posted, [{"kind": "entity", "op": "update", "targetId": "sensor.unplaced_000", "fields": {"area_id": self.area}}])
 
 
 

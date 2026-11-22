@@ -175,7 +175,7 @@ function Shell() {
       <NoticeBanner />
 
       {route.page === "settings" ? (
-        <SettingsPage h={hierarchy} tab={route.tab} go={go} />
+        <SettingsPage h={hierarchy} tab={route.tab} focus={route.focus} go={go} />
       ) : !hierarchy ? (
         <div className="flex flex-1 items-center justify-center gap-2 px-4 text-center text-muted">
           {loading ? (

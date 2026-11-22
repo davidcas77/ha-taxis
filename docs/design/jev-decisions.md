@@ -18,12 +18,25 @@ establish an observation. All questions share one request. Results preserve the
 model, question policy version, choice, confidence and probability distribution.
 Editing notes hides old results; late answers cannot overwrite the new context.
 
-The first question policy is `room-notes-v1`. Decisions are advisory: there is no
-confidence threshold that marks a room ready, ticks a box, saves a test, changes
-settings or writes to Home Assistant. Missing evidence stays explicit. The
-remaining proposed Jev features and generative Ask Taxis are not implemented by
-this change. Model accuracy for real room notes has not been benchmarked; mock
-tests validate the API contract, privacy boundaries and UI, not semantic quality.
+The room-note policy is `room-notes-v1`. Decisions are advisory and missing
+evidence stays explicit. A decision cannot mark a room ready, tick a box,
+save a test, change settings or write to Home Assistant.
+
+## Configuration checks
+
+Taxis builds a check for the selected control in Buttons, an unassigned device
+or entity, a room automation's sensor requirement, or its proposed groups. Each
+check has a bounded set of Choice questions, including an option for insufficient
+evidence. Taxis selects the candidates from Home Assistant and the room plan.
+For Buttons it considers configured behavior and possible overlaps. A button
+check cannot establish that a press actually ran its automation.
+
+Opening a preview reads the evidence from Taxis and Home Assistant. Sending a
+review requires a second, explicit action. Taxis checks the reviewed fingerprint
+against freshly read evidence before sending and can reuse a matching decision
+from its in-memory cache. The provider receives selected names and evidence as
+shown in the preview. Assignments and group changes still use the existing
+review and apply flows. Provider responses supply advice only.
 
 ## Credentials and requests
 
@@ -37,9 +50,11 @@ tests validate the API contract, privacy boundaries and UI, not semantic quality
 - Only `https://api.typesafe.ai/v1/systemone` receives a Bearer-authenticated POST.
   No custom endpoint, browser-supplied question definitions/model, redirects or automatic POST
   retries are supported. Requests have a 25-second deadline and bounded bodies.
-- The runtime redacts configured HA/AI/Jev secrets from notes, and never gathers
-  a hierarchy, live states, entity IDs or stored room records for these calls.
-  User-entered notes are externally transmitted only through the explicit button.
+- The runtime redacts configured HA/AI/Jev secrets from notes and configuration
+  check evidence. Room-note calls receive typed notes and checklist criteria.
+  Configuration checks project a bounded subset of information for the selected
+  subject. They do not send raw Home Assistant states, attributes or automation
+  YAML. User-entered notes and check evidence are sent only on explicit request.
 - Validate every returned answer, model, token count and probability
   distribution. Reject partial/malformed responses rather than presenting them
   as a successful review. User notes are treated as data, not instructions;
@@ -66,6 +81,8 @@ a dollar spending cap. The existing generative AI spending cap remains separate.
 - `GET /api/jev/usage`: UTC month usage and request limit.
 - `POST /api/jev/test`: fixed public connection test using saved settings.
 - `POST /api/jev/room-notes`: bounded notes/checklist review using saved settings.
+- `POST /api/jev/checks/preview`: prepare a read-only configuration check without a provider call.
+- `POST /api/jev/checks/run`: validate the reviewed fingerprint and return an advisory decision.
 
 All writes and paid endpoints use the existing Taxis request-header guard. The
 settings endpoint also uses the shared If-Match revision middleware. Tests use
@@ -77,7 +94,6 @@ Primary contracts checked on 2026-10-28:
 [Choice](https://docs.typesafe.ai/primitives/choice),
 [models/pricing](https://docs.typesafe.ai/models), and
 [request errors](https://docs.typesafe.ai/api/errors).
-
 
 Implementation verification: TypeScript, production build and all 1,363 tests
 across 57 files passed. Eight Jev browser scenarios and the 53 existing Guide,

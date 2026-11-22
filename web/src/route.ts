@@ -70,7 +70,7 @@ export type Route =
   | { page: "rooms" }
   | { page: "health"; check?: HealthCheck }
   | { page: "changes" }
-  | { page: "settings"; tab: SettingsTab };
+  | { page: "settings"; tab: SettingsTab; focus?: "jev" };
 
 export type Selection =
   { kind: "home" } | { kind: "floor"; id: string } | { kind: "area"; id: string } | { kind: "space"; id: string } | { kind: "unassigned" } | { kind: "loose" };
@@ -83,6 +83,7 @@ export const RECIPES: Route = { page: "automations", tab: "recipes", controlId: 
 export const BUTTONS: Route = { page: "automations", tab: "buttons", controlId: null };
 export const SETTINGS: Route = { page: "settings", tab: "general" };
 export const AI_SETTINGS: Route = { page: "settings", tab: "ai" };
+export const JEV_SETTINGS: Route = { page: "settings", tab: "ai", focus: "jev" };
 
 export function parseHash(hash: string): Route {
   // #devices, #entities and the area tabs of those names are the one page and tab now.
@@ -111,7 +112,7 @@ export function parseHash(hash: string): Route {
     case "changes":
       return { page: "changes" };
     case "settings":
-      return a === "ai" ? AI_SETTINGS : SETTINGS;
+      return a === "ai" ? (b === "jev" ? JEV_SETTINGS : AI_SETTINGS) : SETTINGS;
     case "organize":
       // Floors and areas used to be two types; their links still open the tree.
       if (a === "floors" || a === "areas") return { page: "organize", type: "spaces", id: b ? `${a === "floors" ? "floor" : "area"}:${b}` : null };
@@ -154,7 +155,7 @@ export function toHash(r: Route): string {
     case "changes":
       return `#${r.page}`;
     case "settings":
-      return r.tab === "ai" ? "#settings/ai" : "#settings";
+      return r.tab === "ai" ? (r.focus === "jev" ? "#settings/ai/jev" : "#settings/ai") : "#settings";
     case "parameters":
       return `#parameters/${r.tab}`;
     case "organize":

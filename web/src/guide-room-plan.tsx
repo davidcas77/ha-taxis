@@ -7,7 +7,8 @@ import { sameValue } from "../../shared/changes.ts";
 import { planRecipes, recipeChangeInputs, RECIPE_LABEL, type RecipeInstalled } from "../../shared/recipes.ts";
 import type { ChangeInput, Hierarchy } from "../../shared/types.ts";
 import { ExistingLightControllers, LightingBehavior } from "./guide-room-lighting.tsx";
-import { useTaxis, type Route } from "./state.tsx";
+import { JevCheck } from "./jev-check.tsx";
+import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
 import { Button } from "./ui.tsx";
 
 export function RoomAutomationReview({
@@ -158,6 +159,16 @@ export function RoomAutomationReview({
         </div>
       </div>
 
+      <RoomGroupProposals
+        h={h}
+        area={area}
+        automation={automation}
+        activeHelperId={helper?.row.canonicalId}
+        canPropose={Boolean(canPropose)}
+        reviewChanges={reviewChanges}
+        propose={propose}
+        go={go}
+      />
       {motion && (
         <LightingBehavior
           h={h}
@@ -219,6 +230,96 @@ export function RoomAutomationReview({
         </div>
       )}
       <p className="text-xs text-muted">Room view read {new Date(h.fetchedAt).toLocaleString()}.</p>
+    </section>
+  );
+}
+
+function RoomGroupProposals({
+  h,
+  area,
+  automation,
+  activeHelperId,
+  canPropose,
+  reviewChanges,
+  propose,
+  go,
+}: {
+  h: Hierarchy;
+  area: AreaReadiness;
+  automation: RoomAutomation;
+  activeHelperId?: string;
+  canPropose: boolean;
+  reviewChanges: boolean;
+  propose: (inputs: ChangeInput[]) => Promise<boolean>;
+  go: (route: Route) => void;
+}) {
+  const groups = automation.helpers.filter(({ row }) => row.helper === "group");
+  if (!groups.length) return null;
+  return (
+    <section aria-label="Home Assistant group plans" className="grid gap-2 rounded-lg border border-line bg-surface p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">Home Assistant groups</h3>
+        <JevCheck
+          subject={{ kind: "groups", areaId: area.areaId, automationKey: automation.key }}
+          label="Check group plan with Jev"
+          title={`Jev · ${area.name} group plan`}
+          openSettings={() => go(JEV_SETTINGS)}
+        />
+      </div>
+      <ul className="grid min-w-0 gap-2 sm:grid-cols-2">
+        {groups.map(({ row, required, available, pending }) => {
+          const disposition = pending
+            ? "Queued in Changes"
+            : row.status === "in-place"
+              ? available
+                ? "Available in Home Assistant"
+                : "Check in Home Assistant"
+              : row.status === "create"
+                ? "Suggested new group"
+                : row.status === "adopt"
+                  ? "Suggested adoption"
+                  : row.status === "update-members"
+                    ? "Suggested member update"
+                    : "Needs review";
+          const canReviewHelper = row.actionable && !pending && row.canonicalId !== activeHelperId;
+          return (
+            <li key={row.canonicalId} className="grid min-w-0 content-start gap-1 rounded-md border border-line px-3 py-2 text-sm">
+              <p className="font-medium">{row.name}</p>
+              <code className="wrap-anywhere text-xs text-muted">{row.canonicalId}</code>
+              <p className="text-xs text-muted">
+                {disposition} · {required ? "Required for this setup" : "Optional"}
+              </p>
+              {row.status === "create" && (row.groupType === "light" || row.groupType === "binary_sensor") && (
+                <p className="text-xs text-muted">
+                  {row.groupType === "light" ? "Control these lights together." : "The group reports on when any member reports on."}
+                </p>
+              )}
+              {row.adoptFrom && <p className="wrap-anywhere text-xs text-muted">Existing group to adopt · {row.adoptFromName ?? row.adoptFrom}</p>}
+              {row.sources.length > 0 && (
+                <ul aria-label={`Members for ${row.canonicalId}`} className="ml-4 list-disc text-xs text-muted">
+                  {row.sources.map((id) => (
+                    <li key={id} className="wrap-anywhere">
+                      {h.entities[id]?.name ?? id}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {row.scopeBlocked && <p className="text-xs text-warn">{row.scopeBlocked}</p>}
+              {!pending && row.canonicalId === activeHelperId && <p className="text-xs text-accent">Included in the next action above.</p>}
+              {canReviewHelper && (
+                <Button className="mt-1 justify-self-start" disabled={!canPropose} onClick={() => void propose(helperChangeInputs(row))}>
+                  {reviewChanges ? `Add ${row.name} to changes` : `Preview ${row.name}`}
+                </Button>
+              )}
+              {row.status === "conflict" && !pending && (
+                <Button className="mt-1 justify-self-start" onClick={() => go({ page: "parameters", tab: "helpers" })}>
+                  Review in Helpers
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }

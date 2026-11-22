@@ -17,7 +17,7 @@ const TABS: TabItem<SettingsTab>[] = [
   { key: "ai", label: "AI", icon: <Bot className="size-4" aria-hidden /> },
 ];
 
-export function SettingsPage({ h, tab, go }: { h: Hierarchy | null; tab: SettingsTab; go: (r: Route) => void }) {
+export function SettingsPage({ h, tab, focus, go }: { h: Hierarchy | null; tab: SettingsTab; focus?: "jev"; go: (r: Route) => void }) {
   return (
     <Page width="4xl">
       <PageHeader title="Settings" description="These settings live in Taxis; they don't change anything in Home Assistant." />
@@ -36,7 +36,7 @@ export function SettingsPage({ h, tab, go }: { h: Hierarchy | null; tab: Setting
           <>
             <AiAdminPanel />
             <AiSection />
-            <JevSection />
+            <JevSection focus={focus === "jev"} />
           </>
         )}
       </div>
