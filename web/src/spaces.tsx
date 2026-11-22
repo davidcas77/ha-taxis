@@ -5,7 +5,6 @@ import {
   Battery,
   Blinds,
   Camera,
-  Check,
   ChevronDown,
   ChevronRight,
   DoorOpen,
@@ -36,7 +35,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ROLE_ORDER, displayRole } from "../../shared/roles.ts";
-import { suggestEntityArea } from "../../shared/area-suggestion.ts";
+import { suggestAreaPlacement } from "../../shared/area-suggestion.ts";
+import { AssignmentSuggestion } from "./assignment-suggestion.tsx";
 import { unassignedDevices } from "../../shared/unassigned-devices.ts";
 import { sortRows } from "../../shared/sort.ts";
 import { resolveSpaces, spaceFloorDescription } from "../../shared/spaces.ts";
@@ -908,6 +908,29 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
   }, [matches, sort, h]);
   const paging = usePagination(sorted.length, JSON.stringify([query, filters, sort]));
   const shown = sorted.slice(paging.start, paging.end);
+  const rooms = Object.values(h.areas);
+  const suggestions = new Map(
+    shown.map((entity) => [
+      entity.entityId,
+      suggestAreaPlacement({ entityName: entity.name, entityId: entity.entityId, deviceName: deviceName(entity) }, rooms),
+    ]),
+  );
+  const reasonFor = (e: EntityItem) =>
+    !e.inRegistry ? "Not in the entity registry" : e.needsOwnName && !e.customName ? "Assign its device in Devices first." : null;
+  const suggestionFor = (e: EntityItem) => {
+    const suggestion = suggestions.get(e.entityId);
+    return suggestion?.kind === "suggestion" ? (
+      <AssignmentSuggestion
+        suggestion={suggestion}
+        areaName={h.areas[suggestion.areaId].name}
+        subject={e.name}
+        disabled={!!reasonFor(e) || applying || assigning}
+        reviewChanges={reviewChanges}
+        onChoose={() => void assignArea(e, suggestion.areaId)}
+      />
+    ) : null;
+  };
+  const suggested = shown.filter((entity) => suggestions.get(entity.entityId)?.kind === "suggestion" && !reasonFor(entity)).slice(0, 5);
   const eligible = shown.filter((e) => e.inRegistry);
   // Selection never follows an entity hidden by the current query, filters or page.
   const selected = eligible.filter((e) => picked.has(e.entityId)).map((e) => e.entityId);
@@ -975,10 +998,9 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
       minWidth: 190,
       maxWidth: 260,
       cell: (e) => {
-        const suggestion = suggestEntityArea(e.name, e.entityId, Object.values(h.areas));
         const device = e.deviceId ? h.devices[e.deviceId] : undefined;
         const deviceArea = device?.areaId ? h.areas[device.areaId]?.name : null;
-        const reason = !e.inRegistry ? "Not in the entity registry" : e.needsOwnName && !e.customName ? "Assign its device in Devices first." : null;
+        const reason = reasonFor(e);
         return (
           <div className="min-w-0">
             <label className="sr-only" htmlFor={`unassigned-area-${e.entityId}`}>
@@ -995,22 +1017,7 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
                   onChange={(area) => void assignArea(e, area)}
                 />
               </div>
-              {suggestion && (
-                <div className="flex min-w-0 flex-1 items-center gap-1 text-xs">
-                  <span className="min-w-0 truncate text-muted" title={h.areas[suggestion.areaId].name}>
-                    {h.areas[suggestion.areaId].name}
-                  </span>
-                  <Button
-                    className="shrink-0"
-                    disabled={!!reason || applying || assigning}
-                    aria-label={`Use suggested area ${h.areas[suggestion.areaId].name} for ${e.name}`}
-                    title={reviewChanges ? "Add this area assignment to Changes" : "Apply this area assignment"}
-                    onClick={() => void assignArea(e, suggestion.areaId)}
-                  >
-                    <Check className="size-3" aria-hidden />
-                  </Button>
-                </div>
-              )}
+              {suggestionFor(e)}
               {deviceArea && (
                 <span className="min-w-0 flex-1 truncate text-xs text-muted" title={`Device area: ${deviceArea}`}>
                   Device area: {deviceArea}
@@ -1089,6 +1096,19 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
           </Toolbar>
 
           <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea />
+          {suggested.length > 0 && (
+            <section aria-label="Suggested entity areas" className="rounded-lg border border-line bg-surface px-3 py-2 text-sm">
+              <h3 className="font-semibold">Suggested areas</h3>
+              <ul className="mt-1 divide-y divide-line">
+                {suggested.map((entity) => (
+                  <li key={entity.entityId} className="flex items-center gap-3 py-1.5">
+                    <span className="min-w-0 basis-1/2 break-words">{entity.name}</span>
+                    {suggestionFor(entity)}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </>
       )}
       {view === "cards" && !shown.length ? (

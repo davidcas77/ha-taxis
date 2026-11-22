@@ -52,7 +52,7 @@ const shortState = (record: RoomAutomation) => {
 };
 
 function assignmentQueued(h: Hierarchy, areaId: string, automation: RoomAutomation, changes: readonly Change[]): boolean {
-  if (automation.required.some((check) => check.status === "queued")) return true;
+  if ([...automation.required, ...automation.optional].some((check) => check.queuedEntityIds.length > 0)) return true;
   const capabilities = new Set(automation.required.flatMap((check) => [...check.capabilities]));
   return changes.some((change) => {
     if (change.kind !== "entity" || !Object.hasOwn(change.after, "area_id")) return false;

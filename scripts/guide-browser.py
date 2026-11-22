@@ -279,9 +279,11 @@ class GuideRegression(unittest.TestCase):
         expect(requirement.get_by_text("Unavailable", exact=True).first).to_be_visible()
         expect(properties.get_by_role("button", name="Continue to parameters", exact=False)).to_have_count(0)
         requirement.get_by_text("Find equipment to assign", exact=True).click()
-        expect(requirement.get_by_text("Spare hallway sensor", exact=False)).to_be_visible()
+        assign = requirement.get_by_role("button", name=re.compile("^Assign Spare hallway sensor to Living room$", re.I))
+        expect(assign).to_be_visible()
+        expect(requirement.get_by_text("Name points to Hallway", exact=False)).to_be_visible()
         expect(requirement.get_by_text("Spare bulb", exact=False)).to_have_count(0)
-        requirement.get_by_role("button", name=re.compile("^Assign Spare hallway sensor to Living room$", re.I)).click()
+        assign.click()
         self.page.get_by_role("status").filter(has_text="Added to the list of changes").wait_for()
         self.assertEqual(self.posts[0]["fields"]["area_id"], "living_room")
         self.assertEqual(self.posts[0]["targetId"], "binary_sensor.spare_pir")
@@ -300,6 +302,51 @@ class GuideRegression(unittest.TestCase):
         expect(properties.get_by_role("button", name="Continue to parameters", exact=False)).to_be_visible()
         self.assertEqual(self.inventory["entities"]["binary_sensor.living_presence"]["role"], "starts")
         self.assertEqual(self.posts, [])
+
+    def test_named_room_candidate_is_suggested_before_manual_search(self):
+        h = self.body["hierarchy"]
+        h["entities"]["binary_sensor.living_pir"]["state"] = "unavailable"
+        self.add_entity("binary_sensor.spare_motion", "motion", "motion", name="Spare motion", area=None)
+        self.add_entity("binary_sensor.kitchen_pir", "motion", "motion", name="Living room entry motion", area=None)
+        self.add_entity("binary_sensor.living_room_offline", "motion", "motion", name="Living room offline motion", area=None)
+        h["entities"]["binary_sensor.living_room_offline"]["state"] = "unavailable"
+        template = next(iter(self.original["hierarchy"]["devices"].values()))
+        h["devices"]["named_spare"] = {**template, "id": "named_spare", "name": "Living room spare sensor", "areaId": None, "entityIds": ["binary_sensor.spare_motion"]}
+        h["entities"]["binary_sensor.spare_motion"]["deviceId"] = "named_spare"
+        self.open(True)
+        properties = self.record("Automatic lighting")
+        requirement = properties.locator("article").filter(has_text="An occupancy start source")
+        expect(requirement.get_by_role("heading", name="Suggested equipment for Living room", exact=True)).to_be_visible()
+        expect(requirement.get_by_text("Device name “Living room spare sensor”", exact=False)).to_be_visible()
+        expect(requirement.get_by_text("Living room entry motion", exact=False)).to_have_count(0)
+        expect(requirement.get_by_text("Living room offline motion", exact=False)).to_have_count(0)
+        expect(properties.get_by_role("button", name="Continue to parameters", exact=False)).to_have_count(0)
+        self.assertEqual(self.posts, [])
+        requirement.get_by_role("button", name=re.compile("^Assign Spare motion to Living room$", re.I)).click()
+        expect(properties.get_by_role("button", name="Review equipment changes", exact=True)).to_be_visible()
+        self.assertEqual(self.posts, [{"kind": "entity", "op": "update", "targetId": "binary_sensor.spare_motion", "fields": {"area_id": "living_room"}}])
+        self.assertEqual(self.applies, [])
+
+    def test_group_suggestions_use_canonical_ids_named_members_and_reviewed_proposals(self):
+        h = self.body["hierarchy"]
+        h["entities"]["light.living_bulb"]["name"] = "Floor lamp"
+        h["entities"]["binary_sensor.living_pir"]["name"] = "Entrance motion"
+        plan = self.open_plan()
+        groups = plan.get_by_role("region", name="Home Assistant group plans", exact=True)
+        expect(groups.get_by_text("light.living_all", exact=True)).to_be_visible()
+        expect(groups.get_by_text("binary_sensor.living_motion_all", exact=True)).to_be_visible()
+        expect(groups.get_by_role("list", name="Members for light.living_all")).to_contain_text("Floor lamp")
+        expect(groups.get_by_role("list", name="Members for binary_sensor.living_motion_all")).to_contain_text("Entrance motion")
+        expect(groups.get_by_text("The group reports on when any member reports on.", exact=True)).to_be_visible()
+        self.assertEqual(self.posts, [])
+        groups.get_by_role("button", name=re.compile(r"^Add .*motions to changes$", re.I)).click()
+        self.page.get_by_role("status").filter(has_text="Added to the list of changes").wait_for()
+        self.assertEqual(len(self.posts), 1)
+        fields = self.posts[0]["fields"]
+        self.assertEqual(fields["entity_id"], "binary_sensor.living_motion_all")
+        self.assertEqual(fields["group_type"], "binary_sensor")
+        self.assertEqual(fields["entities"], ["binary_sensor.living_pir"])
+        self.assertEqual(self.applies, [])
 
     def test_lighting_with_other_blocked_outcomes_through_review_apply_verify_and_resume(self):
         self.controllers = {"ok": True, "controllers": [

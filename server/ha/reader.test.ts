@@ -299,5 +299,15 @@ describe("HaReader", () => {
       t.reader.invalidate();
       await expect(underway).rejects.toThrow(/Configuration changed/);
     });
+
+    it("waits past an ordinary button read before refreshing and coalesces concurrent fresh requests", async () => {
+      const t = readerOver();
+      t.fake.delayMs = 3;
+      const [ordinary, first, second] = await Promise.all([t.reader.buttons(false), t.reader.buttons(true), t.reader.buttons(true)]);
+      expect(first).not.toBe(ordinary);
+      expect(first).toBe(second);
+      expect(t.reads("get_states")).toBe(2);
+      expect([...configGets(t.fake).values()].every((n) => n === 2)).toBe(true);
+    });
   });
 });

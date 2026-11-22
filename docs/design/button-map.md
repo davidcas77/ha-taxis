@@ -122,14 +122,20 @@ pending maps or presses buttons.
 
 ## AI and validation limits
 
-The local scanner reads available configs deterministically. **Prepare AI
-preview** builds a redacted summary for one control; it makes no provider call.
-Only **Send this review to Medium AI** contacts the configured analysis model.
-Names and summaries are untrusted data. Raw YAML, arbitrary action data,
-credentials and full-house configuration are excluded. The model has no tools,
-assignment or Apply authority. Stale previews and concurrent reviews are refused;
-incomplete output is identified. Existing AI settings, limits and usage apply.
-Per-feature request history is not added to the Ask Taxis metadata list.
+Selecting a control reads the available evidence locally. Each press shows its
+matching automations, enabled state, conditions, actions and static targets.
+The inspection follows readable script and scene references and reports
+potential overlaps between active handlers. Templates, unreadable configurations
+and dynamic targets can leave gaps. This view describes the saved configuration.
+Execution depends on the conditions at the time of the press.
+
+**Analyze with AI** shows the evidence that would be sent for the selected
+control. The configured Medium model receives it after explicit confirmation.
+The supplied prompt asks for an explanation by press, source automation and
+condition, with clear uncertainty. The preview excludes raw YAML, arbitrary
+action data and full-house configuration. The AI provides text advice.
+Taxis checks that the evidence still matches the approved preview before
+sending. Existing AI settings, limits and usage apply.
 
 Validation uses unit/API tests and an isolated HA mock with browser writes and
 paid calls intercepted. Mock fixtures cover Aqara-style, MQTT and event/button

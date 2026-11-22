@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { suggestEntityArea } from "./area-suggestion.ts";
+import { suggestAreaPlacement, suggestEntityArea } from "./area-suggestion.ts";
 
 const areas = [
   { id: "bed", name: "Bedroom" },
@@ -33,5 +33,35 @@ describe("exact area suggestions", () => {
     expect(suggestEntityArea("E\u0301tage temperature", "sensor.any", foreign)?.areaId).toBe("french");
     expect(suggestEntityArea("Etage temperature", "sensor.any", foreign)).toBeNull();
     expect(suggestEntityArea("Hallway motion", "sensor.any", areas)).toBeNull();
+  });
+});
+
+describe("area placement evidence", () => {
+  it("explains a device name independently and collects agreeing entity evidence", () => {
+    expect(suggestAreaPlacement({ deviceName: "Bedroom Bathroom Multisensor" }, areas)).toEqual({
+      kind: "suggestion",
+      areaId: "bath",
+      evidence: [{ source: "Device name", text: "Bedroom Bathroom Multisensor" }],
+    });
+    expect(suggestAreaPlacement({ entityName: "Motion", entityId: "binary_sensor.hall_motion", deviceName: "Hall Multisensor" }, areas)).toEqual({
+      kind: "suggestion",
+      areaId: "hall",
+      evidence: [
+        { source: "Entity ID", text: "binary_sensor.hall_motion" },
+        { source: "Device name", text: "Hall Multisensor" },
+      ],
+    });
+  });
+  it("withholds suggestions for conflicting, duplicate or separate room names", () => {
+    expect(suggestAreaPlacement({ entityName: "Hall motion", deviceName: "Bedroom motion" }, areas)).toEqual({ kind: "ambiguous" });
+    expect(suggestAreaPlacement({ entityName: "Bedroom contact", entityId: "binary_sensor.hall_contact" }, areas)).toEqual({ kind: "ambiguous" });
+    expect(suggestAreaPlacement({ deviceName: "Hall to Bedroom contact" }, areas)).toEqual({ kind: "ambiguous" });
+    expect(suggestAreaPlacement({ entityName: "Hall motion" }, [...areas, { id: "other_hall", name: "Hall" }])).toEqual({ kind: "ambiguous" });
+    expect(suggestAreaPlacement({ deviceName: "New wing motion" }, [...areas, { id: "new:area:1", name: "New wing" }])).toEqual({ kind: "none" });
+  });
+  it("matches actual transliterated area IDs without assuming a translation", () => {
+    const greek = [{ id: "bibliothiki", name: "Βιβλιοθήκη" }];
+    expect(suggestAreaPlacement({ entityId: "light.bibliothiki_rack" }, greek)).toMatchObject({ kind: "suggestion", areaId: "bibliothiki" });
+    expect(suggestAreaPlacement({ deviceName: "Library desk" }, greek)).toEqual({ kind: "none" });
   });
 });

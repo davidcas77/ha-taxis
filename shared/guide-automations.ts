@@ -270,7 +270,7 @@ function equipmentFor(context: Assessment, key: RoomAutomationKey, withOccupancy
   return { required, optional };
 }
 
-function helpersFor(key: RoomAutomationKey, context: Assessment): RoomAutomation["helpers"] {
+function helpersFor(key: RoomAutomationKey, context: Assessment, usesOccupancy: boolean): RoomAutomation["helpers"] {
   const { values, helperRows } = context;
   const keys: Partial<Record<RoomAutomationKey, readonly HelperKey[]>> = {
     motion_lights: ["lights", "illuminance"],
@@ -279,8 +279,9 @@ function helpersFor(key: RoomAutomationKey, context: Assessment): RoomAutomation
     area_climate: ["window", ...(values.doors_open_count ? ["door" as const] : []), ...(values.auto_hvac_on ? ["temperature" as const] : [])],
     media_off: ["media"],
   };
+  const roomKeys = [...(keys[key] ?? []), ...(usesOccupancy ? (["motion", "presence"] as const) : [])];
   return helperRows
-    .filter(({ row }) => keys[key]?.includes(row.key))
+    .filter(({ row }) => roomKeys.includes(row.key))
     .map((helper) => ({
       ...helper,
       required: helper.row.key === "lights" || (key === "bathroom_fan" && helper.row.key === "humidity"),
@@ -335,7 +336,7 @@ export function assessRoomAutomations(context: Assessment): RoomAutomation[] {
           (recipe === key || cell?.status !== "installed"),
       )
       .map(({ key: recipe }) => recipe);
-    const helpers = helpersFor(key, context);
+    const helpers = helpersFor(key, context, occupancy);
     const primary = cells.get(key);
     const hasChanges =
       [...required, ...optional].some((check) => check.queuedEntityIds.length > 0) ||

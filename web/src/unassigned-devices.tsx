@@ -1,9 +1,9 @@
-import { Check } from "lucide-react";
 import { useMemo, useState } from "react";
-import { suggestEntityArea } from "../../shared/area-suggestion.ts";
+import { suggestAreaPlacement } from "../../shared/area-suggestion.ts";
 import { sortRows } from "../../shared/sort.ts";
 import { deviceAreaAssignments, unassignedDevices } from "../../shared/unassigned-devices.ts";
 import type { DeviceItem, Hierarchy } from "../../shared/types.ts";
+import { AssignmentSuggestion } from "./assignment-suggestion.tsx";
 import { DataTable, useSortState, type Column } from "./data-table.tsx";
 import { Pagination, usePagination } from "./records.tsx";
 import { useTaxisData } from "./state.tsx";
@@ -111,7 +111,7 @@ export function UnassignedDevices({ h, showDisabled }: { h: Hierarchy; showDisab
       minWidth: 190,
       maxWidth: 260,
       cell: (device) => {
-        const suggestion = suggestEntityArea(device.name, "", Object.values(h.areas));
+        const suggestion = suggestAreaPlacement({ deviceName: device.name }, Object.values(h.areas));
         return (
           <div className="flex min-w-0 items-center gap-1.5">
             <div className="w-28 min-w-0 max-w-[50%] shrink-0">
@@ -127,21 +127,15 @@ export function UnassignedDevices({ h, showDisabled }: { h: Hierarchy; showDisab
                 disabled={locked}
               />
             </div>
-            {suggestion && (
-              <div className="flex min-w-0 flex-1 items-center gap-1 text-xs">
-                <span className="min-w-0 truncate text-muted" title={h.areas[suggestion.areaId].name}>
-                  {h.areas[suggestion.areaId].name}
-                </span>
-                <Button
-                  className="shrink-0"
-                  disabled={locked}
-                  aria-label={`Use suggested area ${h.areas[suggestion.areaId].name} for device ${device.name}`}
-                  title={reviewChanges ? "Add this device area assignment to Changes" : "Apply this device area assignment"}
-                  onClick={() => void assign([device.id], suggestion.areaId)}
-                >
-                  <Check className="size-3" aria-hidden />
-                </Button>
-              </div>
+            {suggestion.kind === "suggestion" && (
+              <AssignmentSuggestion
+                suggestion={suggestion}
+                areaName={h.areas[suggestion.areaId].name}
+                subject={`device ${device.name}`}
+                disabled={locked}
+                reviewChanges={reviewChanges}
+                onChoose={() => void assign([device.id], suggestion.areaId)}
+              />
             )}
           </div>
         );

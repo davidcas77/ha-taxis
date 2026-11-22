@@ -4,7 +4,9 @@ import type { AreaReadiness, AutomationEquipmentCheck, RoomAutomation } from "..
 import { equipmentIsReporting } from "../../shared/guide-automations.ts";
 import { helperExclusions } from "../../shared/helpers.ts";
 import { areaInventory, defaultCapability, setAppliance, setCounts, setRole, setTvOccupancyRole } from "../../shared/inventory.ts";
+import { roomEquipmentCandidates, type RoomEquipmentCandidate } from "../../shared/room-equipment-candidates.ts";
 import type { EntityItem, Hierarchy } from "../../shared/types.ts";
+import { placementEvidenceText } from "./assignment-suggestion.tsx";
 import { useTaxis, type Route } from "./state.tsx";
 import { Button, inputClass } from "./ui.tsx";
 
@@ -111,28 +113,18 @@ function EquipmentRequirement({ h, area, check }: { h: Hierarchy; area: AreaRead
   const detected = check.entityIds
     .flatMap((id) => (h.entities[id] ? [h.entities[id]] : []))
     .sort((a, b) => Number(usable.has(b.entityId)) - Number(usable.has(a.entityId)) || a.name.localeCompare(b.name));
-  const current = new Set(detected.map((entity) => entity.entityId));
-  const needle = query.trim().toLowerCase();
-  const candidates = expanded
-    ? Object.values(h.entities)
-        .filter((entity) => {
-          const capability = defaultCapability(entity);
-          return (
-            entity.inRegistry &&
-            !current.has(entity.entityId) &&
-            entity.areaId !== area.areaId &&
-            !entity.maintenance &&
-            !(entity.domain === "light" && (entity.platform === "group" || entity.members.length > 0)) &&
-            !(entity.areaId && exclusions(entity.areaId).has(entity.entityId)) &&
-            capability !== null &&
-            check.capabilities.includes(capability) &&
-            equipmentIsReporting(entity, capability) &&
-            (needle ? entity.name.toLowerCase().includes(needle) || entity.entityId.toLowerCase().includes(needle) : entity.areaId === null)
-          );
-        })
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .slice(0, 15)
-    : [];
+  const canFind = check.capabilities.length > 0 && check.status !== "ready" && check.status !== "queued";
+  const available = useMemo(
+    () => (canFind ? roomEquipmentCandidates(h, inventory, area.areaId, check, exclusions) : []),
+    [h, inventory, area.areaId, check, exclusions, canFind],
+  );
+  const found = useMemo(
+    () => (expanded && query.trim() && canFind ? roomEquipmentCandidates(h, inventory, area.areaId, check, exclusions, query) : available),
+    [h, inventory, area.areaId, check, exclusions, canFind, expanded, query, available],
+  );
+  const recommended = available.filter((candidate) => candidate.recommended).slice(0, 3);
+  const recommendedIds = new Set(recommended.map(({ entity }) => entity.entityId));
+  const candidates = found.filter(({ entity }) => !recommendedIds.has(entity.entityId)).slice(0, 15);
   const label = { ready: "Ready", missing: "Missing", unavailable: "Unavailable", review: "Needs selection", queued: "Assignment queued" }[check.status];
   const applyRole = async (entity: EntityItem) => {
     setSaving(true);
@@ -198,6 +190,48 @@ function EquipmentRequirement({ h, area, check }: { h: Hierarchy; area: AreaRead
       </li>
     );
   };
+  const renderCandidate = ({ entity, placement, recommended: isRecommended, verification }: RoomEquipmentCandidate) => {
+    const assignmentQueued = changes.some((change) => change.kind === "entity" && change.targetId === entity.entityId && change.after.area_id === area.areaId);
+    const previous = entity.areaId ? (h.areas[entity.areaId]?.name ?? entity.areaId) : null;
+    const nameNeeded = entity.needsOwnName && !entity.customName;
+    const evidence = placement.kind === "suggestion" ? placementEvidenceText(placement.evidence) : null;
+    return (
+      <li key={entity.entityId} className="flex flex-wrap items-center justify-between gap-2 border-t border-line py-2">
+        <div className="min-w-0 flex-1 break-words">
+          <p className="font-medium">
+            {entity.name} <span className="text-xs font-normal text-muted">· {previous ?? "Unassigned"}</span>
+          </p>
+          {evidence && (
+            <p className="text-xs text-muted">
+              {isRecommended
+                ? "Matches this room by "
+                : placement.kind === "suggestion"
+                  ? `Name points to ${h.areas[placement.areaId]?.name ?? placement.areaId} · `
+                  : ""}
+              {evidence}
+            </p>
+          )}
+          {placement.kind === "ambiguous" && <p className="text-xs text-warn">Names point to more than one room. Check the location.</p>}
+          {verification && <p className="text-xs text-muted">{verification}</p>}
+          {nameNeeded && <p className="text-xs text-muted">Home Assistant needs the entity's name set to assign it separately.</p>}
+        </div>
+        <Button
+          disabled={busy || assignmentQueued}
+          aria-label={`Assign ${entity.name} to ${area.name}`}
+          onClick={() =>
+            void propose({
+              kind: "entity",
+              op: "update",
+              targetId: entity.entityId,
+              fields: { area_id: area.areaId, ...(nameNeeded ? { name: entity.name } : {}) },
+            })
+          }
+        >
+          {assignmentQueued ? "Queued" : reviewChanges ? (previous ? "Queue move" : "Queue assignment") : "Preview assignment"}
+        </Button>
+      </li>
+    );
+  };
   return (
     <article className="min-w-0 rounded-lg border border-line bg-surface px-3 pt-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-1 pb-2">
@@ -212,7 +246,13 @@ function EquipmentRequirement({ h, area, check }: { h: Hierarchy; area: AreaRead
           <ul className="mt-2">{detected.slice(shown.length).map(renderRow)}</ul>
         </details>
       )}
-      {check.capabilities.length > 0 && check.status !== "ready" && (
+      {recommended.length > 0 && (
+        <div className="border-t border-line pt-2">
+          <h5 className="mb-2 text-xs font-semibold text-accent">Suggested equipment for {area.name}</h5>
+          <ul>{recommended.map(renderCandidate)}</ul>
+        </div>
+      )}
+      {canFind && (
         <details className="border-t border-line py-2" onToggle={(event) => setExpanded(event.currentTarget.open)}>
           <summary className="cursor-pointer text-xs text-accent">Find equipment to assign</summary>
           {expanded && (
@@ -221,40 +261,9 @@ function EquipmentRequirement({ h, area, check }: { h: Hierarchy; area: AreaRead
                 Search compatible equipment
                 <input type="search" className={inputClass} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name or entity ID" />
               </label>
-              <p className="text-xs text-muted">Unassigned equipment is listed first. Search to include equipment in other rooms.</p>
-              <ul>
-                {candidates.map((entity) => {
-                  const pending = changes.some(
-                    (change) => change.kind === "entity" && change.targetId === entity.entityId && change.after.area_id === area.areaId,
-                  );
-                  const previous = entity.areaId ? (h.areas[entity.areaId]?.name ?? entity.areaId) : null;
-                  return (
-                    <li key={entity.entityId} className="flex flex-wrap items-center justify-between gap-2 border-t border-line py-2">
-                      <p className="min-w-0 break-words">
-                        {entity.name} <span className="text-xs text-muted">· {previous ?? "Unassigned"}</span>
-                      </p>
-                      <Button
-                        disabled={busy || pending}
-                        aria-label={`Assign ${entity.name} to ${area.name}`}
-                        onClick={() =>
-                          void propose({
-                            kind: "entity",
-                            op: "update",
-                            targetId: entity.entityId,
-                            fields: {
-                              area_id: area.areaId,
-                              ...(entity.needsOwnName && !entity.customName ? { name: entity.name } : {}),
-                            },
-                          })
-                        }
-                      >
-                        {pending ? "Queued" : reviewChanges ? (previous ? "Queue move" : "Queue assignment") : "Preview assignment"}
-                      </Button>
-                    </li>
-                  );
-                })}
-              </ul>
-              {!candidates.length && <p className="text-xs text-muted">No compatible equipment found.</p>}
+              <p className="text-xs text-muted">Search also includes reporting equipment in other rooms. Check its location and role before assigning it.</p>
+              <ul>{candidates.map(renderCandidate)}</ul>
+              {!candidates.length && <p className="text-xs text-muted">No other reporting equipment found.</p>}
             </div>
           )}
         </details>

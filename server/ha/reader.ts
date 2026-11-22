@@ -135,7 +135,7 @@ export class HaReader {
   private cache: { at: number; read: Read } | null = null;
   private inFlight: Promise<Read> | null = null;
   private buttonCache: { at: number; value: ButtonsRead } | null = null;
-  private buttonInFlight: Promise<ButtonsRead> | null = null;
+  private buttonInFlight: { refresh: boolean; result: Promise<ButtonsRead> } | null = null;
   private refsCache: { at: number; snap: Snapshot } | null = null;
   private refsInFlight: Promise<Snapshot> | null = null;
   // The list of Taxis blueprints Home Assistant has, for the health checks, kept
@@ -281,7 +281,11 @@ export class HaReader {
   // after Apply (which changes them).
   async buttons(refresh: boolean): Promise<ButtonsRead> {
     if (!refresh && this.buttonCache && this.deps.clock() - this.buttonCache.at < BUTTON_CACHE_MS) return this.buttonCache.value;
-    this.buttonInFlight ??= (async () => {
+    const underway = this.buttonInFlight;
+    // A forced check must not reuse a read that used cached configurations.
+    if (refresh && underway && !underway.refresh) await underway.result.catch(() => {});
+    if (this.buttonInFlight) return this.buttonInFlight.result;
+    const result = (async () => {
       const generation = this.generation;
       const ha = this.requireHa();
       if (!this.deps.rest) throw new Error(this.deps.notConfigured);
@@ -294,7 +298,8 @@ export class HaReader {
     })().finally(() => {
       this.buttonInFlight = null;
     });
-    return this.buttonInFlight;
+    this.buttonInFlight = { refresh, result };
+    return result;
   }
 
   // ---- health --------------------------------------------------------------

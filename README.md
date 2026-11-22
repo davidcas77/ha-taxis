@@ -35,15 +35,16 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 
 - **Home and Rooms.** Find a room or resume your last one. Select an automation
   to see its equipment requirements, detected sources and readiness. Match
-  missing equipment, then set the automation's parameters and review its
-  proposed Home Assistant changes. **Devices** and **Entities** open the
+  missing equipment with reporting entities whose names point to the room. Set
+  the automation's parameters and review its proposed native groups,
+  group members and automations. **Devices** and **Entities** open the
   corresponding inventory screens from the main menu.
 - **Spaces:** organize floors → spaces → areas, plus areas on no floor and
   entities in no area. Spaces use Home Assistant area labels; an empty space's
   floor placement is stored in a Taxis-owned marker in its label description.
   Moving an area changes registry metadata only: review existing groups, scripts
   and automations afterwards. **Not in any area** has Cards and searchable Table
-  views, with paged results and bulk area assignment.
+  views, with paged results, name-based area suggestions and bulk area assignment.
 - **Each area:** an Overview table shows all capabilities, counted entities and
   current values, with entity names and IDs available from each count. Other tabs
   show its devices and entities, naming, labels and health, with reasons when
@@ -171,12 +172,11 @@ identities. Chats stay in memory and clear when closed, scope changes or the app
 reloads. No background AI analysis runs. Jev remains a separate manual room-note
 review, not a hidden second model in the assistant. See [Ask Taxis](docs/design/ask-taxis.md).
 
-The Buttons tab also offers a manual **AI review of existing button
-automations**, using Medium. Prepare and inspect its exact summary before
-sending. It includes only the selected control, advertised gestures, coverage
-notes and matching automation names/services/targets, not raw automation YAML
-or action data. It cannot assign actions or Apply. Its tokens/cost contribute to
-shared AI usage; recent assistant request history covers Ask Taxis only.
+**Buttons** shows each press's matching automations, actions, conditions and
+potential overlaps from the configurations Taxis can read. **Analyze with AI**
+shows the exact evidence for the selected control. **Send this review to Medium
+AI** sends it for an explanation. Button assignments and Apply remain separate
+actions. Button analysis contributes to shared AI usage.
 
 ## Development
 

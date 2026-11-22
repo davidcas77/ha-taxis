@@ -39,6 +39,8 @@ class ButtonsRegression(fixture.GuideRegression):
         self.add_entity('light.living_all', 'light', platform='group', members=['light.living_bulb'])
         self.add_entity('script.goodnight', 'automation')
         self.queue_calls, self.ai_calls, self.ai_previews = [], [], []
+        self.ai_results = []
+        self.ai_preview = {'content': '{"control":"Selected fixture","matches":1}', 'fingerprint': 'b' * 64, 'count': 1}
         self.fail_queue = False
         self.fingerprint = 'a' * 64
         self.page.route('**/api/buttons*', lambda r: r.fulfill(json={'ok': True, 'inventory': self.inv, 'fingerprint': self.fingerprint}))
@@ -72,11 +74,15 @@ class ButtonsRegression(fixture.GuideRegression):
         self.page.route('**/api/buttons/assign', queue)
         def ai_preview(route):
             self.ai_previews.append(route.request.url)
-            route.fulfill(json={'ok': True, 'preview': {'content': '{"control":"Selected fixture","matches":1}', 'fingerprint': 'b' * 64, 'count': 1}})
+            route.fulfill(json={'ok': True, 'preview': self.ai_preview})
         self.page.route('**/api/buttons/*/ai-preview', ai_preview)
         def ai_review(route):
             self.ai_calls.append(route.request.post_data_json)
-            route.fulfill(json={'ok': True, 'model': 'middle-fixture', 'text': 'Review the existing trigger before adding a second handler.'})
+            if self.ai_results:
+                status, body = self.ai_results.pop(0)
+                route.fulfill(status=status, json=body)
+            else:
+                route.fulfill(json={'ok': True, 'model': 'middle-fixture', 'text': 'Review the existing trigger before adding a second handler.'})
         self.page.route('**/api/buttons/*/ai-review', ai_review)
 
     def open_control(self, id='demo_wall_buttons'):
@@ -250,15 +256,79 @@ class ButtonsRegression(fixture.GuideRegression):
 
     def test_buttons_ai_is_manual_and_has_a_reviewable_payload(self):
         self.open_control()
-        self.page.get_by_text('AI review of existing button automations', exact=True).click()
+        self.page.get_by_text('Analyze with AI', exact=True).click()
         self.assertEqual(self.ai_calls, [])
-        self.page.get_by_role('button', name='Prepare AI preview', exact=True).click()
-        self.page.get_by_text('{"control":"Selected fixture","matches":1}', exact=True).wait_for()
+        expect(self.page.get_by_label('AI request evidence')).to_have_text(self.ai_preview['content'])
         self.assertEqual(self.ai_calls, [])
         self.page.get_by_role('button', name='Send this review to Medium AI', exact=True).click()
-        self.page.get_by_text('Review the existing trigger before adding a second handler.', exact=False).wait_for()
+        expect(self.page.get_by_role('region', name='AI analysis')).to_contain_text('Review the existing trigger before adding a second handler.')
         self.assertEqual(self.ai_calls, [{'fingerprint': 'b' * 64}])
         self.assertEqual(self.queued, [])
+
+    def test_buttons_press_evidence_survives_an_unavailable_ai_provider(self):
+        control = next(c for c in self.inv['controls'] if c['id'] == 'device:demo_wall_buttons')
+        gesture = next(g for g in control['gestures'] if g['button'] == 'Left' and g['gesture'] == 'Short press')
+        target = {'id': 'light.living_all', 'name': 'Living room lights'}
+        handler = {'id': 'fixture_lights', 'name': 'Bedtime lights', 'enabled': True, 'match': 'exact', 'managed': False,
+                   'conditions': ['After sunset'], 'notes': [], 'actions': [{'service': 'light.turn_on', 'targets': [target],
+                        'conditions': ['Guest mode is off'], 'branches': ['Choose option 1'], 'via': ['via script.bedtime'], 'uncertain': False}]}
+        possible = {**handler, 'id': 'fixture_other', 'name': 'Hall keypad behavior', 'match': 'possible', 'enabled': None, 'actions': []}
+        self.ai_preview['analysis'] = {'control': {'name': control['name'], 'integrations': control['integrations']}, 'notes': [],
+            'coverage': {'automations': 3, 'readable': 2, 'unreadable': 1}, 'related': [],
+            'gestures': [{'key': gesture['key'], 'button': gesture['button'], 'gesture': gesture['gesture'], 'source': gesture['source'],
+                          'handlers': [handler, possible], 'overlaps': [{'target': target, 'handlers': [handler['id'], possible['id']],
+                                                                       'kind': 'opposing', 'conditional': True}]}]}
+        self.inv['coverage'] = self.ai_preview['analysis']['coverage']
+        self.ai_results = [(502, {'ok': False, 'error': 'AI is disabled.'})]
+        self.open_control()
+        row = self.row(button='Left')
+        expect(row.get_by_role('link', name='Bedtime lights')).to_have_attribute('href', '/config/automation/edit/fixture_lights')
+        expect(row).to_contain_text('Trigger match')
+        expect(row).to_contain_text('After sunset')
+        expect(row).to_contain_text('Living room lights')
+        expect(row).to_contain_text('Guest mode is off')
+        expect(row).to_contain_text('via script.bedtime')
+        expect(row).to_contain_text('Possible match')
+        expect(row).to_contain_text('Possible opposing actions on Living room lights')
+        expect(self.page.get_by_text(re.compile('2 of 3 automation configs readable'))).to_be_visible()
+        expect(self.row()).to_contain_text('No readable handler matched')
+        self.assertEqual(self.ai_calls, [])
+        self.page.get_by_text('Analyze with AI', exact=True).click()
+        self.page.get_by_role('button', name='Send this review to Medium AI').click()
+        expect(self.page.get_by_role('alert').filter(has_text='AI is disabled.')).to_be_visible()
+        expect(row).to_contain_text('After sunset')
+        self.assertEqual(len(self.ai_calls), 1)
+        self.assertEqual(self.queue_calls + self.posts + self.puts, [])
+
+    def test_buttons_stale_ai_preview_requires_fresh_consent(self):
+        self.ai_results = [(409, {'ok': False, 'code': 'stale', 'error': 'The mapping evidence changed.'})]
+        self.open_control()
+        self.page.get_by_text('Analyze with AI', exact=True).click()
+        send = self.page.get_by_role('button', name='Send this review to Medium AI')
+        send.click()
+        expect(self.page.get_by_role('alert').filter(has_text='The mapping evidence changed.')).to_be_visible()
+        expect(send).to_have_count(0)
+        self.ai_preview = {'content': '{"control":"Refreshed fixture"}', 'fingerprint': 'c' * 64, 'count': 1}
+        self.page.get_by_role('button', name='Refresh preview').click()
+        expect(self.page.get_by_label('AI request evidence')).to_have_text(self.ai_preview['content'])
+        self.assertEqual(self.ai_calls, [{'fingerprint': 'b' * 64}])
+        send.click()
+        expect(self.page.get_by_role('region', name='AI analysis')).to_be_visible()
+        self.assertEqual(self.ai_calls, [{'fingerprint': 'b' * 64}, {'fingerprint': 'c' * 64}])
+
+    def test_buttons_late_ai_answer_cannot_cross_selected_controls(self):
+        pending = []
+        self.page.route('**/api/buttons/*/ai-review', lambda route: pending.append(route))
+        self.open_control()
+        self.page.get_by_text('Analyze with AI', exact=True).click()
+        with self.page.expect_request('**/api/buttons/*/ai-review'):
+            self.page.get_by_role('button', name='Send this review to Medium AI').click()
+        self.page.get_by_role('button', name=re.compile('^Six-button remote')).click()
+        expect(self.page.get_by_role('heading', name='Six-button remote', exact=True)).to_be_visible()
+        pending.pop().fulfill(json={'ok': True, 'model': 'fixture', 'text': 'Answer for the previous control'})
+        self.page.get_by_text('Analyze with AI', exact=True).click()
+        expect(self.page.get_by_text('Answer for the previous control')).to_have_count(0)
+        expect(self.page.get_by_role('button', name='Send this review to Medium AI')).to_be_enabled()
 
     def test_buttons_changes_review_explains_the_grouped_map(self):
         self.open_control()
