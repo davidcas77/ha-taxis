@@ -9,6 +9,7 @@ from pathlib import Path
 import unittest
 from playwright.sync_api import expect
 import urllib.request
+from urllib.parse import unquote, urlsplit
 
 spec = importlib.util.spec_from_file_location('guide_fixture', Path(__file__).with_name('guide-browser.py'))
 fixture = importlib.util.module_from_spec(spec)
@@ -84,6 +85,30 @@ class ButtonsRegression(fixture.GuideRegression):
             else:
                 route.fulfill(json={'ok': True, 'model': 'middle-fixture', 'text': 'Review the existing trigger before adding a second handler.'})
         self.page.route('**/api/buttons/*/ai-review', ai_review)
+        self.reference_rows, self.reference_calls = {}, []
+        def references(route):
+            path = unquote(urlsplit(route.request.url).path).split("/")
+            control_id = path[-2] if path[-1] == "references" else path[-3]
+            rows = self.reference_rows.setdefault(control_id, [])
+            method = route.request.method
+            if method == "GET":
+                route.fulfill(json={"ok": True, "references": rows})
+                return
+            body = route.request.post_data_json
+            self.reference_calls.append((method, control_id, path[-1], body))
+            if method == "POST":
+                rows.append({**body, "id": "24d5e061-6d13-4353-bfc6-8d909bf5864f", "revision": 1})
+            elif method in ("PUT", "DELETE"):
+                note = next((item for item in rows if item["id"] == path[-1] and item["revision"] == body["revision"]), None)
+                if note is None:
+                    route.fulfill(status=409, json={"ok": False, "error": "This button note changed or was removed."})
+                    return
+                if method == "PUT":
+                    note.update({**body, "revision": body["revision"] + 1})
+                else:
+                    rows.remove(note)
+            route.fulfill(json={"ok": True, "references": rows})
+        self.page.route(re.compile(r"/api/buttons/[^/]+/references(?:/[^/]+)?$"), references)
 
     def open_control(self, id='demo_wall_buttons'):
         self.page.goto(fixture.BASE + '/#automations/buttons/' + 'device%3A' + id, wait_until='networkidle')
@@ -92,13 +117,17 @@ class ButtonsRegression(fixture.GuideRegression):
         self.page.get_by_role('heading', name=c['name'], exact=True).wait_for()
 
     def table(self, control='Bedroom wall control'):
-        # One table per control: a row for each button, a column for each press type.
         return self.page.get_by_role('table', name='Buttons of ' + control, exact=True)
 
+    def tree(self, control='Bedroom wall control'):
+        return self.page.get_by_role('list', name='Button tree for ' + control, exact=True)
+
+    def branch(self, button, control='Bedroom wall control'):
+        return self.tree(control).locator(f'details[aria-label="{button}"]')
+
     def row(self, button='Right', gesture='Short press', source='aqara device trigger', control='Bedroom wall control'):
-        """The cell of one button and press type: its assignments, the handlers that exist, and the +."""
-        line = self.table(control).locator('tbody tr').filter(has=self.page.get_by_text(button, exact=True))
-        return line.get_by_role('group', name=gesture + ' · ' + source, exact=True)
+        """The leaf for one Home Assistant trigger source."""
+        return self.branch(button, control).get_by_role('group', name=gesture + ' · ' + source, exact=True)
 
     def editor(self, row, target='light.living_all', service='light.toggle'):
         row.get_by_role('button', name=re.compile(r'^Assign action to ')).click()
@@ -120,7 +149,7 @@ class ButtonsRegression(fixture.GuideRegression):
         expect(buttons).to_have_attribute('aria-current', 'page')
         buttons.click()
         expect(self.page).to_have_url(fixture.BASE + '/#automations/buttons/device%3Ademo_wall_buttons')
-        expect(self.table()).to_be_visible()
+        expect(self.tree()).to_be_visible()
 
     def test_buttons_direct_assignment_requires_exact_confirmation(self):
         self.page.route('**/api/settings/general', lambda route: route.fulfill(json={'ok': True, 'general': {'reviewChangesBeforeApplying': False}, 'revision': 'direct-revision'}))
@@ -164,13 +193,91 @@ class ButtonsRegression(fixture.GuideRegression):
 
     def test_buttons_across_integrations_and_combined_presses_are_visible_without_writes(self):
         self.open_control()
-        self.assertTrue(self.table().locator('tbody tr').filter(has=self.page.get_by_text('Both', exact=True)).is_visible())
+        expect(self.branch('Both')).to_be_visible()
         for label in ['Short press', 'Double press', 'Long press']:
             self.assertTrue(self.row(gesture=label).is_visible())
         sidebar = self.page.get_by_role('complementary', name='Button controls')
         for label in ['Six-button remote', 'Matter bedside button', 'Bedroom wall control']:
             self.assertTrue(sidebar.get_by_role('button', name=re.compile('^' + label)).is_visible())
         self.assertEqual(self.queue_calls + self.ai_calls + self.posts + self.puts, [])
+
+    def test_buttons_homekit_remote_uses_two_physical_buttons_and_a_persistent_transposed_table(self):
+        remote_id = "demo_bedroom_david_remote"
+        name = "Bedroom David remote"
+        gestures = [
+            {"key": f"{button}-{suffix}", "button": f"Button {button}", "gesture": press,
+             "source": "homekit_controller device trigger",
+             "trigger": {"trigger": "device", "domain": "homekit_controller", "device_id": remote_id,
+                         "type": f"button{button}", "subtype": suffix}}
+            for button in (1, 2)
+            for suffix, press in (("single_press", "Single press"), ("double_press", "Double press"), ("long_press", "Long press"))
+        ]
+        self.inv["controls"].append({"id": f"device:{remote_id}", "deviceId": remote_id, "name": name,
+            "areaId": None, "manufacturer": "Fixture", "model": "Remote", "integrations": ["homekit_controller"],
+            "gestures": gestures, "notes": [], "existing": {}})
+        self.open_control(remote_id)
+        layout = self.page.get_by_role("group", name="Button layout", exact=True)
+        expect(layout.get_by_text("2 buttons · 6 gestures", exact=True)).to_be_visible()
+        expect(layout.get_by_role("button", name="Tree", exact=True)).to_have_attribute("aria-pressed", "true")
+        expect(self.tree(name).locator(":scope > li > details > summary")).to_have_text(["Button 1", "Button 2"])
+        for button in ("Button 1", "Button 2"):
+            expect(self.branch(button, name).get_by_role("heading", level=3)).to_have_text(["Single press", "Double press", "Long press"])
+        self.branch("Button 1", name).locator("summary").click()
+        expect(self.row("Button 1", "Single press", "homekit_controller device trigger", name)).not_to_be_visible()
+        expect(self.row("Button 2", "Single press", "homekit_controller device trigger", name)).to_be_visible()
+        layout.get_by_role("button", name="Table", exact=True).click()
+        table = self.table(name)
+        expect(table.get_by_role("columnheader")).to_have_text(["Press type", "Button 1", "Button 2"])
+        expect(table.get_by_role("rowheader")).to_have_text(["Single press", "Double press", "Long press"])
+        self.page.reload(wait_until="networkidle")
+        expect(layout.get_by_role("button", name="Table", exact=True)).to_have_attribute("aria-pressed", "true")
+        expect(table).to_be_visible()
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        scroll = self.page.get_by_role("region", name="Scrollable button table", exact=True)
+        self.assertTrue(scroll.evaluate("el => el.scrollWidth > el.clientWidth"))
+        self.assertFalse(self.page.evaluate("document.documentElement.scrollWidth > innerWidth"))
+        double = table.get_by_role("row", name=re.compile("^Double press"))
+        self.save(self.editor(double.get_by_role("cell").nth(1)))
+        self.assertEqual(self.queue_calls[-1]["gestureKey"], "2-double_press")
+        layout.get_by_role("button", name="Tree", exact=True).click()
+        expect(self.row("Button 2", "Double press", "homekit_controller device trigger", name)).to_contain_text("In changes")
+        self.assertFalse(self.page.evaluate("document.documentElement.scrollWidth > innerWidth"))
+        self.assertEqual(self.posts + self.puts + self.applies, [])
+
+    def test_buttons_distinct_sources_share_one_button_press_without_merging_assignments(self):
+        control = next(c for c in self.inv["controls"] if c["id"] == "device:demo_wall_buttons")
+        original = next(g for g in control["gestures"] if g["button"] == "Right" and g["gesture"] == "Short press")
+        extra = {**original, "key": "fixture-other-source", "source": "HA event types", "eventEntity": "event.fixture_right",
+                 "eventType": "short_press", "trigger": {"trigger": "state", "entity_id": "event.fixture_right"}}
+        same_source = {**original, "key": "fixture-same-source",
+                       "trigger": {**original["trigger"], "subtype": "right_short_alternative"}}
+        control["gestures"].extend((extra, same_source))
+        self.open_control()
+        branch = self.branch("Right")
+        expect(branch.get_by_role("heading", name="Short press", exact=True)).to_have_count(1)
+        native_keys = sorted((original["key"], same_source["key"]))
+        original_name = f"Short press · aqara device trigger · Source {native_keys.index(original['key']) + 1}"
+        alternate_name = f"Short press · aqara device trigger · Source {native_keys.index(same_source['key']) + 1}"
+        native = branch.get_by_role("group", name=original_name, exact=True)
+        alternate = branch.get_by_role("group", name=alternate_name, exact=True)
+        expect(alternate).to_contain_text("right_short_alternative")
+        expect(native.get_by_role("button", name=re.compile("Assign action to .*Source " + str(native_keys.index(original["key"]) + 1)))).to_be_visible()
+        expect(alternate.get_by_role("button", name=re.compile("Assign action to .*Source " + str(native_keys.index(same_source["key"]) + 1)))).to_be_visible()
+        source = self.row(source="HA event types")
+        expect(source).to_contain_text("event.fixture_right")
+        self.save(self.editor(source, service="light.turn_on"))
+        expect(native).not_to_contain_text("In changes")
+        self.page.get_by_role("group", name="Button layout").get_by_role("button", name="Table", exact=True).click()
+        table = self.table()
+        column_index = table.get_by_role("columnheader").all_inner_texts().index("Right") - 1
+        row = table.get_by_role("row", name=re.compile("^Short press"))
+        right_cell = row.get_by_role("cell").nth(column_index)
+        expect(right_cell.get_by_role("group", name="Short press · HA event types", exact=True)).to_contain_text("In changes")
+        self.save(self.editor(right_cell.get_by_role("group", name=original_name, exact=True), service="light.turn_off"))
+        self.assertEqual([request["gestureKey"] for request in self.queue_calls], [extra["key"], original["key"]])
+        self.assertEqual(len(self.queued[0]["after"]["button_map"]["bindings"]), 2)
+        expect(table.get_by_role("rowheader", name="Short press", exact=True)).to_have_count(1)
+        self.assertEqual(self.posts + self.puts + self.applies, [])
 
     def test_buttons_three_inputs_share_one_group_map_with_on_off_toggle(self):
         self.open_control()
@@ -339,6 +446,116 @@ class ButtonsRegression(fixture.GuideRegression):
         self.assertIn('Short press', self.page.get_by_role('main').inner_text())
         self.assertIn('light.toggle', self.page.get_by_role('main').inner_text())
         self.assertNotIn('recipe for undefined', self.page.get_by_role('main').inner_text())
+
+    def test_buttons_reference_notes_for_a_control_with_no_detected_gestures(self):
+        jev_calls = []
+        self.page.route("**/api/jev/checks/*", lambda route: (
+            jev_calls.append(route.request.post_data_json), route.fulfill(json={"ok": False, "error": "Unexpected Jev call"}),
+        ))
+        self.add_entity("button.kitchen_strip_identify", "button", "identify", name="Kitchen Strip Identify")
+        self.add_entity("button.kitchen_strip_blink", "button", name="Kitchen Strip Blink")
+        self.add_entity("button.desk_press", "button", name="Desk press")
+        self.inv["identifyButtons"] = ["button.kitchen_strip_blink"]
+        if "button.press" not in self.inv["services"]:
+            self.inv["services"].append("button.press")
+        self.open_control("unknown")
+        notes = self.page.get_by_role("region", name="Button reference notes", exact=True)
+        expect(notes).to_contain_text("Saved in Taxis for reference")
+        expect(self.page.get_by_text("HA did not expose button gestures", exact=False)).to_be_visible()
+        notes.get_by_role("button", name="Add button note", exact=True).click()
+        form = notes.get_by_role("form", name="New button note", exact=True)
+        expect(form.locator("datalist option")).to_have_count(5)
+        expect(form.get_by_label("Function type")).to_have_value("service")
+        form.get_by_label("Button name or number").fill("Button 2")
+        form.get_by_label("Press type").fill("Triple tap")
+        form.get_by_label("Function type").select_option("custom")
+        form.get_by_label("Function description").fill("Closes the blinds over the keypad’s hub.")
+        self.page.once("dialog", lambda dialog: dialog.dismiss())
+        self.page.get_by_role("complementary", name="Button controls").get_by_role("button", name=re.compile("^Bedroom wall control")).click()
+        expect(form.get_by_label("Function description")).to_have_value("Closes the blinds over the keypad’s hub.")
+        form.get_by_role("button", name="Save button note", exact=True).click()
+        expect(notes.get_by_role("list", name="Saved button notes")).to_contain_text("Button 2 · Triple tap")
+        self.page.reload(wait_until="networkidle")
+        expect(notes.get_by_text("Closes the blinds over the keypad’s hub.", exact=True)).to_be_visible()
+        notes.get_by_role("button", name="Edit Button 2 note", exact=True).click()
+        form = notes.get_by_role("form", name="Edit button note", exact=True)
+        form.get_by_label("Function type").select_option("service")
+        form.get_by_label("Press type").fill("Long press")
+        form.get_by_label("Home Assistant service", exact=True).select_option("button.press")
+        target = form.get_by_label("Entity target (optional)", exact=True)
+        expect(target.locator("option[value='button.desk_press']")).to_have_count(1)
+        expect(target.locator("option[value^='button.kitchen_strip']")).to_have_count(0)
+        form.get_by_label("Home Assistant service", exact=True).select_option("light.toggle")
+        target.select_option("light.living_all")
+        form.get_by_role("button", name="Save button note", exact=True).click()
+        expect(notes.get_by_role("list", name="Saved button notes")).to_contain_text("light.toggle")
+        notes.get_by_role("button", name="Remove Button 2 note", exact=True).click()
+        notes.get_by_role("group", name="Confirm", exact=True).get_by_role("button", name="Remove", exact=True).click()
+        expect(notes.get_by_role("list", name="Saved button notes")).to_have_count(0)
+        self.assertEqual([call[0] for call in self.reference_calls], ["POST", "PUT", "DELETE"])
+        self.assertEqual(self.reference_calls[0][3], {
+            "button": "Button 2", "press": "Triple tap", "action": {"kind": "custom", "description": "Closes the blinds over the keypad’s hub."},
+        })
+        self.assertEqual(self.reference_calls[1][3]["action"]["target"]["id"], "light.living_all")
+        self.assertEqual(self.reference_calls[1][3]["revision"], 1)
+        self.assertEqual(self.reference_calls[2][3], {"revision": 2})
+        self.assertEqual(jev_calls + self.queue_calls + self.ai_calls + self.posts + self.applies, [])
+
+    def test_buttons_reference_late_load_and_save_stay_with_the_original_control(self):
+        held = []
+        next_method = ["GET"]
+        def delay(route):
+            path = unquote(urlsplit(route.request.url).path)
+            if path.endswith("/device:unknown/references") and next_method and route.request.method == next_method[0]:
+                next_method.pop()
+                held.append(route)
+            else:
+                route.fallback()
+        self.page.route("**/api/buttons/*/references", delay)
+        self.page.goto(fixture.BASE + "/#automations/buttons/device%3Aunknown", wait_until="domcontentloaded")
+        controls = self.page.get_by_role("complementary", name="Button controls")
+        expect(self.page.get_by_role("region", name="Button reference notes", exact=True)).to_be_visible()
+        expect(self.page.get_by_role("heading", name="Unexposed keypad", exact=True)).to_be_visible()
+        expect(self.page.get_by_text("Reading button notes…", exact=True)).to_be_visible()
+        controls.get_by_role("button", name=re.compile("^Bedroom wall control")).click()
+        expect(self.page.get_by_role("heading", name="Bedroom wall control", exact=True)).to_be_visible()
+        late = {"id": "24d5e061-6d13-4353-bfc6-8d909bf5864f", "revision": 1, "button": "Previous control", "press": "Single press",
+                "action": {"kind": "custom", "description": "Previous control description"}}
+        held.pop().fulfill(json={"ok": True, "references": [late]})
+        expect(self.page.get_by_text("Previous control description", exact=True)).to_have_count(0)
+        controls.get_by_role("button", name=re.compile("^Unexposed keypad")).click()
+        expect(self.page.get_by_role("heading", name="Unexposed keypad", exact=True)).to_be_visible()
+        notes = self.page.get_by_role("region", name="Button reference notes", exact=True)
+        notes.get_by_role("button", name="Add button note", exact=True).click()
+        form = notes.get_by_role("form", name="New button note", exact=True)
+        form.get_by_label("Button name or number").fill("Original keypad")
+        form.get_by_label("Press type").fill("Single press")
+        form.get_by_label("Function type").select_option("custom")
+        form.get_by_label("Function description").fill("Do not show in the new control")
+        next_method.append("POST")
+        with self.page.expect_request(lambda request: request.url.endswith("/references") and request.method == "POST"):
+            form.get_by_role("button", name="Save button note", exact=True).click()
+        self.page.once("dialog", lambda dialog: dialog.accept())
+        controls.get_by_role("button", name=re.compile("^Bedroom wall control")).click()
+        expect(self.page.get_by_role("heading", name="Bedroom wall control", exact=True)).to_be_visible()
+        held.pop().fulfill(json={"ok": True, "references": [late]})
+        expect(self.page.get_by_text("Previous control description", exact=True)).to_have_count(0)
+        expect(self.page.get_by_text("Button note saved in Taxis.", exact=True)).to_have_count(0)
+
+    def test_buttons_native_mapping_target_picker_excludes_identify_entities(self):
+        self.add_entity("button.kitchen_strip_identify", "button", "identify", name="Kitchen Strip Identify")
+        self.add_entity("button.kitchen_strip_blink", "button", name="Kitchen Strip Blink")
+        self.add_entity("button.desk_press", "button", name="Desk press")
+        self.inv["identifyButtons"] = ["button.kitchen_strip_blink"]
+        if "button.press" not in self.inv["services"]:
+            self.inv["services"].append("button.press")
+        self.open_control()
+        form = self.editor(self.row())
+        target = form.get_by_label("Button action target", exact=True)
+        expect(target.locator("option[value='light.living_all']")).to_have_count(1)
+        expect(target.locator("option[value='button.desk_press']")).to_have_count(1)
+        expect(target.locator("option[value^='button.kitchen_strip']")).to_have_count(0)
+        self.assertEqual(self.queue_calls + self.posts + self.applies, [])
 
     def test_buttons_mobile_layout_fits_and_desktop_screenshot_is_readable(self):
         self.page.set_viewport_size({'width': 390, 'height': 844})

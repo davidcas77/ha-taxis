@@ -1,5 +1,6 @@
 import {
   buttonRecord,
+  isIdentifyButton,
   validButtonMap,
   type ButtonControl,
   type ButtonExisting,
@@ -50,6 +51,7 @@ type GestureInput = Omit<ButtonGesture, "key">;
 
 const GESTURE_WORDS = "press|click|hold|release|button|key|action|double|single|triple|remote|rotate|step|command";
 const DEVICE_TRIGGER_GESTURE = new RegExp(GESTURE_WORDS, "i");
+const IDENTIFY_TRIGGER = /(?:^|[\s_-])identify(?=$|[\s_-])/i;
 // An enum sensor is a button when its options read like presses.
 const ENUM_PRESS_OPTION = /press|click|hold|release|double|single|long|triple|action/i;
 const MAX_DEVICE_TRIGGERS = 200;
@@ -78,6 +80,11 @@ const readable = (s: string) => {
 function nativeLabels(trigger: Record<string, unknown>) {
   const type = String(trigger.type ?? "Press");
   const sub = String(trigger.subtype ?? "Button");
+  // HomeKit Device puts its numbered channel in type and the press in subtype.
+  if (trigger.domain === "homekit_controller" && /^(?:single|double|long)_press$/.test(sub)) {
+    const number = /^button([1-9]|10)$/.exec(type)?.[1];
+    if (number) return { button: `Button ${number}`, gesture: readable(sub) };
+  }
   const words = "single|double|triple|hold|release|long|short|press|quadruple";
   const suffixed = new RegExp(`^(.*?)[_ -](${words})(?:_press)?$`).exec(sub);
   const prefixed = new RegExp(`^(${words})[_ -](.+)$`).exec(sub);
@@ -140,8 +147,15 @@ function addGesture(control: ButtonControl, gesture: GestureInput) {
   if (!control.gestures.some((g) => g.key === key)) control.gestures.push({ ...gesture, key });
 }
 
+function isIgnoredTrigger(trigger: Record<string, unknown>, ignoredInputs: ReadonlySet<string>): boolean {
+  return (
+    (typeof trigger.entity_id === "string" && ignoredInputs.has(trigger.entity_id)) ||
+    (trigger.platform === "device" && IDENTIFY_TRIGGER.test(`${trigger.type ?? ""} ${trigger.subtype ?? ""}`))
+  );
+}
+
 // Gestures the integration advertises as device triggers.
-async function addDeviceTriggerGestures(control: ButtonControl, ha: ButtonHa) {
+async function addDeviceTriggerGestures(control: ButtonControl, ha: ButtonHa, ignoredInputs?: ReadonlySet<string>) {
   try {
     const list = await ha.command<unknown>("device_automation/trigger/list", { device_id: control.deviceId });
     if (!Array.isArray(list)) {
@@ -153,7 +167,9 @@ async function addDeviceTriggerGestures(control: ButtonControl, ha: ButtonHa) {
     for (const value of list.slice(0, MAX_DEVICE_TRIGGERS)) {
       const trigger = normalizeTrigger(value);
       if (!trigger || trigger.platform !== "device" || trigger.device_id !== control.deviceId) continue;
-      if (!DEVICE_TRIGGER_GESTURE.test(`${trigger.type ?? ""} ${trigger.subtype ?? ""}`) || typeof trigger.domain !== "string") continue;
+      const label = `${trigger.type ?? ""} ${trigger.subtype ?? ""}`;
+      if (!DEVICE_TRIGGER_GESTURE.test(label) || typeof trigger.domain !== "string") continue;
+      if (ignoredInputs && isIgnoredTrigger(trigger, ignoredInputs)) continue;
       if (!control.integrations.includes(trigger.domain)) control.integrations.push(trigger.domain);
       addGesture(control, { ...nativeLabels(trigger), source: `${trigger.domain} device trigger`, trigger });
     }
@@ -175,11 +191,11 @@ function enumPressOptions(attrs: Record<string, unknown> | undefined): string[] 
 }
 
 // Gestures from entity states: event entities, enum sensors and button entities.
-function addEntityGestures(raw: RawRegistry, h: Hierarchy, controls: Controls) {
+function addEntityGestures(raw: RawRegistry, h: Hierarchy, controls: Controls, ignoredInputs?: ReadonlySet<string>) {
   const genericEvents = new Set<ButtonControl>();
   for (const s of raw.states) {
     const e = h.entities[s.entity_id];
-    if (!e) continue;
+    if (!e || ignoredInputs?.has(e.entityId)) continue;
     const attrs = s.attributes as Record<string, unknown> | undefined;
     if (e.domain === "event" && attrs?.device_class !== "motion") {
       const control = controls.forEntity(e.entityId);
@@ -417,8 +433,24 @@ export async function discoverButtons(
   );
   const worthAsking = buttonTriggerFilter(raw, h, mentioned);
   const asked = [...controls.all.values()].filter((c) => (options.only ? options.only.has(c.id) : worthAsking(c)));
-  await mapLimit(asked, 6, (c) => addDeviceTriggerGestures(c, ha));
-  addEntityGestures(raw, h, controls);
+  // Routine discovery excludes configuration and diagnostic inputs such as
+  // Identify. Apply still checks any gestures older saved mappings already use.
+  const ignoredInputs = options.only ? undefined : new Set<string>();
+  const identifyButtons = new Set<string>();
+  if (ignoredInputs) {
+    for (const entity of Object.values(h.entities)) {
+      if (isIdentifyButton(entity)) identifyButtons.add(entity.entityId);
+      if (entity.maintenance) ignoredInputs.add(entity.entityId);
+    }
+    for (const entity of raw.entities) {
+      if (isIdentifyButton({ entityId: entity.entity_id, name: entity.original_name, deviceClass: entity.original_device_class }))
+        identifyButtons.add(entity.entity_id);
+      if (entity.id && (ignoredInputs.has(entity.entity_id) || identifyButtons.has(entity.entity_id))) ignoredInputs.add(entity.id);
+    }
+    for (const entityId of identifyButtons) ignoredInputs.add(entityId);
+  }
+  await mapLimit(asked, 6, (c) => addDeviceTriggerGestures(c, ha, ignoredInputs));
+  addEntityGestures(raw, h, controls, ignoredInputs);
 
   const usable = new Set(
     Object.values(h.entities)
@@ -426,10 +458,20 @@ export async function discoverButtons(
       .map((e) => e.entityId),
   );
   const managed = findManaged(evidence, usable);
+  const hiddenBindings = new Set<string>();
+  if (ignoredInputs) {
+    for (const { map } of managed) {
+      for (const binding of map.bindings) {
+        if (isIgnoredTrigger(binding.trigger, ignoredInputs)) hiddenBindings.add(binding.controlId);
+      }
+    }
+  }
   const names: TargetNames = { device: (id) => h.devices[id]?.name ?? id, area: (id) => h.areas[id]?.name ?? id };
   const ctx: MatchContext = { evidence, managed, raw, h, names };
   for (const control of controls.all.values()) {
     if (options.only && !options.only.has(control.id)) continue;
+    if (hiddenBindings.has(control.id))
+      control.notes.push("Existing mappings use maintenance inputs that are hidden here. Review those mappings under By output.");
     matchGestures(control, ctx);
     const related = findRelated(control, ctx);
     if (related.length || !control.gestures.length) control.related = related;
@@ -453,6 +495,7 @@ export async function discoverButtons(
       managed,
       services,
       targetServices,
+      ...(identifyButtons.size > 0 && { identifyButtons: [...identifyButtons].sort() }),
       notes,
       coverage: { automations: evidence.length, readable: evidence.length - missing, unreadable: missing },
       fetchedAt: new Date().toISOString(),

@@ -13,7 +13,8 @@ import { validateInput } from "../../shared/changes.ts";
 import type { Change } from "../../shared/types.ts";
 import { DEFAULT_AI } from "../../shared/ai.ts";
 import { buttonFixture } from "./fixture.ts";
-import { buttonAutomationId } from "./discovery.ts";
+import { buttonAutomationId, discoverButtons } from "./discovery.ts";
+import { buttonHash } from "./identity.ts";
 import { buttonConfig, buttonInventoryFingerprint, planButtonAssignment } from "./mapping.ts";
 import { applyButtonChanges } from "./apply.ts";
 import { changeStore } from "../changes/store.ts";
@@ -73,6 +74,58 @@ describe("button discovery across integrations", () => {
     expect(r.inventory.controls.find((c) => c.id === "device:remote1")?.gestures).toHaveLength(0);
     expect(r.inventory.coverage).toEqual({ automations: 1, readable: 0, unreadable: 1 });
     expect(r.inventory.notes.join()).toContain("incomplete");
+  });
+  it("keeps output-device maintenance buttons out of normal input discovery", async () => {
+    const f = buttonFixture();
+    const identify = "button.kitchen_strip_identify";
+    const identifyRegistryId = "1".repeat(32);
+    f.raw.devices.push({ id: "strip", name: "Kitchen strip", manufacturer: "Gledopto" });
+    f.raw.entities.push(
+      { entity_id: "light.kitchen_strip", device_id: "strip", platform: "mqtt" },
+      { entity_id: identify, id: identifyRegistryId, device_id: "strip", platform: "mqtt", entity_category: "config" },
+      { entity_id: "button.remote_status", device_id: "remote1", platform: "aqara", entity_category: "diagnostic" },
+    );
+    f.raw.states.push(
+      { entity_id: "light.kitchen_strip", state: "off" },
+      { entity_id: identify, state: "unknown", attributes: { friendly_name: "Kitchen strip Identify" } },
+      { entity_id: "button.remote_status", state: "unknown" },
+    );
+    f.triggers.strip = [
+      { platform: "device", device_id: "strip", domain: "button", type: "pressed", entity_id: identifyRegistryId },
+      { platform: "device", device_id: "strip", domain: "light", type: "turned_on", entity_id: "light.kitchen_strip" },
+    ];
+    f.triggers.remote1.push({ platform: "device", device_id: "remote1", domain: "button", type: "pressed", entity_id: "button.remote_status" });
+    const read = await f.read();
+    expect(read.inventory.controls.find((control) => control.id === "device:strip")?.gestures).toEqual([]);
+    expect(read.h.entities["light.kitchen_strip"]).toBeDefined();
+    expect(read.inventory.controls.find((control) => control.id === "device:remote1")?.gestures).toHaveLength(9);
+    expect(read.inventory.controls.find((control) => control.id === "entity:input_button.desk")?.gestures).toHaveLength(1);
+    const existing = await discoverButtons(f.ha, f.rest, f.raw, f.hierarchy(), { only: new Set(["device:strip"]) });
+    expect(existing.inventory.controls[0].gestures).toHaveLength(2);
+    const legacy = { ...existing, h: read.h };
+    const change = asChange(planButtonAssignment(legacy.inventory, assignment(legacy, "strip"), []));
+    f.addAutomation(change.targetId, buttonConfig(change.targetId, String(change.after.alias), change.after.button_map as ButtonMap));
+    const after = await f.read();
+    expect(after.inventory.managed.some((map) => map.id === change.targetId)).toBe(true);
+    expect(after.inventory.controls.find((control) => control.id === "device:strip")?.notes.join()).toContain("By output");
+  });
+  it("excludes Identify even when an integration leaves its category unset", async () => {
+    const f = buttonFixture();
+    const renamedIdentify = { entity_id: "button.renamed", id: "2".repeat(32), original_device_class: "identify", device_class: null };
+    const identifiedButtons = [
+      { entity_id: "button.test_identify_2" },
+      { entity_id: "button.other", original_name: "Identify", name: "Blink" },
+      renamedIdentify,
+    ];
+    for (const entity of identifiedButtons) {
+      f.raw.entities.push({ ...entity, device_id: "remote1", platform: "aqara" });
+      f.raw.states.push({ entity_id: entity.entity_id, state: "unknown" });
+    }
+    const trigger = { platform: "device", device_id: "remote1", domain: "button", type: "pressed" };
+    f.triggers.remote1.push({ ...trigger, entity_id: renamedIdentify.id }, { ...trigger, subtype: "identify" });
+    const read = await f.read();
+    expect(read.inventory.controls.find((control) => control.id === "device:remote1")?.gestures).toHaveLength(9);
+    expect(read.inventory.identifyButtons).toEqual(identifiedButtons.map((item) => item.entity_id).sort());
   });
   it("matches exact button triggers without assigning other gestures from the same remote", async () => {
     const f = buttonFixture();
@@ -157,6 +210,58 @@ const matches = (
   );
 
 describe("gesture labels", () => {
+  it("groups the six HomeKit device triggers by channel and keeps existing mapping identities", async () => {
+    const f = buttonFixture();
+    const remote = "homekit_remote";
+    const controlId = `device:${remote}`;
+    f.raw.devices.push({ id: remote, name: "Bedroom remote", area_id: "bedroom" });
+    const types = ["button1", "button2"];
+    const presses = ["single_press", "double_press", "long_press"];
+    const triggers = types.flatMap((type) =>
+      presses.map((subtype) => ({ platform: "device", domain: "homekit_controller", device_id: remote, type, subtype })),
+    );
+    f.triggers[remote] = triggers;
+    const first = await f.read();
+    const control = first.inventory.controls.find(({ id }) => id === controlId)!;
+    expect(control.gestures).toHaveLength(6);
+    const labels = ["Single press", "Double press", "Long press"];
+    const stableKey = (trigger: Record<string, unknown>) => buttonHash({ trigger, eventEntity: null, eventType: null }).slice(0, 24);
+    expect(control.gestures).toEqual(
+      expect.arrayContaining(
+        triggers.map((trigger, index) =>
+          expect.objectContaining({ trigger, button: `Button ${Math.floor(index / 3) + 1}`, gesture: labels[index % 3], key: stableKey(trigger) }),
+        ),
+      ),
+    );
+
+    const plan = (r: Awaited<ReturnType<typeof f.read>>) =>
+      planButtonAssignment(r.inventory, { ...assignment(r, remote), gestureKey: stableKey(triggers[0]) }, []);
+    const mapped = asChange(plan(first));
+    const old = mapped.after.button_map as ButtonMap;
+    const binding = old.bindings[0];
+    old.bindings[0] = { ...binding, button: "Single", gesture: "Press" };
+    f.addAutomation(mapped.targetId, buttonConfig(mapped.targetId, String(mapped.after.alias), old));
+    const external = triggers[5];
+    f.addAutomation("other_channel", {
+      trigger: [external],
+      action: [{ action: "light.turn_off", target: { entity_id: "light.bedroom_main" } }],
+    });
+
+    const saved = await f.read();
+    const current = saved.inventory.controls.find(({ id }) => id === controlId)!;
+    expect(current.existing[binding.gestureKey]).toMatchObject([{ id: mapped.targetId, managed: true, match: "exact" }]);
+    expect(current.existing[stableKey(external)]).toMatchObject([{ id: "other_channel", managed: false, match: "exact" }]);
+    const update = plan(saved);
+    expect(update).toMatchObject({ op: "update", fields: { automation_id: mapped.targetId } });
+    expect((update.fields?.button_map as ButtonMap).bindings).toEqual([{ ...binding, button: "Button 1", gesture: "Single press" }]);
+  });
+
+  it("keeps other integrations' device-trigger labels", async () => {
+    const f = buttonFixture();
+    const control = (await f.read()).inventory.controls.find(({ id }) => id === "device:remote2")!;
+    expect(control.gestures).toContainEqual(expect.objectContaining({ button: "Button 1", gesture: "Short press", source: "mqtt device trigger" }));
+  });
+
   it("keep the integration's own spelling, not a title-cased one", async () => {
     const f = buttonFixture();
     addEvent(f, "event.desk_remote_button_event_1", "remote3", "Desk remote button 1", { event_types: ["Double press", "long_press"] });

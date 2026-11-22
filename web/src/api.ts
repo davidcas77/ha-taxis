@@ -1,10 +1,11 @@
 import type { AiTier, AiModelsRequest, AiModelsResponse, AiSaveRequest, AiSettingsResponse, AiTestResponse, AiUsageResponse } from "../../shared/ai.ts";
 import type { ButtonInventoryResponse, ButtonAssignment, ButtonAiPreview, ButtonAiResponse } from "../../shared/buttons.ts";
+import type { ButtonReference, ButtonReferenceInput, ButtonReferencesResponse } from "../../shared/button-references.ts";
 import type { AssistantAdminResponse, AssistantPreviewResponse, AssistantResponse, AssistantRequest, AssistantScope } from "../../shared/assistant.ts";
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { GuideResponse, GuideSettings } from "../../shared/guide.ts";
 import type { JevReviewInput, JevReviewResponse, JevSave, JevSettingsResponse, JevTestResponse, JevUsageResponse } from "../../shared/jev.ts";
-import type { JevCheckPreviewResponse, JevCheckRunResponse, JevCheckSubject } from "../../shared/jev-checks.ts";
+import type { JevCheckAutoResponse, JevCheckSubject } from "../../shared/jev-checks.ts";
 import type { HealthOptions, HealthReportResponse } from "../../shared/health.ts";
 import type { RoomLightControllersResponse } from "../../shared/health/lights.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
@@ -64,6 +65,7 @@ async function call<T extends { ok: boolean }>(path: string, init?: RequestInit)
 
 export type { ApplyRun };
 export type Repair = RepairItem;
+const buttonReferencesPath = (controlId: string) => `api/buttons/${encodeURIComponent(controlId)}/references`;
 export type DirectPreviewResponse =
   | {
       ok: true;
@@ -85,6 +87,19 @@ export const api = {
     call<{ ok: true; preview: ButtonAiPreview } | { ok: false; error: string }>(`api/buttons/${encodeURIComponent(id)}/ai-preview`),
   buttonAiReview: (id: string, fingerprint: string) =>
     call<ButtonAiResponse>(`api/buttons/${encodeURIComponent(id)}/ai-review`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
+  buttonReferences: (controlId: string) => call<ButtonReferencesResponse>(buttonReferencesPath(controlId)),
+  saveButtonReference: (controlId: string, value: ButtonReferenceInput, current: ButtonReference | null) =>
+    current
+      ? call<ButtonReferencesResponse>(`${buttonReferencesPath(controlId)}/${encodeURIComponent(current.id)}`, {
+          method: "PUT",
+          body: JSON.stringify({ ...value, revision: current.revision }),
+        })
+      : call<ButtonReferencesResponse>(buttonReferencesPath(controlId), { method: "POST", body: JSON.stringify(value) }),
+  deleteButtonReference: (controlId: string, current: ButtonReference) =>
+    call<ButtonReferencesResponse>(`${buttonReferencesPath(controlId)}/${encodeURIComponent(current.id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ revision: current.revision }),
+    }),
   assistantAdmin: () => call<AssistantAdminResponse>("api/assistant/admin"),
   assistantContext: (scope: AssistantScope) => call<AssistantPreviewResponse>("api/assistant/context", { method: "POST", body: JSON.stringify(scope) }),
   assistantAsk: (request: AssistantRequest) => call<AssistantResponse>("api/assistant/ask", { method: "POST", body: JSON.stringify(request) }),
@@ -93,9 +108,7 @@ export const api = {
   jevTest: () => call<JevTestResponse>("api/jev/test", { method: "POST", body: "{}" }),
   jevUsage: () => call<JevUsageResponse>("api/jev/usage"),
   jevRoomNotes: (value: JevReviewInput) => call<JevReviewResponse>("api/jev/room-notes", { method: "POST", body: JSON.stringify(value) }),
-  jevCheckPreview: (subject: JevCheckSubject) => call<JevCheckPreviewResponse>("api/jev/checks/preview", { method: "POST", body: JSON.stringify(subject) }),
-  jevCheckRun: (subject: JevCheckSubject, fingerprint: string) =>
-    call<JevCheckRunResponse>("api/jev/checks/run", { method: "POST", body: JSON.stringify({ subject, fingerprint }) }),
+  jevCheckAuto: (subject: JevCheckSubject) => call<JevCheckAutoResponse>("api/jev/checks/auto", { method: "POST", body: JSON.stringify(subject) }),
   guide: () => call<GuideResponse>("api/settings/guide"),
   saveGuide: (guide: GuideSettings) => call<GuideResponse>("api/settings/guide", { method: "PUT", body: JSON.stringify(guide) }),
   blueprints: () => call<BlueprintsResponse>("api/blueprints"),

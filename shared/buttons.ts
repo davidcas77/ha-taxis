@@ -66,6 +66,7 @@ export type ButtonInventory = {
   managed: ButtonManaged[];
   services: string[];
   targetServices: string[];
+  identifyButtons?: string[];
   notes: string[];
   coverage: { automations: number; readable: number; unreadable: number };
   fetchedAt: string;
@@ -127,6 +128,15 @@ export type ButtonAiResponse = { ok: true; text: string; model: string; truncate
 export const BUTTON_AUTOMATION_ID = /^taxis_buttons_[a-f0-9]{20}$/;
 const ENTITY = /^[a-z0-9]+[a-z0-9_]*\.[a-z0-9_]+$/;
 export const BUTTON_SERVICE = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
+const IDENTIFY_NAME = /(?:^|[\s._-])identify(?:[\s_-]\d+)?\s*$/i;
+
+// Some integrations omit the configuration category on their Identify entity.
+export function isIdentifyButton(entity: { entityId: string; name?: string | null; deviceClass?: string | null }): boolean {
+  return (
+    entity.entityId.startsWith("button.") && (entity.deviceClass === "identify" || IDENTIFY_NAME.test(entity.name ?? "") || IDENTIFY_NAME.test(entity.entityId))
+  );
+}
+
 export const buttonRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const text = (v: unknown, max = 255): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
 function plainJson(v: unknown, depth = 0): boolean {

@@ -6,6 +6,15 @@ device, and event/button/input_button entities are included across integrations.
 This covers combined presses only when HA advertises them. It never infers a
 button count or possible clicks from a manufacturer's model name.
 
+## Personal reference mappings
+
+Each control can have mappings saved in Taxis for reference. Add the physical
+button and press you want to remember, select an available function and target,
+or write a description for an external function. A control can have manual
+mappings even when Home Assistant exposes no gesture metadata. These records
+live in the app's database and stay separate from discovered automation evidence,
+Jev requests and the Home Assistant apply flow.
+
 ## Discovery and existing assignments
 
 - The page reads `device_automation/trigger/list`, entity state metadata and
@@ -25,6 +34,10 @@ button count or possible clicks from a manufacturer's model name.
   Recipes (30 s, dropped by Apply). Event entities supply their advertised `event_types`;
   motion event entities are excluded. Generic events (no button device class)
   require user inspection; the control carries one note for them.
+- The Buttons inventory excludes configuration and diagnostic inputs, including
+  the device triggers Home Assistant generates for them. Identify is excluded
+  even when the integration leaves its category unset. Existing saved automations
+  can still be validated against the gestures they were configured with.
 - Controls without advertised metadata remain accessible through **Show devices
   without button metadata**. Related legacy event/blueprint handlers are shown
   even when gestures are unknown; assigning guessed gestures is not supported.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.99
+
+- **Buttons.** The Tree groups presses under each button. Switch to Table to compare buttons in columns and press types in rows. HomeKit button numbers and press types now appear on the correct axes.
+- **Button notes.** Record what each press does, including on remotes whose integrations don't report gestures. Choose a Home Assistant function and target or add a custom description. Identify buttons are kept out of the gesture and action pickers.
+- **Jev.** With Jev enabled and a key saved, supported checks start automatically when you open the relevant view. Each result shows when it was checked and whether the answer was cached. Standard checks work without a key.
+
 ## 0.7.98
 
 - **Buttons.** See what each press does, the conditions that apply, the source automations and possible conflicts.

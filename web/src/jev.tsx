@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { JEV_MODELS, validateJev, type JevModel, type JevUsage, type JevView } from "../../shared/jev.ts";
 import { api } from "./api.ts";
 import { useDraftGuard } from "./draft-guard.ts";
+import { jevCheckQueue } from "./jev-check-queue.ts";
 import { useTaxis } from "./state.tsx";
 import { Button, inputClass } from "./ui.tsx";
 
@@ -31,8 +32,8 @@ export function JevSection({ focus = false }: { focus?: boolean }) {
       <div>
         <h2 className="text-sm font-semibold">Jev decisions</h2>
         <p className="mt-1 max-w-[72ch] text-[13px] text-muted">
-          Standard checks use Home Assistant evidence and work without a key. Add a TypeSafe API key to use optional Jev assessments for buttons, area
-          assignments, equipment and group plans, or review your room-test notes. You choose when to send each check.
+          Standard checks use Home Assistant evidence and work without a key. Enabling Jev with a TypeSafe key sends limited evidence when you open or refresh a
+          supported button, area assignment, sensor requirement or room group plan. Room-test notes still require a separate request.
         </p>
       </div>
       {error && (
@@ -46,6 +47,7 @@ export function JevSection({ focus = false }: { focus?: boolean }) {
           key={generation}
           saved={saved}
           onSaved={(value) => {
+            jevCheckQueue.settingsChanged();
             setSaved(value);
             setGeneration((n) => n + 1);
           }}
@@ -166,12 +168,12 @@ function JevForm({ saved, onSaved, reload }: { saved: JevView; onSaved: (v: JevV
         )}
         <p className="max-w-[85ch] text-xs text-muted">
           The key is stored in Taxis's app data and included in Home Assistant app backups. Saved keys are never returned to the browser or written to logs. Jev
-          receives evidence only when you send an optional check or request a room-note review.
+          receives scoped evidence for selected items when enabled. It receives room-test notes when you request that review.
         </p>
       </div>
       <p className="text-xs text-muted">
         The limit counts every outgoing attempt, including connection tests and failed requests, per calendar month (UTC). It is separate from the other AI
-        service's spending cap. Requests are manual; no background analysis runs.
+        service's spending cap. Automatic checks run only for supported items you open or refresh.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button

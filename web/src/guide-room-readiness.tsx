@@ -18,14 +18,16 @@ type Props = {
   pendingAssignment: boolean;
   saving: boolean;
   error: string | null;
+  jevVisible: boolean;
   go: (route: Route) => void;
   onContinue: () => void;
   onReview: () => void;
 };
 
-export function RoomAutomationReadiness({ h, area, automation, pendingAssignment, saving, error, go, onContinue, onReview }: Props) {
+export function RoomAutomationReadiness({ h, area, automation, pendingAssignment, saving, error, jevVisible, go, onContinue, onReview }: Props) {
   const ready = automation.readyRequired === automation.totalRequired;
   const { busy, inventorySaving } = useTaxis();
+  const [optionalOpen, setOptionalOpen] = useState(false);
   return (
     <section aria-label="Equipment readiness" className="grid gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-line bg-surface p-3">
@@ -72,19 +74,27 @@ export function RoomAutomationReadiness({ h, area, automation, pendingAssignment
         <div className="grid gap-2">
           <h3 className="text-sm font-semibold">Required equipment</h3>
           {automation.required.map((check) => (
-            <EquipmentRequirement key={check.key} h={h} area={area} check={check} automationKey={automation.key} go={go} />
+            <EquipmentRequirement key={check.key} h={h} area={area} check={check} automationKey={automation.key} jevVisible={jevVisible} go={go} />
           ))}
         </div>
       )}
       {automation.optional.length > 0 && (
-        <details className="rounded-lg border border-line p-3">
+        <details className="rounded-lg border border-line p-3" onToggle={(event) => setOptionalOpen(event.currentTarget.open)}>
           <summary className="cursor-pointer text-sm font-semibold">
             Optional equipment{" "}
             <span className="ml-1 text-xs font-normal text-muted">{automation.optional.filter((check) => check.status === "ready").length} available</span>
           </summary>
           <div className="mt-3 grid gap-2">
             {automation.optional.map((check) => (
-              <EquipmentRequirement key={check.key} h={h} area={area} check={check} automationKey={automation.key} go={go} />
+              <EquipmentRequirement
+                key={check.key}
+                h={h}
+                area={area}
+                check={check}
+                automationKey={automation.key}
+                jevVisible={jevVisible && optionalOpen}
+                go={go}
+              />
             ))}
           </div>
         </details>
@@ -106,12 +116,14 @@ function EquipmentRequirement({
   area,
   check,
   automationKey,
+  jevVisible,
   go,
 }: {
   h: Hierarchy;
   area: AreaReadiness;
   check: AutomationEquipmentCheck;
   automationKey: RoomAutomation["key"];
+  jevVisible: boolean;
   go: (route: Route) => void;
 }) {
   const { inventory, naming, inventorySaving, saveInventory, busy, propose, reviewChanges, changes, notify } = useTaxis();
@@ -251,11 +263,14 @@ function EquipmentRequirement({
         <h4 className="font-medium">{check.label}</h4>
         <div className="flex flex-wrap items-center gap-1">
           <span className={check.status === "ready" ? "text-xs text-on" : "text-xs text-warn"}>{label}</span>
-          {check.capabilities.length > 0 && (
+          {check.capabilities.some((capability) =>
+            ["motion", "presence", "door", "window", "temperature", "humidity", "illuminance", "power", "leak"].includes(capability),
+          ) && (
             <JevCheck
               subject={{ kind: "equipment", areaId: area.areaId, automationKey, checkKey: check.key }}
               label="Check equipment with Jev"
               title={`Jev · ${check.label} in ${area.name}`}
+              active={jevVisible}
               openSettings={() => go(JEV_SETTINGS)}
             />
           )}

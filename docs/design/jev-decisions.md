@@ -9,7 +9,8 @@ It is disabled by default. No key is copied from the development machine.
 In Settings, use the **Jev decisions** shortcut. Enable the service, paste a
 TypeSafe API key into the password field, choose a pinned model and set a monthly
 request limit. Save before testing. The connection test sends a small public
-message, not house data. Save and reload do not call TypeSafe.
+message. Saving settings does not run a check. When Jev is enabled with a key,
+opening supported records can send their check evidence automatically.
 
 The Guide's room-test checklist has **Review notes with Jev**. This explicit
 action sends only the typed notes and public checklist criteria. One Choice per
@@ -31,12 +32,13 @@ evidence. Taxis selects the candidates from Home Assistant and the room plan.
 For Buttons it considers configured behavior and possible overlaps. A button
 check cannot establish that a press actually ran its automation.
 
-Opening a preview reads the evidence from Taxis and Home Assistant. Sending a
-review requires a second, explicit action. Taxis checks the reviewed fingerprint
-against freshly read evidence before sending and can reuse a matching decision
-from its in-memory cache. The provider receives selected names and evidence as
-shown in the preview. Assignments and group changes still use the existing
-review and apply flows. Provider responses supply advice only.
+Opening or refreshing a supported view checks the selected subject. For an
+unassigned device or entity, select one record. Taxis reads the current evidence
+and can reuse a matching decision from its in-memory cache. The last check time
+shows when the evidence was verified. A cached result also retains the time Jev
+originally answered. The details show the evidence and possible decisions the
+check uses. Assignments and group changes still use the existing review and apply
+flows. Provider responses supply advice only.
 
 ## Credentials and requests
 
@@ -54,7 +56,7 @@ review and apply flows. Provider responses supply advice only.
   check evidence. Room-note calls receive typed notes and checklist criteria.
   Configuration checks project a bounded subset of information for the selected
   subject. They do not send raw Home Assistant states, attributes or automation
-  YAML. User-entered notes and check evidence are sent only on explicit request.
+  YAML. User-entered notes still require an explicit review request.
 - Validate every returned answer, model, token count and probability
   distribution. Reject partial/malformed responses rather than presenting them
   as a successful review. User notes are treated as data, not instructions;
@@ -81,6 +83,7 @@ a dollar spending cap. The existing generative AI spending cap remains separate.
 - `GET /api/jev/usage`: UTC month usage and request limit.
 - `POST /api/jev/test`: fixed public connection test using saved settings.
 - `POST /api/jev/room-notes`: bounded notes/checklist review using saved settings.
+- `POST /api/jev/checks/auto`: automatically assess a supported subject using saved settings, with check and answer timestamps.
 - `POST /api/jev/checks/preview`: prepare a read-only configuration check without a provider call.
 - `POST /api/jev/checks/run`: validate the reviewed fingerprint and return an advisory decision.
 

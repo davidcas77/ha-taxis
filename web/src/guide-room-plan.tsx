@@ -19,6 +19,7 @@ export function RoomAutomationReview({
   installed,
   recipeError,
   verifying,
+  jevVisible,
   verify,
   go,
   onTest,
@@ -30,6 +31,7 @@ export function RoomAutomationReview({
   installed: RecipeInstalled | null;
   recipeError: string | null;
   verifying: boolean;
+  jevVisible: boolean;
   verify: () => Promise<void>;
   go: (route: Route) => void;
   onTest: () => void;
@@ -163,6 +165,7 @@ export function RoomAutomationReview({
         h={h}
         area={area}
         automation={automation}
+        jevVisible={jevVisible}
         activeHelperId={helper?.row.canonicalId}
         canPropose={Boolean(canPropose)}
         reviewChanges={reviewChanges}
@@ -238,6 +241,7 @@ function RoomGroupProposals({
   h,
   area,
   automation,
+  jevVisible,
   activeHelperId,
   canPropose,
   reviewChanges,
@@ -247,6 +251,7 @@ function RoomGroupProposals({
   h: Hierarchy;
   area: AreaReadiness;
   automation: RoomAutomation;
+  jevVisible: boolean;
   activeHelperId?: string;
   canPropose: boolean;
   reviewChanges: boolean;
@@ -255,16 +260,20 @@ function RoomGroupProposals({
 }) {
   const groups = automation.helpers.filter(({ row }) => row.helper === "group");
   if (!groups.length) return null;
+  const hasProposal = groups.some(({ row, pending }) => row.actionable || pending || row.status === "conflict");
   return (
     <section aria-label="Home Assistant group plans" className="grid gap-2 rounded-lg border border-line bg-surface p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">Home Assistant groups</h3>
-        <JevCheck
-          subject={{ kind: "groups", areaId: area.areaId, automationKey: automation.key }}
-          label="Check group plan with Jev"
-          title={`Jev · ${area.name} group plan`}
-          openSettings={() => go(JEV_SETTINGS)}
-        />
+        {hasProposal && (
+          <JevCheck
+            subject={{ kind: "groups", areaId: area.areaId, automationKey: automation.key }}
+            label="Check group plan with Jev"
+            title={`Jev · ${area.name} group plan`}
+            active={jevVisible}
+            openSettings={() => go(JEV_SETTINGS)}
+          />
+        )}
       </div>
       <ul className="grid min-w-0 gap-2 sm:grid-cols-2">
         {groups.map(({ row, required, available, pending }) => {

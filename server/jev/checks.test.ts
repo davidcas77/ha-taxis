@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMockRegistry, withButtonDemo } from "../../scripts/mock-ha-core.ts";
 import { DEFAULT_JEV } from "../../shared/jev.ts";
-import type { JevCheckPreview, JevCheckSubject } from "../../shared/jev-checks.ts";
+import type { JevCheckAutoResponse, JevCheckPreview, JevCheckSubject } from "../../shared/jev-checks.ts";
 import { testStore } from "../ai/test-store.ts";
 import { createApp } from "../app.ts";
 import { applyHistory } from "../changes/history.ts";
@@ -99,14 +99,138 @@ function setup(reply = async (request: JevProviderRequest) => providerReply(requ
     fetchImpl,
     preview,
     run,
+    auto: (subject: JevCheckSubject) => call("jev/checks/auto", subject),
     call,
     app,
+    now: () => new Date(clock).toISOString(),
     setupKey: (limit = DEFAULT_JEV.monthlyRequestLimit) => settings.saveJev({ ...DEFAULT_JEV, enabled: true, monthlyRequestLimit: limit }, KEY),
     tick: (ms: number) => {
       clock += ms;
     },
   };
 }
+
+describe("automatic scoped Jev checks", () => {
+  it("requires the request guard, a supported subject, opt-in and a key before any reads", async () => {
+    const s = setup();
+    expect((await s.app.request("/api/jev/checks/auto", { method: "POST", body: JSON.stringify(area) })).status).toBe(400);
+    expect((await s.call("jev/checks/auto", { ...area, state: {} })).status).toBe(400);
+    expect(await (await s.auto(area)).json()).toMatchObject({ ok: false, code: "setup" });
+    s.settings.saveJev({ ...DEFAULT_JEV, enabled: true });
+    expect(await (await s.auto(area)).json()).toMatchObject({ ok: false, code: "setup" });
+    expect(s.fetchImpl).not.toHaveBeenCalled();
+    expect(s.fake.order).toEqual([]);
+  });
+
+  it.each([buttons, area, equipment, groups])("automatically sends only scoped preview evidence for $kind", async (subject) => {
+    const s = setup();
+    s.setupKey();
+    const first: JevCheckAutoResponse = await (await s.auto(subject)).json();
+    if (!first.ok) throw new Error(first.error);
+    expect(first).toMatchObject({ cached: false, checkedAt: s.now(), reviewedAt: s.now() });
+    const payload = JSON.parse(String(s.fetchImpl.mock.calls[0][1]?.body)) as JevProviderRequest;
+    expect(payload.state).toEqual(JSON.parse(first.preview.content));
+    expect(first.preview.content).not.toContain(KEY);
+    expect(first.preview.content).not.toContain(HA_KEY);
+    expect(first.preview.content).not.toContain("never-send-custom-data");
+    expect(s.fake.writes()).toEqual({ ws: [], rest: [] });
+    expect(s.changes.list()).toEqual([]);
+  });
+
+  it("rechecks evidence, reuses the timed result beyond manual preview expiry, and sends changed evidence", async () => {
+    const s = setup();
+    s.setupKey(2);
+    const preview = await s.preview(area);
+    const first: JevCheckAutoResponse = await (await s.auto(area)).json();
+    if (!first.ok) throw new Error(first.error);
+    s.tick(11 * 60_000);
+    expect(await (await s.run(area, preview.fingerprint)).json()).toMatchObject({ ok: false, code: "stale" });
+    s.fake.ws.length = 0;
+    expect(await (await s.auto(area)).json()).toEqual({ ...first, cached: true, checkedAt: s.now() });
+    expect(s.fake.ws.some((call) => call.type === "get_states")).toBe(true);
+    expect(s.fetchImpl).toHaveBeenCalledTimes(1);
+    s.fake.home.states.find((state) => state.entity_id === area.id)!.attributes = { friendly_name: "Changed room clue", device_class: "motion" };
+    const changed: JevCheckAutoResponse = await (await s.auto(area)).json();
+    if (!changed.ok) throw new Error(changed.error);
+    expect(changed).toMatchObject({ cached: false, checkedAt: s.now(), reviewedAt: s.now() });
+    expect(changed.preview.fingerprint).not.toBe(first.preview.fingerprint);
+    expect(s.fetchImpl).toHaveBeenCalledTimes(2);
+    expect((await s.auto(buttons)).status).toBe(429);
+    expect(s.fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares an identical pending result without bypassing provider single-flight for a different subject", async () => {
+    let started!: () => void;
+    let release!: () => void;
+    const providerStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const providerRelease = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const s = setup(async (request) => {
+      started();
+      await providerRelease;
+      return providerReply(request);
+    });
+    s.setupKey();
+    const checkedAt = s.now();
+    const first = s.auto(area);
+    await providerStarted;
+    const duplicate = s.auto(area);
+    try {
+      const busy = await s.auto(buttons);
+      expect(busy.status).toBe(409);
+      expect(await busy.json()).toMatchObject({ ok: false, code: "busy" });
+    } finally {
+      s.tick(1000);
+      release();
+    }
+    const result = await (await first).json();
+    expect(result).toMatchObject({ ok: true, cached: false, checkedAt, reviewedAt: s.now() });
+    expect(await (await duplicate).json()).toEqual({ ...result, cached: true });
+    expect(s.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["disable", "remove key", "replace key", "change model"])("rechecks configuration after a fresh HA read: %s", async (caseName) => {
+    const s = setup();
+    s.setupKey();
+    s.fake.after = ({ ws }) => {
+      if (ws?.type !== "get_states") return;
+      s.fake.after = null;
+      if (caseName === "disable") s.settings.saveJev(DEFAULT_JEV);
+      if (caseName === "remove key") s.settings.saveJev({ ...DEFAULT_JEV, enabled: true }, null);
+      if (caseName === "replace key") s.settings.saveJev({ ...DEFAULT_JEV, enabled: true }, "replacement-key");
+      if (caseName === "change model") s.settings.saveJev({ ...DEFAULT_JEV, enabled: true, model: "jev-1.13.0" });
+    };
+    const result = await s.auto(area);
+    expect(result.status).toBe(409);
+    expect(await result.json()).toMatchObject({ ok: false, code: ["disable", "remove key"].includes(caseName) ? "setup" : "stale" });
+    expect(s.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("requires a new check after Jev is disabled and reenabled during an evidence read", async () => {
+    const s = setup();
+    s.setupKey();
+    const save = (enabled: boolean, revision: string) =>
+      s.app.request("/api/settings/jev", {
+        method: "PUT",
+        headers: { "X-Taxis-Request": "1", "Content-Type": "application/json", "If-Match": revision },
+        body: JSON.stringify({ ...DEFAULT_JEV, enabled }),
+      });
+    const read = s.fake.ha.command;
+    s.fake.ha.command = async <T>(type: string, payload?: Record<string, unknown>) => {
+      const result = await read<T>(type, payload);
+      if (type === "get_states") {
+        expect((await save(false, "0")).status).toBe(200);
+        expect((await save(true, "1")).status).toBe(200);
+      }
+      return result;
+    };
+    expect(await (await s.auto(area)).json()).toMatchObject({ ok: false, code: "stale" });
+    expect(s.fetchImpl).not.toHaveBeenCalled();
+  });
+});
 
 describe("scoped optional Jev checks", () => {
   it("leaves standard reads working with Jev off, allows a free preview, and requires opt-in and a key for sends", async () => {

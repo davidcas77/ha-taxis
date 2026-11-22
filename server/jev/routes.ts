@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { jevRecord, validateJev, validateJevReview } from "../../shared/jev.ts";
-import { validateJevCheckSubject, type JevCheckPreviewResponse, type JevCheckRunResponse } from "../../shared/jev-checks.ts";
+import { validateJevCheckSubject, type JevCheckAutoResponse, type JevCheckPreviewResponse, type JevCheckRunResponse } from "../../shared/jev-checks.ts";
 import type { settingsStore } from "../settings.ts";
 import type { FetchLike } from "../ai/http.ts";
 import { JevError, jevService } from "./service.ts";
@@ -20,7 +20,10 @@ export function jevRoutes(deps: {
 }) {
   const app = new Hono();
   const service = jevService(deps);
-  const checks = deps.checkReaders ? jevCheckSessions({ ...deps, reads: deps.checkReaders, check: service.check }) : null;
+  let generation = 0;
+  const checks = deps.checkReaders
+    ? jevCheckSessions({ ...deps, reads: deps.checkReaders, check: service.check, authorizationGeneration: () => generation })
+    : null;
   const limit = bodyLimit({
     maxSize: 16 * 1024,
     onError: (c) => c.json({ ok: false, error: "The Jev request is too large." }, 413),
@@ -31,7 +34,10 @@ export function jevRoutes(deps: {
     if (!checked.ok) return c.json({ ok: false, error: checked.error }, 400);
     if (checked.key) deps.protect(checked.key);
     try {
+      const previous = deps.settings.jev();
+      const previousKey = deps.settings.jevKey();
       deps.settings.saveJev(checked.value, checked.key);
+      if (checked.value.enabled !== previous.enabled || checked.value.model !== previous.model || deps.settings.jevKey() !== previousKey) generation++;
     } catch {
       return c.json({ ok: false, error: "Couldn't save Jev settings. The previous settings were kept." }, 500);
     }
@@ -65,6 +71,17 @@ export function jevRoutes(deps: {
     } catch (error) {
       const { status, ...failure } = fail(error);
       return c.json<JevCheckRunResponse>({ ok: false, ...failure }, status);
+    }
+  });
+  app.post("/jev/checks/auto", limit, async (c) => {
+    const subject = validateJevCheckSubject(await c.req.json().catch(() => null));
+    if (!subject) return c.json<JevCheckAutoResponse>({ ok: false, error: "Choose a supported subject for a Jev check." }, 400);
+    if (!checks) return c.json<JevCheckAutoResponse>({ ok: false, error: "This check needs Home Assistant data." }, 503);
+    try {
+      return c.json<JevCheckAutoResponse>({ ok: true, ...(await checks.auto(subject)) });
+    } catch (error) {
+      const { status, ...failure } = fail(error);
+      return c.json<JevCheckAutoResponse>({ ok: false, ...failure }, status);
     }
   });
   app.post("/jev/test", limit, async (c) => {

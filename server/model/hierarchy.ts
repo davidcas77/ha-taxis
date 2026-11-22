@@ -40,6 +40,8 @@ export type RawDevice = {
 };
 export type RawEntity = {
   entity_id: string;
+  // Device triggers can refer to the registry entry ID instead of entity_id.
+  id?: string;
   name?: string | null;
   original_name?: string | null;
   has_entity_name?: boolean;

@@ -54,32 +54,34 @@ class JevRegression(fixture.GuideRegression):
             else:
                 route.fulfill(json=self.review_body(route.request.post_data_json))
         self.page.route("**/api/jev/room-notes", review)
-        self.check_previews, self.check_runs = [], []
+        self.checks = []
         self.stale_check = False
-
-        def prepare_check(route):
-            subject = route.request.post_data_json
-            self.check_previews.append(subject)
-            route.fulfill(json={"ok": True, "preview": {
-                "fingerprint": f"{len(self.check_previews):064x}", "model": self.jev["model"],
-                "content": json.dumps({"fixture evidence": subject}, indent=2),
-                "questions": [{"key": "fit", "label": "Is the evidence sufficient?",
-                               "choices": {"supported": "Supported by evidence", "insufficient": "Not enough evidence"}}],
-            }})
+        self.cached_check = False
 
         def run_check(route):
-            self.check_runs.append(route.request.post_data_json)
+            subject = route.request.post_data_json
+            self.checks.append(subject)
             if self.stale_check:
                 self.stale_check = False
-                route.fulfill(status=409, json={"ok": False, "code": "stale", "error": "The evidence changed. Review a fresh preview."})
+                route.fulfill(status=409, json={"ok": False, "code": "stale", "error": "The settings changed. Check again."})
                 return
-            route.fulfill(json={"ok": True, "cached": True, "review": {
-                "model": self.jev["model"], "inputTokens": 100, "outputTokens": 20, "estimatedUsd": 0.0000042,
-                "answers": {"fit": {"choice": "insufficient", "confidence": 0.83, "probabilities": {"supported": 0.17, "insufficient": 0.83}}},
-            }})
+            checked_at = f"2026-11-22T13:15:{len(self.checks):02d}.000Z"
+            route.fulfill(json={
+                "ok": True, "cached": self.cached_check, "checkedAt": checked_at,
+                "reviewedAt": "2026-11-22T13:14:00.000Z" if self.cached_check else checked_at,
+                "preview": {
+                    "fingerprint": f"{len(self.checks):064x}", "model": self.jev["model"],
+                    "content": json.dumps({"fixture evidence": subject}, indent=2),
+                    "questions": [{"key": "fit", "label": "Is the evidence sufficient?",
+                                   "choices": {"supported": "Supported by evidence", "insufficient": "Not enough evidence"}}],
+                },
+                "review": {
+                    "model": self.jev["model"], "inputTokens": 100, "outputTokens": 20, "estimatedUsd": 0.0000042,
+                    "answers": {"fit": {"choice": "insufficient", "confidence": 0.83, "probabilities": {"supported": 0.17, "insufficient": 0.83}}},
+                },
+            })
 
-        self.page.route("**/api/jev/checks/preview", prepare_check)
-        self.page.route("**/api/jev/checks/run", run_check)
+        self.page.route("**/api/jev/checks/auto", run_check)
 
     def open_equipment_check(self):
         self.open(True)
@@ -94,7 +96,7 @@ class JevRegression(fixture.GuideRegression):
         box = dialog.bounding_box()
         self.assertGreaterEqual(box["x"], 0)
         self.assertLessEqual(box["x"] + box["width"], 390)
-        self.assertEqual(self.check_previews + self.check_runs, [])
+        self.assertEqual(self.checks, [])
         expect(dialog.get_by_role("button", name="Send this check to Jev", exact=True)).to_have_count(0)
         dialog.get_by_role("button", name="Use standard checks", exact=True).click()
         expect(dialog).not_to_be_visible()
@@ -106,54 +108,61 @@ class JevRegression(fixture.GuideRegression):
         settings = self.page.get_by_role("region", name="Jev decisions", exact=True)
         expect(settings.get_by_label("Jev API key", exact=True)).to_be_visible()
         self.assertEqual(self.page.evaluate("document.activeElement.id"), "jev-settings")
-        self.assertEqual(self.check_previews + self.check_runs + self.posts + self.applies, [])
+        self.assertEqual(self.checks + self.posts + self.applies, [])
 
     def test_jev_saved_key_off_offers_enable_without_preview(self):
         self.jev["keySet"] = True
         _, dialog = self.open_equipment_check()
         expect(dialog.get_by_role("button", name="Enable Jev", exact=True)).to_be_visible()
         expect(dialog.get_by_role("button", name="Use standard checks", exact=True)).to_be_visible()
-        self.assertEqual(self.check_previews + self.check_runs, [])
+        self.assertEqual(self.checks, [])
         dialog.get_by_role("button", name="Enable Jev", exact=True).click()
         expect(self.page).to_have_url(fixture.BASE + "/#settings/ai/jev")
 
-    def test_jev_equipment_and_group_checks_require_reviewed_evidence_and_handle_stale_result(self):
+    def test_jev_equipment_and_group_checks_run_automatically_and_can_retry(self):
         self.jev.update({"enabled": True, "keySet": True})
         self.selected()
-        properties, dialog = self.open_equipment_check()
-        subject = {"kind": "equipment", "areaId": "living_room", "automationKey": "motion_lights", "checkKey": "activity"}
-        send = dialog.get_by_role("button", name="Send this check to Jev", exact=True)
-        expect(send).to_be_enabled()
-        expect(dialog.get_by_role("list", name="What Jev will assess")).to_contain_text("Is the evidence sufficient?")
-        dialog.get_by_text("View exact evidence sent to Jev", exact=True).click()
-        expect(dialog.get_by_label("Exact evidence for Jev")).to_have_text(json.dumps({"fixture evidence": subject}, indent=2))
-        self.assertEqual(self.check_previews, [subject])
-        self.assertEqual(self.check_runs, [])
         self.stale_check = True
-        send.click()
-        expect(dialog.get_by_role("alert")).to_contain_text("The evidence changed")
-        expect(send).to_have_count(0)
-        dialog.get_by_role("button", name="Refresh evidence", exact=True).click()
-        expect(send).to_be_enabled()
-        send.click()
+        self.open(True)
+        properties = self.record("Automatic lighting")
+        equipment = properties.locator("article").filter(has_text="An occupancy start source")
+        subject = {"kind": "equipment", "areaId": "living_room", "automationKey": "motion_lights", "checkKey": "activity"}
+        expect(equipment.get_by_role("status")).to_contain_text("Jev check unavailable")
+        self.assertEqual(self.checks, [subject])
+        expect(self.page.get_by_role("dialog")).to_have_count(0)
+        equipment.get_by_role("button", name="Jev details", exact=True).click()
+        dialog = self.page.get_by_role("dialog", name="Jev · An occupancy start source in Living room", exact=True)
+        expect(dialog.get_by_role("alert")).to_contain_text("The settings changed")
+        dialog.get_by_role("button", name="Retry Jev check", exact=True).click()
         assessment = dialog.get_by_role("region", name="Jev check result", exact=True)
-        expect(assessment).to_contain_text("Cached result")
+        expect(dialog.locator("time")).to_have_attribute("datetime", "2026-11-22T13:15:02.000Z")
+        expect(dialog.get_by_text("Fresh result", exact=False)).to_be_visible()
         expect(assessment).to_contain_text("Not enough evidence")
         expect(assessment).to_contain_text("83% confidence")
-        self.assertEqual(self.check_runs, [
-            {"subject": subject, "fingerprint": f"{1:064x}"}, {"subject": subject, "fingerprint": f"{2:064x}"},
-        ])
+        dialog.get_by_text("View exact evidence sent to Jev", exact=True).click()
+        expect(dialog.get_by_label("Exact evidence for Jev")).to_have_text(json.dumps({"fixture evidence": subject}, indent=2))
+        self.assertEqual(self.checks, [subject, subject])
         dialog.get_by_role("button", name="Close Jev check", exact=True).click()
         self.parameters_step(properties)
         properties.get_by_role("button", name="Review automation", exact=True).click()
-        self.plan().get_by_role("button", name="Check group plan with Jev", exact=True).click()
-        groups = self.page.get_by_role("dialog", name="Jev · Living room group plan", exact=True)
-        expect(groups.get_by_role("button", name="Send this check to Jev", exact=True)).to_be_enabled()
-        self.assertEqual(self.check_previews[-1], {"kind": "groups", "areaId": "living_room", "automationKey": "motion_lights"})
-        self.assertEqual(len(self.check_runs), 2)
+        groups = self.plan().get_by_role("region", name="Home Assistant group plans", exact=True)
+        expect(groups.get_by_role("status")).to_contain_text("Fresh result")
+        self.assertEqual(self.checks[2:], [{"kind": "groups", "areaId": "living_room", "automationKey": "motion_lights"}])
         self.assertEqual(self.posts + self.applies, [])
 
-    def test_jev_unassigned_check_is_available_for_one_selected_device_or_entity(self):
+    def test_jev_mobile_room_only_checks_visible_requirements(self):
+        self.jev.update({"enabled": True, "keySet": True})
+        self.page.set_viewport_size({"width": 390, "height": 844})
+        self.open(True)
+        self.assertEqual(self.checks, [])
+        properties = self.record("Automatic lighting")
+        expect(properties.get_by_role("status")).to_contain_text("Fresh result")
+        self.assertEqual([call["checkKey"] for call in self.checks], ["activity"])
+        properties.get_by_text("Optional equipment", exact=False).click()
+        expect(properties.get_by_role("status").filter(has_text="Fresh result")).to_have_count(3)
+        self.assertEqual([call["checkKey"] for call in self.checks], ["activity", "holds", "lux"])
+
+    def test_jev_unassigned_check_runs_for_one_selected_device_or_entity(self):
         self.jev.update({"enabled": True, "keySet": True})
         h = self.body["hierarchy"]
         base = next(iter(self.original["hierarchy"]["devices"].values()))
@@ -163,23 +172,19 @@ class JevRegression(fixture.GuideRegression):
         self.page.goto(fixture.BASE + "/#unassigned", wait_until="networkidle")
         check = self.page.get_by_role("button", name="Check area with Jev", exact=True)
         expect(check).to_have_count(0)
+        self.assertEqual(self.checks, [])
         self.page.get_by_role("checkbox", name="Select Fixture device", exact=True).check()
-        check.click()
-        dialog = self.page.get_by_role("dialog", name="Jev · Area for Fixture device", exact=True)
-        expect(dialog.get_by_role("button", name="Send this check to Jev", exact=True)).to_be_enabled()
-        dialog.get_by_role("button", name="Close Jev check", exact=True).click()
+        expect(self.page.get_by_role("region", name="Assign selected devices").get_by_role("status")).to_contain_text("Fresh result")
         self.page.get_by_role("tab", name="Entities (1)", exact=True).click()
         self.page.get_by_role("checkbox", name="Select Fixture entity", exact=True).check()
-        check.click()
-        dialog = self.page.get_by_role("dialog", name="Jev · Area for Fixture entity", exact=True)
-        expect(dialog.get_by_role("button", name="Send this check to Jev", exact=True)).to_be_enabled()
-        self.assertEqual(self.check_previews, [
+        expect(self.page.get_by_role("region", name="Change the selected entities").get_by_role("status")).to_contain_text("Fresh result")
+        self.assertEqual(self.checks, [
             {"kind": "area", "target": "device", "id": "outside_fixture"},
             {"kind": "area", "target": "entity", "id": "sensor.unplaced_jev"},
         ])
-        self.assertEqual(self.check_runs + self.posts + self.applies, [])
+        self.assertEqual(self.posts + self.applies, [])
 
-    def test_jev_button_check_does_not_send_the_medium_review(self):
+    def test_jev_button_automatic_check_refreshes_timestamp_without_the_medium_review(self):
         self.jev.update({"enabled": True, "keySet": True})
         medium_calls = []
         self.page.route("**/api/buttons/*/ai-review", lambda route: (
@@ -187,13 +192,17 @@ class JevRegression(fixture.GuideRegression):
             route.fulfill(json={"ok": False, "error": "Medium fixture should not be called"}),
         ))
         self.page.goto(fixture.BASE + "/#automations/buttons/device%3Ademo_wall_buttons", wait_until="networkidle")
-        self.page.get_by_role("button", name="Check button mapping with Jev", exact=True).click()
+        fresh = self.page.get_by_role("status").filter(has_text="Fresh result")
+        expect(fresh.locator("time")).to_have_attribute("datetime", "2026-11-22T13:15:01.000Z")
+        self.assertEqual(self.checks, [{"kind": "buttons", "controlId": "device:demo_wall_buttons"}])
+        self.cached_check = True
+        self.page.get_by_role("button", name="Refresh buttons and automations", exact=True).click()
+        cached = self.page.get_by_role("status").filter(has_text="Cached result")
+        expect(cached.locator("time")).to_have_attribute("datetime", "2026-11-22T13:15:02.000Z")
+        self.page.get_by_role("button", name="Jev details", exact=True).click()
         dialog = self.page.get_by_role("dialog", name="Jev · Bedroom wall control button mapping", exact=True)
-        dialog.get_by_role("button", name="Send this check to Jev", exact=True).click()
-        expect(dialog.get_by_role("region", name="Jev check result", exact=True)).to_be_visible()
-        self.assertEqual(self.check_runs, [{
-            "subject": {"kind": "buttons", "controlId": "device:demo_wall_buttons"}, "fingerprint": f"{1:064x}",
-        }])
+        expect(dialog.locator('time[datetime="2026-11-22T13:14:00.000Z"]')).to_be_visible()
+        self.assertEqual(self.checks, [{"kind": "buttons", "controlId": "device:demo_wall_buttons"}] * 2)
         self.assertEqual(medium_calls + self.jev_reviews + self.posts + self.applies, [])
 
     def review_body(self, body):
