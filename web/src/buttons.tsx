@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { buttonTargetDomains, defaultButtonService, domainAllowsService, offeredButtonServices } from "../../shared/button-actions.ts";
 import { buttonMatrix, type MatrixCell } from "../../shared/button-matrix.ts";
 import {
@@ -22,6 +22,7 @@ import {
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { ButtonReferences } from "./button-references.tsx";
+import { summarizeButtonPress } from "./button-press-summary.ts";
 import { DataTable, type Column } from "./data-table.tsx";
 import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
 import { useStoredChoice } from "./storage.ts";
@@ -30,7 +31,7 @@ import { JevCheck } from "./jev-check.tsx";
 import { Badge, Button, Card, Chip, EmptyState, inputClass, Toolbar } from "./ui.tsx";
 
 // What a Taxis assignment is, as the pages below hold it.
-type Binding = ButtonMapping & { queued: boolean; output: string; automationId: string; blocked: string | null };
+type Binding = ButtonMapping & { queued: boolean; output: string; automationId: string; automationEnabled: boolean | null; blocked: string | null };
 type Editing = { key: string; action: ButtonAction | null; enabled: boolean };
 
 const haAutomation = (id: string) => `/config/automation/edit/${encodeURIComponent(id)}`;
@@ -65,15 +66,17 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
       stale = true;
     };
   }, [refresh]);
-  const maps = new Map((data?.inventory.managed ?? []).map((m) => [m.id, { map: m.map, queued: false, blocked: m.blocked }]));
+  const maps = new Map((data?.inventory.managed ?? []).map((m) => [m.id, { map: m.map, queued: false, enabled: m.enabled, blocked: m.blocked }]));
   for (const c of changes)
-    if (c.kind === "automation" && validButtonMap(c.after.button_map)) maps.set(c.targetId, { map: c.after.button_map, queued: true, blocked: [] });
+    if (c.kind === "automation" && validButtonMap(c.after.button_map))
+      maps.set(c.targetId, { map: c.after.button_map, queued: true, enabled: null, blocked: [] });
   const bindings: Binding[] = [...maps.entries()].flatMap(([automationId, m]) =>
     m.map.bindings.map((b) => ({
       ...b,
       queued: m.queued,
       output: m.map.output,
       automationId,
+      automationEnabled: m.enabled,
       blocked: m.blocked.find((x) => x.key === b.key)?.reason ?? null,
     })),
   );
@@ -380,7 +383,8 @@ function ControlView({
     if (editing) editor.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [editing]);
   const editingGesture = control.gestures.find((g) => control.id + g.key === editing?.key) ?? null;
-  const blocked = bindings.filter((b) => b.blocked);
+  const discoveredKeys = new Set(control.gestures.map(({ key }) => key));
+  const blocked = bindings.filter((binding) => binding.blocked && !discoveredKeys.has(binding.gestureKey));
   const renderSources = (button: string, sources: readonly MatrixCell<Binding>[]) => (
     <ul className="grid gap-2 divide-y divide-line">
       {sources.map((cell, index) => {
@@ -410,6 +414,16 @@ function ControlView({
         );
       })}
     </ul>
+  );
+  const renderPress = (button: string, press: string, sources: readonly MatrixCell<Binding>[], showPress: boolean) => (
+    <ButtonPressDetails
+      button={button}
+      press={press}
+      showPress={showPress}
+      description={summarizeButtonPress(sources, pressEvidence, describePressAction, (id) => h.entities[id]?.name ?? id)}
+    >
+      {renderSources(button, sources)}
+    </ButtonPressDetails>
   );
   // Integrations can expose combinations or a generic control without naming a physical button.
   const buttonNoun = matrix.buttons.some(({ label }) => /^(both|button \/ control)$/i.test(label)) ? "button group" : "button";
@@ -485,9 +499,8 @@ function ControlView({
                         const sources = presses.get(press);
                         return sources
                           ? [
-                              <li key={press} className="grid min-w-0 items-start gap-1 py-2.5 sm:grid-cols-[minmax(7rem,10rem)_minmax(0,1fr)] sm:gap-3">
-                                <h3 className="min-w-0 break-words text-[13px] font-medium">{press}</h3>
-                                {renderSources(label, sources)}
+                              <li key={press} className="min-w-0 py-1">
+                                {renderPress(label, press, sources, true)}
                               </li>,
                             ]
                           : [];
@@ -524,7 +537,7 @@ function ControlView({
                         return (
                           <td key={label} className="border-t border-line px-3 py-2 align-top">
                             {sources ? (
-                              renderSources(label, sources)
+                              renderPress(label, press, sources, false)
                             ) : (
                               <span className="text-xs text-muted" aria-label="Press unavailable">
                                 –
@@ -549,19 +562,8 @@ function ControlView({
           ))}
         </section>
       )}
-      {blocked.map((b) => (
-        <Card key={b.key} tone="danger">
-          <p className="text-xs font-medium text-danger">
-            {b.button} · {b.gesture}: Blocked by Taxis's safety rules
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            {b.blocked} This automation is still active in Home Assistant, and Taxis won't write it again as it is.{" "}
-            <a className="text-accent" href={haAutomation(b.automationId)} target="_blank" rel="noreferrer">
-              Open it in HA
-            </a>{" "}
-            to change or remove it, or assign this button a new action here to replace it.
-          </p>
-        </Card>
+      {blocked.map((binding) => (
+        <BlockedMapping key={`${binding.key}:${buttonOutput(binding.action)}`} binding={binding} />
       ))}
       <div ref={editor} />
       {editing && editingGesture && (
@@ -583,6 +585,53 @@ function ControlView({
         />
       )}
     </div>
+  );
+}
+
+function describePressAction(service: string, targets: readonly string[]) {
+  const target = targets.length > 1 ? `${targets.length} targets` : targets[0];
+  return [actionLabel(service, targets.length > 0), target].filter(Boolean).join(" · ");
+}
+
+function ButtonPressDetails({
+  button,
+  press,
+  showPress,
+  description,
+  children,
+}: {
+  button: string;
+  press: string;
+  showPress: boolean;
+  description: string;
+  children: ReactNode;
+}) {
+  const label = `${button} · ${press}`;
+  return (
+    <details aria-label={label} className="min-w-0">
+      <summary aria-label={`${label} · ${description}`} className="cursor-pointer break-words rounded-md px-1.5 py-2 text-[13px] hover:bg-sunken">
+        {showPress && <span className="mr-2 font-medium">{press}</span>}
+        <span className="text-xs text-muted">{description}</span>
+      </summary>
+      <div className="border-l border-line pl-3 pt-2 pb-1">{children}</div>
+    </details>
+  );
+}
+
+function BlockedMapping({ binding }: { binding: Binding }) {
+  return (
+    <Card tone="danger">
+      <p className="text-xs font-medium text-danger">
+        {binding.button} · {binding.gesture} · Blocked by Taxis's safety rules
+      </p>
+      <p className="mt-1 text-xs text-muted">
+        {binding.blocked}{" "}
+        <a className="text-accent" href={haAutomation(binding.automationId)} target="_blank" rel="noreferrer">
+          Open it in HA
+        </a>{" "}
+        to review, change or remove this assignment.
+      </p>
+    </Card>
   );
 }
 
@@ -660,6 +709,11 @@ function GestureCell({
           )}
         </div>
       ))}
+      {bindings
+        .filter((binding) => binding.blocked)
+        .map((binding) => (
+          <BlockedMapping key={`${binding.key}:${buttonOutput(binding.action)}`} binding={binding} />
+        ))}
       {handlers.slice(0, 2).map((handler) => (
         <HandlerEvidence key={handler.id} handler={handler} />
       ))}
