@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildHierarchy, type RawRegistry } from "../../server/model/hierarchy.ts";
-import { assessHouse, EMPTY_GUIDE } from "../../shared/guide.ts";
+import { assessHouse, EMPTY_GUIDE, type AreaReadiness } from "../../shared/guide.ts";
 import type { HealthFinding } from "../../shared/health.ts";
 import { EMPTY_INVENTORY, setCounts, setRecipeWanted } from "../../shared/inventory.ts";
 import { DEFAULT_NAMING } from "../../shared/naming.ts";
@@ -70,19 +70,19 @@ describe("Home rooms", () => {
     expect(suggestHomeRooms(h, EMPTY_INVENTORY, DEFAULT_NAMING, areas, null)).toEqual([]);
   });
 
-  it("puts saved actionable work before ideas and excludes the resumed and explicitly unplanned rooms", () => {
+  it("prioritizes selected automation work regardless of whole-room confirmation", () => {
     const h = house();
-    const areas = assessments(h).map((room) =>
-      room.areaId === "room_10"
-        ? { ...room, stage: "changes" as const, equipmentConfirmed: true }
-        : room.areaId === "spare_room"
-          ? { ...room, stage: "test" as const, equipmentConfirmed: true }
-          : room.areaId === "empty_area"
-            ? { ...room, stage: "unplanned" as const }
-            : room,
-    );
+    const areas = assessments(h).map<AreaReadiness>((room) => {
+      const stage = room.areaId === "room_10" ? "changes" : room.areaId === "spare_room" ? "test" : null;
+      if (!stage) return room;
+      return {
+        ...room,
+        equipmentConfirmed: false,
+        automations: room.automations.map((automation) => (automation.key === "motion_lights" ? { ...automation, selected: true, stage } : automation)),
+      };
+    });
     expect(suggestHomeRooms(h, EMPTY_INVENTORY, DEFAULT_NAMING, areas, "spare_room").map(({ room, reason }) => [room.areaId, reason])).toEqual([
-      ["room_10", "This room has changes ready for review."],
+      ["room_10", "Review queued changes for automatic lighting."],
       ["room_2", "Controllable lights and a motion sensor are already in this room."],
     ]);
   });

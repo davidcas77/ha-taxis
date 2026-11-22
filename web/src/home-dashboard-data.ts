@@ -31,30 +31,42 @@ export function groupHomeRooms(h: Hierarchy, query: string): { id: string | null
 
 const workOrder: readonly GuideStage[] = ["changes", "test", "recipes", "check", "helpers", "equipment", "unread"];
 
+export function currentRoomWork(area: AreaReadiness) {
+  for (const stage of workOrder) {
+    const next = area.automations.find((automation) => automation.selected && automation.stage === stage);
+    if (next) return next;
+  }
+  return null;
+}
+
 export function activeHomeRooms(areas: readonly AreaReadiness[]): AreaReadiness[] {
-  return areas.filter(({ stage }) => workOrder.includes(stage)).sort((a, b) => workOrder.indexOf(a.stage) - workOrder.indexOf(b.stage));
+  return areas
+    .flatMap((area) => {
+      const next = currentRoomWork(area);
+      return next ? [{ area, priority: workOrder.indexOf(next.stage) }] : [];
+    })
+    .sort((a, b) => a.priority - b.priority)
+    .map(({ area }) => area);
 }
 
 export function roomWorkReason(area: AreaReadiness): string | null {
-  if (!area.equipmentConfirmed) return "Review the equipment already assigned here.";
-  switch (area.stage) {
+  const next = currentRoomWork(area);
+  if (!next) return null;
+  switch (next.stage) {
     case "changes":
-      return "This room has changes ready for review.";
+      return `Review queued changes for ${next.label.toLowerCase()}.`;
     case "test":
-      return "Walk through the room and check the chosen behavior.";
+      return `Test ${next.label.toLowerCase()} in the room.`;
     case "recipes":
-      return area.recipes.some((recipe) => recipe.cell?.actionable)
-        ? "A native automation is ready to set up or update."
-        : "Review what the native automations still need.";
+      return `Continue setting up ${next.label.toLowerCase()}.`;
     case "check":
-      return "Review the status and controls of installed automations.";
+      return `Check the installation of ${next.label.toLowerCase()}.`;
     case "helpers":
-      return "Review the helpers needed for your saved goals.";
-    case "equipment": {
-      const needsReview = area.equipment.find((item) => item.required && item.status === "review");
-      const missing = area.equipment.find((item) => item.required && item.status === "missing");
-      return needsReview ? `Review ${needsReview.label.toLowerCase()}.` : missing ? `Your goals need ${missing.label.toLowerCase()}.` : null;
-    }
+      return `Review the helpers for ${next.label.toLowerCase()}.`;
+    case "equipment":
+      return `Match the required equipment for ${next.label.toLowerCase()}.`;
+    case "unread":
+      return `Check the Home Assistant status of ${next.label.toLowerCase()}.`;
     default:
       return null;
   }

@@ -2,15 +2,15 @@ import { ArrowRight, ChevronRight, DoorOpen } from "lucide-react";
 import { useMemo, useState } from "react";
 import { GUIDE_STAGES, type AreaReadiness } from "../../shared/guide.ts";
 import type { Hierarchy } from "../../shared/types.ts";
-import { groupHomeRooms } from "./home-dashboard-data.ts";
+import { currentRoomWork, groupHomeRooms } from "./home-dashboard-data.ts";
 import type { Route } from "./state.tsx";
 import { Button, EmptyState, SearchField } from "./ui.tsx";
 
 export function roomStage(area: AreaReadiness): string {
-  if (!area.equipmentConfirmed) return "Confirm equipment";
-  if (!area.choice) return "Choose an outcome";
-  if (!area.choice.goals.length) return "Equipment organized";
-  return GUIDE_STAGES[area.stage];
+  const work = currentRoomWork(area);
+  if (work) return GUIDE_STAGES[work.stage];
+  if (area.automations.some((automation) => automation.selected && automation.testCurrent)) return "Automation tested";
+  return "Choose an automation";
 }
 
 export function RoomChooser({

@@ -7,11 +7,13 @@ import { JevNotesReview } from "./jev-notes-review.tsx";
 
 export function GuideRoomTest({
   area,
+  canTest,
   onSave,
   openJevSettings,
   adjustLighting,
 }: {
-  area: AreaReadiness;
+  area: Pick<AreaReadiness, "configuration" | "checks" | "testRecord" | "testCurrent">;
+  canTest: boolean;
   onSave: (record: GuideTestRecord) => Promise<string | null>;
   openJevSettings: () => void;
   adjustLighting?: () => void;
@@ -27,7 +29,6 @@ export function GuideRoomTest({
   const [error, setError] = useState<string | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   const guard = useDraftGuard(dirty);
-  const canTest = area.equipmentConfirmed && (area.stage === "test" || area.stage === "tested");
   const changed = draft.configuration !== area.configuration;
   useEffect(() => {
     if (changed && !dirty) {

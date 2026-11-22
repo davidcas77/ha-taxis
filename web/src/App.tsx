@@ -3,11 +3,13 @@ import {
   ArrowLeft,
   CheckCircle2,
   ChevronDown,
+  Cpu,
   FolderTree,
   GitPullRequestArrow,
   HeartPulse,
   House,
   Layers,
+  List,
   Loader2,
   MapPin,
   MousePointerClick,
@@ -59,6 +61,7 @@ function Shell() {
   const [showEmpty, setShowEmpty] = useStoredFlag("taxis:tree:show-empty", true);
   const filters = useMemo<Filters>(() => ({ maintenance, disabled }), [maintenance, disabled]);
   const { page } = route;
+  const buttonsOpen = page === "automations" && route.tab === "buttons";
   const roomId = page === "guide" ? route.areaId : null;
   const [roomContext, setRoomContext] = useState(roomId);
   const roomExists = roomId !== null && Boolean(hierarchy?.areas[roomId]);
@@ -82,14 +85,14 @@ function Shell() {
   return (
     <div className="flex h-full min-w-0 flex-col">
       <header className="shrink-0 border-b border-line bg-surface">
-        <div className="grid min-w-0 grid-cols-[1fr_auto] items-center gap-x-3 px-3 pt-1.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:py-1.5 md:px-4">
+        <div className="grid min-w-0 grid-cols-[1fr_auto] items-center gap-x-3 px-3 pt-1.5 md:grid-cols-[auto_minmax(0,1fr)_auto] md:px-4 md:py-1.5">
           <div className="flex items-center gap-1.5">
             <Layers className="size-5 text-accent" aria-hidden />
             <span className="text-base font-semibold tracking-tight">Taxis</span>
           </div>
           <nav
             aria-label="Pages"
-            className="col-span-2 col-start-1 row-start-2 flex min-w-0 items-center gap-0.5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:gap-1"
+            className="col-span-2 col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-0.5 md:col-span-1 md:col-start-2 md:row-start-1 md:gap-x-1"
           >
             <NavButton active={page === "guide" && !roomId} onClick={() => go(GUIDE)}>
               <House className={`${iconClass} hidden sm:block`} aria-hidden />
@@ -99,15 +102,29 @@ function Shell() {
               <MapPin className={`${iconClass} hidden sm:block`} aria-hidden />
               Rooms
             </NavButton>
+            <NavButton active={page === "organize" && route.type === "devices"} onClick={() => go({ page: "organize", type: "devices", id: null })}>
+              <Cpu className={`${iconClass} hidden sm:block`} aria-hidden />
+              Devices
+            </NavButton>
+            <NavButton active={page === "organize" && route.type === "entities"} onClick={() => go({ page: "organize", type: "entities", id: null })}>
+              <List className={`${iconClass} hidden sm:block`} aria-hidden />
+              Entities
+            </NavButton>
+            <NavButton active={buttonsOpen} onClick={() => go(buttonsOpen ? route : BUTTONS)}>
+              <MousePointerClick className={`${iconClass} hidden sm:block`} aria-hidden />
+              Buttons
+            </NavButton>
             <NavButton active={page === "changes"} onClick={() => go({ page: "changes" })}>
               <GitPullRequestArrow className={`${iconClass} hidden sm:block`} aria-hidden />
               Changes
               {changes.length > 0 && <Count tone="warn">{changes.length}</Count>}
             </NavButton>
-            <ToolsNavigation route={route} go={go} />
-            <NavButton active={page === "settings"} onClick={() => go(page === "settings" ? route : SETTINGS)} label="Settings">
-              <Settings className={iconClass} aria-hidden />
-            </NavButton>
+            <div className="ml-auto flex shrink-0 items-center gap-x-0.5 md:gap-x-1">
+              <ToolsNavigation route={route} go={go} />
+              <NavButton active={page === "settings"} onClick={() => go(page === "settings" ? route : SETTINGS)} label="Settings">
+                <Settings className={iconClass} aria-hidden />
+              </NavButton>
+            </div>
           </nav>
           <button
             type="button"
@@ -115,7 +132,7 @@ function Shell() {
             disabled={loading}
             aria-label="Refresh"
             title="Read Home Assistant again"
-            className="col-start-2 row-start-1 inline-flex shrink-0 items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[13px] hover:bg-sunken disabled:opacity-60 sm:col-start-3"
+            className="col-start-2 row-start-1 inline-flex shrink-0 items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[13px] hover:bg-sunken disabled:opacity-60 md:col-start-3"
           >
             {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
             <span className="hidden sm:inline">Refresh</span>
@@ -257,7 +274,6 @@ const TOOLS = [
   { label: "Areas", icon: MapPin, route: AREAS_HOME },
   { label: "Organize", icon: FolderTree, route: { page: "organize", type: "labels", id: null } },
   { label: "Recipes", icon: Workflow, route: RECIPES },
-  { label: "Buttons", icon: MousePointerClick, route: BUTTONS },
   { label: "Parameters", icon: SlidersHorizontal, route: { page: "parameters", tab: "capabilities" } },
   { label: "Health", icon: HeartPulse, route: { page: "health" } },
 ] satisfies { label: string; icon: typeof MapPin; route: Route }[];
@@ -288,8 +304,11 @@ function ToolsNavigation({ route, go }: { route: Route; go: (route: Route) => vo
     };
   }, [open]);
 
-  const isActive = (target: Route) =>
-    route.page === target.page && (route.page !== "automations" || (target.page === "automations" && route.tab === target.tab));
+  const isActive = (target: Route) => {
+    if (route.page !== target.page) return false;
+    if (route.page === "automations") return target.page === "automations" && route.tab === target.tab;
+    return route.page !== "organize" || (route.type !== "devices" && route.type !== "entities");
+  };
   const closeAndFocus = () => {
     setOpen(false);
     trigger.current?.focus();
@@ -298,7 +317,7 @@ function ToolsNavigation({ route, go }: { route: Route; go: (route: Route) => vo
   return (
     <div
       ref={disclosure}
-      className="relative ml-auto"
+      className="relative"
       onKeyDown={(event) => {
         if (open && event.key === "Escape") {
           event.stopPropagation();

@@ -120,7 +120,7 @@ class HomeRegression(unittest.TestCase):
         resume = self.page.get_by_role("region", name="Resume work")
         expect(resume.get_by_role("button", name="Resume Δωμάτιο 29")).to_be_visible()
         self.page.reload()
-        expect(resume.get_by_text("Confirm equipment", exact=True)).to_be_visible()
+        expect(resume.get_by_text("Choose an automation", exact=True)).to_be_visible()
         self.assertEqual(self.page.evaluate("document.documentElement.scrollWidth"), 360)
         self.page.screenshot(path=screenshot_dir() / "home-mobile.png")
         resume.get_by_role("button", name="Resume Δωμάτιο 29").click()

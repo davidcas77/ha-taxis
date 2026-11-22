@@ -1,6 +1,6 @@
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { assessHouse, type AreaGuideChoice, type AreaReadiness, type GuideSettings } from "../../shared/guide.ts";
+import { assessHouse, type AreaGuideChoice, type AreaReadiness, type GuideSettings, type RoomAutomation } from "../../shared/guide.ts";
 import type { GuideTestRecord } from "../../shared/guide-checks.ts";
 import type { RecipeInstalled } from "../../shared/recipes.ts";
 import type { Hierarchy } from "../../shared/types.ts";
@@ -113,6 +113,20 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
       return Promise.resolve("Review this room’s current setup before saving observations.");
     return save((value) => ({ ...value, tests: { ...value.tests, [area.areaId]: record } }), "Room test record saved.");
   };
+  const saveAutomationTest = (areaId: string, automation: RoomAutomation, record: GuideTestRecord) => {
+    if (!["test", "tested"].includes(automation.stage) || record.configuration !== automation.configuration)
+      return Promise.resolve("Review the current automation setup before saving observations.");
+    return save(
+      (value) => ({
+        ...value,
+        automationTests: {
+          ...value.automationTests,
+          [areaId]: { ...value.automationTests?.[areaId], [automation.key]: record },
+        },
+      }),
+      "Room test record saved.",
+    );
+  };
   const guideAlert = guideError && (
     <div role="alert" className="rounded-lg border border-danger p-3 text-[13px] text-danger">
       <p>{guideError}</p>
@@ -161,6 +175,7 @@ export function GuidePage({ h, areaId, go }: { h: Hierarchy; areaId: string | nu
           confirmEquipment={() => confirmEquipment(active)}
           saveChoice={(choice) => saveChoice(active.areaId, choice)}
           saveTest={(record) => saveTest(active, record)}
+          saveAutomationTest={(automation, record) => saveAutomationTest(active.areaId, automation, record)}
         />
       ) : (
         <>

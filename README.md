@@ -33,12 +33,11 @@ Requires Home Assistant OS or a Supervised installation (the ones with
 
 ## What it does
 
-- **Home and Rooms.** Start with a room, or return to one you were working on.
-  Home highlights room suggestions and issues that deserve attention. Rooms lets
-  you find an area by name. You can organise its equipment, choose an outcome
-  such as gentle night lighting, and review what Taxis proposes to create in
-  Home Assistant. After installation, record how it works in the actual room.
-  Changes to the equipment or settings can make a new test necessary.
+- **Home and Rooms.** Find a room or resume your last one. Select an automation
+  to see its equipment requirements, detected sources and readiness. Match
+  missing equipment, then set the automation's parameters and review its
+  proposed Home Assistant changes. **Devices** and **Entities** open the
+  corresponding inventory screens from the main menu.
 - **Spaces:** organize floors → spaces → areas, plus areas on no floor and
   entities in no area. Spaces use Home Assistant area labels; an empty space's
   floor placement is stored in a Taxis-owned marker in its label description.
@@ -86,8 +85,8 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   media, climate, ventilation and notifications. Space-scoped recipes are
   available alongside the legacy whole-home scope. The generated automations
   keep working when Taxis is stopped.
-- **Buttons:** a tab of **Automations**: inspect remotes, wall controls and HA button inputs across
-  integrations, as one table per control (buttons by press type). See existing automation
+- **Buttons:** Open the button mapping page from the main menu to inspect remotes,
+  wall controls and Home Assistant button inputs. Each control has a table of its press types. See existing automation
   matches and assign an action from a fixed, safe list: control lights, switches,
   fans, covers, media players, climate and similar entities, run scripts, scenes
   and automations, or send a persistent notification. Anything that reaches Home
