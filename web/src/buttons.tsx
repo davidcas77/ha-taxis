@@ -28,6 +28,7 @@ import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
 import { useStoredChoice } from "./storage.ts";
 import { confirmDraftNavigation, useDraftGuard } from "./draft-guard.ts";
 import { JevCheck } from "./jev-check.tsx";
+import { toHash } from "./route.ts";
 import { Badge, Button, Card, Chip, EmptyState, inputClass, Toolbar } from "./ui.tsx";
 
 // What a Taxis assignment is, as the pages below hold it.
@@ -428,6 +429,8 @@ function ControlView({
   // Integrations can expose combinations or a generic control without naming a physical button.
   const buttonNoun = matrix.buttons.some(({ label }) => /^(both|button \/ control)$/i.test(label)) ? "button group" : "button";
   const gestureCount = control.gestures.length;
+  const companion = control.companionControl;
+  const companionLabel = companion?.integration === "homekit_controller" ? "View HomeKit button inputs" : "View Aqara Lanlink record";
   return (
     <div className="flex min-w-0 flex-col gap-3">
       <Coverage data={data} />
@@ -435,6 +438,20 @@ function ControlView({
         <h2 className="text-lg font-semibold">{control.name}</h2>
         <p className="mt-1 text-sm text-muted">{[control.manufacturer, control.model, ...control.integrations].filter(Boolean).join(" · ")}</p>
       </div>
+      {companion && (
+        <p className="rounded-lg border border-line bg-surface p-3 text-sm text-muted">
+          Home Assistant also lists this switch as {companion.name}.{" "}
+          <a
+            href={toHash({ page: "automations", tab: "buttons", controlId: companion.id })}
+            onClick={(event) => {
+              if (busy) event.preventDefault();
+            }}
+            className="font-medium text-accent underline underline-offset-2"
+          >
+            {companionLabel}
+          </a>
+        </p>
+      )}
       <ButtonReferences key={control.id} h={h} control={control} inventory={data.inventory} serviceLabel={actionLabel} />
       {control.notes.map((n) => (
         <p key={n} className="text-xs text-warn">
@@ -589,7 +606,8 @@ function ControlView({
 }
 
 function describePressAction(service: string, targets: readonly string[]) {
-  const target = targets.length > 1 ? `${targets.length} targets` : targets[0];
+  const names = targets.join(", ");
+  const target = targets.length > 2 || (targets.length > 1 && names.length > 80) ? `${targets.length} targets` : names;
   return [actionLabel(service, targets.length > 0), target].filter(Boolean).join(" · ");
 }
 
@@ -841,6 +859,7 @@ function ActionEvidence({ action }: { action: ButtonAnalysisAction }) {
 // What an action is called in the list. Only allowed services reach it.
 function actionLabel(s: string, hasTarget: boolean): string {
   if (s === "persistent_notification.create") return "Show a notification in HA";
+  if (s === "script.smart_light_toggle") return "Run Smart Light Toggle";
   if (!hasTarget && s.startsWith("script.")) return `Run script ${s.slice(7)}`;
   if (s === "script.turn_on") return "Run script";
   if (s === "script.turn_off") return "Stop script";

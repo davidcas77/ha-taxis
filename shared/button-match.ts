@@ -369,9 +369,14 @@ export function referencesDevice(
 
 // The services an automation calls and what they target. Entities are listed by
 // id; devices and areas as `device:<name>` and `area:<name>`.
-export function summarizeActions(config: unknown, names: TargetNames): { services: string[]; targets: string[] } {
+export function summarizeActions(
+  config: unknown,
+  names: TargetNames,
+  actionInputs?: (step: Record<string, unknown>) => readonly string[],
+): { services: string[]; targets: string[] } {
   const services = new Set<string>();
   const targets = new Set<string>();
+  let remaining = actionInputs ? 320 : Infinity;
   const addTargets = (holder: unknown) => {
     if (!buttonRecord(holder)) return;
     for (const id of asStrings(holder.entity_id)) if (ENTITY_ID.test(id)) targets.add(id);
@@ -379,7 +384,7 @@ export function summarizeActions(config: unknown, names: TargetNames): { service
     for (const id of asStrings(holder.area_id)) if (isPlainId(id)) targets.add(`area:${names.area(id)}`);
   };
   const walk = (value: unknown, depth = 0) => {
-    if (depth > 16) return;
+    if (depth > 16 || remaining-- <= 0) return;
     if (Array.isArray(value)) {
       value.slice(0, 100).forEach((v) => walk(v, depth + 1));
       return;
@@ -389,7 +394,11 @@ export function summarizeActions(config: unknown, names: TargetNames): { service
     if (typeof service === "string" && /^[a-z_]+\.[a-z_]+$/.test(service)) services.add(service);
     addTargets(value.target);
     addTargets(value.data);
-    Object.values(value).forEach((v) => walk(v, depth + 1));
+    for (const target of actionInputs?.(value) ?? []) targets.add(target);
+    for (const child of Object.values(value)) {
+      if (remaining <= 0) break;
+      walk(child, depth + 1);
+    }
   };
   walk(config);
   return { services: [...services].slice(0, 30), targets: [...targets].slice(0, 50) };

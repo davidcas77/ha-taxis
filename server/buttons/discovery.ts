@@ -15,6 +15,8 @@ import type { Hierarchy } from "../../shared/types.ts";
 import type { RawRegistry } from "../model/hierarchy.ts";
 import type { RestApi } from "../ha/rest.ts";
 import { mapLimit } from "../references/snapshot.ts";
+import { aqaraH2LightInputs, aqaraH2RouterMatch, verifyAqaraH2Router } from "./aqara-h2-router.ts";
+import { linkCompanionControls } from "./companion-controls.ts";
 import { buttonConfig } from "./mapping.ts";
 import { BUTTON_MARKER, buttonHash, buttonAutomationId } from "./identity.ts";
 import { buttonTriggerFilter, devicesMentionedBy } from "./trigger-candidates.ts";
@@ -23,7 +25,7 @@ export { BUTTON_MARKER, buttonHash, buttonAutomationId } from "./identity.ts";
 export type ButtonHa = { command<T>(type: string, payload?: Record<string, unknown>): Promise<T> };
 export type ButtonEvidence = { id: string; entityId: string; name: string; enabled: boolean | null; config: Record<string, unknown> | null };
 export type ButtonReferenceReader = (kind: "script" | "scene", entityId: string) => Promise<Record<string, unknown> | null>;
-export type ButtonRead = { inventory: ButtonInventory; evidence: ButtonEvidence[]; readReference?: ButtonReferenceReader };
+export type ButtonRead = { inventory: ButtonInventory; evidence: ButtonEvidence[]; readReference?: ButtonReferenceReader; aqaraH2RouterVerified?: boolean };
 
 export function buttonReferenceReader(raw: RawRegistry, rest: Pick<RestApi, "get">): ButtonReferenceReader {
   let ids: Map<string, string> | undefined;
@@ -312,7 +314,14 @@ function hardwareIds(raw: RawRegistry, deviceId: string | null): string[] {
   );
 }
 
-type MatchContext = { evidence: ButtonEvidence[]; managed: ButtonManaged[]; raw: RawRegistry; h: Hierarchy; names: TargetNames };
+type MatchContext = {
+  evidence: ButtonEvidence[];
+  managed: ButtonManaged[];
+  raw: RawRegistry;
+  h: Hierarchy;
+  names: TargetNames;
+  aqaraH2RouterVerified: boolean;
+};
 
 // The press types of each entity that gestures come from, so a template that
 // quotes one of them can be read as a filter.
@@ -335,11 +344,14 @@ function existingEntry(
   control: ButtonControl,
   gesture: ButtonGesture,
   match: ButtonExisting["match"],
+  router: ReturnType<typeof aqaraH2RouterMatch>,
 ): ButtonExisting {
   const own = map?.bindings.filter((b) => b.controlId === control.id && b.gestureKey === gesture.key) ?? [];
   const summary = map
     ? { services: own.map((b) => b.action.service), targets: own.flatMap((b) => (b.action.entityId ? [b.action.entityId] : [])) }
-    : summarizeActions(a.config, ctx.names);
+    : router
+      ? summarizeActions(router.level === "exact" ? router.actions : [], ctx.names, aqaraH2LightInputs)
+      : summarizeActions(a.config, ctx.names);
   return { id: a.id, entityId: a.entityId, name: a.name, enabled: a.enabled, match, ...summary, managed: !!map };
 }
 
@@ -351,14 +363,17 @@ function matchGestures(control: ButtonControl, ctx: MatchContext) {
     for (const a of ctx.evidence) {
       if (!a.config) continue;
       const map = ctx.managed.find((m) => m.id === a.id)?.map;
+      const router = aqaraH2RouterMatch(a.config, gesture, ctx.aqaraH2RouterVerified);
       // A Taxis automation is matched by its own bindings only: its generated
       // triggers also listen to other presses and filter them in conditions.
       const match = map
         ? map.bindings.some((b) => b.controlId === control.id && b.gestureKey === gesture.key)
           ? "exact"
           : null
-        : matchGesture(a.config, gesture, siblings);
-      if (match) control.existing[gesture.key].push(existingEntry(a, ctx, map, control, gesture, match));
+        : router === undefined
+          ? matchGesture(a.config, gesture, siblings)
+          : router?.level;
+      if (match) control.existing[gesture.key].push(existingEntry(a, ctx, map, control, gesture, match, router));
     }
   }
 }
@@ -424,6 +439,7 @@ export async function discoverButtons(
   options: DiscoverOptions = {},
 ): Promise<ButtonRead> {
   const controls = new Controls(h);
+  linkCompanionControls(raw.devices, controls.all);
   // The automations first: which devices they mention decides which devices are
   // asked for device triggers (trigger-candidates.ts).
   const evidence = await readAutomations(raw, rest);
@@ -449,7 +465,13 @@ export async function discoverButtons(
     }
     for (const entityId of identifyButtons) ignoredInputs.add(entityId);
   }
-  await mapLimit(asked, 6, (c) => addDeviceTriggerGestures(c, ha, ignoredInputs));
+  const [aqaraH2RouterVerified] = await Promise.all([
+    verifyAqaraH2Router(
+      ha,
+      evidence.map((a) => a.config),
+    ),
+    mapLimit(asked, 6, (c) => addDeviceTriggerGestures(c, ha, ignoredInputs)),
+  ]);
   addEntityGestures(raw, h, controls, ignoredInputs);
 
   const usable = new Set(
@@ -467,7 +489,7 @@ export async function discoverButtons(
     }
   }
   const names: TargetNames = { device: (id) => h.devices[id]?.name ?? id, area: (id) => h.areas[id]?.name ?? id };
-  const ctx: MatchContext = { evidence, managed, raw, h, names };
+  const ctx: MatchContext = { evidence, managed, raw, h, names, aqaraH2RouterVerified };
   for (const control of controls.all.values()) {
     if (options.only && !options.only.has(control.id)) continue;
     if (hiddenBindings.has(control.id))
@@ -502,5 +524,6 @@ export async function discoverButtons(
     },
     evidence,
     readReference: buttonReferenceReader(raw, rest),
+    aqaraH2RouterVerified,
   };
 }

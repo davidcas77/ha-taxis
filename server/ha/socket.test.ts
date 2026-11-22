@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { aqaraH2Probe } from "./aqara-h2-probe.ts";
 
 import { HaSocket, READ_COMMANDS, WRITE_COMMANDS, assertReadCommand, assertWriteCommand, type SocketLike } from "./socket.ts";
 
@@ -61,10 +62,30 @@ const payloadFor = (t: string) =>
 
 describe("read-only guard", () => {
   it("allows only registry and state reads", () => {
-    for (const t of READ_COMMANDS) expect(() => assertReadCommand(t)).not.toThrow();
+    for (const t of READ_COMMANDS) expect(() => assertReadCommand(t, t === "blueprint/substitute" ? aqaraH2Probe() : {})).not.toThrow();
     for (const t of ["call_service", "config/area_registry/create", "config/entity_registry/update", "config/device_registry/remove_config_entry"]) {
       expect(() => assertReadCommand(t)).toThrow(/isn.t a read/);
     }
+  });
+
+  it("allows blueprint substitution only for the exact read-only Aqara H2 probe", async () => {
+    const fake = fakeHa();
+    const client = new HaSocket("ws://fixture", "good", fake.factory);
+    const probe = aqaraH2Probe();
+    for (const input of [
+      {},
+      { ...probe, domain: "script" },
+      { ...probe, path: "other/path.yaml" },
+      { ...probe, input: { ...probe.input, button1_entity: "event.real_switch_1" } },
+      { ...probe, input: { ...probe.input, b1_single: [{ action: "light.turn_on" }] } },
+    ]) {
+      await expect(client.command("blueprint/substitute", input)).rejects.toThrow(/fixed Aqara H2/);
+    }
+    expect(fake.sent).toEqual([]);
+    await expect(client.command("blueprint/substitute", probe)).resolves.toEqual([]);
+    expect(fake.sent.at(-1)).toMatchObject({ type: "blueprint/substitute", ...probe });
+    expect(WRITE_COMMANDS.has("blueprint/substitute")).toBe(false);
+    client.close();
   });
 
   it("reads the list of integrations, and no other command for config entries", () => {
@@ -120,7 +141,7 @@ describe("read-only guard", () => {
     }
   });
 
-  it("allows the recipe writes and the blueprint read, and no other timer, helper or blueprint command", () => {
+  it("allows the recipe writes and read-only blueprint commands, and no other timer, helper or blueprint command", () => {
     for (const t of ["blueprint/save", "timer/create", "timer/update", "input_boolean/create", "schedule/create", "schedule/update"])
       expect(WRITE_COMMANDS.has(t), t).toBe(true);
     expect(READ_COMMANDS.has("blueprint/list")).toBe(true);
@@ -128,7 +149,6 @@ describe("read-only guard", () => {
     for (const t of [
       "blueprint/delete",
       "blueprint/import",
-      "blueprint/substitute",
       "timer/delete",
       "timer/start",
       "timer/list",

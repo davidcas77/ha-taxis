@@ -68,7 +68,7 @@ export function fakeHa(home: MockHome = buildMockRegistry()) {
   const send = <T>(kind: "read" | "write", type: string, payload: Record<string, unknown>): Promise<T> =>
     track(() => {
       // The same guards the real client has.
-      if (kind === "read") assertReadCommand(type);
+      if (kind === "read") assertReadCommand(type, payload);
       else assertWriteCommand(type, payload);
       const call: WsCall = { kind, type, payload };
       t.ws.push(call);
