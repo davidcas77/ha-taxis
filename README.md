@@ -85,8 +85,8 @@ Requires Home Assistant OS or a Supervised installation (the ones with
   media, climate, ventilation and notifications. Space-scoped recipes are
   available alongside the legacy whole-home scope. The generated automations
   keep working when Taxis is stopped.
-- **Buttons:** a tab of **Automations**: inspect remotes, wall controls and HA button inputs across
-  integrations, as one table per control (buttons by press type). See existing automation
+- **Buttons:** Open the button mapping page from the main menu to inspect remotes,
+  wall controls and Home Assistant button inputs. Each control has a table of its press types. See existing automation
   matches and assign an action from a fixed, safe list: control lights, switches,
   fans, covers, media players, climate and similar entities, run scripts, scenes
   and automations, or send a persistent notification. Anything that reaches Home

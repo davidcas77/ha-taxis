@@ -107,6 +107,15 @@ class ButtonsRegression(fixture.GuideRegression):
         # An earlier notice can still be on screen; the form closing is what says this one went in.
         expect(form).to_have_count(0)
 
+    def test_buttons_header_keeps_bookmarked_control_selected(self):
+        self.open_control()
+        header = self.page.get_by_role('navigation', name='Pages')
+        buttons = header.get_by_role('button', name='Buttons', exact=True)
+        expect(buttons).to_have_attribute('aria-current', 'page')
+        buttons.click()
+        expect(self.page).to_have_url(fixture.BASE + '/#automations/buttons/device%3Ademo_wall_buttons')
+        expect(self.table()).to_be_visible()
+
     def test_buttons_direct_assignment_requires_exact_confirmation(self):
         self.page.route('**/api/settings/general', lambda route: route.fulfill(json={'ok': True, 'general': {'reviewChangesBeforeApplying': False}, 'revision': 'direct-revision'}))
         calls = []

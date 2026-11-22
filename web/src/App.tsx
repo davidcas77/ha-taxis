@@ -61,6 +61,7 @@ function Shell() {
   const [showEmpty, setShowEmpty] = useStoredFlag("taxis:tree:show-empty", true);
   const filters = useMemo<Filters>(() => ({ maintenance, disabled }), [maintenance, disabled]);
   const { page } = route;
+  const buttonsOpen = page === "automations" && route.tab === "buttons";
   const roomId = page === "guide" ? route.areaId : null;
   const [roomContext, setRoomContext] = useState(roomId);
   const roomExists = roomId !== null && Boolean(hierarchy?.areas[roomId]);
@@ -108,6 +109,10 @@ function Shell() {
             <NavButton active={page === "organize" && route.type === "entities"} onClick={() => go({ page: "organize", type: "entities", id: null })}>
               <List className={`${iconClass} hidden sm:block`} aria-hidden />
               Entities
+            </NavButton>
+            <NavButton active={buttonsOpen} onClick={() => go(buttonsOpen ? route : BUTTONS)}>
+              <MousePointerClick className={`${iconClass} hidden sm:block`} aria-hidden />
+              Buttons
             </NavButton>
             <NavButton active={page === "changes"} onClick={() => go({ page: "changes" })}>
               <GitPullRequestArrow className={`${iconClass} hidden sm:block`} aria-hidden />
@@ -269,7 +274,6 @@ const TOOLS = [
   { label: "Areas", icon: MapPin, route: AREAS_HOME },
   { label: "Organize", icon: FolderTree, route: { page: "organize", type: "labels", id: null } },
   { label: "Recipes", icon: Workflow, route: RECIPES },
-  { label: "Buttons", icon: MousePointerClick, route: BUTTONS },
   { label: "Parameters", icon: SlidersHorizontal, route: { page: "parameters", tab: "capabilities" } },
   { label: "Health", icon: HeartPulse, route: { page: "health" } },
 ] satisfies { label: string; icon: typeof MapPin; route: Route }[];

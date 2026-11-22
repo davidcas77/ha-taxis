@@ -6,9 +6,9 @@ organise it: rename, move, label and categorise, then apply the changes to Home
 Assistant in one go.
 
 Open **Home** to pick up a room or find a place to start. **Rooms** opens the
-room chooser. **Devices** and **Entities** open their inventory views.
+room chooser. **Devices** and **Entities** open their inventory views. **Buttons** opens button mapping.
 **Changes** holds proposals waiting for review. **Tools** contains Areas,
-Organize, Recipes, Buttons, Parameters and Health. **Settings** contains editing
+Organize, Recipes, Parameters and Health. **Settings** contains editing
 preferences and AI configuration. The sparkle button opens [Ask Taxis](#ask-taxis).
 
 **Tables.** Every table works the same way. It scrolls inside its own card, never
@@ -992,7 +992,7 @@ only suggests.
 
 ## Buttons
 
-**Automations → Buttons** is for remotes, wall controls and any other button Home Assistant can
+Open **Buttons** from the main menu to find remotes, wall controls and any other button Home Assistant can
 see. Taxis lists them, shows which automations already react to each press, and
 lets you give a press, double press or hold an action. What you get is an ordinary
 Home Assistant automation that keeps working when Taxis is stopped. Nothing

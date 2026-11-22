@@ -19,8 +19,8 @@ from browser_common import BASE, launch
 VIEWPORTS = [(1280, 800), (375, 800)]
 
 # The pages of the navigation, in order, and what each tab strip offers.
-NAV = ["Home", "Rooms", "Devices", "Entities", "Changes", "Tools", "Settings"]
-TOOLS = ["Areas", "Organize", "Recipes", "Buttons", "Parameters", "Health"]
+NAV = ["Home", "Rooms", "Devices", "Entities", "Buttons", "Changes", "Tools", "Settings"]
+TOOLS = ["Areas", "Organize", "Recipes", "Parameters", "Health"]
 ORGANIZE_TYPES = ["spaces", "labels", "category-automation", "category-script", "category-scene", "category-helpers",
                   "zones", "automations", "blueprints", "devices", "entities", "helpers"]
 PARAMETER_TABS = ["capabilities", "helpers", "area-codes", "house", "occupancy", "lighting", "media", "climate", "fan", "exterior", "covers", "safety"]
@@ -212,7 +212,7 @@ class UiEngine(unittest.TestCase):
         tools = nav.get_by_role("button", name="Tools", exact=True)
         tool_pages = nav.get_by_role("group", name="Tools pages", exact=True)
         recipes = tool_pages.get_by_role("button", name="Recipes", exact=True)
-        buttons = tool_pages.get_by_role("button", name="Buttons", exact=True)
+        buttons = nav.get_by_role("button", name="Buttons", exact=True)
         tools.click()
         self.assertEqual(tool_pages.get_by_role("button").evaluate_all(button_names), TOOLS)
         recipes.click()
@@ -229,8 +229,9 @@ class UiEngine(unittest.TestCase):
         buttons.click()
         page.wait_for_function("location.hash === '#automations/buttons'")
         page.get_by_role("heading", name="Buttons", exact=True).wait_for()
-        tools.click()
         expect(buttons).to_have_attribute("aria-current", "page")
+        tools.click()
+        expect(tool_pages.get_by_role("button", name="Buttons", exact=True)).to_have_count(0)
         self.assertEqual(recipes.get_attribute("aria-current"), None)
         self.assertEqual(page.get_by_role("tablist", name="Automations").count(), 0)
         self.assertEqual(page.get_by_role("button", name="Refresh", exact=True).count(), 1)
@@ -242,7 +243,6 @@ class UiEngine(unittest.TestCase):
         page.goto(BASE + "/#automations/buttons/device%3Ademo_wall_buttons", wait_until="networkidle")
         page.reload(wait_until="networkidle")
         page.wait_for_function("location.hash === '#automations/buttons/device%3Ademo_wall_buttons'")
-        tools.click()
         expect(buttons).to_have_attribute("aria-current", "page")
         page.get_by_role("heading", name="Buttons", exact=True).wait_for()
         nav.get_by_role("button", name="Settings", exact=True).click()
@@ -292,7 +292,7 @@ class UiEngine(unittest.TestCase):
         nav.get_by_role("button", name="Home", exact=True).click()
         page.wait_for_url("**/#guide")
 
-    def test_device_and_entity_navigation_stays_visible_at_phone_widths(self):
+    def test_device_entity_and_button_navigation_stays_visible_at_phone_widths(self):
         for width in [320, 360]:
             with self.subTest(width=width):
                 page = self.new_page(width, 800)
@@ -323,6 +323,13 @@ class UiEngine(unittest.TestCase):
                 nav.get_by_role("button", name="Organize", exact=True).click()
                 page.wait_for_url("**/#organize/labels")
                 expect(nav.locator("[aria-current='page']")).not_to_be_visible()
+
+                buttons = nav.get_by_role("button", name="Buttons", exact=True)
+                buttons.focus()
+                buttons.press("Enter")
+                page.wait_for_url("**/#automations/buttons")
+                expect(buttons).to_have_attribute("aria-current", "page")
+                expect(page.get_by_role("heading", name="Buttons", exact=True)).to_be_visible()
 
     def test_health_link_opens_a_specific_check(self):
         page = self.new_page(1280, 800)

@@ -5,7 +5,7 @@
 - **Room automations.** Choose an automation from the Records list and see its requirements on the right.
 - **Equipment readiness.** See which required sources are usable and assign compatible equipment from the room. Optional sources are listed separately.
 - **Setup.** Set parameters for the selected automation and review its Home Assistant changes. Installation and room tests are tracked for each automation.
-- **Navigation.** Open Devices and Entities directly from the top menu.
+- **Navigation.** Open Devices, Entities and Buttons directly from the top menu.
 
 ## 0.7.96
 
