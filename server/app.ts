@@ -2,6 +2,8 @@ import { Hono } from "hono";
 
 import { aiService } from "./ai/service.ts";
 import { aiLedger } from "./ai/ledger.ts";
+import { buttonReferenceRoutes } from "./buttons/reference-routes.ts";
+import { buttonReferenceStore } from "./buttons/reference-store.ts";
 import type { AppContext, AppDeps } from "./context.ts";
 import { requireTaxisHeader } from "./guard.ts";
 import { HaReader } from "./ha/reader.ts";
@@ -81,6 +83,7 @@ export function createApp(deps: AppDeps): Hono<{ Bindings: Bindings }> {
   app.route("/api", aiPageRoutes(ctx));
   app.route("/api", jevPageRoutes(ctx));
   app.route("/api", referenceRoutes(ctx));
+  app.route("/api", buttonReferenceRoutes(buttonReferenceStore(deps.db)));
   app.route("/api", applyRoutes(ctx));
   if (deps.webRoot !== null) app.route("/", uiRoutes(deps.webRoot ?? "./dist/web"));
 

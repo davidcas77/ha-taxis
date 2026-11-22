@@ -4,6 +4,7 @@ import { buttonTargetDomains, defaultButtonService, domainAllowsService, offered
 import { buttonMatrix, type MatrixCell } from "../../shared/button-matrix.ts";
 import {
   buttonOutput,
+  isIdentifyButton,
   validButtonAction,
   validButtonMap,
   type ButtonAction,
@@ -20,6 +21,7 @@ import {
 } from "../../shared/buttons.ts";
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
+import { ButtonReferences } from "./button-references.tsx";
 import { DataTable, type Column } from "./data-table.tsx";
 import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
 import { confirmDraftNavigation, useDraftGuard } from "./draft-guard.ts";
@@ -419,6 +421,7 @@ function ControlView({
         <h2 className="text-lg font-semibold">{control.name}</h2>
         <p className="mt-1 text-sm text-muted">{[control.manufacturer, control.model, ...control.integrations].filter(Boolean).join(" · ")}</p>
       </div>
+      <ButtonReferences key={control.id} h={h} control={control} inventory={data.inventory} serviceLabel={actionLabel} />
       {control.notes.map((n) => (
         <p key={n} className="text-xs text-warn">
           {n}
@@ -735,6 +738,7 @@ function AssignmentEditor({
       .map((e) => e.entityId),
   );
   const allowed = offeredButtonServices(inventory.services, entity || null, entityIds);
+  const identifyIds = new Set(inventory.identifyButtons);
   const targetDomains = new Set(buttonTargetDomains().filter((d) => inventory.services.some((s) => domainAllowsService(d, s))));
   const act = (change: () => void) => {
     change();
@@ -798,7 +802,13 @@ function AssignmentEditor({
         >
           <option value="">Service action without an entity target</option>
           {Object.values(h.entities)
-            .filter((e) => !e.disabled && !inventory.managed.some((m) => m.entityId === e.entityId) && targetDomains.has(e.domain))
+            .filter(
+              (e) =>
+                !e.disabled &&
+                ((!identifyIds.has(e.entityId) && !isIdentifyButton(e)) || e.entityId === initial?.entityId) &&
+                !inventory.managed.some((m) => m.entityId === e.entityId) &&
+                targetDomains.has(e.domain),
+            )
             .sort((a, b) => a.name.localeCompare(b.name))
             .map((e) => (
               <option key={e.entityId} value={e.entityId}>

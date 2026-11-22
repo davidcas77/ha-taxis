@@ -17,9 +17,11 @@ export type JevCheckReview = {
   outputTokens: number;
   estimatedUsd: number;
 };
-export type JevCheckFailure = { ok: false; error: string; code?: "stale" | "setup" };
+export type JevCheckFailure = { ok: false; error: string; code?: "stale" | "setup" | "busy" };
 export type JevCheckPreviewResponse = { ok: true; preview: JevCheckPreview } | JevCheckFailure;
 export type JevCheckRunResponse = { ok: true; review: JevCheckReview; cached: boolean } | JevCheckFailure;
+export type JevCheckAutoResponse =
+  { ok: true; preview: JevCheckPreview; review: JevCheckReview; cached: boolean; checkedAt: string; reviewedAt: string } | JevCheckFailure;
 
 const id = (v: unknown): v is string => typeof v === "string" && /^[\p{L}\p{N}_.:-]{1,255}$/u.test(v) && !v.startsWith("new:");
 const key = (v: unknown): v is RoomAutomationKey => ROOM_AUTOMATIONS.some((x) => x.key === v);

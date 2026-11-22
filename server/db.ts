@@ -65,6 +65,10 @@ const MIGRATIONS: string[] = [
      id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, action TEXT NOT NULL,
      page TEXT NOT NULL, scope TEXT NOT NULL, tier TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL
    );`,
+  `CREATE TABLE IF NOT EXISTS button_references (
+     control_id TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL,
+     details TEXT NOT NULL, PRIMARY KEY (control_id, id)
+   );`,
 ];
 
 const KEEP_SNAPSHOTS = 10;

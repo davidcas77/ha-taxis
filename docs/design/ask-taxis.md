@@ -18,8 +18,8 @@ open options first, then closes the window and restores launcher focus.
 - Existing provider enablement, key management, output limit and spending cap
   apply. Unpriced requests count tokens but not dollars; this limitation remains
   visible. Paid POSTs are not retried. Only one assistant request runs at a time.
-- Jev is independent. Only its existing Guide review and Settings test call it.
-  The assistant does not dynamically route arbitrary questions to Jev.
+- Jev is independent. Its configuration checks, Guide review and Settings test
+  run separately from the assistant.
 
 ## Explicit data boundary
 

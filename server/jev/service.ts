@@ -1,6 +1,6 @@
 import { GUIDE_CHECKS } from "../../shared/guide-checks.ts";
 import { jevEstimatedUsd, jevRecord, type JevModel, type JevReview, type JevReviewInput } from "../../shared/jev.ts";
-import type { JevCheckChoice, JevCheckReview } from "../../shared/jev-checks.ts";
+import type { JevCheckChoice, JevCheckFailure, JevCheckReview } from "../../shared/jev-checks.ts";
 import type { settingsStore } from "../settings.ts";
 import { httpJson, type FetchLike } from "../ai/http.ts";
 import type { JevLedger } from "./ledger.ts";
@@ -12,7 +12,7 @@ export class JevError extends Error {
   constructor(
     message: string,
     readonly status: 409 | 429 | 502 = 502,
-    readonly code?: "stale" | "setup",
+    readonly code?: JevCheckFailure["code"],
   ) {
     super(message);
   }
@@ -56,7 +56,7 @@ export function jevService(deps: { settings: ReturnType<typeof settingsStore>; l
     const key = deps.settings.jevKey();
     if (!key) throw new JevError("Add a Jev API key in Settings first.", 409, "setup");
     if (expectedModel !== undefined && expectedModel !== config.model) throw new JevError("The Jev model changed. Review the preview again.", 409, "stale");
-    if (inFlight) throw new JevError("A Jev request is already running. Wait for it to finish.", 409);
+    if (inFlight) throw new JevError("A Jev request is already running. Wait for it to finish.", 409, "busy");
     const id = deps.ledger.reserve(job, config.model, config.monthlyRequestLimit);
     if (id === null) throw new JevError("The monthly Jev request limit has been reached. Change it in Settings or wait for next month (UTC).", 429);
     inFlight = true;

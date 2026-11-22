@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { ChevronLeft, ChevronRight, CircleCheck, LampDesk } from "lucide-react";
 import { GUIDE_GOALS, ROOM_PROFILES, type AreaGuideChoice, type AreaReadiness, type RoomAutomation, type RoomAutomationKey } from "../../shared/guide.ts";
 import type { GuideTestRecord } from "../../shared/guide-checks.ts";
@@ -28,6 +28,14 @@ const steps = [
   { key: "review", label: "Review & install" },
   { key: "test", label: "Room test" },
 ] as const;
+const recordsDesktopQuery = "(min-width: 48rem)";
+function subscribeToRecordsWidth(onChange: () => void) {
+  const query = window.matchMedia(recordsDesktopQuery);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+const desktopRecordsVisible = () => window.matchMedia(recordsDesktopQuery).matches;
+
 function initialSelection(area: AreaReadiness): RoomSelection {
   const saved = readRoomAutomationSelection(area.areaId);
   if (
@@ -92,6 +100,8 @@ export function RoomGuide({
   const { busy, changes, inventorySaving, parametersSaving } = useTaxis();
   const [selection, setSelection] = useState(() => initialSelection(area));
   const [showDetails, setShowDetails] = useState(() => readRoomAutomationSelection(area.areaId)?.record === selection.record);
+  const desktop = useSyncExternalStore(subscribeToRecordsWidth, desktopRecordsVisible);
+  const jevVisible = desktop || showDetails;
   const [viewVersion, setViewVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -251,6 +261,7 @@ export function RoomGuide({
                       pendingAssignment={pendingAssignment}
                       saving={saving}
                       error={error}
+                      jevVisible={jevVisible}
                       go={go}
                       onContinue={() => void proceed(automation)}
                       onReview={() => step("review")}
@@ -275,6 +286,7 @@ export function RoomGuide({
                       installed={installed}
                       recipeError={recipeError}
                       verifying={verifying}
+                      jevVisible={jevVisible}
                       verify={verify}
                       go={go}
                       onTest={() => step("test")}

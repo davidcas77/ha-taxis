@@ -15,25 +15,25 @@ const jevChecks = [
   {
     key: "jev-buttons",
     name: "Button mapping check",
-    trigger: "Buttons → selected control → Check button mapping with Jev",
+    trigger: "Open or refresh a selected control in Buttons",
     data: "Selected control, supported presses, handler evidence and coverage",
   },
   {
     key: "jev-area",
     name: "Area assignment check",
-    trigger: "Not in any area → select one device or entity → Check area with Jev",
+    trigger: "Select one device or entity in Not in any area",
     data: "Selected device or entity names, area candidates and local placement evidence",
   },
   {
     key: "jev-equipment",
     name: "Room equipment check",
-    trigger: "Rooms → Equipment → Check equipment with Jev",
+    trigger: "Open or refresh a selected room’s sensor requirements",
     data: "Selected requirement, compatible sources, role and availability evidence",
   },
   {
     key: "jev-groups",
     name: "Room group plan check",
-    trigger: "Rooms → Review & install → Check group plan with Jev",
+    trigger: "Open or refresh a selected automation’s proposed groups",
     data: "Canonical Home Assistant groups, source members and planner status",
   },
 ];
@@ -61,7 +61,9 @@ export function AiAdminPanel() {
   const functions = useMemo<FunctionRow[]>(() => {
     if (!data) return [];
     const missing = (model: string | undefined) => model || "Model missing";
-    const jevEngine = `Jev · ${data.jev.enabled && data.jev.keySet ? "On demand" : "Needs setup"}`;
+    const jevConfigured = data.jev.enabled && data.jev.keySet;
+    const jevEngine = `Jev · ${jevConfigured ? "On demand" : "Needs setup"}`;
+    const automaticJev = `Jev · ${jevConfigured ? "On open or refresh" : "Needs setup"}`;
     return [
       ...Object.entries(ASSISTANT_ACTIONS).map(([key, a]) => {
         const status = data.ai.enabled ? "On demand" : "Off";
@@ -89,7 +91,7 @@ export function AiAdminPanel() {
         data: "Typed notes and public checklist criteria",
         authority: "Working / problem / not established; no saved observation or readiness change",
       },
-      ...jevChecks.map((check) => ({ ...check, engine: jevEngine, engineText: jevEngine, authority: "Advisory assessment of reviewed evidence" })),
+      ...jevChecks.map((check) => ({ ...check, engine: automaticJev, engineText: automaticJev, authority: "Advisory assessment of scoped evidence" })),
       {
         key: "tests",
         name: "Connection tests",
@@ -149,7 +151,7 @@ export function AiAdminPanel() {
     <div className="flex flex-col gap-5">
       <Section
         title="AI administration"
-        description="See where AI works, who triggers it and what it receives. Open the sparkle button on any page to ask Taxis. No AI function runs automatically in the background or writes to Home Assistant."
+        description="See where AI works, what triggers it and what it receives. Ask Taxis is available from the sparkle button. Enabled Jev checks run on selected items in view."
         actions={
           <Button onClick={() => setVersion((v) => v + 1)}>
             <RefreshCw className="size-4" aria-hidden />
@@ -186,7 +188,8 @@ export function AiAdminPanel() {
                 </Badge>
               </h3>
               <p className="mt-2 text-[13px] text-muted">
-                Standard checks work without an API key. Jev ({data.jev.model}) adds optional checks and room-note reviews when you choose to send them.
+                Standard checks work without an API key. When enabled, Jev ({data.jev.model}) checks supported items you open or refresh. Room-note review is
+                manual.
               </p>
               <p className="mt-2 text-[13px]">
                 {data.jevUsage.attempts} / {data.jevUsage.limit} monthly requests · {data.jevUsage.completed} completed · estimated $
@@ -212,7 +215,7 @@ export function AiAdminPanel() {
             </p>
             <p className="mt-2 text-[13px] text-muted">
               Readiness, capability counting, helper planning and Health scans remain rule based. Ask Taxis explains supplied evidence; it does not run the
-              Health scan, verify automations or consult Jev. No automatic background analysis or automatic execution is connected.
+              Health scan, verify automations or consult Jev. Jev assessments stay advisory. Use Taxis’s review controls to make Home Assistant changes.
             </p>
           </Card>
 

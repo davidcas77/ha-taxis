@@ -1004,17 +1004,26 @@ only suggests.
 ## Buttons
 
 Open **Buttons** from the main menu to find remotes, wall controls and any other button Home Assistant can
-see. Taxis lists them, shows which automations already react to each press, and
-lets you give a press, double press or hold an action. What you get is an ordinary
-Home Assistant automation that keeps working when Taxis is stopped. Nothing
-changes in Home Assistant until you apply the change.
+see. You can save your own button mappings for reference, see which automations
+already react to each press, or configure a Home Assistant action for a detected
+press. A configured action runs in Home Assistant even when Taxis is stopped.
+
+**Your button mappings.** Choose a control, add a mapping and enter the name or
+number of the physical button and how you press it. Pick an available function
+and its target, or describe what the button does. You can use this with a remote
+that reports no press types. These mappings are stored in Taxis for reference.
+Save, edit and remove them directly on the control. They do not configure Home
+Assistant or feed Jev checks.
 
 **What it lists.** One control per device (or per entity that has no device). The
 gestures come only from what each integration tells Home Assistant: the device
 triggers it advertises, event entities and their event types, sensors that report
 presses as a value, and button and input button entities. Taxis never guesses a
 button count or a click combination. A control whose integration exposes none says
-so, and you can't assign it until Home Assistant sees its gestures. A sensor that
+so. You can still record the buttons yourself, and executable actions become
+available when Home Assistant exposes the gestures. Configuration and diagnostic
+buttons, such as **Identify** on a light controller, don't count as press inputs.
+A sensor that
 reports presses as a value cannot show the same press twice in a row, and the
 control says that too. Use the search box to find a control by name, area or
 integration, **Show devices without button metadata** to include devices that look
@@ -1603,9 +1612,9 @@ settings and Jev. The overview only reads: nothing on it runs a model.
   model and this month's requests against the limit.
 - **Connected functions** lists, for every use of AI: the function, the model or
   status, what triggers it, what data it sends, and what authority it has. They
-  are the three Ask Taxis tasks, the Jev room-note review, the connection tests
-  and the button mapping review. None has authority beyond text advice or a
-  suggestion.
+  include the Ask Taxis tasks, Jev configuration checks, the Jev room-note review,
+  connection tests and the Medium button mapping review. They provide advice
+  and suggestions.
 - **Access and limitations** says what the AI can and can't see.
 - **Recent assistant requests** are the latest 30 Ask Taxis requests (200 kept)
   with time, task, page and context, model and result. Questions, replies and room
@@ -1631,9 +1640,13 @@ and Strong models. You can use it in these parts of Taxis:
 - **Room test.** Review whether the notes you typed report a check working, a
   problem, or insufficient observation. Editing the notes clears the review.
 
-The four configuration checks show a preview before you send. Their decisions
-are advisory and cannot change area assignments, room readiness, group
-membership, checklist observations or Home Assistant settings.
+With Jev enabled and a key saved, configuration checks run automatically for the
+selected control, a single selected unassigned record, or the sensor requirements
+and groups shown for the selected room automation. Taxis shows **Last checked**
+and whether the answer is new or cached. When it reuses a result, the original
+answer time stays visible in the details. Decisions are advisory and cannot
+change area assignments, room readiness, group membership, checklist
+observations or Home Assistant settings.
 
 Taxis uses its standard checks without a Jev key. When you open a configuration
 check before setup, Taxis asks whether you have a Jev API key. Choose to enter
@@ -1641,7 +1654,8 @@ the key in Settings or stay with the standard checks.
 
 Set it up in **Settings → Jev decisions**:
 
-- **Enable Jev decisions**, and choose the **model** (a pinned version).
+- **Enable Jev decisions**, and choose the **model** (a pinned version). Supported
+  checks send evidence for the records you view or refresh.
 - **Jev API key**, from TypeSafe's console. It is separate from your other AI keys,
   write-only like them, stored in the app's data (so in backups of the app) and
   never returned to the browser or written to the log. **Replace Jev key** and
@@ -1652,10 +1666,10 @@ Set it up in **Settings → Jev decisions**:
 - **Test connection** sends one fixed sentence and shows the model, the tokens and
   the estimated cost.
 
-Requests are made only when you press a button. They are not retried, redirects are
-not followed, and a request that takes longer than 25 seconds is dropped. Usage
-keeps counts and estimated cost, never the notes or the answers. What Jev receives
-is listed in [Data and privacy](#data-and-privacy).
+Configuration checks run in the relevant view. The room-note review and connection
+test still run on request. Requests taking longer than 25 seconds are dropped,
+and redirects are not followed. Usage keeps counts and estimated cost, never the
+notes or the answers. What Jev receives is listed in [Data and privacy](#data-and-privacy).
 
 ## Data and privacy
 
@@ -1698,9 +1712,10 @@ What each of the AI and Jev services receives, and when:
     token and the saved API keys are also removed from any text before it is sent.
 - **TypeSafe** receives your Jev API key as the login of the request, the Jev model
   name, and:
-  - when you send a Jev configuration check: the bounded evidence shown in the
-    preview for the selected control, unassigned item, sensor requirement, or
-    proposed room groups, with the questions and their allowed decisions;
+  - when an automatic Jev configuration check needs a new decision: the bounded
+    evidence shown in the check details for the selected control, unassigned item,
+    sensor requirement, or proposed room groups, with the questions and their
+    allowed decisions;
   - when you press **Review notes with Jev** in the Guide: the notes you typed (up
     to 2,000 characters, with the Home Assistant token and saved keys removed) and the descriptions of the
     checklist items you selected. Not the area, entities, states or saved test
