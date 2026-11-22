@@ -10,6 +10,8 @@ export type ReadContext = {
   h: Hierarchy;
   reference: ButtonReferenceReader;
   name: (id: string) => string;
+  actionInputs?: (step: Record<string, unknown>) => readonly string[];
+  preferConfiguredTargets?: boolean;
 };
 type Walk = { ctx: ReadContext; actions: ActionEvidence[]; notes: Set<string>; remaining: number; branch: number };
 
@@ -319,13 +321,20 @@ async function serviceAction(step: Record<string, unknown>, path: Path, walk: Wa
       : service === "script.turn_on" || service === "scene.turn_on"
         ? group.output.filter((id) => id.startsWith(`${scope}.`))
         : [];
-  const publicTargets = (refs.length && !staticTargets.length ? refs : staticTargets).map((id) => targetOf(ctx, id));
+  const configuredInputs = !path.via.length ? (ctx.actionInputs?.(step) ?? []) : [];
+  const configuredTargets = ctx.preferConfiguredTargets && ids.length > 0 ? ids.filter((id) => !isPrivate(id)) : staticTargets;
+  const visibleTargets = [...new Set([...configuredInputs, ...(!configuredInputs.length && !configuredTargets.length ? refs : configuredTargets)])];
+  const publicTargets = visibleTargets.slice(0, MAX_TARGETS).map((id) => targetOf(ctx, id));
   const hits: ActionHit[] = CONTROLS_OUTPUT.has(scope)
     ? group.output.filter((id) => !isPrivate(id) && ctx.h.entities[id] && !ctx.h.entities[id].disabled).map((id) => ({ id, operation }))
     : [];
-  const dynamic = uncertain || group.incomplete || staticTargets.length < new Set([...ids, ...group.output]).size;
+  const dynamic = uncertain || group.incomplete || staticTargets.length < new Set([...ids, ...group.output]).size || visibleTargets.length > MAX_TARGETS;
   emit(walk, path, service, publicTargets, hits, dynamic, serviceSettings(step.data));
   if (dynamic) walk.notes.add("Some targets are dynamic, resolved only as candidates, private, or omitted by the read limit.");
+  if (configuredInputs.length) {
+    walk.notes.add("The displayed lights are script inputs. The script chooses what to do at runtime.");
+    return;
+  }
   if (
     ["automation.trigger", "scene.apply", "script.toggle", "homeassistant.toggle", "homeassistant.turn_on"].includes(service) &&
     (service.startsWith("automation.") ||

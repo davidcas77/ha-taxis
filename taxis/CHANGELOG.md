@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.100
+
+- **Press details.** Tree and Table show a short summary for each press. Expand any press to see its automations, conditions, and assignment controls.
+- **Aqara H2 switches.** Open the matching HomeKit button inputs from the Aqara record. Taxis verifies the installed H2 router blueprint and shows the configured actions and targets for each matched press.
+
 ## 0.7.99
 
 - **Buttons.** The Tree groups presses under each button. Switch to Table to compare buttons in columns and press types in rows. HomeKit button numbers and press types now appear on the correct axes.

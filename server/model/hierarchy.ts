@@ -37,6 +37,8 @@ export type RawDevice = {
   entry_type?: string | null;
   disabled_by?: string | null;
   labels?: string[];
+  identifiers?: [string, string][];
+  serial_number?: string | null;
 };
 export type RawEntity = {
   entity_id: string;
@@ -88,6 +90,7 @@ export type RawState = {
   attributes?: {
     friendly_name?: string;
     device_class?: string;
+    event_types?: unknown;
     unit_of_measurement?: string;
     entity_id?: unknown;
     id?: unknown;

@@ -10,6 +10,7 @@ import {
   type ButtonGestureAnalysis,
 } from "../../shared/buttons.ts";
 import type { Hierarchy } from "../../shared/types.ts";
+import { AQARA_H2_EVENT_CONDITION, aqaraH2LightInputs, aqaraH2RouterMatch } from "./aqara-h2-router.ts";
 import { conditions, incompatible, list, strings, type PressFacts } from "./analysis-conditions.ts";
 import { createReferenceRead, inspectActions, type ActionEvidence, type ReadContext } from "./analysis-actions.ts";
 import { buttonHash } from "./identity.ts";
@@ -25,7 +26,7 @@ const has = (v: object, key: string) => Object.hasOwn(v, key);
 type AnalysisRead = ButtonRead & { h: Hierarchy };
 type Match = { level: "exact" | "possible"; facts: PressFacts | null; note?: string; disabled?: boolean };
 type Handler = { display: ButtonAnalysisHandler; actions: ActionEvidence[]; mayRun: boolean; filtered: boolean };
-type Candidate = { config: ButtonEvidence; match: Match };
+type Candidate = { config: ButtonEvidence; match: Match; routerActions?: readonly unknown[] };
 
 function selectorCoversEntity(target: Record<string, unknown>, source: string, h: Hierarchy): boolean {
   const entity = h.entities[source];
@@ -169,12 +170,14 @@ export async function buildButtonAnalysis(
     const map = managed.get(a.id);
     const match = candidate.match;
     const config = a.config ?? {};
+    const router = candidate.routerActions;
     const bindings = map?.bindings.filter((b) => b.controlId === control.id && b.gestureKey === gesture?.key) ?? [];
     const handbook = new Set<string>();
     if (match.note) handbook.add(match.note);
-    const isBlueprint = config.use_blueprint !== undefined;
+    const isBlueprint = config.use_blueprint !== undefined && !router;
     if (isBlueprint) handbook.add("Only a blueprint input reference was identified. The blueprint’s press logic and actions were not read.");
     const top = map ? [] : conditions(config.conditions ?? config.condition, { facts: match.facts, name: ctx.name });
+    if (router) top.unshift({ text: AQARA_H2_EVENT_CONDITION, truth: null, limits: [] });
     const managedActions = bindings
       .filter((b) => b.enabled)
       .map((b) => ({
@@ -183,9 +186,11 @@ export async function buildButtonAnalysis(
         data: b.action.data,
       }));
     if (map && bindings.some((b) => !b.enabled)) handbook.add("A managed binding for this press is disabled.");
-    const steps = map ? managedActions : (config.actions ?? config.action);
+    const steps = router ?? (map ? managedActions : (config.actions ?? config.action));
     const inspect = !match.disabled && !isBlueprint && !!a.config;
-    const result = inspect ? await inspectActions(steps, top, match.facts, ctx) : { actions: [], notes: [] };
+    const result = inspect
+      ? await inspectActions(steps, top, match.facts, router ? { ...ctx, actionInputs: aqaraH2LightInputs, preferConfiguredTargets: true } : ctx)
+      : { actions: [], notes: [] };
     for (const note of result.notes) handbook.add(note);
     if (inspect && !result.actions.length && !handbook.size) handbook.add("No readable action was found for this press.");
     if (a.enabled === null) handbook.add("Home Assistant did not report whether this automation is enabled.");
@@ -228,6 +233,17 @@ export async function buildButtonAnalysis(
           return bound.length ? [{ config: a, match: { level: "exact", facts: null, disabled: bound.every((binding) => !binding.enabled) } }] : [];
         }
         if (!a.config) return [];
+        const router = aqaraH2RouterMatch(a.config, g, read.aqaraH2RouterVerified === true);
+        if (router !== undefined)
+          return router
+            ? [
+                {
+                  config: a,
+                  ...(router.level === "exact" && { routerActions: router.actions }),
+                  match: { level: router.level, facts: null, note: router.note },
+                },
+              ]
+            : [];
         const match = staticMatch(a.config, g, read.h);
         if (match) return [{ config: a, match }];
         if (existing.has(a.id))

@@ -1,5 +1,6 @@
 import { BLUEPRINT_PATH_RE, SCRIPT_PATHS } from "../../shared/blueprints.ts";
 import { DAY_KEYS, MAX_RANGES_PER_DAY } from "../../shared/periods.ts";
+import { isAqaraH2Probe } from "./aqara-h2-probe.ts";
 
 // Minimal Home Assistant WebSocket client.
 // https://developers.home-assistant.io/docs/api/websocket
@@ -49,6 +50,8 @@ export const READ_COMMANDS = new Set([
   // The blueprints of a domain, to see which Taxis blueprints exist and their
   // version: {domain: "automation"}.
   "blueprint/list",
+  // Read-only substitution with fixed inputs for the known H2 router.
+  "blueprint/substitute",
   // Dashboards other than the default one, and a dashboard's stored config.
   "lovelace/dashboards/list",
   "lovelace/config",
@@ -61,10 +64,12 @@ export const READ_COMMANDS = new Set([
   "config_entries/get",
 ]);
 
-export function assertReadCommand(type: string): void {
+export function assertReadCommand(type: string, payload: Record<string, unknown> = {}): void {
   if (!READ_COMMANDS.has(type)) {
     throw new Error(`Refusing to send "${type}" to Home Assistant: it isn't a read.`);
   }
+  if (type === "blueprint/substitute" && !isAqaraH2Probe(payload))
+    throw new Error("Refusing to substitute a blueprint outside the fixed Aqara H2 router check.");
 }
 
 // Edits Apply can make: registry edits from the change list, and dashboard
@@ -312,7 +317,7 @@ export class HaSocket {
 
   /** Sends one read command and resolves with its result. */
   async command<T>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
-    assertReadCommand(type);
+    assertReadCommand(type, payload);
     return this.send<T>(type, payload);
   }
 

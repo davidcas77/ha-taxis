@@ -125,9 +125,18 @@ class ButtonsRegression(fixture.GuideRegression):
     def branch(self, button, control='Bedroom wall control'):
         return self.tree(control).locator(f'details[aria-label="{button}"]')
 
+    def press(self, button='Right', gesture='Short press', control='Bedroom wall control'):
+        return self.branch(button, control).locator(f'details[aria-label="{button} · {gesture}"]')
+
+    def show_press(self, details):
+        if details.get_attribute('open') is None:
+            details.locator(':scope > summary').click()
+
     def row(self, button='Right', gesture='Short press', source='aqara device trigger', control='Bedroom wall control'):
         """The leaf for one Home Assistant trigger source."""
-        return self.branch(button, control).get_by_role('group', name=gesture + ' · ' + source, exact=True)
+        details = self.press(button, gesture, control)
+        self.show_press(details)
+        return details.get_by_role('group', name=gesture + ' · ' + source, exact=True)
 
     def editor(self, row, target='light.living_all', service='light.toggle'):
         row.get_by_role('button', name=re.compile(r'^Assign action to ')).click()
@@ -221,14 +230,33 @@ class ButtonsRegression(fixture.GuideRegression):
         expect(layout.get_by_role("button", name="Tree", exact=True)).to_have_attribute("aria-pressed", "true")
         expect(self.tree(name).locator(":scope > li > details > summary")).to_have_text(["Button 1", "Button 2"])
         for button in ("Button 1", "Button 2"):
-            expect(self.branch(button, name).get_by_role("heading", level=3)).to_have_text(["Single press", "Double press", "Long press"])
-        self.branch("Button 1", name).locator("summary").click()
-        expect(self.row("Button 1", "Single press", "homekit_controller device trigger", name)).not_to_be_visible()
-        expect(self.row("Button 2", "Single press", "homekit_controller device trigger", name)).to_be_visible()
+            expect(self.branch(button, name)).to_have_attribute("open", "")
+            for press in ("Single press", "Double press", "Long press"):
+                details = self.press(button, press, name)
+                expect(details).not_to_have_attribute("open", "")
+                summary = details.locator(":scope > summary")
+                expect(summary).to_be_visible()
+                expect(summary).to_contain_text(press)
+                expect(summary).to_contain_text("No readable handler matched")
+                expect(details.get_by_text("homekit_controller device trigger", exact=True)).not_to_be_visible()
+                expect(details.get_by_role("button", name=re.compile("Assign action"))).to_have_count(0)
+        first = self.press("Button 1", "Single press", name)
+        neighbor = self.press("Button 1", "Double press", name)
+        self.show_press(first)
+        expect(first.get_by_text("homekit_controller device trigger", exact=True)).to_be_visible()
+        expect(neighbor).not_to_have_attribute("open", "")
+        self.show_press(neighbor)
+        first.locator(":scope > summary").click()
+        expect(first).not_to_have_attribute("open", "")
+        expect(neighbor).to_have_attribute("open", "")
+        self.branch("Button 1", name).locator(":scope > summary").click()
+        expect(first.locator(":scope > summary")).not_to_be_visible()
+        expect(self.press("Button 2", "Single press", name).locator(":scope > summary")).to_be_visible()
         layout.get_by_role("button", name="Table", exact=True).click()
         table = self.table(name)
         expect(table.get_by_role("columnheader")).to_have_text(["Press type", "Button 1", "Button 2"])
         expect(table.get_by_role("rowheader")).to_have_text(["Single press", "Double press", "Long press"])
+        expect(table.locator("td > details:not([open]) > summary")).to_have_text(["No readable handler matched"] * 6)
         self.page.reload(wait_until="networkidle")
         expect(layout.get_by_role("button", name="Table", exact=True)).to_have_attribute("aria-pressed", "true")
         expect(table).to_be_visible()
@@ -237,9 +265,19 @@ class ButtonsRegression(fixture.GuideRegression):
         self.assertTrue(scroll.evaluate("el => el.scrollWidth > el.clientWidth"))
         self.assertFalse(self.page.evaluate("document.documentElement.scrollWidth > innerWidth"))
         double = table.get_by_role("row", name=re.compile("^Double press"))
-        self.save(self.editor(double.get_by_role("cell").nth(1)))
+        target = double.get_by_role("cell").nth(1).locator("details[aria-label='Button 2 · Double press']")
+        neighbor = double.get_by_role("cell").nth(0).locator("details[aria-label='Button 1 · Double press']")
+        self.show_press(target)
+        expect(neighbor).not_to_have_attribute("open", "")
+        self.show_press(neighbor)
+        target.locator(":scope > summary").click()
+        expect(target).not_to_have_attribute("open", "")
+        expect(neighbor).to_have_attribute("open", "")
+        self.show_press(target)
+        self.save(self.editor(target))
         self.assertEqual(self.queue_calls[-1]["gestureKey"], "2-double_press")
         layout.get_by_role("button", name="Tree", exact=True).click()
+        expect(self.press("Button 2", "Double press", name).locator(":scope > summary")).to_contain_text("Queued · Toggle")
         expect(self.row("Button 2", "Double press", "homekit_controller device trigger", name)).to_contain_text("In changes")
         self.assertFalse(self.page.evaluate("document.documentElement.scrollWidth > innerWidth"))
         self.assertEqual(self.posts + self.puts + self.applies, [])
@@ -253,13 +291,14 @@ class ButtonsRegression(fixture.GuideRegression):
                        "trigger": {**original["trigger"], "subtype": "right_short_alternative"}}
         control["gestures"].extend((extra, same_source))
         self.open_control()
-        branch = self.branch("Right")
-        expect(branch.get_by_role("heading", name="Short press", exact=True)).to_have_count(1)
+        press = self.press()
+        expect(press).to_have_count(1)
+        self.show_press(press)
         native_keys = sorted((original["key"], same_source["key"]))
         original_name = f"Short press · aqara device trigger · Source {native_keys.index(original['key']) + 1}"
         alternate_name = f"Short press · aqara device trigger · Source {native_keys.index(same_source['key']) + 1}"
-        native = branch.get_by_role("group", name=original_name, exact=True)
-        alternate = branch.get_by_role("group", name=alternate_name, exact=True)
+        native = press.get_by_role("group", name=original_name, exact=True)
+        alternate = press.get_by_role("group", name=alternate_name, exact=True)
         expect(alternate).to_contain_text("right_short_alternative")
         expect(native.get_by_role("button", name=re.compile("Assign action to .*Source " + str(native_keys.index(original["key"]) + 1)))).to_be_visible()
         expect(alternate.get_by_role("button", name=re.compile("Assign action to .*Source " + str(native_keys.index(same_source["key"]) + 1)))).to_be_visible()
@@ -272,12 +311,38 @@ class ButtonsRegression(fixture.GuideRegression):
         column_index = table.get_by_role("columnheader").all_inner_texts().index("Right") - 1
         row = table.get_by_role("row", name=re.compile("^Short press"))
         right_cell = row.get_by_role("cell").nth(column_index)
+        self.show_press(right_cell.locator("details[aria-label='Right · Short press']"))
         expect(right_cell.get_by_role("group", name="Short press · HA event types", exact=True)).to_contain_text("In changes")
         self.save(self.editor(right_cell.get_by_role("group", name=original_name, exact=True), service="light.turn_off"))
         self.assertEqual([request["gestureKey"] for request in self.queue_calls], [extra["key"], original["key"]])
         self.assertEqual(len(self.queued[0]["after"]["button_map"]["bindings"]), 2)
         expect(table.get_by_role("rowheader", name="Short press", exact=True)).to_have_count(1)
         self.assertEqual(self.posts + self.puts + self.applies, [])
+
+    def test_buttons_blocked_mapping_details_stay_with_the_press_and_preserve_legacy_warnings(self):
+        control = next(c for c in self.inv['controls'] if c['id'] == 'device:demo_wall_buttons')
+        gesture = next(g for g in control['gestures'] if g['button'] == 'Right' and g['gesture'] == 'Short press')
+        binding = {'key': 'mapped', 'controlId': control['id'], 'gestureKey': gesture['key'], 'button': gesture['button'],
+                   'gesture': gesture['gesture'], 'trigger': gesture['trigger'], 'enabled': True,
+                   'action': {'service': 'light.toggle', 'entityId': 'light.living_all', 'data': {}}}
+        legacy = {**binding, 'key': 'legacy', 'gestureKey': 'no-longer-exposed', 'gesture': 'Previous press'}
+        self.inv['managed'].append({'id': 'taxis_fixture', 'entityId': 'automation.taxis_fixture', 'alias': 'Fixture',
+            'enabled': True, 'fingerprint': 'fixture',
+            'map': {'version': 1, 'output': 'light.living_all', 'expected': None, 'allowExisting': False, 'bindings': [binding, legacy]},
+            'blocked': [{'key': 'mapped', 'reason': 'Unsupported mapped action.'}, {'key': 'legacy', 'reason': 'Unsupported legacy action.'}]})
+        self.open_control()
+        press = self.press()
+        expect(press.locator(':scope > summary')).to_contain_text('Blocked by Taxis · Toggle')
+        expect(self.page.get_by_text('Unsupported legacy action.')).to_be_visible()
+        expect(self.page.get_by_text('Unsupported mapped action.')).not_to_be_visible()
+        self.show_press(press)
+        expect(press.get_by_text('Unsupported mapped action.')).to_be_visible()
+        expect(press.get_by_role('link', name='Open it in HA')).to_have_attribute('href', '/config/automation/edit/taxis_fixture')
+        self.page.get_by_role('button', name='Table', exact=True).click()
+        expect(self.table().locator('details[aria-label="Right · Short press"] > summary')).to_contain_text('Blocked by Taxis · Toggle')
+        expect(self.page.get_by_text('Unsupported mapped action.')).not_to_be_visible()
+        expect(self.page.get_by_text('Unsupported legacy action.')).to_be_visible()
+        self.assertEqual(self.queue_calls + self.posts + self.puts + self.applies, [])
 
     def test_buttons_three_inputs_share_one_group_map_with_on_off_toggle(self):
         self.open_control()
@@ -375,6 +440,7 @@ class ButtonsRegression(fixture.GuideRegression):
     def test_buttons_press_evidence_survives_an_unavailable_ai_provider(self):
         control = next(c for c in self.inv['controls'] if c['id'] == 'device:demo_wall_buttons')
         gesture = next(g for g in control['gestures'] if g['button'] == 'Left' and g['gesture'] == 'Short press')
+        control['existing'][gesture['key']] = []
         target = {'id': 'light.living_all', 'name': 'Living room lights'}
         handler = {'id': 'fixture_lights', 'name': 'Bedtime lights', 'enabled': True, 'match': 'exact', 'managed': False,
                    'conditions': ['After sunset'], 'notes': [], 'actions': [{'service': 'light.turn_on', 'targets': [target],
@@ -388,6 +454,11 @@ class ButtonsRegression(fixture.GuideRegression):
         self.inv['coverage'] = self.ai_preview['analysis']['coverage']
         self.ai_results = [(502, {'ok': False, 'error': 'AI is disabled.'})]
         self.open_control()
+        press = self.press(button='Left')
+        summary = press.locator(':scope > summary')
+        expect(summary).to_contain_text('Conditional action · On · Living room lights · 1 possible match · 1 overlap to review')
+        expect(press.get_by_text('After sunset', exact=True)).not_to_be_visible()
+        expect(press.get_by_role('link', name='Bedtime lights')).to_have_count(0)
         row = self.row(button='Left')
         expect(row.get_by_role('link', name='Bedtime lights')).to_have_attribute('href', '/config/automation/edit/fixture_lights')
         expect(row).to_contain_text('Trigger match')

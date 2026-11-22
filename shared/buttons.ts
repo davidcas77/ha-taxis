@@ -49,6 +49,7 @@ export type ButtonControl = {
   notes: string[];
   existing: Record<string, ButtonExisting[]>;
   related?: ButtonExisting[];
+  companionControl?: { id: string; name: string; integration: "aqara_lanlink" | "homekit_controller" };
 };
 // `blocked` lists the bindings of the map that Taxis's safety rules (see
 // button-actions.ts) refuse now. Such a map is still read and shown.

@@ -1,0 +1,122 @@
+{
+  "mode": "queued",
+  "max": 10,
+  "trigger_variables": {
+    "t1": "event.taxis_blueprint_probe_1"
+  },
+  "triggers": [
+    {
+      "trigger": "event",
+      "event_type": "state_changed",
+      "event_data": {
+        "entity_id": "{{ t1 }}"
+      }
+    },
+    {
+      "trigger": "event",
+      "event_type": "state_changed",
+      "event_data": {
+        "entity_id": "{{ t1 | regex_replace(find='_[0-9]$', replace='') ~ '_2' }}"
+      }
+    },
+    {
+      "trigger": "event",
+      "event_type": "state_changed",
+      "event_data": {
+        "entity_id": "{{ t1 | regex_replace(find='_[0-9]$', replace='') ~ '_3' }}"
+      }
+    },
+    {
+      "trigger": "event",
+      "event_type": "state_changed",
+      "event_data": {
+        "entity_id": "{{ t1 | regex_replace(find='_[0-9]$', replace='') ~ '_4' }}"
+      }
+    }
+  ],
+  "variables": {
+    "e1": "event.taxis_blueprint_probe_1",
+    "base": "{{ e1 | regex_replace(find='_[0-9]$', replace='') }}",
+    "e2": "{{ base ~ '_2' }}",
+    "e3": "{{ base ~ '_3' }}",
+    "e4": "{{ base ~ '_4' }}",
+    "eid": "{{ trigger.event.data.entity_id | default('') }}",
+    "etype": "{{ trigger.event.data.new_state.attributes.event_type | default('') if trigger.event.data.new_state else '' }}"
+  },
+  "conditions": [
+    {
+      "condition": "template",
+      "value_template": "{{ trigger.event.data.old_state is not none\n   and trigger.event.data.new_state is not none\n   and trigger.event.data.old_state.state != 'unavailable'\n   and trigger.event.data.new_state.state not in ['unavailable', 'unknown'] }}\n"
+    }
+  ],
+  "actions": [
+    {
+      "choose": [
+        {
+          "conditions": "{{ eid == e1 and etype == 'single_press' }}",
+          "sequence": [
+            {
+              "stop": "Taxis contract probe: b1_single"
+            }
+          ]
+        },
+        {
+          "conditions": "{{ eid == e2 and etype == 'single_press' }}",
+          "sequence": [
+            {
+              "stop": "Taxis contract probe: b2_single"
+            }
+          ]
+        },
+        {
+          "conditions": "{{ eid == e3 and etype == 'single_press' }}",
+          "sequence": [
+            {
+              "stop": "Taxis contract probe: b3_single"
+            }
+          ]
+        },
+        {
+          "conditions": "{{ eid == e3 and etype == 'double_press' }}",
+          "sequence": [
+            {
+              "stop": "Taxis contract probe: b3_double"
+            }
+          ]
+        },
+        {
+          "conditions": "{{ eid == e3 and etype == 'long_press' }}",
+          "sequence": [
+            {
+              "stop": "Taxis contract probe: b3_long"
+            }
+          ]
+        },
+        {
+          "conditions": "{{ eid == e4 and etype == 'single_press' }}",
+          "sequence": [
+            {
+              "stop": "Taxis contract probe: b4_single"
+            }
+          ]
+        },
+        {
+          "conditions": "{{ eid == e4 and etype == 'double_press' }}",
+          "sequence": [
+            {
+              "stop": "Taxis contract probe: b4_double"
+            }
+          ]
+        },
+        {
+          "conditions": "{{ eid == e4 and etype == 'long_press' }}",
+          "sequence": [
+            {
+              "stop": "Taxis contract probe: b4_long"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
