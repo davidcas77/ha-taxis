@@ -7,7 +7,8 @@ import { sameValue } from "../../shared/changes.ts";
 import { planRecipes, recipeChangeInputs, RECIPE_LABEL, type RecipeInstalled } from "../../shared/recipes.ts";
 import type { ChangeInput, Hierarchy } from "../../shared/types.ts";
 import { ExistingLightControllers, LightingBehavior } from "./guide-room-lighting.tsx";
-import { useTaxis, type Route } from "./state.tsx";
+import { JevCheck } from "./jev-check.tsx";
+import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
 import { Button } from "./ui.tsx";
 
 export function RoomAutomationReview({
@@ -160,6 +161,7 @@ export function RoomAutomationReview({
 
       <RoomGroupProposals
         h={h}
+        area={area}
         automation={automation}
         activeHelperId={helper?.row.canonicalId}
         canPropose={Boolean(canPropose)}
@@ -234,6 +236,7 @@ export function RoomAutomationReview({
 
 function RoomGroupProposals({
   h,
+  area,
   automation,
   activeHelperId,
   canPropose,
@@ -242,6 +245,7 @@ function RoomGroupProposals({
   go,
 }: {
   h: Hierarchy;
+  area: AreaReadiness;
   automation: RoomAutomation;
   activeHelperId?: string;
   canPropose: boolean;
@@ -253,7 +257,15 @@ function RoomGroupProposals({
   if (!groups.length) return null;
   return (
     <section aria-label="Home Assistant group plans" className="grid gap-2 rounded-lg border border-line bg-surface p-3">
-      <h3 className="text-sm font-semibold">Home Assistant groups</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">Home Assistant groups</h3>
+        <JevCheck
+          subject={{ kind: "groups", areaId: area.areaId, automationKey: automation.key }}
+          label="Check group plan with Jev"
+          title={`Jev · ${area.name} group plan`}
+          openSettings={() => go(JEV_SETTINGS)}
+        />
+      </div>
       <ul className="grid min-w-0 gap-2 sm:grid-cols-2">
         {groups.map(({ row, required, available, pending }) => {
           const disposition = pending

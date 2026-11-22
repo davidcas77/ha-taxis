@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.98
+
+- **Buttons.** See what each press does, the conditions that apply, the source automations and possible conflicts.
+- **Room setup.** See suggested areas for unassigned devices and entities, find equipment for a room requirement and review proposed light and motion groups.
+- **Jev.** With a TypeSafe key saved in Taxis, review button behavior, area placement, sensor suitability and group membership. Taxis shows the evidence before sending it, and the results are advisory.
+
 ## 0.7.97
 
 - **Room automations.** Choose an automation from the Records list and see its requirements on the right.

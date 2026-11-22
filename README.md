@@ -127,12 +127,12 @@ The commands Taxis may send are fixed in `server/ha/socket.ts` and
 
 Every outside address Taxis can contact, and when:
 
-| Address                                                                                                      | Only when                                                                                         | What it receives                                                                                                                                       |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Your Home Assistant, through the Supervisor (`ws://supervisor/core/websocket`, `http://supervisor/core/api`) | Always                                                                                            | Reads of the registries, states, services and automation configs; writes when you apply or confirm an edit                                             |
-| Anthropic (`https://api.anthropic.com`)                                                                      | AI is on, provider Anthropic, and you press Send, Load models, a Test button or the button review | Your API key; the question, reviewed context and up to six earlier messages (Ask Taxis); the reviewed summary (button review); a fixed sentence (Test) |
-| The OpenAI-compatible service you set (its base URL)                                                         | AI is on, that provider, and the same actions                                                     | The same as above                                                                                                                                      |
-| TypeSafe (`https://api.typesafe.ai/v1/systemone`)                                                            | Jev is on with a key, and you press **Review notes with Jev** or Test                             | Your Jev key and model; the notes you typed (up to 2,000 characters) and the descriptions of the selected checklist items; a fixed sentence (Test)     |
+| Address                                                                                                      | Only when                                                                                               | What it receives                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Your Home Assistant, through the Supervisor (`ws://supervisor/core/websocket`, `http://supervisor/core/api`) | Always                                                                                                  | Reads of the registries, states, services and automation configs; writes when you apply or confirm an edit                                                                                        |
+| Anthropic (`https://api.anthropic.com`)                                                                      | AI is on, provider Anthropic, and you press Send, Load models, a Test button or the button review       | Your API key; the question, reviewed context and up to six earlier messages (Ask Taxis); the reviewed summary (button review); a fixed sentence (Test)                                            |
+| The OpenAI-compatible service you set (its base URL)                                                         | AI is on, that provider, and the same actions                                                           | The same as above                                                                                                                                                                                 |
+| TypeSafe (`https://api.typesafe.ai/v1/systemone`)                                                            | Jev is on with a key, and you send a Jev check, press **Review notes with Jev**, or test the connection | Your Jev key and model; the previewed evidence and questions for the selected check; typed notes and selected checklist criteria for a room-note review; a fixed sentence for the connection test |
 
 AI and Jev receive no Home Assistant token, state values, attributes or
 automation YAML, redirects are not followed, and neither can change Home
@@ -169,14 +169,21 @@ does not independently read the complete Health report or automation history.
 model routing, data access, usage and the last 30 assistant request results.
 At most 200 request metadata records are kept, with no questions, answers or room
 identities. Chats stay in memory and clear when closed, scope changes or the app
-reloads. No background AI analysis runs. Jev remains a separate manual room-note
-review, not a hidden second model in the assistant. See [Ask Taxis](docs/design/ask-taxis.md).
+reloads. Analysis runs on request. See [Ask Taxis](docs/design/ask-taxis.md).
 
 **Buttons** shows each press's matching automations, actions, conditions and
 potential overlaps from the configurations Taxis can read. **Analyze with AI**
 shows the exact evidence for the selected control. **Send this review to Medium
 AI** sends it for an explanation. Button assignments and Apply remain separate
 actions. Button analysis contributes to shared AI usage.
+
+**Jev** can review the behavior of a selected control, suggest an existing area
+for an unassigned device or entity, review sensors for a room requirement, and
+check whether proposed group members belong together. Taxis uses its standard
+checks without a Jev key. Opening a Jev check before setup asks whether you
+have a key and lets you continue with standard checks. Enable Jev and save your
+TypeSafe API key in **Settings → Jev decisions**. Each Jev check shows the
+evidence before sending it to TypeSafe. Its decisions never change Home Assistant.
 
 ## Development
 

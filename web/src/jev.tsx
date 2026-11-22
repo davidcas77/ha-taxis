@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { JEV_MODELS, validateJev, type JevModel, type JevUsage, type JevView } from "../../shared/jev.ts";
 import { api } from "./api.ts";
 import { useDraftGuard } from "./draft-guard.ts";
 import { useTaxis } from "./state.tsx";
 import { Button, inputClass } from "./ui.tsx";
 
-export function JevSection() {
+export function JevSection({ focus = false }: { focus?: boolean }) {
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (focus) section.current?.focus();
+  }, [focus]);
   const [saved, setSaved] = useState<JevView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
@@ -23,12 +27,12 @@ export function JevSection() {
     };
   }, [generation]);
   return (
-    <section id="jev-settings" aria-label="Jev decisions" className="flex flex-col gap-4 border-t border-line pt-6">
+    <section ref={section} id="jev-settings" tabIndex={-1} aria-label="Jev decisions" className="flex flex-col gap-4 border-t border-line pt-6">
       <div>
         <h2 className="text-sm font-semibold">Jev decisions</h2>
         <p className="mt-1 max-w-[72ch] text-[13px] text-muted">
-          An optional TypeSafe decision service, separate from your Low, Medium and Strong models. It can review room-test notes in the Guide. Suggestions do
-          not change checkmarks, readiness, helpers or devices.
+          Standard checks use Home Assistant evidence and work without a key. Add a TypeSafe API key to use optional Jev assessments for buttons, area
+          assignments, equipment and group plans, or review your room-test notes. You choose when to send each check.
         </p>
       </div>
       {error && (
@@ -162,7 +166,7 @@ function JevForm({ saved, onSaved, reload }: { saved: JevView; onSaved: (v: JevV
         )}
         <p className="max-w-[85ch] text-xs text-muted">
           The key is stored in Taxis's app data and included in Home Assistant app backups. Saved keys are never returned to the browser or written to logs. Jev
-          receives room notes and checklist descriptions only when you click Review notes with Jev.
+          receives evidence only when you send an optional check or request a room-note review.
         </p>
       </div>
       <p className="text-xs text-muted">

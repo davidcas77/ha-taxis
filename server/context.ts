@@ -4,6 +4,7 @@ import type { ChangeStore } from "./changes/store.ts";
 import type { applyHistory } from "./changes/history.ts";
 import type { AiLedger } from "./ai/ledger.ts";
 import type { AiService } from "./ai/service.ts";
+import type { FetchLike } from "./ai/http.ts";
 import type { JevLedger } from "./jev/ledger.ts";
 import type { HaTargetResult } from "./config.ts";
 import type { HaReader } from "./ha/reader.ts";
@@ -46,6 +47,8 @@ export type AppDeps = {
   logger: AppLogger;
   // Registers a secret (an AI key) with the logger so it is never written.
   protectSecret?: (secret: string) => void;
+  // Tests can exercise the fixed Jev endpoint without leaving the process.
+  jevFetch?: FetchLike;
   // Where the built web UI is; null serves none (tests).
   webRoot?: string | null;
 };

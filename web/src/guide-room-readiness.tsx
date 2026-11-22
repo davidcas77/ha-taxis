@@ -7,7 +7,8 @@ import { areaInventory, defaultCapability, setAppliance, setCounts, setRole, set
 import { roomEquipmentCandidates, type RoomEquipmentCandidate } from "../../shared/room-equipment-candidates.ts";
 import type { EntityItem, Hierarchy } from "../../shared/types.ts";
 import { placementEvidenceText } from "./assignment-suggestion.tsx";
-import { useTaxis, type Route } from "./state.tsx";
+import { JevCheck } from "./jev-check.tsx";
+import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
 import { Button, inputClass } from "./ui.tsx";
 
 type Props = {
@@ -71,7 +72,7 @@ export function RoomAutomationReadiness({ h, area, automation, pendingAssignment
         <div className="grid gap-2">
           <h3 className="text-sm font-semibold">Required equipment</h3>
           {automation.required.map((check) => (
-            <EquipmentRequirement key={check.key} h={h} area={area} check={check} />
+            <EquipmentRequirement key={check.key} h={h} area={area} check={check} automationKey={automation.key} go={go} />
           ))}
         </div>
       )}
@@ -83,7 +84,7 @@ export function RoomAutomationReadiness({ h, area, automation, pendingAssignment
           </summary>
           <div className="mt-3 grid gap-2">
             {automation.optional.map((check) => (
-              <EquipmentRequirement key={check.key} h={h} area={area} check={check} />
+              <EquipmentRequirement key={check.key} h={h} area={area} check={check} automationKey={automation.key} go={go} />
             ))}
           </div>
         </details>
@@ -100,7 +101,19 @@ export function RoomAutomationReadiness({ h, area, automation, pendingAssignment
   );
 }
 
-function EquipmentRequirement({ h, area, check }: { h: Hierarchy; area: AreaReadiness; check: AutomationEquipmentCheck }) {
+function EquipmentRequirement({
+  h,
+  area,
+  check,
+  automationKey,
+  go,
+}: {
+  h: Hierarchy;
+  area: AreaReadiness;
+  check: AutomationEquipmentCheck;
+  automationKey: RoomAutomation["key"];
+  go: (route: Route) => void;
+}) {
   const { inventory, naming, inventorySaving, saveInventory, busy, propose, reviewChanges, changes, notify } = useTaxis();
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -236,7 +249,17 @@ function EquipmentRequirement({ h, area, check }: { h: Hierarchy; area: AreaRead
     <article className="min-w-0 rounded-lg border border-line bg-surface px-3 pt-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-1 pb-2">
         <h4 className="font-medium">{check.label}</h4>
-        <span className={check.status === "ready" ? "text-xs text-on" : "text-xs text-warn"}>{label}</span>
+        <div className="flex flex-wrap items-center gap-1">
+          <span className={check.status === "ready" ? "text-xs text-on" : "text-xs text-warn"}>{label}</span>
+          {check.capabilities.length > 0 && (
+            <JevCheck
+              subject={{ kind: "equipment", areaId: area.areaId, automationKey, checkKey: check.key }}
+              label="Check equipment with Jev"
+              title={`Jev · ${check.label} in ${area.name}`}
+              openSettings={() => go(JEV_SETTINGS)}
+            />
+          )}
+        </div>
       </div>
       {check.advice && <p className="pb-2 text-xs text-muted">{check.advice}</p>}
       {shown.length > 0 && <ul>{shown.map(renderRow)}</ul>}

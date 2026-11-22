@@ -137,8 +137,14 @@ function plain(s: unknown, limit = 112): string {
 const status = (handler: Candidate) => Number(handler.config.enabled !== true) * 2 + Number(handler.match.level !== "exact");
 type BuildResult = { analysis: ButtonAnalysis; count: number };
 
-export async function buildButtonAnalysis(control: ButtonControl, read: AnalysisRead, redact: (text: string) => string = (s) => s): Promise<BuildResult> {
+export async function buildButtonAnalysis(
+  control: ButtonControl,
+  read: AnalysisRead,
+  redact: (text: string) => string = (s) => s,
+  idLabel?: (rawId: string) => string,
+): Promise<BuildResult> {
   const clean = (v: unknown, max = 112) => plain(redact(plain(v, 1024)), max);
+  const identifier = (id: string, max = 160) => (idLabel ? idLabel(id) : clean(id, max));
   const ctx: ReadContext = {
     h: read.h,
     reference: createReferenceRead(read.readReference),
@@ -188,7 +194,7 @@ export async function buildButtonAnalysis(control: ButtonControl, read: Analysis
       value: {
         ...action.value,
         service: clean(action.value.service),
-        targets: action.value.targets.map((target) => ({ id: clean(target.id, 160), name: clean(target.name) })),
+        targets: action.value.targets.map((target) => ({ id: identifier(target.id), name: clean(target.name) })),
         conditions: action.value.conditions.slice(0, 10).map((text) => clean(text, 220)),
         branches: action.value.branches.slice(0, 6),
         via: action.value.via.slice(0, 4).map((text) => clean(text)),
@@ -196,7 +202,7 @@ export async function buildButtonAnalysis(control: ButtonControl, read: Analysis
     }));
     return {
       display: {
-        id: clean(a.id, 160),
+        id: identifier(a.id),
         name: clean(a.name) || "Unnamed automation",
         enabled: a.enabled,
         match: match.level,
@@ -236,12 +242,12 @@ export async function buildButtonAnalysis(control: ButtonControl, read: Analysis
     if (handlers.some((handler) => handler.display.match === "possible" && !handler.actions.length))
       notes.add("Possible references with unknown actions were not treated as confirmed output matches.");
     gestures.push({
-      key: clean(g.key, 180),
+      key: identifier(g.key, 180),
       button: clean(g.button),
       gesture: clean(g.gesture),
       source: clean(g.source),
       handlers: handlers.map((handler) => handler.display),
-      overlaps: overlaps(handlers, ctx).map((overlap) => ({ ...overlap, target: { id: clean(overlap.target.id, 160), name: clean(overlap.target.name) } })),
+      overlaps: overlaps(handlers, ctx).map((overlap) => ({ ...overlap, target: { id: identifier(overlap.target.id), name: clean(overlap.target.name) } })),
     });
   }
   const related: ButtonAnalysisHandler[] = [];

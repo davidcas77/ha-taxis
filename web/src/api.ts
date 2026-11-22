@@ -4,6 +4,7 @@ import type { AssistantAdminResponse, AssistantPreviewResponse, AssistantRespons
 import type { GroupSettings } from "../../shared/groups.ts";
 import type { GuideResponse, GuideSettings } from "../../shared/guide.ts";
 import type { JevReviewInput, JevReviewResponse, JevSave, JevSettingsResponse, JevTestResponse, JevUsageResponse } from "../../shared/jev.ts";
+import type { JevCheckPreviewResponse, JevCheckRunResponse, JevCheckSubject } from "../../shared/jev-checks.ts";
 import type { HealthOptions, HealthReportResponse } from "../../shared/health.ts";
 import type { RoomLightControllersResponse } from "../../shared/health/lights.ts";
 import type { InventorySettings } from "../../shared/inventory.ts";
@@ -92,6 +93,9 @@ export const api = {
   jevTest: () => call<JevTestResponse>("api/jev/test", { method: "POST", body: "{}" }),
   jevUsage: () => call<JevUsageResponse>("api/jev/usage"),
   jevRoomNotes: (value: JevReviewInput) => call<JevReviewResponse>("api/jev/room-notes", { method: "POST", body: JSON.stringify(value) }),
+  jevCheckPreview: (subject: JevCheckSubject) => call<JevCheckPreviewResponse>("api/jev/checks/preview", { method: "POST", body: JSON.stringify(subject) }),
+  jevCheckRun: (subject: JevCheckSubject, fingerprint: string) =>
+    call<JevCheckRunResponse>("api/jev/checks/run", { method: "POST", body: JSON.stringify({ subject, fingerprint }) }),
   guide: () => call<GuideResponse>("api/settings/guide"),
   saveGuide: (guide: GuideSettings) => call<GuideResponse>("api/settings/guide", { method: "PUT", body: JSON.stringify(guide) }),
   blueprints: () => call<BlueprintsResponse>("api/blueprints"),

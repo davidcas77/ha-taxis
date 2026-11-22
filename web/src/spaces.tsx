@@ -37,6 +37,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ROLE_ORDER, displayRole } from "../../shared/roles.ts";
 import { suggestAreaPlacement } from "../../shared/area-suggestion.ts";
 import { AssignmentSuggestion } from "./assignment-suggestion.tsx";
+import { JevCheck } from "./jev-check.tsx";
 import { unassignedDevices } from "../../shared/unassigned-devices.ts";
 import { sortRows } from "../../shared/sort.ts";
 import { resolveSpaces, spaceFloorDescription } from "../../shared/spaces.ts";
@@ -60,7 +61,7 @@ import { DevicesEntities } from "./devices-view.tsx";
 import { AreaNamingTab } from "./naming.tsx";
 import { useStoredChoice, useStoredSet } from "./storage.ts";
 import { DataTable, useSortState, type Column } from "./data-table.tsx";
-import { useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
+import { JEV_SETTINGS, useTaxis, type AreaTab, type Route, type Selection } from "./state.tsx";
 import {
   AreaSelect,
   Button,
@@ -831,7 +832,7 @@ export function SpaceView({
       <AreaList h={h} title="No floor" subtitle="Areas that aren't on any floor" areaIds={h.looseAreaIds} filters={filters} select={select} floorId={null} />
     );
   } else if (sel.kind === "unassigned") {
-    body = <UnassignedView h={h} filters={filters} edit={rows.edit} />;
+    body = <UnassignedView h={h} filters={filters} edit={rows.edit} go={go} />;
   } else {
     body = <HomeView h={h} filters={filters} select={select} />;
   }
@@ -845,7 +846,7 @@ export function SpaceView({
   );
 }
 
-function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; edit: (id: string) => void }) {
+function UnassignedView({ h, filters, edit, go }: { h: Hierarchy; filters: Filters; edit: (id: string) => void; go: (route: Route) => void }) {
   const [tab, setTab] = useState<"devices" | "entities">("devices");
   return (
     <section aria-label="Unassigned items" className="flex min-w-0 flex-col gap-3">
@@ -868,16 +869,28 @@ function UnassignedView({ h, filters, edit }: { h: Hierarchy; filters: Filters; 
       />
       <div id={tabPanelId("Unassigned items")} role="tabpanel">
         {tab === "devices" ? (
-          <UnassignedDevices h={h} showDisabled={filters.disabled} />
+          <UnassignedDevices h={h} showDisabled={filters.disabled} go={go} />
         ) : (
-          <UnassignedEntities h={h} filters={filters} edit={edit} onDevices={() => setTab("devices")} />
+          <UnassignedEntities h={h} filters={filters} edit={edit} onDevices={() => setTab("devices")} go={go} />
         )}
       </div>
     </section>
   );
 }
 
-function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; filters: Filters; edit: (id: string) => void; onDevices: () => void }) {
+function UnassignedEntities({
+  h,
+  filters,
+  edit,
+  onDevices,
+  go,
+}: {
+  h: Hierarchy;
+  filters: Filters;
+  edit: (id: string) => void;
+  onDevices: () => void;
+  go: (route: Route) => void;
+}) {
   const { propose, busy: applying, reviewChanges } = useTaxis();
   const [assigning, setAssigning] = useState(false);
   const assignArea = async (entity: EntityItem, area: string | null) => {
@@ -934,6 +947,16 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
   const eligible = shown.filter((e) => e.inRegistry);
   // Selection never follows an entity hidden by the current query, filters or page.
   const selected = eligible.filter((e) => picked.has(e.entityId)).map((e) => e.entityId);
+  const selectedEntity = selected.length === 1 ? h.entities[selected[0]] : null;
+  const selectedAreaCheck = selectedEntity && (
+    <JevCheck
+      subject={{ kind: "area", target: "entity", id: selectedEntity.entityId }}
+      label="Check area with Jev"
+      title={`Jev · Area for ${selectedEntity.name}`}
+      openSettings={() => go(JEV_SETTINGS)}
+      disabled={applying || assigning}
+    />
+  );
   const all = eligible.length > 0 && selected.length === eligible.length;
   const selectionCheckbox = (
     <input
@@ -1095,7 +1118,7 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
             )}
           </Toolbar>
 
-          <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea />
+          <BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea areaCheck={selectedAreaCheck} />
           {suggested.length > 0 && (
             <section aria-label="Suggested entity areas" className="rounded-lg border border-line bg-surface px-3 py-2 text-sm">
               <h3 className="font-semibold">Suggested areas</h3>
@@ -1137,7 +1160,7 @@ function UnassignedEntities({ h, filters, edit, onDevices }: { h: Hierarchy; fil
             </Toolbar>
           }
           summary={<span>{matches.length} matching entities</span>}
-          actions={<BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea inline />}
+          actions={<BulkBar h={h} ids={selected} onDone={() => setPicked(new Set())} requireArea inline areaCheck={selectedAreaCheck} />}
 
           label="Unassigned entities table"
           empty={
@@ -1731,12 +1754,14 @@ export function BulkBar({
   onDone,
   requireArea = false,
   inline = false,
+  areaCheck,
 }: {
   h: Hierarchy;
   ids: string[];
   onDone: () => void;
   requireArea?: boolean;
   inline?: boolean;
+  areaCheck?: ReactNode;
 }) {
   const { propose } = useTaxis();
   const [area, setArea] = useState<string | null>(null);
@@ -1809,6 +1834,7 @@ export function BulkBar({
         >
           Move
         </Button>
+        {areaCheck}
       </div>
       {ids.length > 0 && (
         <>

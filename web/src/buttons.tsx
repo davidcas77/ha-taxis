@@ -21,8 +21,9 @@ import {
 import type { Hierarchy } from "../../shared/types.ts";
 import { api } from "./api.ts";
 import { DataTable, type Column } from "./data-table.tsx";
-import { useTaxis, type Route } from "./state.tsx";
+import { JEV_SETTINGS, useTaxis, type Route } from "./state.tsx";
 import { confirmDraftNavigation, useDraftGuard } from "./draft-guard.ts";
+import { JevCheck } from "./jev-check.tsx";
 import { Badge, Button, Card, Chip, EmptyState, inputClass, Toolbar } from "./ui.tsx";
 
 // What a Taxis assignment is, as the pages below hold it.
@@ -215,6 +216,7 @@ export function ButtonsPanel({ h, controlId, go }: { h: Hierarchy; controlId: st
               onClose={() => setEditing(null)}
               onBusy={setSubmitting}
               onAdded={added}
+              openJevSettings={() => go(JEV_SETTINGS)}
             />
           ) : (
             <EmptyState>
@@ -332,6 +334,7 @@ function ControlView({
   onClose,
   onBusy,
   onAdded,
+  openJevSettings,
 }: {
   h: Hierarchy;
   control: ButtonControl;
@@ -345,6 +348,7 @@ function ControlView({
   onClose: () => void;
   onBusy: (value: boolean) => void;
   onAdded: () => Promise<void>;
+  openJevSettings: () => void;
 }) {
   const matrix = buttonMatrix(control.gestures, bindings, control.existing);
   const [attempt, setAttempt] = useState(0);
@@ -436,12 +440,22 @@ function ControlView({
         </div>
       )}
       {hasEvidence && (
-        <ButtonAiReview
-          controlId={control.id}
-          preview={preview}
-          error={result?.ok === false ? result.error : null}
-          onRefresh={() => setAttempt((v) => v + 1)}
-        />
+        <div className="grid gap-2">
+          <JevCheck
+            subject={{ kind: "buttons", controlId: control.id }}
+            label="Check button mapping with Jev"
+            title={`Jev · ${control.name} button mapping`}
+            revision={`${data.fingerprint}:${revision}`}
+            disabled={refreshing}
+            openSettings={openJevSettings}
+          />
+          <ButtonAiReview
+            controlId={control.id}
+            preview={preview}
+            error={result?.ok === false ? result.error : null}
+            onRefresh={() => setAttempt((v) => v + 1)}
+          />
+        </div>
       )}
       {matrix.rows.length > 0 && (
         <>

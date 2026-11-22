@@ -1618,12 +1618,26 @@ again.
 ## Jev decisions
 
 Jev is an optional decision service from TypeSafe, separate from your Low, Medium
-and Strong models. It has one job: in the Guide's room test, **Review notes with
-Jev** reads the notes you typed and says, for each checklist item you selected,
-whether they describe it **working**, **a problem**, or **not established**, with
-the probabilities it gave. It is a suggestion. It never ticks a box, saves an
-observation, changes readiness or touches Home Assistant, and editing the notes
-clears the review shown. Your own observations stay the evidence.
+and Strong models. You can use it in these parts of Taxis:
+
+- **Buttons.** Review the selected control's presses, conditions and actions for
+  duplicate, complementary or potentially conflicting behavior.
+- **Unassigned entities and devices.** Review the evidence for placement in an
+  existing area. Check the suggested room before choosing it yourself.
+- **Room automation equipment.** Review the sensors that could satisfy a selected
+  requirement. Check their physical location and behavior before assigning one.
+- **Room automation groups.** Review whether the members in a proposed group fit
+  one purpose or might serve separate zones.
+- **Room test.** Review whether the notes you typed report a check working, a
+  problem, or insufficient observation. Editing the notes clears the review.
+
+The four configuration checks show a preview before you send. Their decisions
+are advisory and cannot change area assignments, room readiness, group
+membership, checklist observations or Home Assistant settings.
+
+Taxis uses its standard checks without a Jev key. When you open a configuration
+check before setup, Taxis asks whether you have a Jev API key. Choose to enter
+the key in Settings or stay with the standard checks.
 
 Set it up in **Settings → Jev decisions**:
 
@@ -1684,6 +1698,9 @@ What each of the AI and Jev services receives, and when:
     token and the saved API keys are also removed from any text before it is sent.
 - **TypeSafe** receives your Jev API key as the login of the request, the Jev model
   name, and:
+  - when you send a Jev configuration check: the bounded evidence shown in the
+    preview for the selected control, unassigned item, sensor requirement, or
+    proposed room groups, with the questions and their allowed decisions;
   - when you press **Review notes with Jev** in the Guide: the notes you typed (up
     to 2,000 characters, with the Home Assistant token and saved keys removed) and the descriptions of the
     checklist items you selected. Not the area, entities, states or saved test
